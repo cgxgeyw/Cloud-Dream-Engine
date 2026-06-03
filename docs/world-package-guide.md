@@ -117,6 +117,551 @@ my-world/
 
 云朵梦境支持世界包自带界面。你可以分别为桌面端和移动端设计不同布局。
 
+## 界面文件整体结构
+
+一份界面文件通常由这几部分组成：
+
+```jsonc
+{
+  "schema_version": 2,
+  "meta": {},
+  "layout": {
+    "root": {}
+  },
+  "mounts": {},
+  "tokens": {},
+  "components": {},
+  "effects": {},
+  "custom_css": ""
+}
+```
+
+### `schema_version`
+
+控制这份界面文件使用哪一版规则。当前建议写 `2`。
+
+如果你是新建世界包，直接使用 `2` 即可；旧版本配置可能还能兼容，但新功能会优先放在新版规则里。
+
+### `meta`
+
+保存界面文件的基本说明，不直接改变画面，但方便编辑器和校验工具识别。
+
+常见字段：
+
+- `name`：界面名称，例如“悬疑世界桌面界面”。
+- `platform`：这份界面用于桌面端还是移动端。桌面端写 `desktop`，移动端写 `mobile`。
+
+### `layout`
+
+控制界面的主体结构。最重要的是 `root`，也就是整个游戏界面的根节点。
+
+你可以把它理解成“页面骨架”：哪些区域在左，哪些区域在右，聊天放哪里，状态栏放哪里，按钮浮在哪里，都由这里决定。
+
+### `mounts`
+
+控制旧版或特定区域的挂载顺序，目前最常见的是侧边面板页签顺序。
+
+例如你想让侧边面板先显示地图，再显示关系，再显示礼仪，可以配置类似：
+
+```jsonc
+{
+  "side_panel": {
+    "tab_order": ["map", "custom:关系", "custom:礼仪"]
+  }
+}
+```
+
+### `tokens`
+
+控制整套界面的基础视觉变量，例如背景色、文字色、圆角、字体、间距、动效速度。
+
+它适合用来做“全局风格统一”。例如你想让整个世界偏暗色、偏古典、偏清爽，优先改这里。
+
+常见写法：
+
+```jsonc
+{
+  "color.bg": "#08101d",
+  "color.panel": "rgba(255,255,255,0.08)",
+  "color.text": "#f5f7fb",
+  "space.md": "16px",
+  "radius.lg": "24px",
+  "font.body": "\"Microsoft YaHei\", sans-serif",
+  "motion.fast": "180ms"
+}
+```
+
+### `components`
+
+控制通用组件的视觉样式，例如面板、按钮、消息气泡、标签、徽章等。
+
+它通常包含：
+
+- `base`：默认样式。
+- `variants`：不同变体的样式，例如主要按钮、幽灵按钮、玩家消息、角色消息。
+
+示例：
+
+```jsonc
+{
+  "button": {
+    "base": {
+      "border_radius": "14px",
+      "background": "rgba(255,255,255,0.10)"
+    },
+    "variants": {
+      "primary": {
+        "background": "#f0d3b2",
+        "color": "#472a21"
+      }
+    }
+  }
+}
+```
+
+### `effects`
+
+控制界面动效或背景效果，例如进入页面的动画、消息出现动画、背景渐变等。
+
+如果你想让界面更安静，可以减少动效；如果是更有戏剧感的世界，可以适当加强进入和消息出现效果。
+
+### `custom_css`
+
+写额外的自定义样式。它适合做更细的视觉调整，例如某个世界专属背景、特殊字体、某个区域的边框和阴影。
+
+建议只在 `tokens` 和 `components` 不够用时再写 `custom_css`。如果你不熟悉 CSS，先保持为空字符串。
+
+## 布局节点字段详解
+
+`layout.root` 和它的子节点都叫布局节点。每个节点都需要一个 `type`，表示它是哪种节点。
+
+### 通用字段
+
+这些字段大多数节点都可以使用：
+
+| 字段 | 作用 |
+| --- | --- |
+| `type` | 节点类型，决定它是网格、堆叠、组件、浮层还是条件节点。 |
+| `id` | 给节点取一个唯一名字，方便识别或写样式。 |
+| `class_name` | 给节点加样式类名，方便在 `custom_css` 中定制。 |
+| `visible` | 是否显示这个节点。写 `false` 可以临时隐藏。 |
+| `area` | 放入网格布局的哪个区域。只在父级是网格时常用。 |
+| `width` | 节点宽度，例如 `100%`、`320px`。 |
+| `height` | 节点高度，例如 `100%`、`auto`。 |
+| `min_width` | 最小宽度，避免被压得太窄。 |
+| `min_height` | 最小高度，常用 `0` 解决滚动区域撑开问题。 |
+| `max_width` | 最大宽度。 |
+| `max_height` | 最大高度。 |
+| `padding` | 内边距，控制内容离边框的距离。 |
+| `margin` | 外边距，控制节点和周围节点的距离。 |
+| `align` | 交叉方向对齐方式。 |
+| `justify` | 主方向对齐方式。 |
+| `style` | 直接写样式对象，适合局部微调。 |
+
+### `style`
+
+`style` 用于写局部样式，例如：
+
+```jsonc
+{
+  "style": {
+    "height": "100%",
+    "min_height": "0",
+    "flex": "1 1 0"
+  }
+}
+```
+
+常见用途：
+
+- `height: "100%"`：让节点占满可用高度。
+- `min_height: "0"`：让聊天列表这类区域可以正确滚动。
+- `flex: "1 1 0"`：让某个模块吃掉剩余空间。
+- `overflow: "hidden"`：隐藏溢出内容。
+- `background`：设置背景。
+- `border_radius`：设置圆角。
+
+## 节点类型详解
+
+### `grid`：网格布局
+
+适合桌面端大布局，例如三栏界面。
+
+常用字段：
+
+| 字段 | 作用 |
+| --- | --- |
+| `columns` | 定义每一列的宽度。 |
+| `rows` | 定义每一行的高度。 |
+| `areas` | 给网格区域命名。 |
+| `gap` | 区域之间的间距。 |
+| `children` | 放在网格里的子节点。 |
+
+示例：
+
+```jsonc
+{
+  "type": "grid",
+  "columns": ["280px", "1fr", "300px"],
+  "rows": ["auto", "1fr"],
+  "areas": [
+    ["header", "header", "actions"],
+    ["scene", "chat", "side"]
+  ],
+  "gap": "16px",
+  "children": []
+}
+```
+
+使用建议：
+
+- 桌面端优先使用网格。
+- `areas` 每一行的数量要一致。
+- 子节点通过 `area` 指定自己进入哪个区域。
+
+### `stack`：堆叠布局
+
+适合把模块从上到下或从左到右排列。
+
+常用字段：
+
+| 字段 | 作用 |
+| --- | --- |
+| `direction` | 排列方向，`vertical` 是上下排列，`horizontal` 是左右排列。 |
+| `gap` | 子节点之间的间距。 |
+| `children` | 子节点列表。 |
+
+示例：
+
+```jsonc
+{
+  "type": "stack",
+  "direction": "vertical",
+  "gap": "12px",
+  "children": [
+    { "type": "component", "component": "narration_card" },
+    { "type": "component", "component": "message_list" },
+    { "type": "component", "component": "input_composer" }
+  ]
+}
+```
+
+使用建议：
+
+- 移动端优先使用上下堆叠。
+- 聊天区通常可以放成：旁白、消息列表、输入区。
+
+### `absolute`：浮层布局
+
+适合放悬浮按钮、右上角操作、覆盖层等。
+
+常用字段：
+
+| 字段 | 作用 |
+| --- | --- |
+| `children` | 浮层中的子节点。 |
+
+子节点通常配合 `anchor` 使用：
+
+```jsonc
+{
+  "type": "component",
+  "component": "floating_actions",
+  "anchor": {
+    "top": "12px",
+    "right": "12px"
+  }
+}
+```
+
+`anchor` 字段说明：
+
+- `top`：距离顶部多少。
+- `right`：距离右侧多少。
+- `bottom`：距离底部多少。
+- `left`：距离左侧多少。
+
+### `component`：功能组件
+
+用于放入实际可见的游戏模块，例如聊天列表、输入框、角色条、侧边面板。
+
+常用字段：
+
+| 字段 | 作用 |
+| --- | --- |
+| `component` | 组件名称，决定显示哪个模块。 |
+| `props` | 组件参数，用来控制这个模块显示哪些内容。 |
+| `variant` | 组件变体，适合给同一组件做不同视觉版本。 |
+| `slots` | 插槽内容，给组件内部补充额外布局。 |
+| `anchor` | 浮层定位，常用于悬浮按钮。 |
+
+示例：
+
+```jsonc
+{
+  "type": "component",
+  "component": "scene_header",
+  "props": {
+    "show_world_name": true,
+    "show_location": true
+  }
+}
+```
+
+### `when`：条件显示
+
+用于“满足条件才显示”的模块。
+
+常用字段：
+
+| 字段 | 作用 |
+| --- | --- |
+| `expr` | 条件表达式。 |
+| `child` | 条件成立时显示的节点。 |
+
+示例：
+
+```jsonc
+{
+  "type": "when",
+  "expr": "latest_narration != null",
+  "child": {
+    "type": "component",
+    "component": "narration_card"
+  }
+}
+```
+
+### `for_each`：循环显示
+
+用于根据一组数据重复生成节点，例如角色列表、条目列表。
+
+常用字段：
+
+| 字段 | 作用 |
+| --- | --- |
+| `source` | 要遍历的数据来源。 |
+| `item_as` | 当前条目的名字。 |
+| `index_as` | 当前序号的名字。 |
+| `child` | 每一项要生成的节点。 |
+| `empty` | 没有数据时显示的节点。 |
+
+如果只是显示在场角色，通常直接使用 `character_bar` 组件即可，不一定需要自己写循环。
+
+### `slot`：插槽
+
+用于给组件内部预留扩展位置。一般玩家创建世界包时很少需要它。
+
+常用字段：
+
+| 字段 | 作用 |
+| --- | --- |
+| `name` | 插槽名称。 |
+
+## 组件字段详解
+
+### `scene_header`：场景头部
+
+显示世界、地点、时间、玩家身份和在场角色等顶部信息。
+
+可用参数：
+
+| 参数 | 作用 |
+| --- | --- |
+| `show_world_name` | 是否显示世界名称。 |
+| `show_location` | 是否显示当前位置。 |
+| `show_time_label` | 是否显示时间标签。 |
+| `show_player_identity` | 是否显示玩家当前身份。 |
+| `show_visible_characters` | 是否在头部显示在场角色。移动端通常建议关闭，避免拥挤。 |
+| `title_mode` | 标题模式，桌面端可写 `desktop`，移动端可写 `mobile`。 |
+| `player_identity_format` | 玩家身份的显示格式，适合自定义文案。 |
+
+### `scene_focus`：场景聚焦
+
+显示当前场景重点，例如当前说话角色、头像、立绘或关键台词。
+
+可用参数：
+
+| 参数 | 作用 |
+| --- | --- |
+| `show_avatar` | 是否显示头像或立绘。 |
+| `show_line` | 是否显示当前关键台词。 |
+| `avatar_variant` | 头像或立绘的视觉变体。 |
+
+### `character_bar`：角色条
+
+显示当前在场角色。
+
+可用参数：
+
+| 参数 | 作用 |
+| --- | --- |
+| `empty_text` | 没有在场角色时显示的文字。 |
+| `max_items` | 最多显示多少个角色。 |
+
+### `narration_card`：旁白卡
+
+显示最新旁白或剧情说明。
+
+可用参数：
+
+| 参数 | 作用 |
+| --- | --- |
+| `title` | 旁白卡标题。 |
+| `show_copy_button` | 是否显示复制按钮。 |
+| `empty_text` | 没有旁白时显示的文字。 |
+
+### `message_list`：消息列表
+
+显示玩家发言、角色回应、旁白、系统信息等。
+
+可用参数：
+
+| 参数 | 作用 |
+| --- | --- |
+| `auto_scroll` | 新消息出现时是否自动滚动到底部。 |
+| `show_pending_state` | 是否显示等待 AI 回复的状态。 |
+| `show_agent_reasoning` | 是否显示角色推理内容。用户向世界通常建议关闭。 |
+
+### `input_composer`：输入区
+
+显示玩家输入框、发送按钮、图片按钮、语音按钮等。
+
+可用参数：
+
+| 参数 | 作用 |
+| --- | --- |
+| `placeholder` | 输入框占位提示。 |
+| `submit_label` | 发送按钮文字。 |
+| `editing_submit_label` | 编辑已有消息时的提交按钮文字。 |
+| `show_image_button` | 是否显示图片按钮。 |
+| `show_audio_button` | 是否显示语音按钮。 |
+| `show_session_meta` | 是否显示当前会话辅助信息。移动端通常建议关闭。 |
+| `enter_to_submit` | 是否按回车发送。 |
+
+### `side_panel_tabs`：侧边面板
+
+显示地图、自定义状态页签、世界信息等。
+
+可用参数：
+
+| 参数 | 作用 |
+| --- | --- |
+| `show_map_tab` | 是否显示地图页签。 |
+| `show_custom_tabs` | 是否显示世界自定义页签。 |
+| `empty_text` | 没有内容时显示的文字。 |
+
+### `floating_actions`：悬浮操作
+
+显示返回、调试、设置等辅助按钮。
+
+可用参数：
+
+| 参数 | 作用 |
+| --- | --- |
+| `show_back` | 是否显示返回按钮。 |
+| `show_debug` | 是否显示调试按钮。正式游玩界面可以关闭。 |
+| `show_settings` | 是否显示设置按钮。 |
+| `layout` | 按钮排列方式，例如横排、竖排或自动换行。 |
+
+## 桌面端布局示例
+
+```jsonc
+{
+  "schema_version": 2,
+  "meta": {
+    "name": "桌面端界面",
+    "platform": "desktop"
+  },
+  "layout": {
+    "root": {
+      "type": "grid",
+      "columns": ["280px", "1fr", "300px"],
+      "rows": ["auto", "1fr"],
+      "areas": [
+        ["header", "header", "actions"],
+        ["scene", "chat", "side"]
+      ],
+      "gap": "16px",
+      "padding": "18px",
+      "children": [
+        {
+          "type": "component",
+          "component": "scene_header",
+          "area": "header"
+        },
+        {
+          "type": "component",
+          "component": "floating_actions",
+          "area": "actions"
+        },
+        {
+          "type": "component",
+          "component": "scene_focus",
+          "area": "scene"
+        },
+        {
+          "type": "stack",
+          "area": "chat",
+          "gap": "12px",
+          "children": [
+            { "type": "component", "component": "narration_card" },
+            { "type": "component", "component": "message_list" },
+            { "type": "component", "component": "input_composer" }
+          ]
+        },
+        {
+          "type": "component",
+          "component": "side_panel_tabs",
+          "area": "side"
+        }
+      ]
+    }
+  }
+}
+```
+
+## 移动端布局示例
+
+```jsonc
+{
+  "schema_version": 2,
+  "meta": {
+    "name": "移动端界面",
+    "platform": "mobile"
+  },
+  "layout": {
+    "root": {
+      "type": "stack",
+      "direction": "vertical",
+      "gap": "10px",
+      "padding": "12px",
+      "children": [
+        {
+          "type": "component",
+          "component": "scene_header",
+          "props": {
+            "title_mode": "mobile",
+            "show_visible_characters": false
+          }
+        },
+        { "type": "component", "component": "scene_focus" },
+        { "type": "component", "component": "narration_card" },
+        {
+          "type": "component",
+          "component": "message_list",
+          "style": {
+            "flex": "1 1 0",
+            "min_height": "0"
+          }
+        },
+        { "type": "component", "component": "input_composer" }
+      ]
+    }
+  }
+}
+```
+
 ### 桌面端适合展示什么
 
 桌面屏幕空间更大，适合同时展示：
