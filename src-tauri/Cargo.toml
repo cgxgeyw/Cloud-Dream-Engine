@@ -1,0 +1,54 @@
+[package]
+name = "dream-narrative-engine"
+version = "0.1.0"
+description = "梦叙引擎：以 AI 驱动的叙事游戏引擎"
+authors = ["Dream Narrative Engine"]
+edition = "2021"
+
+[lib]
+name = "dream_narrative_engine_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[features]
+local-embedding = ["candle-core", "candle-nn", "candle-transformers", "tokenizers"]
+
+[dependencies]
+# Tauri 桌面框架
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-shell = "2"
+
+# 序列化
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+json5 = "0.4"
+
+# 数据库
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# 通用工具
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+regex = "1"
+
+# 异步运行时
+tokio = { version = "1", features = ["full"] }
+
+# HTTP 客户端（用于 LLM API）
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "stream", "rustls-tls"] }
+futures = "0.3"
+candle-core = { version = "0.10.2", optional = true }
+candle-nn = { version = "0.10.2", optional = true }
+candle-transformers = { version = "0.10.2", optional = true }
+tokenizers = { version = "0.21.4", optional = true }
+
+# 错误处理
+thiserror = "1"
+anyhow = "1"
+
+# 编码与压缩
+base64 = "0.22"
+zip = { version = "2", default-features = false, features = ["deflate"] }

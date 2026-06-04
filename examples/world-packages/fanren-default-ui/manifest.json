@@ -1,0 +1,30 @@
+{
+  "format": "dream-world-package",
+  "version": 4,
+  "world_file": "world/world.json",
+  "desktop_ui_file": "world/ui.desktop.jsonc",
+  "mobile_ui_file": "world/ui.mobile.jsonc",
+  "character_files": [
+    {
+      "source_character_id": "fanren-player-han-li",
+      "character_name": "韩立",
+      "file_path": "characters/fanren-player-han-li/character.json"
+    },
+    {
+      "source_character_id": "fanren-npc-mo-daifu",
+      "character_name": "墨大夫",
+      "file_path": "characters/fanren-npc-mo-daifu/character.json"
+    },
+    {
+      "source_character_id": "fanren-npc-zhang-tie",
+      "character_name": "张铁",
+      "file_path": "characters/fanren-npc-zhang-tie/character.json"
+    },
+    {
+      "source_character_id": "fanren-npc-li-feiyu",
+      "character_name": "厉飞雨",
+      "file_path": "characters/fanren-npc-li-feiyu/character.json"
+    }
+  ],
+  "assets": []
+}

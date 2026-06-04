@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>移动端场景名测试</title>
+    <style>
+        /* 模拟移动端样式 */
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+        }
+        
+        .test-container {
+            width: 375px;
+            height: 667px;
+            margin: 20px auto;
+            border: 1px solid #ccc;
+            border-radius: 20px;
+            overflow: hidden;
+            position: relative;
+            background: #020617;
+        }
+        
+        /* 复现修复后的样式 */
+        .game-root--mobile-session {
+            --game-mobile-radius: 14px;
+            min-height: 100dvh;
+            height: 100dvh;
+            padding-top: 14px;
+            padding-right: 0;
+            padding-bottom: 0;
+            padding-left: 0;
+        }
+        
+        .game-simple-top {
+            display: grid;
+            gap: 8px;
+            margin-top: -4px;
+            margin-bottom: 2px;
+            padding: 10px 68px 10px 12px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: var(--game-mobile-radius);
+            background:
+                radial-gradient(circle at top left, rgba(255, 246, 232, 0.08), transparent 22%),
+                linear-gradient(180deg, rgba(255, 255, 255, 0.1) 92%, rgba(6, 6, 8, 0.26)), 
+                linear-gradient(180deg, rgba(255, 255, 255, 0.1) 84%, rgba(6, 6, 8, 0.42));
+            box-shadow: 0 22px 44px rgba(0, 0, 0, 0.2);
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+            min-width: 0;
+        }
+        
+        .game-simple-top-row {
+            display: flex;
+            flex-wrap: nowrap;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+            overflow-x: auto;
+            overflow-y: hidden;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
+            touch-action: pan-x;
+        }
+        
+        .game-simple-top-row::-webkit-scrollbar {
+            display: none;
+        }
+        
+        .game-simple-top-row--scene {
+            min-width: max-content;
+        }
+        
+        .game-simple-top-place {
+            font-family: var(--font-display, -apple-system, BlinkMacSystemFont);
+            font-size: 18px;
+            font-weight: 700;
+            color: #fff;
+            letter-spacing: 0.01em;
+            line-height: 1.15;
+            white-space: nowrap;
+            flex: 0 0 auto;
+        }
+        
+        .game-simple-top-time {
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.6);
+            white-space: nowrap;
+            flex: 0 0 auto;
+        }
+        
+        .game-status-handle {
+            position: absolute;
+            top: 18px;
+            right: 0;
+            z-index: 85;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 42px;
+            min-height: 108px;
+            padding: 12px 10px;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-right: none;
+            border-radius: var(--game-mobile-radius) 0 0 var(--game-mobile-radius);
+            background: rgba(255, 255, 255, 0.08);
+            color: #fff;
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            letter-spacing: 0.08em;
+            box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+        }
+        
+        .test-info {
+            padding: 20px;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        
+        .test-info h2 {
+            color: #333;
+        }
+        
+        .test-info ul {
+            line-height: 1.6;
+        }
+        
+        .test-info code {
+            background: #f0f0f0;
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-info">
+        <h2>移动端场景名修复测试</h2>
+        <p>修复内容：</p>
+        <ul>
+            <li>✅ 场景名容器右侧 padding 从 54px 增加到 68px，避让侧边栏按钮</li>
+            <li>✅ 场景名行添加 <code>min-width: max-content</code> 确保可以水平滚动</li>
+            <li>✅ 场景名容器添加 <code>min-width: 0</code> 允许子元素溢出</li>
+            <li>✅ 场景名行已有 <code>overflow-x: auto</code> 支持水平滚动</li>
+        </ul>
+        <p>测试说明：在下方模拟的移动端界面中，长场景名应该可以左右滑动，并且不会与右侧的"会话状态"按钮重叠。</p>
+    </div>
+    
+    <div class="test-container">
+        <div class="game-root--mobile-session">
+            <section class="game-simple-top">
+                <div class="game-simple-top-row game-simple-top-row--scene">
+                    <strong class="game-simple-top-place">这是一个非常非常非常非常非常非常非常长的场景名称 · 具体位置信息</strong>
+                    <span class="game-simple-top-time">下午 3:30</span>
+                </div>
+                <div class="game-simple-top-row">
+                    <span class="game-simple-top-role"><strong>身份：</strong><span>玩家角色</span></span>
+                    <span class="game-simple-top-chars"><strong>在场人物：</strong><span>张三、李四、王五、赵六、钱七</span></span>
+                </div>
+            </section>
+            
+            <button class="game-status-handle">会话状态</button>
+        </div>
+    </div>
+    
+    <div class="test-info">
+        <h3>预期效果：</h3>
+        <ul>
+            <li>长场景名可以左右滑动（在移动设备上用手指左右拖动）</li>
+            <li>场景名右侧有足够的空间，不会与"会话状态"按钮重叠</li>
+            <li>时间标签始终可见，不会因为滚动而隐藏</li>
+        </ul>
+    </div>
+</body>
+</html>

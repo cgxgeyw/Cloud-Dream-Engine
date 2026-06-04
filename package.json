@@ -1,0 +1,16 @@
+{
+  "name": "dream-narrative-engine-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "tauri": "tauri",
+    "tauri:dev": "node ./scripts/tauri-dev.js",
+    "build:windows-msi": "powershell -ExecutionPolicy Bypass -File scripts/build-windows-msi.ps1",
+    "build:android-apk": "powershell -ExecutionPolicy Bypass -File scripts/build_android_apk.ps1",
+    "frontend:install": "cd frontend && npm install"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.9.3",
+    "sharp": "^0.34.5"
+  }
+}

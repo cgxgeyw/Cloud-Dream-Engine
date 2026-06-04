@@ -1,0 +1,258 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "name": "GWTW Desktop UI"
+  },
+  "layout": {
+    "root": {
+      "type": "grid",
+      "id": "gwtw-desktop-root",
+      "columns": [
+        "minmax(280px, 1.02fr)",
+        "minmax(360px, 1.28fr)",
+        "minmax(250px, 0.82fr)"
+      ],
+      "rows": [
+        "auto",
+        "minmax(0, 1fr)"
+      ],
+      "areas": [
+        [
+          "header",
+          "header",
+          "header"
+        ],
+        [
+          "scene",
+          "chat",
+          "side"
+        ]
+      ],
+      "gap": "16px",
+      "padding": "18px",
+      "style": {
+        "height": "100%",
+        "min_height": "0"
+      },
+      "children": [
+        {
+          "type": "mount",
+          "mount": "header",
+          "area": "header"
+        },
+        {
+          "type": "stack",
+          "area": "scene",
+          "class_name": "gwtw-visual-column",
+          "gap": "12px",
+          "style": {
+            "height": "100%",
+            "min_height": "0",
+            "overflow": "hidden"
+          },
+          "children": [
+            {
+              "type": "mount",
+              "mount": "scene_focus"
+            },
+            {
+              "type": "mount",
+              "mount": "character_bar"
+            }
+          ]
+        },
+        {
+          "type": "stack",
+          "area": "chat",
+          "class_name": "gwtw-chat-column",
+          "gap": "12px",
+          "style": {
+            "height": "100%",
+            "min_height": "0",
+            "overflow": "hidden"
+          },
+          "children": [
+            {
+              "type": "mount",
+              "mount": "narration"
+            },
+            {
+              "type": "mount",
+              "mount": "message_list"
+            },
+            {
+              "type": "mount",
+              "mount": "input_area"
+            }
+          ]
+        },
+        {
+          "type": "mount",
+          "mount": "side_panel",
+          "area": "side"
+        },
+        {
+          "type": "absolute",
+          "children": [
+            {
+              "type": "mount",
+              "mount": "floating_actions",
+              "anchor": {
+                "top": "18px",
+                "right": "20px"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "mounts": {
+    "header": {
+      "visible": true,
+      "class_name": "gwtw-header-bar"
+    },
+    "scene": {
+      "visible": true,
+      "chrome": "panel",
+      "class_name": "gwtw-scene-board"
+    },
+    "scene_focus": {
+      "visible": true,
+      "chrome": "panel",
+      "class_name": "gwtw-focus-frame",
+      "min_height": "0",
+      "style": {
+        "display": "flex",
+        "flex": "1 1 0",
+        "min_height": "0",
+        "overflow": "hidden"
+      }
+    },
+    "character_bar": {
+      "visible": true,
+      "class_name": "gwtw-character-ribbon",
+      "style": {
+        "flex": "0 0 auto",
+        "min_height": "0"
+      }
+    },
+    "narration": {
+      "visible": true,
+      "chrome": "panel",
+      "class_name": "gwtw-narration-card",
+      "style": {
+        "flex": "0 0 auto"
+      }
+    },
+    "message_list": {
+      "visible": true,
+      "chrome": "panel",
+      "class_name": "gwtw-chat-board",
+      "min_height": "0",
+      "style": {
+        "display": "flex",
+        "flex": "1 1 0",
+        "flex_direction": "column",
+        "min_height": "0",
+        "overflow": "hidden"
+      }
+    },
+    "side_panel": {
+      "visible": true,
+      "chrome": "panel",
+      "class_name": "gwtw-side-board",
+      "min_height": "0",
+      "style": {
+        "min_height": "0"
+      }
+    },
+    "input_area": {
+      "visible": true,
+      "chrome": "panel",
+      "class_name": "gwtw-input-board",
+      "style": {
+        "flex": "0 0 auto"
+      }
+    }
+  },
+  "tokens": {
+    "color.bg": "#d9c7ae",
+    "color.panel": "rgba(76, 52, 44, 0.78)",
+    "color.text": "#fff8f1",
+    "space.md": "16px",
+    "radius.lg": "26px",
+    "font.body": "\"Noto Serif SC\", serif",
+    "font.display": "\"Noto Serif SC\", serif",
+    "motion.fast": "180ms"
+  },
+  "components": {
+    "panel": {
+      "base": {
+        "background": "rgba(76, 52, 44, 0.78)",
+        "border": "1px solid rgba(255,231,204,0.20)",
+        "border_radius": "26px",
+        "box_shadow": "0 20px 52px rgba(58, 54, 50, 0.14)",
+        "backdrop_filter": "blur(18px)"
+      }
+    },
+    "button": {
+      "base": {
+        "border_radius": "14px",
+        "border": "1px solid rgba(255,231,204,0.18)",
+        "background": "rgba(255,255,255,0.10)",
+        "color": "#fff4e6"
+      },
+      "variants": {
+        "primary": {
+          "background": "#f0d3b2",
+          "color": "#472a21"
+        },
+        "ghost": {
+          "background": "rgba(255,255,255,0.08)"
+        }
+      }
+    },
+    "message_bubble": {
+      "base": {
+        "border_radius": "20px",
+        "padding": "16px 18px"
+      },
+      "variants": {
+        "agent": {
+          "background": "rgba(88,60,50,0.86)",
+          "color": "#fff8f1"
+        },
+        "player": {
+          "background": "#f0d3b2",
+          "color": "#472a21"
+        },
+        "system": {
+          "background": "rgba(110,82,72,0.76)",
+          "color": "#f7e6d5"
+        }
+      }
+    },
+    "chip": {
+      "base": {
+        "border_radius": "999px",
+        "background": "rgba(255,244,230,0.12)",
+        "color": "#fff4e6",
+        "border": "1px solid rgba(255,231,204,0.14)"
+      }
+    },
+    "badge": {
+      "base": {
+        "border_radius": "999px",
+        "background": "rgba(255,248,241,0.12)",
+        "color": "#fff4e6"
+      }
+    }
+  },
+  "effects": {
+    "background": {
+      "image": "linear-gradient(180deg, #c8b39a 0%, #a98a74 100%)"
+    }
+  },
+  "custom_css": ".game-ui-root {\n  --game-bg-from: #c8b39a;\n  --game-bg-via: #b99b83;\n  --game-bg-to: #a98a74;\n  --game-bg-accent: rgba(132, 98, 78, 0.16);\n  --game-text: #fff8f1;\n  --game-text-dim: rgba(255, 248, 241, 0.68);\n  --game-text-muted: rgba(255, 248, 241, 0.58);\n  --game-text-faint: rgba(255, 248, 241, 0.78);\n  --game-text-weak: rgba(255, 248, 241, 0.72);\n  --game-border: rgba(255, 231, 204, 0.20);\n  --game-border-dim: rgba(255, 231, 204, 0.14);\n  --game-border-light: rgba(255, 231, 204, 0.18);\n  --game-border-medium: rgba(255, 231, 204, 0.28);\n  --game-bg-panel: rgba(76, 52, 44, 0.78);\n  --game-bg-subtle: rgba(110, 82, 72, 0.42);\n  --game-bg-hover: rgba(255, 244, 230, 0.16);\n  --game-bg-active: rgba(240, 211, 178, 0.24);\n  --game-bg-input: rgba(255, 255, 255, 0.10);\n  --game-player-bg: #f0d3b2;\n  --game-speaker-blue: #f0d3b2;\n  --game-node-current: #ffe2bd;\n  --game-tag-bg: rgba(255,244,230,0.12);\n  --game-tag-border: rgba(255,231,204,0.14);\n  --game-tag-text: #fff4e6;\n  color: #fff8f1;\n  background:\n    radial-gradient(circle at 18% 10%, rgba(255,239,220,0.24), transparent 18%),\n    radial-gradient(circle at 82% 18%, rgba(132, 98, 78, 0.16), transparent 22%),\n    linear-gradient(180deg, #c8b39a 0%, #a98a74 100%);\n}\n\n.game-ui-root.game-root {\n  display: flex;\n  width: 100%;\n  min-height: 100vh;\n  min-height: 100dvh;\n  height: 100vh;\n  height: 100dvh;\n  flex-direction: column;\n  color: var(--game-text);\n  overflow: hidden;\n}\n\n.game-ui-root.game-root--preview {\n  min-height: 0;\n  height: 100%;\n}\n\n.game-header {\n  display: flex;\n  min-height: 100%;\n  align-items: center;\n  justify-content: space-between;\n  gap: 14px;\n}\n\n.game-header-left,\n.game-header-actions,\n.game-header-meta,\n.game-scene-header,\n.game-scene-header-main,\n.game-scene-header-side,\n.game-simple-meta,\n.game-simple-place-row,\n.game-simple-actions,\n.game-input-mode,\n.game-input-mode-actions,\n.game-session-meta,\n.game-message-actions,\n.game-tabs {\n  display: flex;\n}\n\n.game-header-left,\n.game-scene-header-main {\n  min-width: 0;\n  align-items: center;\n  gap: 10px;\n}\n\n.game-header-actions,\n.game-header-meta,\n.game-input-mode-actions,\n.game-session-meta,\n.game-message-actions,\n.game-simple-meta,\n.game-simple-actions {\n  flex-wrap: wrap;\n  gap: 8px;\n}\n\n.game-title-group,\n.game-simple-top,\n.game-simple-top-main,\n.game-narration-panel,\n.game-input-area,\n.game-input-mode-copy,\n.game-status,\n.game-panel,\n.game-card,\n.game-system-action,\n.game-agent-blocks,\n.game-agent-answer,\n.game-director-trace-lines {\n  display: grid;\n}\n\n.game-title-group {\n  gap: 2px;\n}\n\n.game-title {\n  font-size: 16px;\n  font-weight: 600;\n}\n\n.game-time,\n.game-session-meta-id,\n.game-input-mode-text,\n.game-narration-label {\n  color: var(--game-text-dim);\n}\n\n.game-time,\n.game-session-meta-id {\n  font-size: 11px;\n  line-height: 1.4;\n}\n\n.game-simple-top {\n  gap: 10px;\n  min-width: 0;\n  padding: 12px 14px;\n}\n\n.game-simple-top-main {\n  min-width: 0;\n  gap: 4px;\n}\n\n.game-simple-world {\n  color: var(--game-text-dim);\n  font-size: 10px;\n  font-weight: 700;\n  letter-spacing: 0.08em;\n  text-transform: uppercase;\n}\n\n.game-simple-place-row,\n.game-simple-actions,\n.game-simple-meta {\n  align-items: center;\n  gap: 8px;\n}\n\n.game-simple-meta-item,\n.game-scene-badge,\n.game-scene-char,\n.game-system-action-badge {\n  display: inline-flex;\n  width: fit-content;\n  align-items: center;\n}\n\n.game-simple-meta-item {\n  min-width: 0;\n  gap: 6px;\n  font-size: 11px;\n}\n\n.game-simple-meta-item span {\n  color: var(--game-text-dim);\n}\n\n.game-simple-place,\n.game-scene-name {\n  min-width: 0;\n  overflow: hidden;\n  color: var(--game-text);\n  font-weight: 700;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.game-simple-place {\n  font-size: 18px;\n}\n\n.game-scene-header {\n  min-width: 0;\n  align-items: center;\n  justify-content: space-between;\n  gap: 12px;\n}\n\n.game-scene-header-side {\n  min-width: 0;\n  align-items: center;\n  justify-content: flex-end;\n  gap: 8px;\n}\n\n.game-scene-name {\n  margin: 0;\n  font-family: var(--game-ui-token-font-display, serif);\n  font-size: 17px;\n}\n\n.game-scene-time {\n  color: var(--game-text-dim);\n  font-size: 11px;\n  white-space: nowrap;\n}\n\n.game-scene-badge {\n  padding: 4px 10px;\n  font-size: 11px;\n  white-space: nowrap;\n}\n\n.game-scene-center {\n  min-width: 0;\n  min-height: 0;\n}\n\n.game-avatar {\n  display: grid;\n  width: 100%;\n  max-width: min(190px, 60%);\n  aspect-ratio: 3 / 4;\n  place-items: center;\n  justify-self: center;\n  align-self: end;\n  padding: 12px;\n  overflow: hidden;\n  color: var(--game-text);\n  font-size: 22px;\n  font-weight: 800;\n  text-align: center;\n}\n\n.game-avatar--image {\n  padding: 0;\n}\n\n.game-avatar-image {\n  display: block;\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n}\n\n.game-current-line,\n.game-message-content,\n.game-custom-tab-content,\n.game-system-action-text,\n.game-director-trace-line,\n.game-agent-reasoning-line {\n  white-space: pre-wrap;\n  word-break: break-word;\n}\n\n.game-current-line {\n  min-height: 124px;\n  padding: 12px 14px;\n  border: 1px solid var(--game-border);\n  border-radius: 18px;\n  color: var(--game-text);\n  line-height: 1.7;\n  overflow: hidden;\n}\n\n.game-scene-characters {\n  display: flex;\n  min-height: 0;\n  align-items: center;\n  gap: 8px;\n  overflow: hidden;\n}\n\n.game-scene-char {\n  min-height: 26px;\n  padding: 2px 10px;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n.game-narration-panel {\n  gap: 6px;\n  min-width: 0;\n  min-height: 0;\n  padding: 10px 12px;\n}\n\n.game-narration-label {\n  font-size: 11px;\n  font-weight: 700;\n  letter-spacing: 0.08em;\n}\n\n.game-narration-content {\n  max-height: calc((1.7em * 4) + 8px);\n  overflow: hidden;\n  color: var(--game-text-weak);\n  font-size: 13px;\n  line-height: 1.7;\n  word-break: break-word;\n}\n\n.game-chat-messages {\n  display: grid;\n  min-width: 0;\n  min-height: 0;\n  height: 100%;\n  gap: 12px;\n  align-content: start;\n  overflow-y: auto;\n  overscroll-behavior: contain;\n}\n\n.game-message-row {\n  display: grid;\n  width: 100%;\n  gap: 6px;\n}\n\n.game-message-row--player {\n  justify-items: end;\n}\n\n.game-message-row--agent,\n.game-message-row--system {\n  justify-items: start;\n}\n\n.game-message {\n  display: grid;\n  width: min(100%, 560px);\n  gap: 6px;\n  border: 1px solid var(--game-border-dim);\n  box-shadow: 0 10px 30px rgba(58, 42, 36, 0.14);\n}\n\n.game-message--player {\n  border-bottom-right-radius: 8px;\n}\n\n.game-message--agent {\n  border-bottom-left-radius: 8px;\n}\n\n.game-message--system {\n  width: min(100%, 680px);\n}\n\n.game-message--pending {\n  border-style: dashed;\n  opacity: 0.92;\n}\n\n.game-message-speaker {\n  color: var(--game-speaker-blue);\n  font-size: 12px;\n  font-weight: 600;\n}\n\n.game-message-speaker--player {\n  justify-self: end;\n  color: var(--game-tag-text);\n  text-align: right;\n}\n\n.game-message-content {\n  color: var(--game-text);\n  font-size: 13px;\n  line-height: 1.6;\n}\n\n.game-message-content--system {\n  color: var(--game-text-weak);\n}\n\n.game-message-actions {\n  width: min(100%, 560px);\n  padding: 0 4px;\n  justify-content: flex-end;\n}\n\n.game-message-actions--agent {\n  justify-content: flex-start;\n}\n\n.game-input-area {\n  min-width: 0;\n  min-height: 0;\n  gap: 8px;\n  padding: 10px;\n}\n\n.game-input-mode {\n  align-items: center;\n  justify-content: space-between;\n  gap: 10px;\n  padding: 9px 10px;\n  border: 1px solid var(--game-border-dim);\n  border-radius: 12px;\n  background: color-mix(in srgb, var(--game-bg-subtle) 92%, transparent);\n}\n\n.game-input-mode-copy {\n  gap: 2px;\n}\n\n.game-input-mode-title {\n  color: var(--game-text);\n  font-size: 12px;\n  font-weight: 700;\n}\n\n.game-input-bubble {\n  padding: 8px 10px;\n  border: 1px solid rgba(248, 113, 113, 0.30);\n  border-radius: 12px;\n  background: rgba(220, 38, 38, 0.16);\n  color: #fecaca;\n  font-size: 12px;\n  line-height: 1.5;\n}\n\n.game-input-compose {\n  display: grid;\n  grid-template-columns: minmax(0, 1fr) auto;\n  align-items: end;\n  gap: 8px;\n}\n\n.game-textarea {\n  width: 100%;\n  min-height: 54px;\n  max-height: 88px;\n  padding: 10px;\n  border: 1px solid var(--game-border);\n  border-radius: 16px;\n  background: var(--game-bg-input);\n  color: var(--game-text);\n  font: inherit;\n  font-size: 13px;\n  line-height: 1.55;\n  resize: none;\n}\n\n.game-textarea::placeholder {\n  color: var(--game-text-dim);\n}\n\n.game-textarea:focus {\n  border-color: var(--game-border-medium);\n  outline: none;\n}\n\n.game-back-btn,\n.game-quick-btn,\n.game-submit-btn,\n.game-tab,\n.game-switch-proposal-accept,\n.game-switch-proposal-reject,\n.game-message-action-btn {\n  position: relative;\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  border: 1px solid var(--game-border-light);\n  color: var(--game-text);\n  cursor: pointer;\n  font-weight: 600;\n}\n\n.game-back-btn {\n  width: 36px;\n  height: 36px;\n  padding: 0;\n}\n\n.game-quick-btn,\n.game-switch-proposal-accept,\n.game-switch-proposal-reject {\n  min-height: 32px;\n  padding: 0 12px;\n  font-size: 12px;\n}\n\n.game-submit-btn {\n  min-height: 34px;\n  padding: 0 16px;\n  font-size: 12px;\n  font-weight: 700;\n}\n\n.game-submit-btn--inline {\n  align-self: stretch;\n}\n\n.game-message-action-btn {\n  min-height: 26px;\n  padding: 0 10px;\n  border-radius: 999px;\n  color: var(--game-text-dim);\n  font-size: 11px;\n}\n\n.game-message-action-btn:disabled,\n.game-submit-btn:disabled,\n.game-quick-btn:disabled,\n.game-switch-proposal-accept:disabled,\n.game-switch-proposal-reject:disabled {\n  cursor: default;\n  opacity: 0.55;\n}\n\n.game-status {\n  grid-template-rows: auto minmax(0, 1fr);\n  gap: 8px;\n  height: 100%;\n  overflow: hidden;\n}\n\n.game-tabs {\n  min-height: 0;\n  gap: 6px;\n}\n\n.game-tab {\n  min-height: 30px;\n  flex: 1 1 0;\n  font-size: 12px;\n}\n\n.game-panel {\n  gap: 8px;\n  min-height: 0;\n  padding: 10px;\n}\n\n.game-card {\n  gap: 4px;\n  padding: 7px 9px;\n  border: 1px solid var(--game-border-dim);\n  border-radius: 16px;\n  background: var(--game-bg-subtle);\n  font-size: 12px;\n}\n\n.game-side-content {\n  display: grid;\n  min-width: 0;\n  min-height: 0;\n  gap: 8px;\n  align-content: start;\n  overflow: auto;\n}\n\n.game-loading {\n  position: relative;\n  z-index: 1;\n  padding: 18px;\n}\n\n.game-ui-layout {\n  min-height: 0;\n  height: 100%;\n  overflow: hidden;\n}\n\n.gwtw-visual-column,\n.gwtw-chat-column {\n  min-height: 0;\n  height: 100%;\n  overflow: hidden;\n}\n\n.gwtw-visual-column {\n  display: flex;\n}\n\n.gwtw-chat-column {\n  display: flex;\n}\n\n.game-ui-mount--header .game-header {\n  min-height: 100%;\n  display: flex;\n  align-items: center;\n  padding: 2px 6px 0;\n}\n\n.game-ui-mount--header .game-title {\n  font-family: var(--game-ui-token-font-display, serif);\n  font-size: 24px;\n  font-weight: 600;\n  letter-spacing: 0.08em;\n}\n\n.game-ui-mount--header .game-time {\n  font-size: 12px;\n}\n\n.gwtw-scene-board .game-scene {\n  display: grid;\n  grid-template-rows: auto;\n  gap: 0;\n  min-height: 0;\n  padding: 0;\n  background: transparent;\n  border: none;\n  box-shadow: none;\n}\n\n.gwtw-scene-board .game-scene-header {\n  position: static;\n  min-height: auto;\n  padding: 0;\n  border: none;\n  background: transparent;\n  backdrop-filter: none;\n}\n\n.gwtw-focus-frame {\n  min-height: 0;\n  height: 100%;\n  padding: 0;\n  border: 0;\n  border-radius: 0;\n  background: transparent;\n  box-shadow: none;\n  overflow: hidden;\n}\n\n.gwtw-focus-frame .game-scene-center {\n  width: 100%;\n  min-height: 100%;\n  padding: 22px;\n  display: grid;\n  grid-template-rows: minmax(0, 1fr) auto;\n  align-items: end;\n  justify-items: center;\n  gap: 16px;\n  border-radius: inherit;\n  background:\n    linear-gradient(180deg, rgba(255,255,255,0.10), rgba(76,52,44,0.50)),\n    var(--game-runtime-bg-image, var(--game-local-bg-image, none));\n  background-size: cover;\n  background-position: center;\n  overflow: hidden;\n}\n\n.gwtw-focus-frame .game-avatar {\n  width: min(72%, 280px);\n  max-width: min(72%, 280px);\n  align-self: end;\n  border: 0;\n  border-radius: 0;\n  background: transparent;\n  box-shadow: none;\n}\n\n.gwtw-focus-frame .game-current-line {\n  width: min(100%, 36ch);\n  max-width: 36ch;\n  min-height: 124px;\n  max-height: 42%;\n  margin: 0 auto;\n  overflow: hidden;\n  box-sizing: border-box;\n  text-align: center;\n  font-size: 16px;\n  line-height: 1.75;\n  background: rgba(76, 52, 44, 0.70);\n}\n\n.gwtw-character-ribbon {\n  flex: 0 0 auto;\n}\n\n.gwtw-character-ribbon .game-scene-characters {\n  padding: 0;\n  justify-content: center;\n  max-height: 86px;\n  overflow: hidden;\n  background: transparent;\n  border: none;\n}\n\n.gwtw-narration-card .game-narration-panel {\n  padding: 0;\n  background: transparent;\n  border: none;\n  backdrop-filter: none;\n}\n\n.gwtw-chat-board {\n  flex: 1 1 0;\n  min-height: 0;\n  overflow: hidden;\n}\n\n.gwtw-chat-board .game-chat-messages {\n  height: 100%;\n  min-height: 0;\n  padding: 0;\n  background: transparent;\n  border: none;\n  backdrop-filter: none;\n}\n\n.gwtw-chat-board .game-chat-messages > .game-message-row--system:first-child {\n  display: none;\n}\n\n.gwtw-chat-board .game-message-row.game-message-row--agent {\n  border: 0;\n  background: transparent;\n  box-shadow: none;\n  backdrop-filter: none;\n}\n\n.gwtw-chat-board .game-message-action-btn--copy,\n.gwtw-chat-board .game-message-action-btn--branch {\n  position: relative;\n  display: inline-grid;\n  place-items: center;\n  width: 28px;\n  height: 28px;\n  min-width: 28px;\n  min-height: 28px;\n  max-width: 28px;\n  max-height: 28px;\n  padding: 0;\n  flex: 0 0 28px;\n  gap: 0;\n  line-height: 0;\n}\n\n.gwtw-chat-board .game-message-action-btn--copy > svg,\n.gwtw-chat-board .game-message-action-btn--branch > svg {\n  position: static;\n  width: 12px;\n  height: 12px;\n  margin: auto;\n  transform: none;\n  pointer-events: none;\n}\n\n.gwtw-input-board .game-input-area {\n  padding: 0;\n  background: transparent;\n  border: none;\n  box-shadow: none;\n  backdrop-filter: none;\n}\n\n.gwtw-side-board .game-status {\n  height: 100%;\n}\n\n.gwtw-side-board .game-tabs {\n  display: grid;\n  grid-template-columns: repeat(2, minmax(0, 1fr));\n  gap: 8px;\n}\n\n.gwtw-side-board .game-panel {\n  height: 100%;\n  min-height: 0;\n}"
+}

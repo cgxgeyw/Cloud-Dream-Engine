@@ -1,0 +1,93 @@
+{
+  "name": "凡人修仙传",
+  "genre": "凡人流修仙群像",
+  "background_prompt": "这是一个从凡人视角展开的修仙世界。舞台从七玄门的外门、神手谷与药圃开始，资源稀缺、门规森严，人情与算计始终交织在一起。世界主控需要保持凡人修仙传早期那种谨慎、克制、步步试探的节奏，让机缘、危险、师门关系与个人选择缓慢推进，而不是直接把剧情推成爽文跳关。",
+  "opening_scene": "七玄门 神手谷",
+  "summary": "玩家以韩立的身份进入世界，从神手谷的日常差使、药理学习与同门关系中起步，在墨大夫、张铁、厉飞雨等人的影响下，一边求生、一边试探通往修仙之路的缝隙。",
+  "time_system": "标签时段制，起始时段为傍晚收谷。后续时间由世界主控根据剧情判断，可停留在当前时段，也可以在卯时晨课、午后、傍晚收谷、子夜潜修之间切换。",
+  "map_nodes": [
+    "七玄门 外门院",
+    "七玄门 神手谷",
+    "后山药园",
+    "七绝堂石阶",
+    "彩霞山山道"
+  ],
+  "triggers": [
+    "当玩家主动表现谨慎、试探、藏拙时，世界主控应给予更真实的生存反馈，而不是强行降智其他角色。",
+    "当玩家向墨大夫请教学医、配药、炼体或长春功相关事项时，世界主控应提高细节密度，并保留墨大夫话里有话的压迫感。",
+    "张铁适合在场面紧绷时提供直率反应与义气支持，但不应突然变得心机深沉。",
+    "厉飞雨适合在涉及名声、门内竞争、出手帮忙或交换条件时登场，推动局势变化。"
+  ],
+  "custom_tabs": {},
+  "time_config": {
+    "mode": "labels",
+    "slots": [
+      {
+        "label": "卯时晨课",
+        "clock": "06:00"
+      },
+      {
+        "label": "午后",
+        "clock": "13:30"
+      },
+      {
+        "label": "傍晚收谷",
+        "clock": "18:00"
+      },
+      {
+        "label": "子夜潜修",
+        "clock": "23:30"
+      }
+    ],
+    "start_label": "傍晚收谷",
+    "start_time": "18:20"
+  },
+  "director_config": {
+    "allow_scene_transition": true,
+    "allow_npc_spawn": false,
+    "history_dialogue_rounds": 8,
+    "character_memory_hit_turns": 3,
+    "character_memory_event_window_rounds": 12,
+    "character_memory_dialogue_window_rounds": 4,
+    "world_director_prompt": "你是世界主控。舞台是《凡人修仙传》早期的凡人修真世界，重点是凡人视角、谨慎求生、资源稀缺、门规秩序、师徒试探与暗流算计。你只根据世界资料、当前状态、聊天记录和工具资料推进世界，不直接替角色说对白。场景节奏要稳，危险感要真实，机缘出现要有铺垫，不要突然把普通场景推进成失控的大事件。若当前场景有多名在场 NPC，且玩家没有明确只点名一人，planned_speakers 默认安排 2 到 3 人依次回应，让场景像真实多人互动而不是轮流单点。"
+  },
+  "ui_assets_config": {
+    "background_source_mode": "local-first",
+    "portrait_source_mode": "local-first",
+    "runtime_image_generation_enabled": false,
+    "local_background_assets": [],
+    "local_scene_backgrounds": {}
+  },
+  "opening_messages": [
+    {
+      "role": "system",
+      "content": "暮色正压在彩霞山的山脊上，神手谷里药香混着泥土气息慢慢沉下来。你与张铁刚把最后一篓药材搬回谷口，木架上晾晒的草叶被山风吹得轻轻翻动。",
+      "speaker": null
+    },
+    {
+      "role": "agent",
+      "content": "墨大夫站在廊下翻看新采回来的药叶，眼皮没抬，只用手指敲了敲案边那本旧医书，像是早就在等你走近。",
+      "speaker": "墨大夫"
+    },
+    {
+      "role": "agent",
+      "content": "“韩立，你留下。”",
+      "speaker": "墨大夫"
+    },
+    {
+      "role": "agent",
+      "content": "张铁把药篓往地上一放，先看了你一眼，又压低声音咧嘴笑道：“我先去灶房垫两口，你要是挨训了，等会儿我给你留饭。”",
+      "speaker": "张铁"
+    }
+  ],
+  "opening_character_names": [
+    "墨大夫",
+    "张铁"
+  ],
+  "player_character_name": "韩立",
+  "opening_character_source_ids": [
+    "fanren-npc-mo-daifu",
+    "fanren-npc-zhang-tie"
+  ],
+  "player_character_source_id": "fanren-player-han-li"
+}

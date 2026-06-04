@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Frontend build/cache
+frontend/dist/
+frontend/*.tsbuildinfo
+
+# Rust/Tauri build output
+src-tauri/target/
+src-tauri/gen/
+src-tauri/binaries/*.exe
+target/
+
+# Android/Gradle build output
+.gradle/
+.gradle-android/
+**/.gradle/
+**/build/
+
+# Local runtime data and generated artifacts
+.uploads/
+artifacts/
+build/
+data/
+
+# Logs
+*.log
+*.err
+*.err.log
+__pycache__/
+*.py[cod]
+
+# Local config and secrets
+.claude/settings.local.json
+.env
+.env.*
+*.keystore
+*.jks
+dev.config.json
+
+# OS/editor noise
+Thumbs.db
+.DS_Store

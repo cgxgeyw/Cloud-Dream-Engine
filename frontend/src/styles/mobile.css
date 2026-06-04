@@ -1,0 +1,928 @@
+/* ═══════════════════════════════════════════════════════════════
+   mobile.css — iOS风格移动端样式
+   磨砂玻璃 · 圆角卡片 · 细腻动效 · 系统级视觉
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ─── iOS设计变量 ─── */
+:root {
+  /* iOS系统色 */
+  --ios-bg: #f2f2f7;
+  --ios-bg-secondary: #ffffff;
+  --ios-bg-tertiary: #f2f2f7;
+  --ios-bg-grouped: #f2f2f7;
+  
+  /* 磨砂玻璃 */
+  --ios-blur-bg: rgba(255, 255, 255, 0.72);
+  --ios-blur-bg-dark: rgba(30, 30, 30, 0.72);
+  
+  /* 文字色 */
+  --ios-text: #000000;
+  --ios-text-secondary: rgba(60, 60, 67, 0.6);
+  --ios-text-tertiary: rgba(60, 60, 67, 0.3);
+  
+  /* 系统蓝 */
+  --ios-blue: #007aff;
+  --ios-blue-bg: rgba(0, 122, 255, 0.12);
+  
+  /* 系统灰 */
+  --ios-gray: #8e8e93;
+  --ios-gray-bg: rgba(142, 142, 147, 0.12);
+  
+  /* 分隔线 */
+  --ios-separator: rgba(60, 60, 67, 0.12);
+  --ios-separator-opaque: #c6c6c8;
+  
+  /* 安全区域 */
+  --ios-safe-top: env(safe-area-inset-top, 0px);
+  --ios-safe-bottom: env(safe-area-inset-bottom, 0px);
+  
+  /* 尺寸 */
+  --ios-header-height: 44px;
+  --ios-tab-height: 49px;
+  --ios-radius-sm: 8px;
+  --ios-radius: 12px;
+  --ios-radius-lg: 16px;
+  
+  /* 动效 */
+  --ios-ease: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --ios-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ios-duration: 0.35s;
+}
+
+/* 暗色模式 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ios-bg: #000000;
+    --ios-bg-secondary: #1c1c1e;
+    --ios-bg-tertiary: #2c2c2e;
+    --ios-bg-grouped: #1c1c1e;
+    --ios-blur-bg: rgba(30, 30, 30, 0.72);
+    --ios-blur-bg-dark: rgba(255, 255, 255, 0.72);
+    --ios-text: #ffffff;
+    --ios-text-secondary: rgba(235, 235, 245, 0.6);
+    --ios-text-tertiary: rgba(235, 235, 245, 0.3);
+    --ios-separator: rgba(84, 84, 88, 0.6);
+    --ios-separator-opaque: #38383a;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   基础布局
+   ═══════════════════════════════════════════════════════════════ */
+
+.ios-app {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--ios-bg);
+  color: var(--ios-text);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  padding-top: var(--ios-safe-top);
+}
+
+.ios-content {
+  padding-top: calc(var(--ios-header-height) + var(--ios-safe-top));
+  padding-bottom: var(--ios-safe-bottom);
+  min-height: 100vh;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   导航栏
+   ═══════════════════════════════════════════════════════════════ */
+
+.ios-nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--ios-header-height);
+  padding-top: var(--ios-safe-top);
+  background: var(--ios-blur-bg);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 0.5px solid var(--ios-separator);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-left: 16px;
+  padding-right: 16px;
+  z-index: 100;
+}
+
+.ios-nav-left,
+.ios-nav-right {
+  width: 60px;
+  display: flex;
+  align-items: center;
+}
+
+.ios-nav-right {
+  justify-content: flex-end;
+}
+
+.ios-nav-btn {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--ios-blue);
+  cursor: pointer;
+  border-radius: 50%;
+  transition: background var(--ios-duration) var(--ios-ease);
+}
+
+.ios-nav-btn:active {
+  background: var(--ios-blue-bg);
+}
+
+.ios-nav-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ios-text);
+  text-align: center;
+  flex: 1;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   侧边栏
+   ═══════════════════════════════════════════════════════════════ */
+
+.ios-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 200;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--ios-duration) var(--ios-ease),
+              visibility var(--ios-duration) var(--ios-ease);
+}
+
+.ios-drawer-overlay--open {
+  opacity: 1;
+  visibility: visible;
+}
+
+.ios-drawer {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 280px;
+  background: var(--ios-bg-secondary);
+  z-index: 201;
+  transform: translateX(-100%);
+  transition: transform var(--ios-duration) var(--ios-ease);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 2px 0 20px rgba(0, 0, 0, 0.15);
+}
+
+.ios-drawer--open {
+  transform: translateX(0);
+}
+
+.ios-drawer-header {
+  padding: calc(20px + var(--ios-safe-top)) 20px 16px;
+}
+
+.ios-drawer-logo {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--ios-text);
+  letter-spacing: -0.5px;
+}
+
+.ios-drawer-tagline {
+  font-size: 13px;
+  color: var(--ios-text-secondary);
+  margin-top: 4px;
+}
+
+.ios-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+.ios-drawer-footer {
+  padding: 16px 20px calc(20px + var(--ios-safe-bottom));
+  border-top: 0.5px solid var(--ios-separator);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   列表组件 (iOS Settings风格)
+   ═══════════════════════════════════════════════════════════════ */
+
+.ios-list {
+  background: var(--ios-bg-secondary);
+  border-radius: var(--ios-radius);
+  margin: 0 16px;
+  overflow: hidden;
+}
+
+.ios-list--inset {
+  margin: 20px 16px;
+}
+
+.ios-list-header {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--ios-text-secondary);
+  text-transform: uppercase;
+  padding: 8px 16px 8px 32px;
+  margin-top: 20px;
+}
+
+.ios-list-item {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 11px 16px;
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--ios-duration) var(--ios-ease);
+  position: relative;
+}
+
+.ios-list-item:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: 16px;
+  right: 0;
+  bottom: 0;
+  height: 0.5px;
+  background: var(--ios-separator);
+}
+
+.ios-list-item--has-icon:not(:last-child)::after {
+  left: 60px;
+}
+
+.ios-list-item:active {
+  background: var(--ios-text-tertiary);
+}
+
+.ios-list-item-icon {
+  width: 29px;
+  height: 29px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 16px;
+  flex-shrink: 0;
+}
+
+.ios-list-item-icon--blue { background: var(--ios-blue); color: white; }
+.ios-list-item-icon--gray { background: var(--ios-gray); color: white; }
+.ios-list-item-icon--orange { background: #ff9500; color: white; }
+.ios-list-item-icon--green { background: #34c759; color: white; }
+.ios-list-item-icon--red { background: #ff3b30; color: white; }
+.ios-list-item-icon--purple { background: #af52de; color: white; }
+
+.ios-list-item-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.ios-list-item-title {
+  font-size: 17px;
+  font-weight: 400;
+  color: var(--ios-text);
+  line-height: 1.2;
+}
+
+.ios-list-item-subtitle {
+  font-size: 14px;
+  color: var(--ios-text-secondary);
+  margin-top: 2px;
+}
+
+.ios-list-item-value {
+  font-size: 17px;
+  color: var(--ios-text-secondary);
+  margin-right: 8px;
+}
+
+.ios-list-item-arrow {
+  color: var(--ios-text-tertiary);
+  flex-shrink: 0;
+}
+
+.ios-list-item--active .ios-list-item-title {
+  color: var(--ios-blue);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   按钮组件
+   ═══════════════════════════════════════════════════════════════ */
+
+.ios-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 50px;
+  padding: 14px 20px;
+  font-size: 17px;
+  font-weight: 600;
+  border: none;
+  border-radius: var(--ios-radius);
+  cursor: pointer;
+  transition: all var(--ios-duration) var(--ios-ease);
+}
+
+.ios-btn--primary {
+  background: var(--ios-blue);
+  color: white;
+}
+
+.ios-btn--primary:active {
+  background: #0066d6;
+  transform: scale(0.98);
+}
+
+.ios-btn--secondary {
+  background: var(--ios-gray-bg);
+  color: var(--ios-text);
+}
+
+.ios-btn--secondary:active {
+  background: var(--ios-text-tertiary);
+}
+
+.ios-btn--destructive {
+  background: #ff3b30;
+  color: white;
+}
+
+.ios-btn--block {
+  width: 100%;
+}
+
+.ios-btn-group {
+  display: flex;
+  gap: 12px;
+  padding: 0 16px;
+}
+
+.ios-btn-group .ios-btn {
+  flex: 1;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   卡片组件
+   ═══════════════════════════════════════════════════════════════ */
+
+.ios-card {
+  background: var(--ios-bg-secondary);
+  border-radius: var(--ios-radius-lg);
+  margin: 16px;
+  overflow: hidden;
+}
+
+.ios-card-header {
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ios-card-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--ios-radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+}
+
+.ios-card-body {
+  padding: 0 16px 16px;
+}
+
+.ios-card-footer {
+  padding: 12px 16px;
+  border-top: 0.5px solid var(--ios-separator);
+  display: flex;
+  gap: 12px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   表单组件
+   ═══════════════════════════════════════════════════════════════ */
+
+.ios-field {
+  margin: 0 16px;
+}
+
+.ios-field-label {
+  font-size: 13px;
+  color: var(--ios-text-secondary);
+  margin-bottom: 8px;
+  padding-left: 4px;
+}
+
+.ios-input {
+  width: 100%;
+  min-height: 50px;
+  padding: 14px 16px;
+  font-size: 17px;
+  background: var(--ios-bg-secondary);
+  border: none;
+  border-radius: var(--ios-radius);
+  color: var(--ios-text);
+  transition: all var(--ios-duration) var(--ios-ease);
+}
+
+.ios-input:focus {
+  outline: none;
+  box-shadow: 0 0 0 4px var(--ios-blue-bg);
+}
+
+.ios-input::placeholder {
+  color: var(--ios-text-tertiary);
+}
+
+.ios-textarea {
+  width: 100%;
+  min-height: 100px;
+  padding: 14px 16px;
+  font-size: 17px;
+  background: var(--ios-bg-secondary);
+  border: none;
+  border-radius: var(--ios-radius);
+  color: var(--ios-text);
+  resize: none;
+  line-height: 1.4;
+}
+
+.ios-textarea:focus {
+  outline: none;
+  box-shadow: 0 0 0 4px var(--ios-blue-bg);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   空状态与加载
+   ═══════════════════════════════════════════════════════════════ */
+
+.ios-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 40px;
+  text-align: center;
+}
+
+.ios-empty-icon {
+  font-size: 64px;
+  margin-bottom: 16px;
+  opacity: 0.5;
+}
+
+.ios-empty-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--ios-text);
+  margin: 0 0 8px;
+}
+
+.ios-empty-text {
+  font-size: 15px;
+  color: var(--ios-text-secondary);
+  margin: 0;
+}
+
+.ios-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px;
+}
+
+.ios-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--ios-text-tertiary);
+  border-top-color: var(--ios-blue);
+  border-radius: 50%;
+  animation: ios-spin 0.8s linear infinite;
+}
+
+@keyframes ios-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   分段控制器
+   ═══════════════════════════════════════════════════════════════ */
+
+.ios-segment {
+  display: flex;
+  background: var(--ios-text-tertiary);
+  border-radius: 8px;
+  padding: 2px;
+  margin: 16px;
+}
+
+.ios-segment-btn {
+  flex: 1;
+  min-height: 32px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--ios-text-secondary);
+  cursor: pointer;
+  transition: all var(--ios-duration) var(--ios-ease);
+}
+
+.ios-segment-btn--active {
+  background: var(--ios-bg-secondary);
+  color: var(--ios-text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   搜索栏
+   ═══════════════════════════════════════════════════════════════ */
+
+.ios-search {
+  margin: 8px 16px;
+  position: relative;
+}
+
+.ios-search-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--ios-text-tertiary);
+  pointer-events: none;
+}
+
+.ios-search-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px 0 36px;
+  font-size: 15px;
+  background: var(--ios-text-tertiary);
+  border: none;
+  border-radius: 10px;
+  color: var(--ios-text);
+}
+
+.ios-search-input::placeholder {
+  color: var(--ios-text-secondary);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   游戏页面
+   ═══════════════════════════════════════════════════════════════ */
+
+.ios-game {
+  min-height: 100vh;
+  background: #000000;
+  color: white;
+}
+
+.ios-game-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: calc(12px + var(--ios-safe-top)) 16px 12px;
+  background: linear-gradient(180deg, rgba(0,0,0,0.8) 0%, transparent 100%);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ios-game-info {
+  flex: 1;
+  text-align: center;
+}
+
+.ios-game-world {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  font-weight: 500;
+}
+
+.ios-game-location {
+  font-size: 17px;
+  font-weight: 600;
+  color: white;
+}
+
+.ios-game-chat {
+  padding: calc(80px + var(--ios-safe-top)) 16px calc(140px + var(--ios-safe-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ios-message {
+  max-width: 85%;
+  padding: 12px 16px;
+  border-radius: 18px;
+  font-size: 15px;
+  line-height: 1.5;
+  animation: ios-message-in 0.3s var(--ios-spring);
+}
+
+@keyframes ios-message-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.ios-message--agent {
+  align-self: flex-start;
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+  border-bottom-left-radius: 4px;
+}
+
+.ios-message--player {
+  align-self: flex-end;
+  background: var(--ios-blue);
+  color: white;
+  border-bottom-right-radius: 4px;
+}
+
+.ios-message--system {
+  align-self: center;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 13px;
+  padding: 8px 14px;
+  border-radius: 12px;
+}
+
+.ios-message-speaker {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.7;
+  margin-bottom: 4px;
+}
+
+.ios-game-input {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 12px 16px calc(20px + var(--ios-safe-bottom));
+  background: linear-gradient(0deg, #000000 0%, transparent 100%);
+}
+
+.ios-game-input-box {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 22px;
+  padding: 8px 8px 8px 16px;
+}
+
+.ios-game-input-field {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: white;
+  font-size: 16px;
+  padding: 8px 0;
+  resize: none;
+  min-height: 24px;
+  max-height: 100px;
+  line-height: 1.3;
+}
+
+.ios-game-input-field::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.ios-game-input-field:focus {
+  outline: none;
+}
+
+.ios-game-send {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--ios-blue);
+  color: white;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all var(--ios-duration) var(--ios-ease);
+}
+
+.ios-game-send:active {
+  transform: scale(0.9);
+}
+
+.ios-game-send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   浮动按钮
+   ═══════════════════════════════════════════════════════════════ */
+
+.ios-fab {
+  position: fixed;
+  right: 20px;
+  bottom: calc(20px + var(--ios-safe-bottom));
+  width: 56px;
+  height: 56px;
+  border-radius: 28px;
+  background: var(--ios-blue);
+  color: white;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 122, 255, 0.4);
+  z-index: 90;
+  transition: all var(--ios-duration) var(--ios-spring);
+}
+
+.ios-fab:active {
+  transform: scale(0.9);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   响应式断点
+   ═══════════════════════════════════════════════════════════════ */
+
+@media (min-width: 768px) {
+  .ios-app {
+    display: none;
+  }
+}
+
+@media (max-width: 767px) {
+  .desktop-only {
+    display: none !important;
+  }
+  
+  /* 深层页面适配 */
+  .screen-layout {
+    background: var(--ios-bg);
+    color: var(--ios-text);
+    min-height: 100vh;
+    padding: calc(var(--ios-header-height) + var(--ios-safe-top) + 8px) 16px var(--ios-safe-bottom);
+  }
+  
+  .screen-layout-header {
+    display: none;
+  }
+  
+  .surface-panel {
+    background: var(--ios-bg-secondary);
+    border-radius: var(--ios-radius-lg);
+    border: none;
+  }
+  
+  .surface-panel--pad-lg {
+    padding: 16px;
+  }
+  
+  /* 表单元素 */
+  .screen-layout input,
+  .screen-layout textarea,
+  .screen-layout select {
+    background: var(--ios-bg-secondary);
+    color: var(--ios-text);
+    border: none;
+    border-radius: var(--ios-radius);
+    padding: 14px 16px;
+    font-size: 17px;
+  }
+  
+  .screen-layout input::placeholder,
+  .screen-layout textarea::placeholder {
+    color: var(--ios-text-tertiary);
+  }
+  
+  .screen-layout label {
+    color: var(--ios-text-secondary);
+  }
+  
+  /* 按钮 */
+  .screen-layout .action-btn,
+  .screen-layout button:not(.ios-list-item):not(.ios-btn):not(.ios-segment-btn) {
+    background: var(--ios-blue);
+    color: white;
+    border: none;
+    border-radius: var(--ios-radius);
+    padding: 12px 20px;
+    font-size: 15px;
+    font-weight: 600;
+    min-height: 44px;
+  }
+  
+  /* 文字 */
+  .screen-layout h1,
+  .screen-layout h2,
+  .screen-layout h3 {
+    color: var(--ios-text);
+  }
+  
+  .empty-text {
+    color: var(--ios-text-secondary);
+    text-align: center;
+    padding: 40px 20px;
+    font-size: 15px;
+  }
+  
+  .error-text {
+    color: #ff3b30;
+    text-align: center;
+    padding: 20px;
+  }
+  
+  /* NewGamePage */
+  .newgame-screen {
+    padding: 0;
+  }
+  
+  .newgame-list-panel {
+    background: transparent;
+    padding: 0;
+  }
+  
+  .newgame-section-title {
+    color: var(--ios-text);
+    font-size: 20px;
+    font-weight: 600;
+  }
+  
+  .newgame-section-note {
+    color: var(--ios-text-secondary);
+    font-size: 15px;
+  }
+  
+  .newgame-world-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 16px;
+  }
+  
+  .newgame-world-card {
+    background: var(--ios-bg-secondary);
+    border: none;
+    border-radius: var(--ios-radius-lg);
+    padding: 16px;
+    text-align: left;
+    color: var(--ios-text);
+  }
+  
+  .newgame-world-card strong {
+    color: var(--ios-text);
+    font-size: 17px;
+    font-weight: 600;
+  }
+  
+  .newgame-world-card span {
+    color: var(--ios-text-secondary);
+    font-size: 14px;
+  }
+  
+  .newgame-world-card p {
+    color: var(--ios-text-secondary);
+    font-size: 15px;
+    margin: 8px 0;
+  }
+  
+  .newgame-world-card-meta {
+    color: var(--ios-text-tertiary);
+    font-size: 13px;
+  }
+}

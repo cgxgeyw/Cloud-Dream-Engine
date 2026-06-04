@@ -1,0 +1,196 @@
+{
+  "schema_version": 2,
+  "meta": {
+    "name": "Default Mobile Narrative UI",
+    "platform": "mobile",
+    "description": "Shared Android mobile UI for default worlds, Piao, and Feihualing."
+  },
+  "layout": {
+    "root": {
+      "type": "stack",
+      "direction": "vertical",
+      "gap": "0",
+      "padding": "0",
+      "style": {
+        "height": "100dvh",
+        "min_height": "0",
+        "overflow": "hidden"
+      },
+      "children": [
+        {
+          "type": "component",
+          "component": "scene_header",
+          "class_name": "default-m-header",
+          "props": {
+            "title_mode": "mobile",
+            "show_world_name": true,
+            "show_location": true,
+            "show_time_label": true,
+            "show_player_identity": false,
+            "show_visible_characters": false
+          }
+        },
+        {
+          "type": "component",
+          "component": "message_list",
+          "class_name": "default-m-messages",
+          "style": {
+            "flex": "1 1 0",
+            "min_height": "0"
+          },
+          "props": {
+            "mobile_simple": true,
+            "auto_scroll": true,
+            "show_agent_reasoning": false,
+            "show_pending_state": true
+          }
+        },
+        {
+          "type": "component",
+          "component": "character_bar",
+          "class_name": "default-m-cast",
+          "props": {
+            "show_player": false,
+            "max_items": 0,
+            "empty_text": ""
+          }
+        },
+        {
+          "type": "component",
+          "component": "side_panel_tabs",
+          "class_name": "default-m-side",
+          "props": {
+            "show_map_tab": true,
+            "show_custom_tabs": true,
+            "drawer_label": "\u72b6\u6001",
+            "empty_text": "\u6682\u65e0\u72b6\u6001\u4fe1\u606f"
+          }
+        },
+        {
+          "type": "component",
+          "component": "input_composer",
+          "class_name": "default-m-input",
+          "props": {
+            "placeholder": "\u8f93\u5165\u4f60\u7684\u884c\u52a8...",
+            "submit_label": "\u53d1\u9001",
+            "editing_submit_label": "\u66f4\u65b0",
+            "show_session_meta": false,
+            "enter_to_submit": true
+          }
+        },
+        {
+          "type": "absolute",
+          "children": [
+            {
+              "type": "component",
+              "component": "floating_actions",
+              "class_name": "default-m-float",
+              "anchor": {
+                "top": "12px",
+                "right": "12px"
+              },
+              "props": {
+                "show_back": false,
+                "show_debug": false,
+                "show_settings": false
+              }
+            }
+          ]
+        }
+      ],
+      "id": "default-mobile-root"
+    }
+  },
+  "tokens": {
+    "color.bg": "#fbf9f4",
+    "color.panel": "#f5f3ee",
+    "color.text": "#1b1c19",
+    "color.text-dim": "#434843",
+    "color.text-muted": "rgba(67, 72, 67, 0.62)",
+    "color.border": "#c3c8c1",
+    "color.input": "#ffffff",
+    "color.accent": "#536255",
+    "color.accent-bg": "rgba(83, 98, 85, 0.12)",
+    "color.deep": "#30312e",
+    "space.md": "16px",
+    "radius.md": "8px",
+    "radius.lg": "16px",
+    "font.body": "\"Be Vietnam Pro\", \"PingFang SC\", \"Microsoft YaHei\", system-ui, sans-serif",
+    "font.display": "Literata, \"Noto Serif SC\", \"Source Han Serif SC\", serif",
+    "motion.fast": "160ms"
+  },
+  "components": {
+    "panel": {
+      "base": {
+        "background": "var(--game-ui-token-color-panel, #f5f3ee)",
+        "border": "1px solid var(--game-ui-token-color-border, #c3c8c1)",
+        "border_radius": "12px",
+        "box_shadow": "0 4px 12px rgba(48, 49, 46, 0.04)"
+      }
+    },
+    "button": {
+      "base": {
+        "transition": "background var(--game-ui-token-motion-fast, 160ms) ease, border-color var(--game-ui-token-motion-fast, 160ms) ease, transform var(--game-ui-token-motion-fast, 160ms) ease"
+      },
+      "variants": {
+        "primary": {
+          "background": "#536255",
+          "color": "#ffffff"
+        },
+        "ghost": {
+          "background": "#f5f3ee",
+          "color": "#434843",
+          "border": "1px solid #c3c8c1"
+        }
+      }
+    },
+    "message_bubble": {
+      "base": {
+        "border_radius": "16px"
+      },
+      "variants": {
+        "agent": {
+          "background": "rgba(255, 255, 255, 0.86)",
+          "color": "#1b1c19",
+          "border": "1px solid #c3c8c1"
+        },
+        "player": {
+          "background": "#8a9a8b",
+          "color": "#ffffff",
+          "border": "1px solid rgba(83, 98, 85, 0.28)"
+        },
+        "system": {
+          "background": "rgba(245, 243, 238, 0.78)",
+          "color": "#434843",
+          "border": "1px solid rgba(116, 120, 114, 0.18)"
+        }
+      }
+    },
+    "input": {
+      "base": {
+        "background": "#ffffff",
+        "border": "1px solid #c3c8c1",
+        "color": "#1b1c19"
+      }
+    }
+  },
+  "effects": {
+    "page_enter": {
+      "enabled": true,
+      "duration": "160ms",
+      "easing": "ease-out"
+    },
+    "message_reveal": {
+      "enabled": true,
+      "duration": "160ms"
+    }
+  },
+  "custom_css": "&.game-root,\n&.game-root--mobile-session {\n  color: #1b1c19;\n  background: radial-gradient(circle at 14% 0%, rgba(138,154,139,0.12), transparent 32%), radial-gradient(circle at 90% 18%, rgba(78,96,115,0.10), transparent 28%), linear-gradient(180deg, #fbf9f4 0%, #f5f3ee 48%, #eeeae1 100%);\n  font-family: \"Be Vietnam Pro\", \"PingFang SC\", \"Microsoft YaHei\", system-ui, sans-serif;\n}\n&.game-root--mobile-session { height: 100dvh; min-height: 100dvh; overflow: hidden; padding-top: 0; box-sizing: border-box; gap: 0 !important; }\n&.game-root--mobile-session .game-simple-top,\n&.game-root--mobile-session .game-chat-messages,\n&.game-root--mobile-session .game-input-area,\n&.game-root--mobile-session .game-scene-characters { box-sizing: border-box; }\n&.game-root--mobile-session .game-mobile-shell-actions,\n&.game-root--mobile-session .game-agent-reasoning,\n&.game-root--mobile-session .game-agent-answer-label { display: none !important; }\n\n&.game-root--mobile-session .default-m-header .game-simple-top { flex: 0 0 auto; min-height: 66px; padding: max(calc(env(safe-area-inset-top, 0px) + 9px), 20px) 108px 10px 65px; display: flex; align-items: center; gap: 12px; background: rgba(251,249,244,0.96); border: 0; border-bottom: 1px solid #c3c8c1; border-radius: 0; box-shadow: 0 4px 12px rgba(48,49,46,0.05); }\n&.game-root--mobile-session .default-m-header .game-simple-top-main,\n&.game-root--mobile-session .default-m-header .game-title-group,\n&.game-root--mobile-session .default-m-header .game-simple-place-row { min-width: 0; flex: 1 1 auto; }\n&.game-root--mobile-session .default-m-header .game-simple-world,\n&.game-root--mobile-session .default-m-header .game-simple-place { max-width: calc(100vw - 189px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n&.game-root--mobile-session .default-m-header .game-simple-world { margin-bottom: 3px; color: #536255; font-size: 12px; font-weight: 700; line-height: 16px; letter-spacing: 0; }\n&.game-root--mobile-session .default-m-header .game-simple-place { color: #1b1c19; font-family: Literata, \"Noto Serif SC\", \"Source Han Serif SC\", serif; font-size: 18px; font-weight: 600; line-height: 24px; letter-spacing: 0; }\n&.game-root--mobile-session .default-m-header .game-simple-meta { flex: 0 0 auto; display: flex; align-items: center; justify-content: flex-end; max-width: 92px; min-width: 0; }\n&.game-root--mobile-session .default-m-header .game-simple-meta-item { display: inline-flex; align-items: center; gap: 4px; max-width: 92px; min-height: 26px; padding: 0 8px; border-radius: 999px; border: 1px solid #c3c8c1; background: #f5f3ee; color: #434843; font-size: 11px; line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }\n&.game-root--mobile-session .default-m-header .game-simple-meta-item strong { display: none; }\n\n&.game-root--mobile-session .default-m-messages { flex: 1 1 0 !important; min-height: 0; position: relative; overflow: hidden; border: 0; background: linear-gradient(180deg, rgba(251,249,244,0.76), rgba(251,249,244,0.94)), var(--game-runtime-bg-image, var(--game-local-bg-image, linear-gradient(180deg, #fbf9f4, #f0eee9))); background-size: cover; background-position: center; }\n&.game-root--mobile-session .default-m-messages::before { content: \"\"; position: absolute; inset: 0; pointer-events: none; opacity: 0.34; background-image: linear-gradient(rgba(83,98,85,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(83,98,85,0.025) 1px, transparent 1px); background-size: 100% 32px, 32px 100%; }\n&.game-root--mobile-session .default-m-messages .game-chat-messages { position: relative; z-index: 1; height: 100%; min-height: 0; padding: 18px 20px 20px; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; overflow-x: hidden; scrollbar-width: none; }\n&.game-root--mobile-session .default-m-messages .game-chat-messages::-webkit-scrollbar { display: none; }\n&.game-root--mobile-session .default-m-messages .game-message-row { width: 100%; display: flex; flex-direction: column; align-items: flex-start; }\n&.game-root--mobile-session .default-m-messages .game-message-row--player { align-items: flex-end; }\n&.game-root--mobile-session .default-m-messages .game-message { max-width: min(91%, 560px); padding: 12px 14px; border-radius: 16px; box-shadow: 0 4px 12px rgba(48,49,46,0.04); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }\n&.game-root--mobile-session .default-m-messages .game-message--agent { background: rgba(255,255,255,0.86); border: 1px solid #c3c8c1; border-bottom-left-radius: 6px; color: #1b1c19; }\n&.game-root--mobile-session .default-m-messages .game-message--player { background: #8a9a8b; border: 1px solid rgba(83,98,85,0.28); border-bottom-right-radius: 6px; color: #ffffff; }\n&.game-root--mobile-session .default-m-messages .game-message--system { max-width: 96%; align-self: center; background: rgba(245,243,238,0.78); border: 1px solid rgba(116,120,114,0.18); color: #434843; box-shadow: none; }\n&.game-root--mobile-session .default-m-messages .game-message-speaker { margin-bottom: 6px; color: #536255; font-size: 12px; font-weight: 700; line-height: 16px; letter-spacing: 0; }\n&.game-root--mobile-session .default-m-messages .game-message-content { color: #1b1c19; font-family: Literata, \"Noto Serif SC\", \"Source Han Serif SC\", \"PingFang SC\", serif; font-size: 16px; line-height: 1.62; letter-spacing: 0; word-break: break-word; }\n&.game-root--mobile-session .default-m-messages .game-message--player .game-message-speaker,\n&.game-root--mobile-session .default-m-messages .game-message--player .game-message-content { color: #ffffff; }\n&.game-root--mobile-session .default-m-messages .game-message-content--system { text-align: center; color: #434843; font-size: 15px; }\n&.game-root--mobile-session .default-m-messages .game-message-inline-actions { display: flex; align-items: center; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(116,120,114,0.16); opacity: 1; }\n&.game-root--mobile-session .default-m-messages .game-message-inline-actions--player { justify-content: flex-end; }\n&.game-root--mobile-session .default-m-messages .game-message-inline-actions--agent { justify-content: flex-start; }\n&.game-root--mobile-session .default-m-messages .game-message-action-btn { min-width: 34px; height: 30px; padding: 0 9px; border-radius: 999px; background: rgba(245,243,238,0.80); border: 1px solid #c3c8c1; color: #4e6073; font-size: 12px; line-height: 1; }\n&.game-root--mobile-session .default-m-messages .game-message--player .game-message-action-btn { background: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.28); color: #ffffff; }\n\n&.game-root--mobile-session .default-m-cast .game-scene-characters { flex: 0 0 auto; min-height: 48px; padding: 8px 20px; display: flex; align-items: center; gap: 8px; overflow-x: auto; overflow-y: hidden; flex-wrap: nowrap; scrollbar-width: none; background: rgba(251,249,244,0.96); border-top: 1px solid rgba(195,200,193,0.70); border-bottom: 0; }\n&.game-root--mobile-session .default-m-cast .game-scene-characters::-webkit-scrollbar { display: none; }\n&.game-root--mobile-session .default-m-cast .game-scene-characters::before { content: \"\\540c\\4f34\"; flex: 0 0 auto; color: #434843; font-size: 12px; font-weight: 600; }\n&.game-root--mobile-session .default-m-cast .game-scene-char { flex: 0 0 auto; max-width: 12em; min-height: 32px; padding: 0 12px; display: inline-flex; align-items: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-radius: 999px; border: 1px solid #c3c8c1; background: #ffffff; color: #434843; font-size: 13px; font-weight: 600; box-shadow: 0 2px 8px rgba(48,49,46,0.04); }\n\n&.game-root--mobile-session .default-m-side .game-status--mobile-drawer { position: fixed; inset: 0; z-index: 120; margin: 0 !important; pointer-events: none; }\n&.game-root--mobile-session .default-m-side .game-status-handle { position: absolute; top: max(calc(env(safe-area-inset-top, 0px) + 96px), 116px); right: env(safe-area-inset-right, 0px); z-index: 2; min-width: 42px; min-height: 96px; padding: 10px 8px; display: inline-flex; align-items: center; justify-content: center; border-radius: 12px 0 0 12px; writing-mode: vertical-rl; text-orientation: mixed; letter-spacing: 0; pointer-events: auto; background: #536255; color: #ffffff; border: 1px solid rgba(255,255,255,0.50); border-right: 0; box-shadow: 0 10px 24px rgba(48,49,46,0.18); }\n&.game-root--mobile-session .default-m-side .game-status-drawer { position: absolute; top: max(calc(env(safe-area-inset-top, 0px) + 8px), 20px); right: calc(env(safe-area-inset-right, 0px) + 46px); bottom: calc(env(safe-area-inset-bottom, 0px) + 96px); width: min(76vw, 320px); max-width: calc(100vw - 68px); display: flex; flex-direction: column; gap: 10px; padding: 14px; overflow: hidden; pointer-events: auto; transform: translateX(calc(100% + 58px)); transition: transform 180ms ease; border-radius: 16px 0 0 16px; background: rgba(251,249,244,0.97); border: 1px solid #c3c8c1; box-shadow: 0 18px 48px rgba(48,49,46,0.20); }\n&.game-root--mobile-session .default-m-side .game-status--mobile-drawer-open .game-status-drawer { transform: translateX(0); }\n&.game-root--mobile-session .default-m-side .game-status-drawer .game-tabs { flex: 0 0 auto; display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }\n&.game-root--mobile-session .default-m-side .game-status-drawer .game-tabs::-webkit-scrollbar { display: none; }\n&.game-root--mobile-session .default-m-side .game-status-drawer .game-tab { flex: 0 0 auto; min-height: 30px; padding: 0 10px; border-radius: 999px; white-space: nowrap; background: #f5f3ee; color: #434843; border: 1px solid #c3c8c1; }\n&.game-root--mobile-session .default-m-side .game-status-drawer .game-tab--active { background: #536255; color: #ffffff; }\n&.game-root--mobile-session .default-m-side .game-status-drawer .game-panel,\n&.game-root--mobile-session .default-m-side .game-status-drawer .game-side-content { flex: 1 1 auto; min-height: 0; max-height: none !important; overflow: auto; padding: 10px; background: #ffffff; border: 1px solid rgba(195,200,193,0.72); border-radius: 12px; }\n&.game-root--mobile-session .default-m-side .game-custom-tab-content,\n&.game-root--mobile-session .default-m-side .game-card { padding: 0; border: 0; background: transparent; color: #434843; font-size: 13px; line-height: 1.7; white-space: pre-wrap; }\n&.game-root--mobile-session .default-m-side .game-status--map-active .game-status-drawer { width: min(76vw, 320px); }\n&.game-root--mobile-session .default-m-side .game-map-graph--compact .game-map-summary-meta,\n&.game-root--mobile-session .default-m-side .game-map-graph--compact .game-node-current { display: none !important; }\n\n&.game-root--mobile-session .default-m-input .game-input-area { flex: 0 0 auto; margin: 0; padding: 10px 20px calc(12px + env(safe-area-inset-bottom, 0px)); background: rgba(251,249,244,0.98); border: 0; border-top: 1px solid #c3c8c1; border-radius: 0; box-shadow: 0 -4px 14px rgba(48,49,46,0.06); }\n&.game-root--mobile-session .default-m-input .game-input-compose { display: flex; flex-direction: column; align-items: stretch; gap: 9px; width: 100%; }\n&.game-root--mobile-session .default-m-input .game-textarea,\n&.game-root--mobile-session .default-m-input textarea.game-textarea { width: 100%; min-height: 50px; max-height: 92px; box-sizing: border-box; padding: 12px 14px; border-radius: 10px; border: 1px solid #c3c8c1; background: #ffffff; color: #1b1c19; font-size: 15px; line-height: 1.45; box-shadow: none; }\n&.game-root--mobile-session .default-m-input .game-textarea:focus,\n&.game-root--mobile-session .default-m-input textarea.game-textarea:focus { border-color: #536255; outline: none; box-shadow: 0 0 0 2px rgba(83,98,85,0.12); }\n&.game-root--mobile-session .default-m-input .game-textarea::placeholder { color: rgba(67,72,67,0.56); }\n&.game-root--mobile-session .default-m-input .game-input-actions { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; }\n&.game-root--mobile-session .default-m-input .game-input-actions-spacer { display: none; }\n&.game-root--mobile-session .default-m-input .game-input-icon-btn { width: 42px; height: 42px; min-width: 42px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 10px; border: 1px solid #c3c8c1; background: #ffffff; color: #4e6073; }\n&.game-root--mobile-session .default-m-input .game-input-icon-btn:nth-of-type(1) { order: 2; }\n&.game-root--mobile-session .default-m-input .game-input-icon-btn:nth-of-type(2) { order: 1; }\n&.game-root--mobile-session .default-m-input .game-submit-btn { order: 3; flex: 1 1 auto; min-width: 96px; height: 42px; margin-left: 0; padding: 0 16px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: 10px; background: #536255; color: #ffffff; border: 1px solid rgba(83,98,85,0.42); box-shadow: 0 4px 12px rgba(83,98,85,0.18); font-size: 15px; font-weight: 700; white-space: nowrap; }\n&.game-root--mobile-session .default-m-input .game-submit-btn:disabled { opacity: 0.55; box-shadow: none; }\n&.game-root--mobile-session .default-m-input .game-input-images,\n&.game-root--mobile-session .default-m-input .game-input-audios { max-height: 54px; overflow-x: auto; overflow-y: hidden; }\n&.game-root--mobile-session .default-m-input .game-input-bubble { max-height: 42px; overflow: auto; }\n&.game-root--mobile-session .game-loading { color: #434843; }\n&.game-root--mobile-session .game-error-text { color: #ba1a1a; }\n",
+  "mounts": {
+    "side_panel": {
+      "tab_order": [
+        "map"
+      ]
+    }
+  }
+}

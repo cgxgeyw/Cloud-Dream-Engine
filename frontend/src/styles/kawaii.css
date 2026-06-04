@@ -1,0 +1,711 @@
+:root[data-color-scheme="kawaii"] {
+  --color-charcoal: oklch(0.39 0.06 357);
+  --color-concrete: oklch(0.69 0.04 356);
+  --color-accent: oklch(0.74 0.16 6);
+  --color-bg: oklch(0.975 0.018 350);
+  --color-surface: oklch(0.992 0.008 8);
+  --color-success: oklch(0.79 0.12 156);
+  --color-warning: oklch(0.84 0.13 74);
+  --color-error: oklch(0.7 0.17 18);
+  --color-border: oklch(0.9 0.03 355);
+  --color-border-hover: oklch(0.8 0.1 6);
+  --color-muted: oklch(0.61 0.05 355);
+  --color-subtle-bg: oklch(0.958 0.02 355);
+  --color-hover-bg: oklch(0.942 0.04 4);
+  --color-active-bg: color-mix(in srgb, var(--color-accent) 10%, transparent);
+
+  --game-bg-from: oklch(0.24 0.04 350);
+  --game-bg-via: oklch(0.29 0.06 356);
+  --game-bg-to: oklch(0.22 0.04 348);
+  --game-bg-accent: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  --game-text: oklch(0.95 0.02 8);
+  --game-text-dim: oklch(0.84 0.03 355);
+  --game-text-muted: oklch(0.8 0.03 355);
+  --game-text-faint: oklch(0.9 0.02 8);
+  --game-text-weak: oklch(0.82 0.02 355);
+  --game-text-weaker: oklch(0.76 0.02 355);
+  --game-border: color-mix(in srgb, var(--color-accent) 26%, white 14%);
+  --game-border-dim: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  --game-border-light: color-mix(in srgb, var(--color-accent) 34%, transparent);
+  --game-border-medium: color-mix(in srgb, var(--color-accent) 44%, transparent);
+  --game-bg-panel: rgba(255, 247, 251, 0.08);
+  --game-bg-subtle: rgba(255, 247, 251, 0.05);
+  --game-bg-hover: rgba(255, 222, 236, 0.14);
+  --game-bg-active: rgba(255, 222, 236, 0.2);
+  --game-bg-overlay: rgba(46, 17, 31, 0.42);
+  --game-bg-input: rgba(255, 247, 251, 0.08);
+  --game-player-bg: color-mix(in srgb, var(--color-accent) 18%, rgba(255, 255, 255, 0.08));
+  --game-speaker-blue: oklch(0.86 0.08 356);
+  --game-node-current: oklch(0.9 0.05 6);
+  --game-tag-bg: rgba(255, 231, 241, 0.12);
+  --game-tag-border: rgba(255, 214, 231, 0.18);
+  --game-tag-text: oklch(0.93 0.02 8);
+  --game-delete: oklch(0.83 0.08 18);
+  --game-delete-border: rgba(255, 194, 204, 0.3);
+  --game-delete-bg: rgba(255, 194, 204, 0.12);
+  --game-avatar-from: rgba(250, 143, 180, 0.8);
+  --game-avatar-to: rgba(61, 26, 39, 0.9);
+  --game-map-center: rgba(245, 149, 186, 0.24);
+  --game-gradient-overlay-from: rgba(61, 26, 39, 0.42);
+  --game-gradient-overlay-to: rgba(61, 26, 39, 0.14);
+  --game-gradient-cover-from: rgba(36, 15, 24, 0.82);
+  --game-gradient-cover-via: rgba(36, 15, 24, 0.3);
+  --game-gradient-cover-to: rgba(36, 15, 24, 0.9);
+
+  --radius-sm: 0.8rem;
+  --radius-default: 1.05rem;
+  --radius-md: 1.3rem;
+  --radius-lg: 1.8rem;
+  --radius-full: 9999px;
+
+  --shadow-sm: 0 6px 16px rgba(182, 98, 132, 0.08);
+  --shadow-default: 0 12px 30px rgba(182, 98, 132, 0.1);
+  --shadow-md: 0 18px 44px rgba(182, 98, 132, 0.14);
+  --shadow-lg: 0 26px 60px rgba(182, 98, 132, 0.18);
+
+  --font-display: "Nunito", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --font-body: "Nunito", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --font-mono: "JetBrains Mono", "Consolas", monospace;
+
+  --kawaii-shell: color-mix(in srgb, var(--color-surface) 88%, #ffeaf2);
+  --kawaii-shell-strong: color-mix(in srgb, var(--color-surface) 78%, #ffd9e7);
+  --kawaii-line: color-mix(in srgb, var(--color-accent) 16%, #f4d7e3);
+  --kawaii-line-strong: color-mix(in srgb, var(--color-accent) 32%, #f2bfd1);
+  --kawaii-separator: color-mix(in srgb, var(--color-accent) 12%, #f5dee8);
+  --kawaii-sketch: color-mix(in srgb, var(--color-accent) 48%, #f3b7cb);
+  --kawaii-fill: linear-gradient(180deg, #fffafc 0%, #fff2f7 100%);
+  --kawaii-fill-strong: linear-gradient(180deg, #fff3f8 0%, #ffe7f0 100%);
+  --kawaii-fill-pressed: linear-gradient(180deg, #ffecf3 0%, #ffe0eb 100%);
+  --kawaii-primary-fill: linear-gradient(180deg, #ff98ba 0%, #f77ea7 58%, #ef6e99 100%);
+  --kawaii-panel-radius: 34px 28px 22px 30px;
+  --kawaii-card-radius: 30px 24px 18px 28px;
+  --kawaii-chip-radius: 999px 999px 20px 999px;
+  --kawaii-panel-border-width: 2.5px;
+  --kawaii-chip-border-width: 2px;
+  --kawaii-sketch-shadow: 2px 3px 0 rgba(248, 185, 207, 0.9);
+  --kawaii-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --kawaii-duration-fast: 160ms;
+  --kawaii-duration-base: 220ms;
+}
+
+:root[data-color-scheme="kawaii"][data-theme="dark"] {
+  --color-charcoal: oklch(0.92 0.015 8);
+  --color-concrete: oklch(0.74 0.025 356);
+  --color-accent: oklch(0.78 0.16 8);
+  --color-bg: oklch(0.24 0.02 352);
+  --color-surface: oklch(0.29 0.025 354);
+  --color-success: oklch(0.79 0.12 156);
+  --color-warning: oklch(0.84 0.13 74);
+  --color-error: oklch(0.74 0.16 18);
+  --color-border: oklch(0.4 0.03 354);
+  --color-border-hover: oklch(0.62 0.09 8);
+  --color-muted: oklch(0.75 0.03 356);
+  --color-subtle-bg: oklch(0.33 0.025 354);
+  --color-hover-bg: oklch(0.38 0.03 356);
+  --color-active-bg: color-mix(in srgb, var(--color-accent) 18%, transparent);
+
+  --kawaii-shell: color-mix(in srgb, var(--color-surface) 90%, #4d2236);
+  --kawaii-shell-strong: color-mix(in srgb, var(--color-surface) 88%, #5b2940);
+  --kawaii-line: color-mix(in srgb, var(--color-accent) 20%, #62344a);
+  --kawaii-line-strong: color-mix(in srgb, var(--color-accent) 34%, #77405a);
+  --kawaii-separator: color-mix(in srgb, var(--color-accent) 16%, #593145);
+  --kawaii-sketch: color-mix(in srgb, var(--color-accent) 40%, #7f4760);
+  --kawaii-sketch-shadow: 2px 3px 0 rgba(103, 63, 81, 0.8);
+
+  --shadow-sm: 0 8px 20px rgba(0, 0, 0, 0.24);
+  --shadow-default: 0 16px 34px rgba(0, 0, 0, 0.28);
+  --shadow-md: 0 22px 48px rgba(0, 0, 0, 0.34);
+  --shadow-lg: 0 32px 72px rgba(0, 0, 0, 0.42);
+}
+
+:root[data-color-scheme="kawaii"] body {
+  background: var(--color-bg);
+  color: var(--color-charcoal);
+}
+
+:root[data-color-scheme="kawaii"] .theme-picker-preview--kawaii {
+  background: linear-gradient(180deg, #ffe8f1, #fff7fa);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 24%, var(--color-border));
+}
+
+:root[data-color-scheme="kawaii"] .theme-picker-preview--kawaii .theme-picker-preview-header {
+  background: linear-gradient(180deg, #ff8fb4, #f4759f);
+}
+
+:root[data-color-scheme="kawaii"] .theme-picker-preview--kawaii .theme-picker-preview-line {
+  background: color-mix(in srgb, var(--color-accent) 30%, white);
+}
+
+:root[data-color-scheme="kawaii"] .theme-picker-card--active {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 34%, transparent);
+}
+
+@media (max-width: 767px) {
+  :root[data-color-scheme="kawaii"] .layout-root {
+    background:
+      radial-gradient(circle at top left, rgba(255, 202, 224, 0.5), transparent 34%),
+      radial-gradient(circle at bottom right, rgba(255, 227, 236, 0.72), transparent 38%),
+      linear-gradient(180deg, #fff7fa 0%, #fff2f7 48%, #ffedf4 100%);
+  }
+
+  :root[data-color-scheme="kawaii"][data-theme="dark"] .layout-root {
+    background:
+      radial-gradient(circle at top left, rgba(255, 154, 192, 0.18), transparent 28%),
+      radial-gradient(circle at bottom right, rgba(255, 216, 230, 0.08), transparent 34%),
+      linear-gradient(180deg, #2a1620 0%, #2f1824 44%, #26121c 100%);
+  }
+
+  :root[data-color-scheme="kawaii"] .layout-bg-scrim {
+    background:
+      linear-gradient(180deg, rgba(255, 248, 251, 0.82), rgba(255, 240, 247, 0.94)),
+      linear-gradient(135deg, rgba(255, 188, 213, 0.14), rgba(255, 255, 255, 0));
+  }
+
+  :root[data-color-scheme="kawaii"][data-theme="dark"] .layout-bg-scrim {
+    background:
+      linear-gradient(180deg, rgba(39, 18, 28, 0.82), rgba(35, 16, 24, 0.94)),
+      linear-gradient(135deg, rgba(255, 176, 207, 0.08), rgba(255, 255, 255, 0));
+  }
+
+  :root[data-color-scheme="kawaii"] .layout-inner {
+    min-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    padding: 72px 14px calc(28px + env(safe-area-inset-bottom, 0px));
+  }
+
+  :root[data-color-scheme="kawaii"] .layout-header-card,
+  :root[data-color-scheme="kawaii"] .surface-panel,
+  :root[data-color-scheme="kawaii"] .settings-nav-item,
+  :root[data-color-scheme="kawaii"] .settings-model-item,
+  :root[data-color-scheme="kawaii"] .mcp-tool-card,
+  :root[data-color-scheme="kawaii"] .newgame-world-card,
+  :root[data-color-scheme="kawaii"] .card-item,
+  :root[data-color-scheme="kawaii"] .settings-model-discovery,
+  :root[data-color-scheme="kawaii"] .settings-bg-preview,
+  :root[data-color-scheme="kawaii"] .settings-upload-zone,
+  :root[data-color-scheme="kawaii"] .toast-card {
+    border: var(--kawaii-panel-border-width) solid var(--kawaii-sketch);
+    border-radius: var(--kawaii-panel-radius);
+    background:
+      radial-gradient(circle at 12% 16%, rgba(255, 216, 231, 0.48), transparent 18%),
+      radial-gradient(circle at 86% 82%, rgba(255, 232, 240, 0.72), transparent 24%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0)) top/100% 1px no-repeat,
+      var(--kawaii-fill);
+    box-shadow: var(--kawaii-sketch-shadow), var(--shadow-default);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  :root[data-color-scheme="kawaii"] .layout-header-card--compact,
+  :root[data-color-scheme="kawaii"] .card-item,
+  :root[data-color-scheme="kawaii"] .settings-nav-item,
+  :root[data-color-scheme="kawaii"] .settings-model-item,
+  :root[data-color-scheme="kawaii"] .mcp-tool-card,
+  :root[data-color-scheme="kawaii"] .newgame-world-card {
+    border-radius: var(--kawaii-card-radius);
+  }
+
+  :root[data-color-scheme="kawaii"] .surface-panel,
+  :root[data-color-scheme="kawaii"] .card-item,
+  :root[data-color-scheme="kawaii"] .settings-model-item,
+  :root[data-color-scheme="kawaii"] .mcp-tool-card,
+  :root[data-color-scheme="kawaii"] .newgame-world-card,
+  :root[data-color-scheme="kawaii"] .settings-nav-item {
+    background:
+      radial-gradient(circle at top left, rgba(255, 214, 229, 0.4), transparent 18%),
+      linear-gradient(180deg, #fffafc 0%, #fff1f6 100%);
+  }
+
+  :root[data-color-scheme="kawaii"] .layout-header {
+    gap: 14px;
+    padding: 18px 18px 16px 72px;
+  }
+
+  :root[data-color-scheme="kawaii"] .layout-header--compact {
+    padding-left: 72px;
+  }
+
+  :root[data-color-scheme="kawaii"] .layout-title {
+    color: var(--color-charcoal);
+    font-family: var(--font-body);
+    font-size: 30px;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1.04;
+  }
+
+  :root[data-color-scheme="kawaii"] .layout-title--compact {
+    font-size: 26px;
+  }
+
+  :root[data-color-scheme="kawaii"] .action-btn,
+  :root[data-color-scheme="kawaii"] .card-action-btn,
+  :root[data-color-scheme="kawaii"] .settings-root-actions .action-btn,
+  :root[data-color-scheme="kawaii"] .settings-model-suggestions .action-btn,
+  :root[data-color-scheme="kawaii"] .asset-gallery-primary-btn,
+  :root[data-color-scheme="kawaii"] .mobile-theme-btn,
+  :root[data-color-scheme="kawaii"] .home-mobile-btn {
+    border: var(--kawaii-chip-border-width) solid var(--kawaii-sketch);
+    border-radius: var(--kawaii-chip-radius);
+    background:
+      radial-gradient(circle at 16% 18%, rgba(255, 235, 244, 0.95), transparent 26%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0)) top/100% 1px no-repeat,
+      var(--kawaii-fill);
+    color: var(--color-charcoal);
+    font-weight: 800;
+    box-shadow: 1px 2px 0 rgba(248, 195, 214, 0.9), var(--shadow-sm);
+    transition:
+      transform var(--kawaii-duration-base) var(--kawaii-ease),
+      box-shadow var(--kawaii-duration-base) var(--kawaii-ease),
+      border-color var(--kawaii-duration-fast) ease,
+      background-color var(--kawaii-duration-fast) ease,
+      color var(--kawaii-duration-fast) ease;
+  }
+
+  :root[data-color-scheme="kawaii"] .action-btn:hover,
+  :root[data-color-scheme="kawaii"] .card-action-btn:hover,
+  :root[data-color-scheme="kawaii"] .settings-root-actions .action-btn:hover,
+  :root[data-color-scheme="kawaii"] .settings-model-suggestions .action-btn:hover,
+  :root[data-color-scheme="kawaii"] .asset-gallery-primary-btn:hover,
+  :root[data-color-scheme="kawaii"] .mobile-theme-btn:hover,
+  :root[data-color-scheme="kawaii"] .home-mobile-btn:hover {
+    transform: translateY(-2px);
+    border-color: var(--kawaii-line-strong);
+    background:
+      radial-gradient(circle at 16% 18%, rgba(255, 235, 244, 0.95), transparent 26%),
+      var(--kawaii-fill-strong);
+    box-shadow: 2px 3px 0 rgba(247, 188, 209, 0.92), var(--shadow-default);
+  }
+
+  :root[data-color-scheme="kawaii"] .action-btn:active,
+  :root[data-color-scheme="kawaii"] .card-action-btn:active,
+  :root[data-color-scheme="kawaii"] .mobile-theme-btn:active,
+  :root[data-color-scheme="kawaii"] .home-mobile-btn:active {
+    transform: translateY(0) scale(0.98);
+    box-shadow: var(--shadow-sm);
+  }
+
+  :root[data-color-scheme="kawaii"] .action-btn--primary,
+  :root[data-color-scheme="kawaii"] .action-btn--accent,
+  :root[data-color-scheme="kawaii"] .menu-btn--primary,
+  :root[data-color-scheme="kawaii"] .home-mobile-btn--primary,
+  :root[data-color-scheme="kawaii"] .mobile-nav-item--active,
+  :root[data-color-scheme="kawaii"] .settings-model-badge,
+  :root[data-color-scheme="kawaii"] .mcp-tool-state--enabled {
+    border-color: color-mix(in srgb, var(--color-accent) 58%, #f4c3d7);
+    background: var(--kawaii-primary-fill);
+    color: oklch(0.98 0 0);
+    box-shadow: 2px 3px 0 rgba(240, 137, 176, 0.72), 0 14px 28px rgba(224, 103, 145, 0.28);
+  }
+
+  :root[data-color-scheme="kawaii"] .action-btn--danger {
+    border-color: color-mix(in srgb, var(--color-error) 38%, var(--color-border));
+    background:
+      radial-gradient(circle at 14% 18%, rgba(255, 231, 236, 0.92), transparent 24%),
+      linear-gradient(180deg, color-mix(in srgb, var(--color-error) 10%, white), #fff2f4);
+    color: var(--color-error);
+  }
+
+  :root[data-color-scheme="kawaii"] .menu-btn {
+    border: var(--kawaii-panel-border-width) solid var(--kawaii-sketch);
+    border-radius: var(--kawaii-panel-radius);
+    background:
+      radial-gradient(circle at 10% 16%, rgba(255, 213, 228, 0.44), transparent 20%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(255, 255, 255, 0)) top/100% 1px no-repeat,
+      linear-gradient(180deg, var(--kawaii-shell-strong), var(--color-surface));
+    color: var(--color-charcoal);
+    box-shadow: var(--kawaii-sketch-shadow), var(--shadow-default);
+    transition:
+      transform var(--kawaii-duration-base) var(--kawaii-ease),
+      box-shadow var(--kawaii-duration-base) var(--kawaii-ease),
+      border-color var(--kawaii-duration-fast) ease;
+  }
+
+  :root[data-color-scheme="kawaii"] .menu-btn:hover {
+    transform: translateY(-2px);
+    border-color: var(--kawaii-line-strong);
+    box-shadow: var(--shadow-md);
+  }
+
+  :root[data-color-scheme="kawaii"] .menu-btn-icon,
+  :root[data-color-scheme="kawaii"] .card-item-icon,
+  :root[data-color-scheme="kawaii"] .mobile-theme-btn-icon {
+    border-radius: 18px 18px 12px 18px;
+    background: color-mix(in srgb, var(--color-accent) 11%, var(--color-surface));
+    color: var(--color-accent);
+  }
+
+  :root[data-color-scheme="kawaii"] .menu-btn-title,
+  :root[data-color-scheme="kawaii"] .card-item-title,
+  :root[data-color-scheme="kawaii"] .save-title,
+  :root[data-color-scheme="kawaii"] .newgame-world-card-top strong,
+  :root[data-color-scheme="kawaii"] .settings-nav-item-copy strong,
+  :root[data-color-scheme="kawaii"] .settings-detail-head-copy strong,
+  :root[data-color-scheme="kawaii"] .settings-model-name,
+  :root[data-color-scheme="kawaii"] .mcp-tool-card-copy strong {
+    color: var(--color-charcoal);
+    font-weight: 800;
+  }
+
+  :root[data-color-scheme="kawaii"] .field-input,
+  :root[data-color-scheme="kawaii"] .editor-field-input,
+  :root[data-color-scheme="kawaii"] .editor-tab-add-input {
+    border: 2px solid color-mix(in srgb, var(--kawaii-sketch) 88%, white);
+    border-radius: 20px 20px 14px 20px;
+    background:
+      radial-gradient(circle at 12% 16%, rgba(255, 239, 246, 0.9), transparent 22%),
+      linear-gradient(180deg, #fffdfd 0%, #fff2f7 100%);
+    color: var(--color-charcoal);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    transition:
+      border-color var(--kawaii-duration-fast) ease,
+      box-shadow var(--kawaii-duration-fast) ease,
+      background-color var(--kawaii-duration-fast) ease;
+  }
+
+  :root[data-color-scheme="kawaii"] .field-input:focus,
+  :root[data-color-scheme="kawaii"] .editor-field-input:focus,
+  :root[data-color-scheme="kawaii"] .editor-tab-add-input:focus {
+    border-color: var(--color-accent);
+    box-shadow:
+      0 0 0 4px rgba(255, 161, 193, 0.22),
+      inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    outline: none;
+  }
+
+  :root[data-color-scheme="kawaii"] .field-input::placeholder,
+  :root[data-color-scheme="kawaii"] .editor-field-input::placeholder,
+  :root[data-color-scheme="kawaii"] .editor-tab-add-input::placeholder {
+    color: var(--color-concrete);
+  }
+
+  :root[data-color-scheme="kawaii"] .editor-tab,
+  :root[data-color-scheme="kawaii"] .editor-tab-add,
+  :root[data-color-scheme="kawaii"] .editor-tab-add-confirm,
+  :root[data-color-scheme="kawaii"] .editor-tab-add-cancel {
+    border: 2px solid color-mix(in srgb, var(--kawaii-sketch) 90%, white);
+    border-radius: 18px 18px 12px 18px;
+    background:
+      radial-gradient(circle at 14% 18%, rgba(255, 237, 245, 0.92), transparent 24%),
+      var(--kawaii-fill);
+    color: var(--color-charcoal);
+  }
+
+  :root[data-color-scheme="kawaii"] .editor-tab--active {
+    border-color: color-mix(in srgb, var(--color-accent) 60%, white);
+    background: linear-gradient(180deg, #ff8fb4, #f26b98);
+    color: white;
+    box-shadow: 0 10px 24px rgba(224, 103, 145, 0.24);
+  }
+
+  :root[data-color-scheme="kawaii"] .card-item {
+    gap: 12px;
+  }
+
+  :root[data-color-scheme="kawaii"] .card-item--world-bg::before {
+    background: linear-gradient(180deg, rgba(58, 23, 36, 0.1), rgba(58, 23, 36, 0.76));
+  }
+
+  :root[data-color-scheme="kawaii"] .card-delete-btn {
+    border-color: color-mix(in srgb, var(--color-error) 36%, var(--color-border));
+    background: color-mix(in srgb, var(--color-surface) 82%, #ffe5ec);
+    color: var(--color-error);
+    box-shadow: 0 6px 16px rgba(190, 92, 120, 0.14);
+  }
+
+  :root[data-color-scheme="kawaii"] .settings-upload-zone {
+    border-style: dashed;
+    border-width: 3px;
+    background:
+      radial-gradient(circle at 12% 16%, rgba(255, 219, 232, 0.44), transparent 20%),
+      linear-gradient(180deg, #fff9fb 0%, #fff1f6 100%);
+  }
+
+  :root[data-color-scheme="kawaii"] .home-mobile-center {
+    min-height: calc(100dvh - 54px);
+    padding: 28px 20px 36px;
+  }
+
+  :root[data-color-scheme="kawaii"] .home-mobile-brand {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    max-width: 100%;
+    padding: 12px 20px;
+    border: var(--kawaii-chip-border-width) solid var(--kawaii-sketch);
+    border-radius: 999px 999px 22px 999px;
+    background:
+      radial-gradient(circle at 14% 18%, rgba(255, 233, 242, 0.92), transparent 24%),
+      var(--kawaii-fill);
+    color: var(--color-charcoal);
+    box-shadow: 2px 3px 0 rgba(247, 198, 215, 0.9), var(--shadow-default);
+    margin-bottom: 26px;
+    letter-spacing: 0;
+    overflow-wrap: anywhere;
+  }
+
+  :root[data-color-scheme="kawaii"] .home-mobile-actions {
+    max-width: 304px;
+    gap: 14px;
+  }
+
+  :root[data-color-scheme="kawaii"] .home-mobile-btn {
+    padding: 18px 20px;
+    text-align: left;
+  }
+
+  :root[data-color-scheme="kawaii"] .home-mobile-btn-icon {
+    width: 42px;
+    height: 42px;
+    border-radius: 16px 16px 10px 16px;
+    background: color-mix(in srgb, var(--color-accent) 10%, var(--color-surface));
+    color: var(--color-accent);
+    flex: 0 0 42px;
+  }
+
+  :root[data-color-scheme="kawaii"] .home-mobile-btn--primary .home-mobile-btn-icon {
+    background: rgba(255, 255, 255, 0.18);
+    color: white;
+  }
+
+  :root[data-color-scheme="kawaii"] .home-mobile-hint {
+    color: var(--color-muted);
+    margin-top: 26px;
+  }
+
+  :root[data-color-scheme="kawaii"] .mobile-fab {
+    border: 2px solid color-mix(in srgb, var(--color-accent) 34%, white);
+    border-radius: 18px 18px 12px 18px;
+    background: var(--kawaii-primary-fill);
+    color: white;
+    box-shadow: 2px 3px 0 rgba(240, 145, 182, 0.72), 0 16px 30px rgba(224, 103, 145, 0.34);
+    transition:
+      transform var(--kawaii-duration-base) var(--kawaii-ease),
+      box-shadow var(--kawaii-duration-base) var(--kawaii-ease),
+      background-color var(--kawaii-duration-fast) ease;
+  }
+
+  :root[data-color-scheme="kawaii"] .mobile-back-btn {
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    background: var(--color-surface);
+    color: var(--color-charcoal);
+    box-shadow: none;
+  }
+
+  :root[data-color-scheme="kawaii"] .mobile-fab:active {
+    transform: scale(0.96);
+    box-shadow: 0 10px 22px rgba(224, 103, 145, 0.24);
+  }
+
+  :root[data-color-scheme="kawaii"] .mobile-overlay {
+    background: rgba(79, 33, 51, 0.32);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+
+  :root[data-color-scheme="kawaii"] .mobile-sidebar {
+    border-right: 1px solid var(--kawaii-separator);
+    background:
+      radial-gradient(circle at top right, rgba(255, 198, 220, 0.45), transparent 30%),
+      linear-gradient(180deg, #fff9fb 0%, #fff2f7 100%);
+    box-shadow: 0 24px 46px rgba(96, 46, 66, 0.18);
+    animation: kawaii-sidebar-in var(--kawaii-duration-base) var(--kawaii-ease);
+  }
+
+  :root[data-color-scheme="kawaii"] .mobile-sidebar-brand,
+  :root[data-color-scheme="kawaii"] .mobile-sidebar-footer {
+    border-color: var(--kawaii-separator);
+  }
+
+  :root[data-color-scheme="kawaii"] .mobile-sidebar-brand {
+    margin-bottom: 18px;
+    padding: 26px 16px 14px;
+  }
+
+  :root[data-color-scheme="kawaii"] .mobile-sidebar-brand-icon-btn {
+    border-radius: 18px 18px 12px 18px;
+    background:
+      radial-gradient(circle at 18% 18%, rgba(255, 239, 245, 0.96), transparent 28%),
+      linear-gradient(180deg, #fff6fa 0%, #ffe8f1 100%);
+    border: 2px solid color-mix(in srgb, var(--kawaii-sketch) 86%, white);
+    box-shadow: 1px 2px 0 rgba(247, 197, 215, 0.9), 0 10px 20px rgba(196, 96, 130, 0.12);
+  }
+
+  :root[data-color-scheme="kawaii"] .mobile-sidebar-brand-title,
+  :root[data-color-scheme="kawaii"] .mobile-theme-btn-label {
+    color: var(--color-charcoal);
+  }
+
+  :root[data-color-scheme="kawaii"] .mobile-sidebar-brand-title {
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+  }
+
+  :root[data-color-scheme="kawaii"] .mobile-sidebar-brand-subtitle {
+    color: var(--color-muted);
+  }
+
+  :root[data-color-scheme="kawaii"] .mobile-nav-list {
+    padding-top: 30px;
+    gap: 12px;
+  }
+
+  :root[data-color-scheme="kawaii"] .mobile-nav-item {
+    border: 2px solid var(--kawaii-sketch);
+    border-radius: 24px 20px 16px 26px;
+    background:
+      radial-gradient(circle at 12% 16%, rgba(255, 231, 240, 0.86), transparent 20%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(255, 255, 255, 0)) top/100% 1px no-repeat,
+      var(--kawaii-fill);
+    color: var(--color-charcoal);
+    box-shadow: 1px 2px 0 rgba(247, 198, 215, 0.88), var(--shadow-sm);
+    transition:
+      transform var(--kawaii-duration-base) var(--kawaii-ease),
+      box-shadow var(--kawaii-duration-base) var(--kawaii-ease),
+      border-color var(--kawaii-duration-fast) ease,
+      background-color var(--kawaii-duration-fast) ease;
+  }
+
+  :root[data-color-scheme="kawaii"] .mobile-nav-item:hover,
+  :root[data-color-scheme="kawaii"] .mobile-nav-item:active {
+    transform: translateX(2px);
+    border-color: var(--kawaii-line-strong);
+    background: var(--kawaii-fill-strong);
+    box-shadow: 2px 3px 0 rgba(247, 188, 209, 0.92), var(--shadow-default);
+  }
+
+  :root[data-color-scheme="kawaii"] .mobile-nav-item--active:hover,
+  :root[data-color-scheme="kawaii"] .mobile-nav-item--active:active {
+    transform: translateX(2px);
+    opacity: 1;
+  }
+
+  :root[data-color-scheme="kawaii"] .mobile-theme-btn {
+    min-height: 46px;
+    width: 100%;
+    justify-content: center;
+    background: var(--kawaii-fill-strong);
+  }
+
+  :root[data-color-scheme="kawaii"] .settings-page-shell > .surface-panel,
+  :root[data-color-scheme="kawaii"] .settings-nav-item,
+  :root[data-color-scheme="kawaii"] .settings-model-item,
+  :root[data-color-scheme="kawaii"] .settings-model-discovery,
+  :root[data-color-scheme="kawaii"] .settings-bg-preview,
+  :root[data-color-scheme="kawaii"] .settings-upload-zone {
+    border: 1px solid var(--color-border);
+    border-radius: 16px;
+    background: var(--color-surface);
+    box-shadow: none;
+  }
+
+  :root[data-color-scheme="kawaii"] .settings-nav-item {
+    border-radius: 12px;
+  }
+
+  :root[data-color-scheme="kawaii"] .settings-nav-item:hover,
+  :root[data-color-scheme="kawaii"] .settings-nav-item:active {
+    transform: none;
+    background: var(--color-hover-bg);
+    border-color: var(--color-border-hover);
+  }
+
+  :root[data-color-scheme="kawaii"] .settings-mobile-title,
+  :root[data-color-scheme="kawaii"] .settings-detail-head-copy strong,
+  :root[data-color-scheme="kawaii"] .settings-section-title {
+    font-family: var(--font-body);
+    letter-spacing: 0;
+  }
+
+  :root[data-color-scheme="kawaii"] .action-btn,
+  :root[data-color-scheme="kawaii"] .card-action-btn,
+  :root[data-color-scheme="kawaii"] .menu-btn--primary,
+  :root[data-color-scheme="kawaii"] .home-mobile-btn,
+  :root[data-color-scheme="kawaii"] .mobile-fab,
+  :root[data-color-scheme="kawaii"] .mobile-back-btn,
+  :root[data-color-scheme="kawaii"] .mobile-close-btn,
+  :root[data-color-scheme="kawaii"] .mobile-sidebar-brand-icon-btn,
+  :root[data-color-scheme="kawaii"] .mobile-nav-item,
+  :root[data-color-scheme="kawaii"] .mobile-theme-btn {
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    color: var(--color-charcoal);
+    box-shadow: none;
+  }
+
+  :root[data-color-scheme="kawaii"] .action-btn::after,
+  :root[data-color-scheme="kawaii"] .card-action-btn::after {
+    display: none;
+  }
+
+  :root[data-color-scheme="kawaii"] .action-btn:hover,
+  :root[data-color-scheme="kawaii"] .action-btn:active,
+  :root[data-color-scheme="kawaii"] .card-action-btn:hover,
+  :root[data-color-scheme="kawaii"] .card-action-btn:active,
+  :root[data-color-scheme="kawaii"] .menu-btn--primary:hover,
+  :root[data-color-scheme="kawaii"] .menu-btn--primary:active,
+  :root[data-color-scheme="kawaii"] .home-mobile-btn:hover,
+  :root[data-color-scheme="kawaii"] .home-mobile-btn:active,
+  :root[data-color-scheme="kawaii"] .mobile-fab:hover,
+  :root[data-color-scheme="kawaii"] .mobile-fab:active,
+  :root[data-color-scheme="kawaii"] .mobile-back-btn:hover,
+  :root[data-color-scheme="kawaii"] .mobile-back-btn:active,
+  :root[data-color-scheme="kawaii"] .mobile-close-btn:hover,
+  :root[data-color-scheme="kawaii"] .mobile-close-btn:active,
+  :root[data-color-scheme="kawaii"] .mobile-sidebar-brand-icon-btn:hover,
+  :root[data-color-scheme="kawaii"] .mobile-sidebar-brand-icon-btn:active,
+  :root[data-color-scheme="kawaii"] .mobile-nav-item:hover,
+  :root[data-color-scheme="kawaii"] .mobile-nav-item:active,
+  :root[data-color-scheme="kawaii"] .mobile-theme-btn:hover,
+  :root[data-color-scheme="kawaii"] .mobile-theme-btn:active {
+    border-color: var(--color-border-hover);
+    background: var(--color-hover-bg);
+    color: var(--color-charcoal);
+    box-shadow: none;
+  }
+
+  :root[data-color-scheme="kawaii"] .action-btn--primary,
+  :root[data-color-scheme="kawaii"] .action-btn--accent,
+  :root[data-color-scheme="kawaii"] .home-mobile-btn--primary,
+  :root[data-color-scheme="kawaii"] .mobile-nav-item--active {
+    border-color: var(--color-border-hover);
+    background: var(--color-surface);
+    color: var(--color-charcoal);
+    box-shadow: none;
+  }
+
+}
+
+:root[data-color-scheme="kawaii"] .toast-card-dot {
+  background: var(--color-accent);
+}
+
+:root[data-color-scheme="kawaii"] .toast-card--error .toast-card-dot {
+  background: var(--color-error);
+}
+
+@keyframes kawaii-sidebar-in {
+  from {
+    transform: translateX(-24px);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-color-scheme="kawaii"] .mobile-sidebar {
+    animation: none;
+  }
+
+  :root[data-color-scheme="kawaii"] * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
