@@ -13,6 +13,8 @@ import {
 import type { ContentPart } from "../data/types";
 import {
   resolveSidePanelTabOrder,
+  type GameUiDocument,
+  type GameUiLayoutNode,
   type UiAssetConfig,
 } from "../data/gameUi";
 
@@ -509,13 +511,59 @@ export function resolveDialogueSpeakerLabel(
   return message.speaker?.trim() || "系统";
 }
 
+function nodeDisablesMapSideTab(node: GameUiLayoutNode | undefined): boolean {
+  if (!node || typeof node !== "object") {
+    return false;
+  }
+
+  if (
+    node.type === "component" &&
+    node.component === "side_panel_tabs" &&
+    node.props?.show_map_tab === false
+  ) {
+    return true;
+  }
+
+  if ("children" in node && Array.isArray(node.children)) {
+    if (node.children.some((child) => nodeDisablesMapSideTab(child))) {
+      return true;
+    }
+  }
+
+  if (node.type === "component" && node.slots) {
+    for (const slot of Object.values(node.slots)) {
+      const slotNodes = Array.isArray(slot) ? slot : [slot];
+      if (slotNodes.some((child) => nodeDisablesMapSideTab(child))) {
+        return true;
+      }
+    }
+  }
+
+  if ("child" in node && nodeDisablesMapSideTab(node.child)) {
+    return true;
+  }
+
+  if ("empty" in node && nodeDisablesMapSideTab(node.empty)) {
+    return true;
+  }
+
+  return false;
+}
+
+function shouldOfferMapSideTab(document: GameUiDocument, mapCount: number): boolean {
+  if (mapCount <= 0) {
+    return false;
+  }
+  return !nodeDisablesMapSideTab(document.layout.root);
+}
+
 export function resolveStatusTabs(
-  document: Parameters<typeof resolveSidePanelTabOrder>[0],
+  document: GameUiDocument,
   mapCount: number,
   attributeTabs: Array<[string, string]>,
 ): Array<{ key: string; label: string }> {
   const available = new Map<string, { key: string; label: string }>();
-  if (mapCount > 0) {
+  if (shouldOfferMapSideTab(document, mapCount)) {
     available.set("map", { key: "map", label: "地图" });
   }
   for (const [key] of attributeTabs) {
