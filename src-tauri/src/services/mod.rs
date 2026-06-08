@@ -5,4 +5,5 @@ pub mod game_ui;
 pub mod game_engine;
 pub mod llm;
 pub mod map_topology;
+pub mod notifications;
 pub mod world_package;

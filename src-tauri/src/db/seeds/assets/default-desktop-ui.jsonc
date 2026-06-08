@@ -1,28 +1,28 @@
 {
   "schema_version": 2,
   "meta": {
-    "name": "Piao Desktop UI",
+    "name": "默认桌面叙事界面",
     "platform": "desktop",
-    "description": "飘 · 庄园回廊社交簿 — 骨白纸质暖色风格"
+    "description": "默认叙事世界共用桌面界面。"
   },
   "layout": {
     "root": {
       "type": "grid",
-      "id": "piao-desktop-root",
+      "id": "default-desktop-root",
       "columns": [
-        "38%",
-        "37%",
-        "25%"
+        "minmax(360px, 0.38fr)",
+        "minmax(420px, 0.37fr)",
+        "minmax(280px, 0.25fr)"
       ],
       "rows": [
-        "56px",
+        "76px",
         "minmax(0, 1fr)"
       ],
       "areas": [
         [
-          "topbar",
-          "topbar",
-          "topbar"
+          "header",
+          "header",
+          "actions"
         ],
         [
           "scene",
@@ -31,6 +31,7 @@
         ]
       ],
       "gap": "0",
+      "padding": "0",
       "style": {
         "height": "100%",
         "min_height": "0"
@@ -39,23 +40,34 @@
         {
           "type": "component",
           "component": "scene_header",
-          "area": "topbar",
-          "class_name": "piao-topbar",
+          "area": "header",
+          "class_name": "default-d-header",
           "props": {
             "show_world_name": true,
             "show_location": true,
             "show_time_label": true,
             "show_player_identity": true,
-            "player_identity_format": "action_phrase",
             "show_visible_characters": false,
-            "title_mode": "desktop"
+            "title_mode": "desktop",
+            "player_identity_format": "action_phrase"
+          }
+        },
+        {
+          "type": "component",
+          "component": "floating_actions",
+          "area": "actions",
+          "class_name": "default-d-actions",
+          "props": {
+            "show_back": true,
+            "show_debug": false,
+            "show_settings": true
           }
         },
         {
           "type": "stack",
           "area": "scene",
-          "class_name": "piao-scene-column",
-          "gap": "0",
+          "class_name": "default-d-scene",
+          "gap": "18px",
           "style": {
             "height": "100%",
             "min_height": "0"
@@ -64,21 +76,23 @@
             {
               "type": "component",
               "component": "scene_focus",
-              "class_name": "piao-focus",
-              "props": {
-                "show_avatar": false,
-                "show_line": true
-              },
+              "class_name": "default-d-focus",
               "style": {
                 "flex": "1 1 0",
                 "min_height": "0"
+              },
+              "props": {
+                "show_avatar": true,
+                "show_line": true,
+                "avatar_variant": "focus"
               }
             },
             {
               "type": "component",
               "component": "character_bar",
-              "class_name": "piao-character-bar",
+              "class_name": "default-d-cast",
               "props": {
+                "show_player": false,
                 "empty_text": ""
               }
             }
@@ -87,41 +101,45 @@
         {
           "type": "stack",
           "area": "chat",
-          "class_name": "piao-chat-column",
-          "gap": "0",
+          "class_name": "default-d-chat",
+          "gap": "18px",
           "style": {
             "height": "100%",
-            "min_height": "0",
-            "border_left": "1px solid rgba(45, 71, 57, 0.12)",
-            "border_right": "1px solid rgba(45, 71, 57, 0.12)"
+            "min_height": "0"
           },
           "children": [
             {
               "type": "component",
               "component": "narration_card",
-              "class_name": "piao-narration",
+              "class_name": "default-d-narration",
               "props": {
                 "title": "",
-                "show_copy_button": false
+                "show_copy_button": false,
+                "empty_text": "暂无场景描述。"
               }
             },
             {
               "type": "component",
               "component": "message_list",
-              "class_name": "piao-messages",
+              "class_name": "default-d-messages",
               "style": {
                 "flex": "1 1 0",
                 "min_height": "0"
+              },
+              "props": {
+                "auto_scroll": true,
+                "show_agent_reasoning": false,
+                "show_pending_state": true
               }
             },
             {
               "type": "component",
               "component": "input_composer",
-              "class_name": "piao-input",
+              "class_name": "default-d-input",
               "props": {
-                "placeholder": "写下你的话语或行动…",
-                "submit_label": "落笔",
-                "editing_submit_label": "重写并重试",
+                "placeholder": "输入控制指令...",
+                "submit_label": "发送",
+                "editing_submit_label": "更新",
                 "show_image_button": true,
                 "show_audio_button": true,
                 "show_session_meta": false,
@@ -131,41 +149,15 @@
           ]
         },
         {
-          "type": "stack",
+          "type": "component",
+          "component": "side_panel_tabs",
           "area": "side",
-          "class_name": "piao-side-column",
-          "style": {
-            "height": "100%",
-            "min_height": "0"
-          },
-          "gap": "0",
-          "children": [
-            {
-              "type": "component",
-              "component": "side_panel_tabs",
-              "class_name": "piao-side-tabs",
-              "style": {
-                "flex": "1 1 0",
-                "min_height": "0"
-              },
-              "props": {
-                "show_map_tab": true,
-                "show_custom_tabs": true,
-                "empty_text": ""
-              }
-            },
-            {
-              "type": "component",
-              "component": "floating_actions",
-              "class_name": "piao-floating-actions",
-              "props": {
-                "show_back": true,
-                "show_debug": true,
-                "show_settings": false,
-                "layout": "row"
-              }
-            }
-          ]
+          "class_name": "default-d-side",
+          "props": {
+            "show_map_tab": true,
+            "show_attribute_tabs": true,
+            "empty_text": "暂无状态信息"
+          }
         }
       ]
     }
@@ -177,19 +169,14 @@
     "color.text-dim": "#8e8174",
     "color.border": "rgba(45, 71, 57, 0.12)",
     "color.input": "#ffffff",
-    "color.primary": "#b88b8b",
-    "color.primary-text": "#f8f6f3",
-    "color.narrator-bg": "#f7ece8",
-    "color.narrator-border": "#b88b8b",
-    "color.deep-green": "#2d4739",
-    "color.destructive": "#c85a54",
+    "color.accent": "#b88b8b",
+    "color.accent-bg": "#f7ece8",
     "space.md": "16px",
-    "radius.sm": "2px",
     "radius.md": "2px",
     "radius.lg": "2px",
-    "font.body": "'Inter', -apple-system, sans-serif",
-    "font.display": "'Cormorant Garamond', Georgia, serif",
-    "motion.fast": "200ms"
+    "font.body": "\"PingFang SC\", \"Microsoft YaHei\", system-ui, sans-serif",
+    "font.display": "Georgia, \"Noto Serif SC\", \"Songti SC\", serif",
+    "motion.fast": "150ms"
   },
   "components": {
     "panel": {
@@ -197,88 +184,72 @@
         "background": "#f4ede4",
         "border": "1px solid rgba(45, 71, 57, 0.12)",
         "border_radius": "2px",
-        "box_shadow": "0 1px 3px rgba(43, 45, 58, 0.08)"
+        "box_shadow": "none"
       }
     },
     "button": {
       "base": {
-        "border_radius": "2px",
-        "border": "1px solid rgba(45, 71, 57, 0.12)",
-        "background": "#f8f6f3",
-        "color": "#2b2d3a"
+        "transition": "background 150ms ease, border-color 150ms ease, color 150ms ease"
       },
       "variants": {
         "primary": {
-          "background": "rgba(184, 139, 139, 0.90)",
+          "background": "#b88b8b",
           "color": "#f8f6f3",
           "border": "1px solid #b88b8b"
         },
         "ghost": {
-          "background": "transparent",
-          "border": "1px solid transparent"
+          "background": "#ffffff",
+          "color": "#8e8174",
+          "border": "1px solid rgba(45, 71, 57, 0.12)"
         }
       }
     },
     "message_bubble": {
       "base": {
-        "border_radius": "2px",
-        "padding": "12px 16px"
+        "border_radius": "2px"
       },
       "variants": {
         "agent": {
-          "background": "#f4ede4",
+          "background": "transparent",
           "color": "#2b2d3a",
-          "border": "1px solid rgba(45, 71, 57, 0.12)"
+          "border": "0"
         },
         "player": {
-          "background": "rgba(184, 139, 139, 0.08)",
-          "color": "#8e8174",
-          "border": "1px solid rgba(45, 71, 57, 0.08)"
+          "background": "rgba(232, 227, 219, 0.72)",
+          "color": "#5d4f47",
+          "border": "1px solid rgba(45, 71, 57, 0.10)"
         },
         "system": {
           "background": "#f7ece8",
-          "color": "#2b2d3a",
-          "border_left": "2px solid #b88b8b"
+          "color": "#5d4f47",
+          "border": "1px solid rgba(184, 139, 139, 0.18)"
         }
       }
     },
-    "textarea": {
+    "input": {
       "base": {
-        "border_radius": "2px",
         "background": "#ffffff",
-        "border": "1px solid rgba(45, 71, 57, 0.12)"
-      }
-    },
-    "chip": {
-      "base": {
-        "border_radius": "2px",
-        "background": "#f8f6f3",
-        "color": "#2b2d3a",
-        "border": "1px solid rgba(45, 71, 57, 0.12)"
+        "border": "1px solid rgba(45, 71, 57, 0.12)",
+        "color": "#2b2d3a"
       }
     }
   },
   "effects": {
-    "background": {
-      "image": "none"
-    },
     "page_enter": {
       "enabled": true,
-      "duration": "200ms",
+      "duration": "150ms",
       "easing": "ease-out"
     },
     "message_reveal": {
       "enabled": true,
-      "duration": "200ms"
+      "duration": "150ms"
     }
   },
-  "custom_css": ".game-ui-root {\n  --piao-bg: #f8f6f3;\n  --piao-card: #f4ede4;\n  --piao-text: #2b2d3a;\n  --piao-text-dim: #8e8174;\n  --piao-border: rgba(45, 71, 57, 0.12);\n  --piao-border-light: rgba(45, 71, 57, 0.08);\n  --piao-primary: #b88b8b;\n  --piao-primary-soft: rgba(184, 139, 139, 0.08);\n  --piao-green: #2d4739;\n  --piao-narrator-bg: #f7ece8;\n  --piao-narrator-border: #b88b8b;\n  --piao-destructive: #c85a54;\n  --piao-shadow: 0 1px 3px rgba(43, 45, 58, 0.08);\n  --piao-font-display: 'Cormorant Garamond', Georgia, serif;\n  --piao-font-body: 'Inter', -apple-system, sans-serif;\n  color: var(--piao-text);\n  background: var(--piao-bg);\n  font-family: var(--piao-font-body);\n}\n\n/* ── Top Bar ── */\n\n.piao-topbar .game-header {\n  min-height: 100%;\n  align-items: center;\n  padding: 0 32px;\n  background: var(--piao-bg);\n  border-bottom: 1px solid var(--piao-border);\n  justify-content: space-between;\n}\n\n.piao-topbar .game-header-left {\n  display: flex;\n  align-items: center;\n}\n\n.piao-topbar .game-title-group {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n}\n\n.piao-topbar .game-title-group::after {\n  content: \"\";\n  display: block;\n  width: 1px;\n  height: 20px;\n  background: var(--piao-border);\n  flex-shrink: 0;\n}\n\n.piao-topbar .game-simple-world {\n  font-family: var(--piao-font-display);\n  font-size: 20px;\n  font-weight: 600;\n  color: var(--piao-text);\n  letter-spacing: 0.04em;\n}\n\n.piao-topbar .game-scene-name {\n  font-family: var(--piao-font-body);\n  font-size: 14px;\n  font-weight: 400;\n  color: var(--piao-text-dim);\n}\n\n.piao-topbar .game-header-meta {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  font-size: 14px;\n  color: var(--piao-text-dim);\n}\n\n.piao-topbar .game-header-meta .game-simple-meta-item {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n  font-size: 14px;\n  color: var(--piao-text-dim);\n}\n\n.piao-topbar .game-header-meta .game-simple-meta-item strong {\n  font-weight: 400;\n  color: var(--piao-text-dim);\n}\n\n.piao-topbar .game-header-meta .game-simple-meta-item span {\n  font-family: var(--piao-font-display);\n  font-weight: 500;\n  color: var(--piao-text);\n}\n\n/* Player action phrase: \"以 XX 之名行动\" */\n.piao-topbar .game-simple-meta-item--action-phrase {\n  gap: 6px;\n}\n\n.piao-topbar .game-action-phrase-prefix,\n.piao-topbar .game-action-phrase-suffix {\n  font-family: var(--piao-font-body);\n  font-size: 14px;\n  font-weight: 400;\n  color: var(--piao-text-dim);\n}\n\n.piao-topbar .game-action-phrase-name {\n  font-family: var(--piao-font-display);\n  font-size: 15px;\n  font-weight: 500;\n  color: var(--piao-text);\n}\n\n.piao-topbar .game-header-actions {\n  display: none;\n}\n\n/* ── Scene Column ── */\n\n.piao-scene-column {\n  background: linear-gradient(to bottom right, #faf8f5, #f4ede4);\n  position: relative;\n}\n\n/* ── Scene Focus ── */\n\n.piao-focus {\n  overflow: hidden;\n  padding: 0;\n  border: 0;\n  background: transparent;\n  box-shadow: none;\n}\n\n.piao-focus .game-scene-center {\n  width: 100%;\n  min-height: 100%;\n  padding: 24px;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  justify-content: center;\n  gap: 16px;\n  background: transparent;\n  overflow: hidden;\n}\n\n.piao-focus .game-current-line {\n  position: absolute;\n  bottom: 36px;\n  left: 0;\n  right: 0;\n  padding: 16px 24px;\n  text-align: center;\n  font-family: var(--piao-font-display);\n  font-size: 18px;\n  font-style: italic;\n  line-height: 1.75;\n  color: var(--piao-primary);\n  border-top: 1px solid var(--piao-border);\n  background: linear-gradient(to bottom right, rgba(250,248,245,0.9), rgba(244,237,228,0.9));\n}\n\n/* ── Character Bar ── */\n\n.piao-character-bar {\n  border-top: 1px solid var(--piao-border);\n  padding: 0;\n  flex-shrink: 0;\n  height: 36px;\n  min-height: 36px;\n  max-height: 36px;\n}\n\n.piao-character-bar .game-scene-characters {\n  display: flex;\n  flex-direction: row;\n  align-items: center;\n  gap: 0;\n  padding: 0 16px;\n  background: transparent;\n  border: none;\n  height: 36px;\n  overflow-x: auto;\n  overflow-y: hidden;\n  white-space: nowrap;\n  scrollbar-width: none;\n  cursor: grab;\n}\n\n.piao-character-bar .game-scene-characters::-webkit-scrollbar {\n  display: none;\n}\n\n.piao-character-bar .game-scene-characters::before {\n  content: \"在场人物：\";\n  font-family: var(--piao-font-body);\n  font-size: 12px;\n  font-weight: 500;\n  color: var(--piao-text-dim);\n  flex-shrink: 0;\n  margin-right: 4px;\n}\n\n.piao-character-bar .game-scene-char {\n  display: inline-flex;\n  align-items: center;\n  padding: 0;\n  border-radius: 0;\n  border: none;\n  background: transparent;\n  font-family: var(--piao-font-display);\n  font-size: 13px;\n  font-weight: 500;\n  color: var(--piao-text);\n  flex-shrink: 0;\n  white-space: nowrap;\n  height: 36px;\n  line-height: 36px;\n}\n\n.piao-character-bar .game-scene-char::after {\n  content: \"、\";\n  color: var(--piao-text-dim);\n  font-family: var(--piao-font-body);\n  font-weight: 400;\n  margin: 0 2px;\n}\n\n.piao-character-bar .game-scene-char:last-child::after {\n  content: \"\";\n  margin: 0;\n}\n\n/* ── Narration ── */\n\n.piao-narration {\n  padding: 0;\n}\n\n.piao-narration .game-narration-panel {\n  padding: 12px 16px;\n  background: var(--piao-narrator-bg);\n  border: none;\n  border-left: 2px solid var(--piao-narrator-border);\n  border-radius: 0;\n  box-shadow: none;\n  backdrop-filter: none;\n}\n\n.piao-narration .game-narration-label {\n  display: none;\n}\n\n.piao-narration .game-narration-content {\n  font-family: var(--piao-font-display);\n  font-size: 14px;\n  font-style: italic;\n  line-height: 1.75;\n  color: var(--piao-text);\n  opacity: 0.85;\n}\n\n/* ── Messages ── */\n\n.piao-messages .game-chat-messages {\n  height: 100%;\n  min-height: 0;\n  padding: 16px;\n  background: transparent;\n  border: none;\n  backdrop-filter: none;\n  gap: 16px;\n}\n\n.piao-messages .game-message-row {\n  margin-bottom: 0;\n}\n\n.piao-messages .game-message--agent {\n  background: var(--piao-card);\n  border: 1px solid var(--piao-border);\n  border-radius: 2px;\n  padding: 14px 16px;\n  box-shadow: var(--piao-shadow);\n}\n\n.piao-messages .game-message-speaker {\n  font-family: var(--piao-font-display);\n  font-size: 16px;\n  font-weight: 500;\n  color: var(--piao-text);\n  margin-bottom: 4px;\n}\n\n.piao-messages .game-message-content--default {\n  font-family: var(--piao-font-body);\n  font-size: 15px;\n  line-height: 1.7;\n  color: var(--piao-text);\n}\n\n.piao-messages .game-message--player {\n  background: var(--piao-primary-soft);\n  border: 1px solid var(--piao-border-light);\n  border-radius: 2px;\n  padding: 12px 16px;\n  margin-left: 32px;\n}\n\n.piao-messages .game-message-speaker--player {\n  font-size: 13px;\n  font-weight: 400;\n  color: var(--piao-text-dim);\n  font-family: var(--piao-font-body);\n}\n\n.piao-messages .game-message--player .game-message-content--default {\n  color: var(--piao-text-dim);\n}\n\n.piao-messages .game-message--system {\n  background: var(--piao-narrator-bg);\n  border: none;\n  border-left: 2px solid var(--piao-narrator-border);\n  border-radius: 0;\n  padding: 10px 14px;\n}\n\n.piao-messages .game-message--system .game-message-content--system {\n  font-family: var(--piao-font-display);\n  font-size: 14px;\n  font-style: italic;\n  color: var(--piao-text);\n  opacity: 0.8;\n}\n\n.piao-messages .game-message-actions {\n  opacity: 0;\n  transition: opacity 150ms ease;\n}\n\n.piao-messages .game-message-row:hover .game-message-actions {\n  opacity: 1;\n}\n\n.piao-messages .game-message-action-btn {\n  border-radius: 2px;\n  color: var(--piao-text-dim);\n}\n\n.piao-messages .game-message-action-btn:hover {\n  color: var(--piao-text);\n  background: var(--piao-primary-soft);\n}\n\n/* ── Input Composer ── */\n\n.piao-input {\n  border-top: 1px solid var(--piao-border);\n}\n\n.piao-input .game-input-area {\n  padding: 16px;\n  background: var(--piao-bg);\n  border: none;\n  box-shadow: none;\n  backdrop-filter: none;\n}\n\n.piao-input .game-input-compose {\n  display: flex;\n  flex-direction: column;\n  gap: 10px;\n}\n\n.piao-input .game-textarea {\n  background: #ffffff;\n  border: 1px solid var(--piao-border);\n  border-radius: 2px;\n  box-shadow: var(--piao-shadow);\n  font-family: var(--piao-font-body);\n  font-size: 15px;\n  color: var(--piao-text);\n  padding: 12px 16px;\n  resize: none;\n}\n\n.piao-input .game-textarea::placeholder {\n  font-family: var(--piao-font-display);\n  font-style: italic;\n  color: var(--piao-text-dim);\n  opacity: 0.7;\n}\n\n.piao-input .game-textarea:focus {\n  outline: none;\n  box-shadow: var(--piao-shadow), 0 0 0 1px var(--piao-primary);\n}\n\n.piao-input .game-input-toolbar {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 8px;\n}\n\n.piao-input .game-input-toolbar-left {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n.piao-input .game-input-attach-btn {\n  width: 32px;\n  height: 32px;\n  min-width: 32px;\n  border-radius: 2px;\n  border: 1px solid var(--piao-border);\n  background: var(--piao-bg);\n  color: var(--piao-text-dim);\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  padding: 0;\n  transition: all 150ms ease;\n}\n\n.piao-input .game-input-attach-btn:hover {\n  background: var(--piao-card);\n  color: var(--piao-text);\n}\n\n.piao-input .game-submit-btn {\n  border-radius: 2px;\n  background: rgba(184, 139, 139, 0.90);\n  color: var(--piao-bg);\n  border: 1px solid var(--piao-primary);\n  font-family: var(--piao-font-body);\n  font-size: 14px;\n  font-weight: 500;\n  padding: 6px 16px;\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  transition: background-color 150ms ease;\n  margin-left: auto;\n}\n\n.piao-input .game-submit-btn:hover {\n  background: var(--piao-primary);\n}\n\n.piao-input .game-submit-btn:disabled {\n  opacity: 0.5;\n  cursor: not-allowed;\n}\n\n.piao-input .game-session-meta {\n  display: none;\n}\n\n/* ── Side Column ── */\n\n.piao-side-column {\n  background: var(--piao-card);\n}\n\n.piao-side-tabs .game-status {\n  height: 100%;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n  background: transparent;\n  border: none;\n  gap: 0;\n}\n\n.piao-side-tabs .game-tabs {\n  display: flex;\n  gap: 0;\n  padding: 12px 16px 0;\n  border-bottom: 1px solid var(--piao-border);\n}\n\n.piao-side-tabs .game-tab {\n  min-width: 0;\n  flex: 1 1 0;\n  padding: 8px 6px;\n  border: 0;\n  border-bottom: 1px solid transparent;\n  border-radius: 0;\n  background: transparent;\n  color: var(--piao-text-dim);\n  font-family: var(--piao-font-body);\n  font-size: 12px;\n  font-weight: 500;\n  letter-spacing: 0.04em;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.piao-side-tabs .game-tab:hover {\n  color: var(--piao-text);\n  background: rgba(184, 139, 139, 0.05);\n}\n\n.piao-side-tabs .game-tab--active {\n  color: var(--piao-primary);\n  border-bottom-color: var(--piao-primary);\n  background: transparent;\n}\n\n.piao-side-tabs .game-panel {\n  flex: 1 1 0;\n  height: auto;\n  min-height: 0;\n  padding: 16px;\n  overflow: hidden;\n  background: transparent;\n  border: none;\n  border-radius: 0;\n  box-shadow: none;\n  backdrop-filter: none;\n}\n\n.piao-side-tabs .game-custom-tab-content {\n  height: 100%;\n  overflow: auto;\n  padding: 14px 16px;\n  background: var(--piao-bg);\n  border: 1px solid var(--piao-border);\n  border-radius: 2px;\n  box-shadow: var(--piao-shadow);\n  font-family: var(--piao-font-body);\n  font-size: 14px;\n  line-height: 1.75;\n  color: var(--piao-text);\n}\n\n/* ── Floating Actions ── */\n\n.piao-floating-actions {\n  border-top: 1px solid var(--piao-border);\n  padding: 10px 12px;\n}\n\n.piao-floating-actions .game-header-actions {\n  display: flex;\n  gap: 8px;\n  width: 100%;\n}\n\n.piao-floating-actions .game-back-btn,\n.piao-floating-actions .game-quick-btn {\n  flex: 1;\n  height: 36px;\n  border-radius: 2px;\n  border: 1px solid var(--piao-border);\n  background: var(--piao-bg);\n  color: var(--piao-text-dim);\n  font-size: 13px;\n  font-weight: 500;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  gap: 4px;\n  transition: all 150ms ease;\n}\n\n.piao-floating-actions .game-back-btn:hover,\n.piao-floating-actions .game-quick-btn:hover {\n  background: var(--piao-primary-soft);\n  color: var(--piao-text);\n  border-color: var(--piao-primary);\n}\n\n/* ── Scrollbar ── */\n\n.game-ui-root ::-webkit-scrollbar {\n  width: 4px;\n}\n\n.game-ui-root ::-webkit-scrollbar-track {\n  background: transparent;\n}\n\n.game-ui-root ::-webkit-scrollbar-thumb {\n  background: var(--piao-border);\n  border-radius: 2px;\n}\n\n.game-ui-root ::-webkit-scrollbar-thumb:hover {\n  background: var(--piao-text-dim);\n}",
+  "custom_css": "&.game-root {\n  color: #2b2d3a;\n  background: #f8f6f3;\n  font-family: \"PingFang SC\", \"Microsoft YaHei\", system-ui, sans-serif;\n}\n&.game-root .default-d-header,\n&.game-root .default-d-actions {\n  border-bottom: 1px solid rgba(45, 71, 57, 0.12);\n  background: #f8f6f3;\n}\n&.game-root .default-d-header .game-header {\n  min-height: 76px;\n  padding: 18px 32px 10px;\n  align-items: center;\n  background: transparent;\n  border: 0;\n  border-radius: 0;\n  box-shadow: none;\n}\n&.game-root .default-d-header .game-title-group,\n&.game-root .default-d-header .game-header-left,\n&.game-root .default-d-header .game-header-meta {\n  min-width: 0;\n}\n&.game-root .default-d-header .game-title-group {\n  display: flex;\n  align-items: center;\n  gap: 18px;\n}\n&.game-root .default-d-header .game-simple-world {\n  color: #2b2d3a;\n  font-family: Georgia, \"Noto Serif SC\", \"Songti SC\", serif;\n  font-size: 22px;\n  font-weight: 600;\n  line-height: 1;\n}\n&.game-root .default-d-header .game-simple-place-row {\n  display: flex;\n  align-items: center;\n  gap: 14px;\n}\n&.game-root .default-d-header .game-scene-name {\n  color: #8e8174;\n  font-size: 14px;\n  font-weight: 400;\n  line-height: 1;\n}\n&.game-root .default-d-header .game-scene-time {\n  color: #8e8174;\n  font-size: 14px;\n  line-height: 1;\n}\n&.game-root .default-d-header .game-simple-meta-item--action-phrase {\n  gap: 6px;\n  min-height: auto;\n  padding: 0;\n  border: 0;\n  border-radius: 0;\n  background: transparent;\n  color: #8e8174;\n  font-size: 14px;\n}\n&.game-root .default-d-header .game-action-phrase-name {\n  color: #2b2d3a;\n  font-family: Georgia, \"Noto Serif SC\", \"Songti SC\", serif;\n  font-size: 17px;\n}\n&.game-root .default-d-actions {\n  padding: 0 24px 0 0;\n  display: flex;\n  align-items: center;\n  justify-content: flex-end;\n}\n&.game-root .default-d-actions .game-header-actions {\n  display: flex;\n  align-items: center;\n  gap: 10px;\n}\n&.game-root .default-d-actions .game-back-btn,\n&.game-root .default-d-actions .game-quick-btn {\n  min-width: 40px;\n  height: 40px;\n  padding: 0 14px;\n  border-radius: 2px;\n  background: #ffffff;\n  border: 1px solid rgba(45, 71, 57, 0.12);\n  color: #8e8174;\n}\n&.game-root .default-d-scene {\n  padding: 0;\n  border-right: 1px solid rgba(45, 71, 57, 0.12);\n  background: linear-gradient(135deg, #faf8f5 0%, #f4ede4 100%);\n}\n&.game-root .default-d-focus,\n&.game-root .default-d-messages,\n&.game-root .default-d-side {\n  min-height: 0;\n}\n&.game-root .default-d-focus {\n  flex: 1 1 auto;\n  border: 0;\n  border-radius: 0;\n  background: linear-gradient(135deg, #faf8f5 0%, #f4ede4 100%);\n  box-shadow: none;\n  overflow: hidden;\n}\n&.game-root .default-d-focus .game-scene-center {\n  position: relative;\n  height: 100%;\n  min-height: 0;\n  padding: 48px 40px 0;\n  display: flex;\n  flex-direction: column;\n  justify-content: center;\n  align-items: center;\n  gap: 32px;\n  background: transparent;\n}\n&.game-root .default-d-focus .game-scene-center::before {\n  content: \"????\";\n  position: absolute;\n  top: 24px;\n  left: 24px;\n  padding: 6px 12px;\n  background: rgba(255,255,255,0.6);\n  border: 1px solid rgba(45, 71, 57, 0.12);\n  box-shadow: 0 1px 3px rgba(43,45,58,0.06);\n  color: #8e8174;\n  font-size: 12px;\n}\n&.game-root .default-d-focus .game-avatar {\n  width: 256px;\n  height: 320px;\n  max-width: 100%;\n  border: 1px solid rgba(45, 71, 57, 0.18);\n  border-radius: 0;\n  background: rgba(255,255,255,0.52);\n  box-shadow: 0 1px 3px rgba(43,45,58,0.06);\n  overflow: hidden;\n}\n&.game-root .default-d-focus .game-avatar-image {\n  width: 100%;\n  height: 100%;\n  object-fit: cover;\n}\n&.game-root .default-d-focus .game-current-line {\n  width: 100%;\n  margin-top: auto;\n  padding: 28px 32px;\n  border-top: 1px solid rgba(45, 71, 57, 0.12);\n  background: rgba(248,246,243,0.55);\n  color: #2b2d3a;\n  font-family: Georgia, \"Noto Serif SC\", \"Songti SC\", serif;\n  font-size: 28px;\n  font-style: italic;\n  line-height: 1.6;\n  text-align: left;\n}\n&.game-root .default-d-cast .game-scene-characters {\n  padding: 18px 24px 24px;\n  gap: 10px;\n  border: 0;\n  background: rgba(248,246,243,0.7);\n  justify-content: flex-start;\n  align-items: center;\n}\n&.game-root .default-d-cast .game-scene-char {\n  min-height: 38px;\n  padding: 0 14px;\n  border-radius: 2px;\n  border: 1px solid rgba(45, 71, 57, 0.12);\n  background: #ffffff;\n  color: #2d4739;\n  font-size: 13px;\n  font-weight: 500;\n}\n&.game-root .default-d-chat {\n  padding: 0;\n  background: #f8f6f3;\n}\n&.game-root .default-d-narration .game-narration-panel {\n  margin: 24px 24px 0;\n  padding: 12px 0 12px 16px;\n  border: 0;\n  border-left: 2px solid #b88b8b;\n  border-radius: 0;\n  background: #f7ece8;\n  box-shadow: none;\n}\n&.game-root .default-d-narration .game-narration-label {\n  display: none;\n}\n&.game-root .default-d-narration .game-narration-content {\n  color: rgba(43,45,58,0.8);\n  font-family: Georgia, \"Noto Serif SC\", \"Songti SC\", serif;\n  font-size: 15px;\n  font-style: italic;\n  line-height: 1.7;\n}\n&.game-root .default-d-messages {\n  min-height: 0;\n  overflow: hidden;\n}\n&.game-root .default-d-messages .game-chat-messages {\n  height: 100%;\n  min-height: 0;\n  padding: 24px 24px 0;\n  overflow-y: auto;\n  background: transparent;\n}\n&.game-root .default-d-messages .game-message-row {\n  margin-bottom: 22px;\n}\n&.game-root .default-d-messages .game-message-row--player {\n  padding-left: 56px;\n}\n&.game-root .default-d-messages .game-message {\n  max-width: 100%;\n  padding: 0;\n  background: transparent;\n  box-shadow: none;\n}\n&.game-root .default-d-messages .game-message--player {\n  padding: 10px 14px;\n  background: rgba(232,227,219,0.72);\n  border: 1px solid rgba(45, 71, 57, 0.10);\n  box-shadow: 0 1px 3px rgba(43,45,58,0.06);\n}\n&.game-root .default-d-messages .game-message-speaker {\n  margin-bottom: 8px;\n  color: #2b2d3a;\n  font-family: Georgia, \"Noto Serif SC\", \"Songti SC\", serif;\n  font-size: 22px;\n  font-weight: 500;\n  letter-spacing: 0;\n}\n&.game-root .default-d-messages .game-message-speaker--player {\n  color: #8e8174;\n  font-size: 14px;\n  font-family: \"PingFang SC\", \"Microsoft YaHei\", system-ui, sans-serif;\n}\n&.game-root .default-d-messages .game-message-content--default {\n  color: #2b2d3a;\n  font-size: 16px;\n  line-height: 1.75;\n}\n&.game-root .default-d-messages .game-message--player .game-message-content--default {\n  color: #5d4f47;\n}\n&.game-root .default-d-messages .game-message-content--system {\n  color: #5d4f47;\n  font-family: Georgia, \"Noto Serif SC\", \"Songti SC\", serif;\n  font-style: italic;\n}\n&.game-root .default-d-messages .game-message-actions,\n&.game-root .default-d-messages .game-message-inline-actions {\n  gap: 8px;\n}\n&.game-root .default-d-messages .game-message-action-btn {\n  min-width: 32px;\n  height: 32px;\n  border-radius: 2px;\n  background: #ffffff;\n  border: 1px solid rgba(45, 71, 57, 0.12);\n  color: #8e8174;\n}\n&.game-root .default-d-input {\n  padding: 16px 24px 20px;\n  border-top: 1px solid rgba(45, 71, 57, 0.12);\n  background: #f4ede4;\n}\n&.game-root .default-d-input .game-input-area {\n  padding: 0;\n  border: 0;\n  background: transparent;\n  box-shadow: none;\n}\n&.game-root .default-d-input .game-input-area::before {\n  content: \"????\";\n  display: block;\n  margin-bottom: 12px;\n  color: #8e8174;\n  font-size: 11px;\n  letter-spacing: 0.12em;\n  text-transform: uppercase;\n}\n&.game-root .default-d-input .game-textarea,\n&.game-root .default-d-input textarea.game-textarea {\n  min-height: 92px;\n  max-height: 156px;\n  padding: 12px 14px;\n  border: 1px solid rgba(45, 71, 57, 0.12);\n  border-radius: 2px;\n  background: #ffffff;\n  color: #2b2d3a;\n  font-size: 16px;\n  line-height: 1.65;\n  box-shadow: 0 1px 3px rgba(43,45,58,0.06);\n}\n&.game-root .default-d-input .game-textarea::placeholder {\n  color: rgba(142,129,116,0.66);\n  font-family: Georgia, \"Noto Serif SC\", \"Songti SC\", serif;\n}\n&.game-root .default-d-input .game-input-toolbar {\n  margin-top: 12px;\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 16px;\n}\n&.game-root .default-d-input .game-input-toolbar-left {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n}\n&.game-root .default-d-input .game-input-attach-btn {\n  width: 32px;\n  height: 32px;\n  border-radius: 2px;\n  border: 1px solid rgba(45, 71, 57, 0.12);\n  background: #ffffff;\n  color: #8e8174;\n}\n&.game-root .default-d-input .game-submit-btn,\n&.game-root .default-d-input .game-submit-btn--inline {\n  min-width: 104px;\n  height: 40px;\n  padding: 0 18px;\n  border-radius: 2px;\n  background: #b88b8b;\n  color: #f8f6f3;\n  border: 1px solid #b88b8b;\n  font-size: 14px;\n  font-weight: 500;\n  box-shadow: none;\n}\n&.game-root .default-d-side {\n  height: 100%;\n  border-left: 1px solid rgba(45, 71, 57, 0.12);\n  background: #f4ede4;\n}\n&.game-root .default-d-side .game-status {\n  height: 100%;\n  display: flex;\n  flex-direction: column;\n  padding: 0;\n}\n&.game-root .default-d-side .game-tabs {\n  display: flex;\n  gap: 4px;\n  padding: 16px 16px 0;\n  border-bottom: 1px solid rgba(45, 71, 57, 0.12);\n}\n&.game-root .default-d-side .game-tab {\n  min-height: 38px;\n  padding: 0 12px;\n  border: 0;\n  border-bottom: 1px solid transparent;\n  border-radius: 0;\n  background: transparent;\n  color: #8e8174;\n  font-size: 12px;\n  font-weight: 600;\n  letter-spacing: 0.12em;\n  text-transform: uppercase;\n}\n&.game-root .default-d-side .game-tab--active {\n  color: #b88b8b;\n  border-color: #b88b8b;\n  background: transparent;\n}\n&.game-root .default-d-side .game-panel,\n&.game-root .default-d-side .game-side-content {\n  flex: 1 1 auto;\n  min-height: 0;\n  padding: 16px;\n  border: 0;\n  background: transparent;\n}\n&.game-root .default-d-side .game-card,\n&.game-root .default-d-side .game-attribute-tab-content {\n  color: #2b2d3a;\n  font-size: 14px;\n  line-height: 1.75;\n  white-space: pre-wrap;\n  background: rgba(255,255,255,0.42);\n  border: 1px solid rgba(45, 71, 57, 0.12);\n  padding: 12px;\n}\n&.game-root .default-d-side .game-map-summary {\n  align-items: flex-start;\n  gap: 8px;\n}\n&.game-root .default-d-side .game-map-summary-main strong {\n  color: #2b2d3a;\n  font-family: Georgia, \"Noto Serif SC\", \"Songti SC\", serif;\n  font-size: 17px;\n}\n&.game-root .default-d-side .game-map-summary-main span,\n&.game-root .default-d-side .game-map-summary-meta {\n  color: #8e8174;\n  font-size: 12px;\n}",
   "mounts": {
     "side_panel": {
       "tab_order": [
-        "map",
-        "custom:\u5173\u7cfb",
-        "custom:\u793c\u4eea"
+        "map"
       ]
     }
   }

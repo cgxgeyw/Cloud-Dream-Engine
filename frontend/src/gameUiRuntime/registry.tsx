@@ -98,7 +98,7 @@ export function createGameUiComponentRegistry(
       version: 1,
       propsSchema: {
         show_map_tab: "boolean",
-        show_custom_tabs: "boolean",
+        show_attribute_tabs: "boolean",
         empty_text: "string",
       },
       render: ({ node }) => <SidePanelTabsComponent runtime={runtime} actions={actions} node={node} />,

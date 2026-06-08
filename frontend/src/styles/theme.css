@@ -1531,7 +1531,7 @@
   justify-content: center;
 }
 
-@media (min-width: 769px) {
+@media (min-width: 769px) and (hover: hover) and (pointer: fine) {
   .layout-inner:has(.newgame-setup-screen) {
     height: 100vh;
     min-height: 0;
@@ -1558,15 +1558,15 @@
 
   .newgame-setup-screen {
     min-height: 0;
+    overflow: hidden;
   }
 
   .newgame-setup-panel {
     min-height: 0;
     display: grid;
-    grid-template-rows: auto minmax(96px, 0.86fr) auto auto auto;
     gap: 12px;
     padding: 16px;
-    overflow: hidden;
+    overflow-y: auto;
   }
 
   .newgame-setup-head {
@@ -2463,6 +2463,20 @@
   pointer-events: none;
 }
 
+.toast-stack {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 16px);
+  left: 50%;
+  z-index: 2400;
+  display: flex;
+  width: min(420px, calc(100vw - 32px));
+  transform: translateX(-50%);
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  pointer-events: none;
+}
+
 .toast {
   padding: 12px 20px;
   border-radius: var(--radius-lg);
@@ -2472,6 +2486,41 @@
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
   animation: toast-in 200ms ease-out, toast-out 300ms ease-in 2200ms forwards;
   pointer-events: auto;
+}
+
+.toast-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 11px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.35;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.22);
+  animation: toast-in 200ms ease-out, toast-out 300ms ease-in 2200ms forwards;
+  pointer-events: auto;
+}
+
+.toast-card-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: var(--radius-full);
+  background: var(--color-success);
+  flex: 0 0 auto;
+}
+
+.toast-card--error .toast-card-dot {
+  background: var(--color-error);
+}
+
+.toast-card-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .toast--success {
@@ -2498,7 +2547,7 @@
    Mobile Responsive Styles (< 768px)
    ═══════════════════════════════════════════════════════════════ */
 
-@media (max-width: 768px) {
+@media (max-width: 768px), (hover: none) and (pointer: coarse) {
   /* Typography */
   :root {
     --sp-lg: 16px;
@@ -2730,8 +2779,7 @@
 .mobile-nav-container {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
-  min-height: 100dvh;
+  min-height: var(--app-visual-viewport-height, 100dvh);
 }
 
 .mobile-header {
@@ -2920,7 +2968,7 @@
 }
 
 /* Show mobile nav on small screens */
-@media (max-width: 768px) {
+@media (max-width: 768px), (hover: none) and (pointer: coarse) {
   .mobile-header {
     display: flex;
   }
@@ -2961,10 +3009,8 @@
 .mobile-nav-container {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
-  height: 100vh;
-  min-height: 100dvh;
-  height: 100dvh;
+  min-height: var(--app-visual-viewport-height, 100dvh);
+  height: var(--app-visual-viewport-height, 100dvh);
   position: relative;
   background: var(--color-bg);
 }
@@ -3259,6 +3305,7 @@
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  height: 100%;
   background: inherit;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
@@ -3273,13 +3320,13 @@
 }
 
 /* 移动端标题区域左移避让 FAB 按钮 */
-@media (max-width: 767px) {
+@media (max-width: 767px), (hover: none) and (pointer: coarse) {
   .layout-header {
     padding-left: 72px;
   }
 
   .layout-root {
-    min-height: 100dvh;
+    min-height: var(--app-visual-viewport-height, 100dvh);
     padding-top: env(safe-area-inset-top, 0px);
     padding-bottom: env(safe-area-inset-bottom, 0px);
     padding-left: env(safe-area-inset-left, 0px);
@@ -3287,7 +3334,7 @@
   }
 
   .layout-inner {
-    min-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    min-height: calc(var(--app-visual-viewport-height, 100dvh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
     padding-top: 12px;
     padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px));
   }
@@ -3379,7 +3426,7 @@
 }
 
 /* Show mobile nav on small screens */
-@media (max-width: 768px) {
+@media (max-width: 768px), (hover: none) and (pointer: coarse) {
   .layout-header {
     padding: 12px;
     padding-left: 65px;
@@ -3461,16 +3508,17 @@
   }
 
   .mcp-mobile-header {
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
+    grid-template-columns: 1fr;
+    align-items: start;
+    gap: 12px;
     min-height: 44px;
-    margin-bottom: 0;
+    margin-bottom: 14px;
   }
 
   .character-pool-mobile-header {
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 10px;
+    grid-template-columns: 1fr;
+    align-items: start;
+    gap: 12px;
     min-height: 48px;
     margin-bottom: 14px;
     padding-right: 96px;
@@ -3479,6 +3527,9 @@
   .character-pool-mobile-copy {
     min-width: 0;
     padding-left: 65px;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
   }
 
   .character-pool-mobile-copy strong {
@@ -3494,6 +3545,7 @@
   }
 
   .character-pool-mobile-header .action-btn {
+    width: 100%;
     justify-content: center;
     min-height: 42px;
     padding: 8px 10px;
@@ -3507,6 +3559,9 @@
 
   .mcp-mobile-header .settings-detail-head-copy {
     padding-left: 65px;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
   }
 
   .mcp-mobile-header .settings-detail-head-copy strong {
@@ -3522,10 +3577,16 @@
   }
 
   .mcp-mobile-header .action-btn {
+    order: 2;
+    width: 100%;
     justify-content: center;
     min-height: 42px;
+    max-width: none;
+    min-width: 0;
     padding: 8px 10px;
     font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
 
@@ -3542,15 +3603,17 @@
     display: grid;
     grid-template-columns: 1fr;
     align-items: start;
-    gap: 10px;
+    gap: 12px;
     min-height: 48px;
-    margin-bottom: 2px;
-    padding-right: 96px;
+    margin-bottom: 14px;
   }
 
   .saves-mobile-title {
     margin: 0;
     padding-left: 65px;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
     color: var(--color-charcoal);
     font-family: var(--font-display);
     font-size: 24px;
@@ -3562,7 +3625,7 @@
   }
 
   .saves-mobile-header .action-btn {
-    justify-self: end;
+    width: 100%;
     justify-content: center;
     min-height: 42px;
     padding: 8px 10px;
@@ -3659,21 +3722,46 @@
 
   .newgame-world-grid {
     grid-template-columns: 1fr;
+    gap: 10px;
+    width: min(100%, 360px);
+    margin: 0 auto;
   }
 
   .newgame-list-head {
+    display: grid;
     grid-template-columns: minmax(0, 1fr);
     align-items: start;
-    gap: 10px;
+    gap: 12px;
     min-height: 48px;
-    padding-left: 65px;
-    padding-right: 96px;
+  }
+
+  .newgame-screen {
+    gap: 10px;
+    width: 100%;
+    max-width: 390px;
+    margin: 0 auto;
+  }
+
+  .newgame-setup-screen {
+    max-width: none;
+  }
+
+  .surface-panel.newgame-list-panel {
+    gap: 12px;
+    padding: 12px;
   }
 
   .newgame-list-head > div,
   .newgame-section-title,
   .newgame-section-note {
     min-width: 0;
+  }
+
+  .newgame-list-head > div {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    padding-left: 65px;
   }
 
   .newgame-section-title,
@@ -3686,14 +3774,228 @@
 
   .newgame-list-head .action-btn {
     justify-self: start;
-    max-width: 100%;
+    width: 100%;
+    max-width: none;
+    min-height: 42px;
+    padding: 8px 10px;
+    font-size: 13px;
     white-space: nowrap;
   }
 
+  .newgame-world-card {
+    gap: 6px;
+    min-height: 108px;
+    padding: 12px;
+  }
+
+  .newgame-world-card strong {
+    overflow: hidden;
+    font-size: 15px;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .newgame-world-card-top span {
+    overflow: hidden;
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .newgame-world-card p {
+    font-size: 12px;
+    line-height: 1.35;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .newgame-world-card-meta {
+    display: grid;
+    gap: 2px;
+    align-items: start;
+    font-size: 11px;
+    line-height: 1.3;
+  }
+
+  .newgame-world-card-meta span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .layout-inner:has(.newgame-setup-screen) {
+    min-height: calc(var(--app-visual-viewport-height, 100dvh) - env(safe-area-inset-top, 0px));
+    padding: calc(env(safe-area-inset-top, 0px) + 72px) 12px calc(env(safe-area-inset-bottom, 0px) + 16px);
+    overflow: visible;
+  }
+
+  .layout-inner:has(.newgame-setup-screen) .layout-header--compact {
+    margin-bottom: 16px;
+  }
+
+  .newgame-setup-screen {
+    max-width: none;
+    min-height: 0;
+    width: 100%;
+    overflow: visible;
+  }
+
+  .newgame-setup-panel {
+    display: grid;
+    gap: 12px;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    overflow: visible;
+  }
+
+  .newgame-setup-panel .newgame-preview-hero {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .newgame-setup-panel .newgame-action-stack {
+    margin-top: 2px;
+  }
+
+  .newgame-start-btn {
+    width: 100%;
+  }
+
   .newgame-setup-head {
-    min-height: 44px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+    min-height: 38px;
     padding-left: 65px;
     padding-right: 96px;
+  }
+
+  .newgame-setup-head .action-btn {
+    justify-content: center;
+    min-width: 0;
+    min-height: 36px;
+    padding: 6px 8px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .newgame-preview-hero {
+    gap: 2px;
+    min-height: 0;
+    padding: 10px 12px;
+  }
+
+  .newgame-label {
+    font-size: 10px;
+  }
+
+  .newgame-world-name {
+    margin: 2px 0 1px;
+    overflow: hidden;
+    font-size: 20px;
+    line-height: 1.15;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .newgame-world-meta {
+    overflow: hidden;
+    font-size: 11px;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .newgame-preview-summary {
+    margin: 2px 0 0;
+    font-size: 11px;
+    line-height: 1.35;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .newgame-info-grid {
+    gap: 6px;
+  }
+
+  .newgame-info-row {
+    gap: 2px;
+    padding: 7px 9px;
+    font-size: 12px;
+    line-height: 1.25;
+  }
+
+  .newgame-info-row strong,
+  .newgame-info-row span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .newgame-player-card {
+    padding: 10px;
+  }
+
+  .newgame-player-card .editor-field {
+    gap: 4px;
+  }
+
+  .newgame-player-card .editor-field-label {
+    font-size: 12px;
+  }
+
+  .newgame-player-card .editor-field-input {
+    min-height: 34px;
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+
+  .newgame-action-stack {
+    --newgame-action-button-height: 42px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    width: 100%;
+  }
+
+  .newgame-secondary-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .newgame-secondary-actions .action-btn {
+    justify-content: center;
+    min-width: 0;
+    width: 100%;
+    max-width: none;
+    height: var(--newgame-action-button-height);
+    min-height: var(--newgame-action-button-height);
+    padding: 0 8px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .newgame-start-btn {
+    display: flex;
+    width: 100%;
+    max-width: none;
+    height: var(--newgame-action-button-height);
+    min-height: var(--newgame-action-button-height);
+    padding: 0 8px;
+    font-size: 12px;
   }
 
   .world-editor-toolbar {
@@ -3727,6 +4029,31 @@
     scroll-padding-right: 96px;
   }
 
+  .character-editor-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding-top: 44px;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .character-editor-tabs .editor-tab {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-width: 0;
+    min-height: 40px;
+    padding: 7px 8px;
+    overflow: hidden;
+    font-size: 12px;
+    line-height: 1.2;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .world-editor-mobile-savebar {
     padding-bottom: max(10px, env(safe-area-inset-bottom, 0px));
   }
@@ -3748,7 +4075,7 @@
   .settings-mobile-overview-head {
     display: grid;
     gap: 0;
-    padding: 0 96px 0 65px;
+    padding: 0 0 0 65px;
     min-height: 44px;
     align-content: center;
   }
@@ -3846,23 +4173,30 @@
 
   .settings-detail-head {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    align-items: center;
+    grid-template-columns: 1fr;
+    align-items: start;
     gap: 12px;
     min-height: 48px;
-    padding-left: 65px;
-    padding-right: 96px;
   }
 
-  .settings-detail-back {
-    min-height: 38px;
-    padding: 0 12px;
+  .settings-detail-back,
+  .settings-detail-head > .action-btn {
+    order: 2;
+    width: 100%;
+    justify-content: center;
+    min-height: 42px;
+    padding: 8px 10px;
+    font-size: 13px;
   }
 
   .settings-detail-head-copy {
+    order: 1;
     display: grid;
     gap: 2px;
     min-width: 0;
+    min-height: 44px;
+    padding-left: 65px;
+    align-content: center;
   }
 
   .settings-detail-head-copy span {

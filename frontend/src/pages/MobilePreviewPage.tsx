@@ -79,7 +79,7 @@ export function MobilePreviewPage() {
     >
       <div className="mobile-redesign-hero">
         <div className="mobile-redesign-hero-copy">
-          <span className="mobile-redesign-kicker">New Direction</span>
+          <span className="mobile-redesign-kicker">新方向</span>
           <h2>去掉每个界面顶部那条统一页头，改成更像 App 的浮动控制和直接入场内容。</h2>
           <p>
             左侧导航从最顶层直接盖出，游戏页不再切出单独场景区，状态区也不再做成明显的第二栏，

@@ -47,7 +47,7 @@ export type GameUiRuntimeContext = {
   visible_characters: string[];
   side_tabs: Array<{ key: string; label: string }>;
   active_side_tab: SideTab;
-  active_custom_content: string;
+  active_attribute_content: string;
   draft_input: {
     value: string;
     set_value: Dispatch<SetStateAction<string>>;
@@ -130,7 +130,7 @@ export function createGameUiRuntimeContext(
     visible_characters: bag.session?.visible_characters ?? [],
     side_tabs: bag.sideTabs,
     active_side_tab: bag.sideTab,
-    active_custom_content: bag.activeCustomContent,
+    active_attribute_content: bag.activeAttributeContent,
     draft_input: {
       value: bag.inputValue,
       set_value: bag.setInputValue,

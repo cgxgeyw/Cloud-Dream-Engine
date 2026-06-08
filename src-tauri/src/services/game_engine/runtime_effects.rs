@@ -7,6 +7,7 @@ use crate::db::repositories::attribute_repo::AttributeRepository;
 use crate::models::attribute::{AttributeSchema, AttributeValueUpsertRequest};
 use crate::models::character::CharacterDefinition;
 use crate::models::memory::MemoryEntry;
+use crate::models::scheduled_notification::PendingScheduledNotification;
 use crate::models::session::{
     ChatMessage, InventoryItem, MessageContent, RuntimeAttributeItem, SceneRuntime, SessionSnapshot,
 };
@@ -19,6 +20,7 @@ pub(crate) struct DirectorRuntimeApplication {
     pub system_messages: Vec<ChatMessage>,
     pub system_log_lines: Vec<String>,
     pub tool_call_logs: Vec<String>,
+    pub pending_notifications: Vec<PendingScheduledNotification>,
     pub scene_tags: Vec<String>,
     pub state_tags: Vec<String>,
     pub state_metrics: HashMap<String, f64>,
@@ -66,6 +68,7 @@ pub(crate) fn apply_director_runtime_effects(
         system_messages: Vec::new(),
         system_log_lines: Vec::new(),
         tool_call_logs: parse_tool_call_logs(parsed.get("tool_calls")),
+        pending_notifications: parse_pending_notifications(parsed.get("pending_notifications")),
         scene_tags: parse_string_array(
             parsed
                 .get("next_scene_tags")
@@ -720,6 +723,18 @@ fn parse_tool_call_messages(
                 })),
             })
         })
+        .collect()
+}
+
+fn parse_pending_notifications(
+    value: Option<&serde_json::Value>,
+) -> Vec<PendingScheduledNotification> {
+    let Some(items) = value.and_then(|value| value.as_array()) else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| serde_json::from_value::<PendingScheduledNotification>(item.clone()).ok())
         .collect()
 }
 

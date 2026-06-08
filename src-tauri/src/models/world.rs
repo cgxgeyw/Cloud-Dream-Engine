@@ -2,18 +2,6 @@ use crate::models::session::ChatMessage;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CustomAttributeDefinition {
-    pub id: String,
-    pub name: String,
-    pub value_type: String,
-    pub order: i32,
-    pub enabled: bool,
-    pub required: bool,
-    pub placeholder: String,
-    pub default_value: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorldDefinition {
     pub id: String,
     pub name: String,
@@ -24,11 +12,6 @@ pub struct WorldDefinition {
     pub time_system: String,
     pub map_nodes: serde_json::Value,
     pub triggers: Vec<String>,
-    pub custom_tabs: std::collections::HashMap<String, String>,
-    #[serde(default)]
-    pub world_custom_attribute_definitions: Vec<CustomAttributeDefinition>,
-    #[serde(default)]
-    pub character_custom_attribute_definitions: Vec<CustomAttributeDefinition>,
     pub time_config: serde_json::Value,
     pub director_config: serde_json::Value,
     pub ui_theme_config: serde_json::Value,
@@ -56,9 +39,6 @@ pub struct WorldCreateRequest {
     pub time_system: String,
     pub map_nodes: serde_json::Value,
     pub triggers: Vec<String>,
-    pub custom_tabs: std::collections::HashMap<String, String>,
-    pub world_custom_attribute_definitions: Vec<CustomAttributeDefinition>,
-    pub character_custom_attribute_definitions: Vec<CustomAttributeDefinition>,
     pub time_config: serde_json::Value,
     pub director_config: serde_json::Value,
     pub ui_theme_config: serde_json::Value,
@@ -77,9 +57,6 @@ pub struct WorldUpdateRequest {
     pub time_system: Option<String>,
     pub map_nodes: Option<serde_json::Value>,
     pub triggers: Option<Vec<String>>,
-    pub custom_tabs: Option<std::collections::HashMap<String, String>>,
-    pub world_custom_attribute_definitions: Option<Vec<CustomAttributeDefinition>>,
-    pub character_custom_attribute_definitions: Option<Vec<CustomAttributeDefinition>>,
     pub time_config: Option<serde_json::Value>,
     pub director_config: Option<serde_json::Value>,
     pub ui_theme_config: Option<serde_json::Value>,
@@ -155,9 +132,6 @@ pub struct WorldPackageWorldData {
     pub time_system: String,
     pub map_nodes: serde_json::Value,
     pub triggers: Vec<String>,
-    pub custom_tabs: std::collections::HashMap<String, String>,
-    pub world_custom_attribute_definitions: Vec<CustomAttributeDefinition>,
-    pub character_custom_attribute_definitions: Vec<CustomAttributeDefinition>,
     pub time_config: serde_json::Value,
     pub director_config: serde_json::Value,
     pub ui_assets_config: serde_json::Value,

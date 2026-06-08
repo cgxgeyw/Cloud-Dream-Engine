@@ -7,6 +7,7 @@ pub mod plugin;
 pub mod rule;
 pub mod runtime;
 pub mod save;
+pub mod scheduled_notification;
 pub mod session;
 pub mod settings;
 pub mod world;

@@ -13,7 +13,7 @@ use crate::models::world::{
 use crate::state::AppState;
 
 const WORLD_PACKAGE_FORMAT: &str = "dream-world-package";
-const WORLD_PACKAGE_VERSION: u32 = 4;
+const WORLD_PACKAGE_VERSION: u32 = 5;
 const WORLD_PACKAGE_FILE: &str = "world/world.json";
 const WORLD_PACKAGE_DESKTOP_UI_FILE: &str = "world/ui.desktop.jsonc";
 const WORLD_PACKAGE_MOBILE_UI_FILE: &str = "world/ui.mobile.jsonc";
@@ -59,7 +59,6 @@ impl WorldPackageService {
                             recent_dialogue_rounds: character.recent_dialogue_rounds,
                             attributes: character.attributes.clone(),
                             portrait_assets: character.portrait_assets.clone(),
-                            custom_tabs: character.custom_tabs.clone(),
                             system_prompt_template: character.system_prompt_template.clone(),
                             response_contract_prompt: character.response_contract_prompt.clone(),
                             narration_prompt: character.narration_prompt.clone(),
@@ -486,11 +485,6 @@ fn to_world_package_data(
         time_system: world.time_system.clone(),
         map_nodes: world.map_nodes.clone(),
         triggers: world.triggers.clone(),
-        custom_tabs: world.custom_tabs.clone(),
-        world_custom_attribute_definitions: world.world_custom_attribute_definitions.clone(),
-        character_custom_attribute_definitions: world
-            .character_custom_attribute_definitions
-            .clone(),
         time_config: world.time_config.clone(),
         director_config: world.director_config.clone(),
         ui_assets_config: world

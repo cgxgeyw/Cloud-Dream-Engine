@@ -50,6 +50,25 @@ function Remove-FileWithRetry {
     }
 }
 
+function Ensure-AndroidAdjustResize {
+    param([string]$ManifestPath)
+
+    if (-not (Test-Path $ManifestPath)) {
+        return
+    }
+
+    $content = [System.IO.File]::ReadAllText($ManifestPath, [System.Text.Encoding]::UTF8)
+    if ($content -match 'android:windowSoftInputMode=') {
+        return
+    }
+
+    $updated = $content -replace '(android:configChanges="[^"]*"\s*)', "`$1            android:windowSoftInputMode=`"adjustResize`"`r`n"
+    if ($updated -ne $content) {
+        $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+        [System.IO.File]::WriteAllText($ManifestPath, $updated, $utf8NoBom)
+    }
+}
+
 if (-not $env:JAVA_HOME) {
     $env:JAVA_HOME = "C:\Program Files\Eclipse Adoptium\jdk-17.0.18.8-hotspot"
 }
@@ -223,6 +242,8 @@ try {
             }
         }
     }
+
+    Ensure-AndroidAdjustResize -ManifestPath (Join-Path $androidProjectDir "app\src\main\AndroidManifest.xml")
 
     if (-not (Test-Path $android36Jar)) {
         Write-Host "Repairing Android SDK Platform 36..." -ForegroundColor Cyan

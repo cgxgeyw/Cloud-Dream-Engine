@@ -148,29 +148,7 @@ pub fn build_character_system_prompt(
         return render_character_system_prompt_template(template, speaker, speaker_profile);
     }
 
-    let profile = if let Some(profile) = speaker_profile {
-        profile
-    } else {
-        return format!(
-            "你是{}。请始终以该角色身份说话，不要代替玩家行动。",
-            speaker
-        );
-    };
-
-    let mut sections = vec![format!("你需要扮演 {}。", speaker)];
-
-    if !profile.role.trim().is_empty() {
-        sections.push(format!("角色身份 / 职责：{}", profile.role.trim()));
-    }
-
-    if !profile.background_prompt.trim().is_empty() {
-        sections.push(profile.background_prompt.trim().to_string());
-    }
-
-    sections.push("你必须始终站在该角色视角回应，不要代替玩家决定行动。".to_string());
-    sections.push("如果需要输出对白或行动，只输出该角色本轮会表达的内容。".to_string());
-
-    sections.join("\n\n")
+    String::new()
 }
 
 fn render_character_system_prompt_template(

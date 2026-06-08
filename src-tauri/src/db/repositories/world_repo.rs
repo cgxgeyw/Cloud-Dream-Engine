@@ -1,13 +1,13 @@
 use crate::models::world::*;
 use crate::services::map_topology::normalize_map_topology;
 use rusqlite::{params, Connection};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 pub struct WorldRepository<'a> {
     conn: &'a Connection,
 }
 
-const WORLD_SELECT_COLUMNS: &str = "id, name, genre, background_prompt, opening_scene, summary, time_system, map_nodes_json, triggers_json, custom_tabs_json, world_custom_attribute_definitions_json, character_custom_attribute_definitions_json, time_config_json, director_config_json, ui_theme_config_json, director_system_prompt_base, director_runtime_system_prompt, opening_messages_json, opening_character_ids_json, player_character_id";
+const WORLD_SELECT_COLUMNS: &str = "id, name, genre, background_prompt, opening_scene, summary, time_system, map_nodes_json, triggers_json, time_config_json, director_config_json, ui_theme_config_json, director_system_prompt_base, director_runtime_system_prompt, opening_messages_json, opening_character_ids_json, player_character_id";
 
 impl<'a> WorldRepository<'a> {
     pub fn new(conn: &'a Connection) -> Self {
@@ -32,25 +32,19 @@ impl<'a> WorldRepository<'a> {
                     time_system: row.get(6)?,
                     map_nodes: serde_json::from_str(&row.get::<_, String>(7)?).unwrap_or_default(),
                     triggers: serde_json::from_str(&row.get::<_, String>(8)?).unwrap_or_default(),
-                    custom_tabs: serde_json::from_str(&row.get::<_, String>(9)?)
+                    time_config: serde_json::from_str(&row.get::<_, String>(9)?)
                         .unwrap_or_default(),
-                    world_custom_attribute_definitions: serde_json::from_str(&row.get::<_, String>(10)?)
+                    director_config: serde_json::from_str(&row.get::<_, String>(10)?)
                         .unwrap_or_default(),
-                    character_custom_attribute_definitions: serde_json::from_str(&row.get::<_, String>(11)?)
+                    ui_theme_config: serde_json::from_str(&row.get::<_, String>(11)?)
                         .unwrap_or_default(),
-                    time_config: serde_json::from_str(&row.get::<_, String>(12)?)
+                    director_system_prompt_base: row.get(12)?,
+                    director_runtime_system_prompt: row.get(13)?,
+                    opening_messages: serde_json::from_str(&row.get::<_, String>(14)?)
                         .unwrap_or_default(),
-                    director_config: serde_json::from_str(&row.get::<_, String>(13)?)
+                    opening_character_ids: serde_json::from_str(&row.get::<_, String>(15)?)
                         .unwrap_or_default(),
-                    ui_theme_config: serde_json::from_str(&row.get::<_, String>(14)?)
-                        .unwrap_or_default(),
-                    director_system_prompt_base: row.get(15)?,
-                    director_runtime_system_prompt: row.get(16)?,
-                    opening_messages: serde_json::from_str(&row.get::<_, String>(17)?)
-                        .unwrap_or_default(),
-                    opening_character_ids: serde_json::from_str(&row.get::<_, String>(18)?)
-                        .unwrap_or_default(),
-                    player_character_id: row.get(19)?,
+                    player_character_id: row.get(16)?,
                 })
             })
             .map_err(|e| e.to_string())?
@@ -78,25 +72,19 @@ impl<'a> WorldRepository<'a> {
                     time_system: row.get(6)?,
                     map_nodes: serde_json::from_str(&row.get::<_, String>(7)?).unwrap_or_default(),
                     triggers: serde_json::from_str(&row.get::<_, String>(8)?).unwrap_or_default(),
-                    custom_tabs: serde_json::from_str(&row.get::<_, String>(9)?)
+                    time_config: serde_json::from_str(&row.get::<_, String>(9)?)
                         .unwrap_or_default(),
-                    world_custom_attribute_definitions: serde_json::from_str(&row.get::<_, String>(10)?)
+                    director_config: serde_json::from_str(&row.get::<_, String>(10)?)
                         .unwrap_or_default(),
-                    character_custom_attribute_definitions: serde_json::from_str(&row.get::<_, String>(11)?)
+                    ui_theme_config: serde_json::from_str(&row.get::<_, String>(11)?)
                         .unwrap_or_default(),
-                    time_config: serde_json::from_str(&row.get::<_, String>(12)?)
+                    director_system_prompt_base: row.get(12)?,
+                    director_runtime_system_prompt: row.get(13)?,
+                    opening_messages: serde_json::from_str(&row.get::<_, String>(14)?)
                         .unwrap_or_default(),
-                    director_config: serde_json::from_str(&row.get::<_, String>(13)?)
+                    opening_character_ids: serde_json::from_str(&row.get::<_, String>(15)?)
                         .unwrap_or_default(),
-                    ui_theme_config: serde_json::from_str(&row.get::<_, String>(14)?)
-                        .unwrap_or_default(),
-                    director_system_prompt_base: row.get(15)?,
-                    director_runtime_system_prompt: row.get(16)?,
-                    opening_messages: serde_json::from_str(&row.get::<_, String>(17)?)
-                        .unwrap_or_default(),
-                    opening_character_ids: serde_json::from_str(&row.get::<_, String>(18)?)
-                        .unwrap_or_default(),
-                    player_character_id: row.get(19)?,
+                    player_character_id: row.get(16)?,
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -114,11 +102,6 @@ impl<'a> WorldRepository<'a> {
         let time_system = world.time_system.trim().to_string();
         let map_nodes = normalize_map_topology(&world.map_nodes);
         let triggers = normalize_list(&world.triggers);
-        let custom_tabs = normalize_map(&world.custom_tabs);
-        let world_custom_attribute_definitions =
-            normalize_custom_attribute_definitions(&world.world_custom_attribute_definitions);
-        let character_custom_attribute_definitions =
-            normalize_custom_attribute_definitions(&world.character_custom_attribute_definitions);
         let opening_messages = normalize_messages(&world.opening_messages);
         let opening_character_ids = normalize_list(&world.opening_character_ids);
         let player_character_id = world
@@ -127,7 +110,7 @@ impl<'a> WorldRepository<'a> {
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
         self.conn.execute(
-            "INSERT INTO worlds (id, name, genre, background_prompt, opening_scene, summary, time_system, map_nodes_json, triggers_json, custom_tabs_json, world_custom_attribute_definitions_json, character_custom_attribute_definitions_json, time_config_json, director_config_json, ui_theme_config_json, opening_messages_json, opening_character_ids_json, player_character_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+            "INSERT INTO worlds (id, name, genre, background_prompt, opening_scene, summary, time_system, map_nodes_json, triggers_json, time_config_json, director_config_json, ui_theme_config_json, opening_messages_json, opening_character_ids_json, player_character_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 id,
                 name,
@@ -138,9 +121,6 @@ impl<'a> WorldRepository<'a> {
                 time_system,
                 serde_json::to_string(&map_nodes).unwrap_or_default(),
                 serde_json::to_string(&triggers).unwrap_or_default(),
-                serde_json::to_string(&custom_tabs).unwrap_or_default(),
-                serde_json::to_string(&world_custom_attribute_definitions).unwrap_or_default(),
-                serde_json::to_string(&character_custom_attribute_definitions).unwrap_or_default(),
                 serde_json::to_string(&world.time_config).unwrap_or_default(),
                 serde_json::to_string(&world.director_config).unwrap_or_default(),
                 serde_json::to_string(&world.ui_theme_config).unwrap_or_default(),
@@ -197,21 +177,6 @@ impl<'a> WorldRepository<'a> {
             .as_ref()
             .map(|values| normalize_list(values))
             .unwrap_or(existing.triggers);
-        let custom_tabs = req
-            .custom_tabs
-            .as_ref()
-            .map(|values| normalize_map(values))
-            .unwrap_or(existing.custom_tabs);
-        let world_custom_attribute_definitions = req
-            .world_custom_attribute_definitions
-            .as_ref()
-            .map(|values| normalize_custom_attribute_definitions(values))
-            .unwrap_or(existing.world_custom_attribute_definitions);
-        let character_custom_attribute_definitions = req
-            .character_custom_attribute_definitions
-            .as_ref()
-            .map(|values| normalize_custom_attribute_definitions(values))
-            .unwrap_or(existing.character_custom_attribute_definitions);
         let opening_messages = req
             .opening_messages
             .as_ref()
@@ -230,7 +195,7 @@ impl<'a> WorldRepository<'a> {
         });
 
         self.conn.execute(
-            "UPDATE worlds SET name = ?1, genre = ?2, background_prompt = ?3, opening_scene = ?4, summary = ?5, time_system = ?6, map_nodes_json = ?7, triggers_json = ?8, custom_tabs_json = ?9, world_custom_attribute_definitions_json = ?10, character_custom_attribute_definitions_json = ?11, time_config_json = ?12, director_config_json = ?13, ui_theme_config_json = ?14, opening_messages_json = ?15, opening_character_ids_json = ?16, player_character_id = ?17 WHERE id = ?18",
+            "UPDATE worlds SET name = ?1, genre = ?2, background_prompt = ?3, opening_scene = ?4, summary = ?5, time_system = ?6, map_nodes_json = ?7, triggers_json = ?8, time_config_json = ?9, director_config_json = ?10, ui_theme_config_json = ?11, opening_messages_json = ?12, opening_character_ids_json = ?13, player_character_id = ?14 WHERE id = ?15",
             params![
                 name,
                 genre,
@@ -240,9 +205,6 @@ impl<'a> WorldRepository<'a> {
                 time_system,
                 serde_json::to_string(&map_nodes).unwrap_or_default(),
                 serde_json::to_string(&triggers).unwrap_or_default(),
-                serde_json::to_string(&custom_tabs).unwrap_or_default(),
-                serde_json::to_string(&world_custom_attribute_definitions).unwrap_or_default(),
-                serde_json::to_string(&character_custom_attribute_definitions).unwrap_or_default(),
                 serde_json::to_string(req.time_config.as_ref().unwrap_or(&existing.time_config)).unwrap_or_default(),
                 serde_json::to_string(req.director_config.as_ref().unwrap_or(&existing.director_config)).unwrap_or_default(),
                 serde_json::to_string(req.ui_theme_config.as_ref().unwrap_or(&existing.ui_theme_config)).unwrap_or_default(),
@@ -291,83 +253,6 @@ fn normalize_list(values: &[String]) -> Vec<String> {
             }
         })
         .collect()
-}
-
-fn normalize_map(values: &HashMap<String, String>) -> HashMap<String, String> {
-    let mut map = HashMap::new();
-    for (key, value) in values {
-        let key = key.trim();
-        if key.is_empty() {
-            continue;
-        }
-        map.insert(key.to_string(), value.trim().to_string());
-    }
-    map
-}
-
-fn normalize_custom_attribute_definitions(
-    values: &[CustomAttributeDefinition],
-) -> Vec<CustomAttributeDefinition> {
-    let mut seen = HashSet::new();
-    let mut definitions = Vec::new();
-
-    for (index, value) in values.iter().enumerate() {
-        let name = value.name.trim();
-        if name.is_empty() {
-            continue;
-        }
-
-        let id = value.id.trim();
-        let fallback_id = normalize_attribute_id(name);
-        let id = if id.is_empty() { fallback_id } else { normalize_attribute_id(id) };
-        if id.is_empty() || !seen.insert(id.clone()) {
-            continue;
-        }
-
-        let value_type = match value.value_type.trim() {
-            "text" | "longText" => value.value_type.trim().to_string(),
-            _ => "longText".to_string(),
-        };
-
-        definitions.push(CustomAttributeDefinition {
-            id,
-            name: name.to_string(),
-            value_type,
-            order: if value.order >= 0 {
-                value.order
-            } else {
-                index as i32
-            },
-            enabled: value.enabled,
-            required: value.required,
-            placeholder: value.placeholder.trim().to_string(),
-            default_value: value.default_value.trim().to_string(),
-        });
-    }
-
-    definitions.sort_by_key(|item| item.order);
-    for (index, item) in definitions.iter_mut().enumerate() {
-        item.order = index as i32;
-    }
-    definitions
-}
-
-fn normalize_attribute_id(value: &str) -> String {
-    value
-        .trim()
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() {
-                character.to_ascii_lowercase()
-            } else if character == '_' || character == '-' {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>()
-        .trim_matches('_')
-        .to_string()
 }
 
 fn normalize_messages(values: &[WorldOpeningMessage]) -> Vec<WorldOpeningMessage> {

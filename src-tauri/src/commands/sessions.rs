@@ -3,6 +3,10 @@ use tauri::{AppHandle, State};
 
 use crate::events::session_events::SessionEventEmitter;
 use crate::models::session::*;
+use crate::services::game_engine::service_mode::{resolve_service_runtime_config, ServiceMode};
+use crate::services::notifications::{
+    NotificationScheduler, NotificationToolInput, NotificationToolRuntime,
+};
 use crate::state::AppState;
 
 #[tauri::command]
@@ -118,6 +122,24 @@ pub async fn submit_player_action(
         messages,
         director_completed_payload,
     } = prepared;
+    let service_config = resolve_service_runtime_config(&world);
+    if service_config.service_mode == ServiceMode::AgentChat {
+        return run_agent_chat_player_action(
+            &app,
+            &state,
+            session_id,
+            request,
+            service_config,
+            session,
+            world,
+            characters,
+            turn_index,
+            recovery_journal,
+            image_model,
+            messages,
+        )
+        .await;
+    }
 
     let director_service = &state.services.runtime.world_director;
     let mut emit_director_progress =
@@ -150,6 +172,10 @@ pub async fn submit_player_action(
             &characters,
             turn_index,
             request.content.as_str(),
+            Some(NotificationToolRuntime {
+                app: &app,
+                data_dir: &state.data_dir,
+            }),
             Some(&mut emit_director_progress),
         )
         .await;
@@ -252,6 +278,10 @@ pub async fn submit_player_action(
                 &runtime_preparation.next_scene_name,
                 &runtime_preparation.next_location,
                 &runtime_preparation.visible_chars,
+                Some(NotificationToolRuntime {
+                    app: &app,
+                    data_dir: &state.data_dir,
+                }),
                 Some(&mut emit_progress),
             )
             .await?
@@ -344,6 +374,7 @@ pub async fn submit_player_action(
         )?;
         finalize_turn_snapshot(
             &app,
+            &state.data_dir,
             &state.services.runtime.session_orchestrator,
             db.conn(),
             director_service,
@@ -462,6 +493,185 @@ pub async fn retry_failed_llm_step(
     Ok(result)
 }
 
+async fn run_agent_chat_player_action(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    session_id: String,
+    request: PlayerActionRequest,
+    service_config: crate::services::game_engine::service_mode::ServiceRuntimeConfig,
+    session: SessionSnapshot,
+    world: crate::models::world::WorldDefinition,
+    characters: Vec<crate::models::character::CharacterDefinition>,
+    turn_index: i32,
+    recovery_journal: Vec<serde_json::Value>,
+    image_model: Option<crate::models::model_config::ModelConfig>,
+    messages: Vec<crate::models::session::ChatMessage>,
+) -> Result<SessionSnapshot, String> {
+    let target = state
+        .services
+        .runtime
+        .session_orchestrator
+        .prepare_agent_chat_target(&service_config, &session, &characters)?;
+    {
+        let db = state.db.lock().await;
+        state
+            .services
+            .runtime
+            .session_orchestrator
+            .ensure_agent_chat_runtime_session(
+                db.conn(),
+                &session_id,
+                turn_index,
+                &service_config,
+                &target.agent,
+            )?;
+    }
+    let (session, messages) = state
+        .services
+        .runtime
+        .session_orchestrator
+        .normalize_agent_chat_player_identity(&session, messages, &target.agent);
+    let speaker_turn_result = {
+        let base_message_count = session.messages.len().saturating_add(1);
+        let mut emit_progress =
+            |progress: crate::services::game_engine::orchestrator::SpeakerTurnProgress| {
+                let snapshot = build_agent_chat_progress_snapshot(
+                    &session,
+                    &target,
+                    &progress,
+                    turn_index,
+                    base_message_count,
+                );
+                let _ = SessionEventEmitter::emit_snapshot(app, &session_id, &snapshot);
+            };
+        let db = state.db.lock().await;
+        crate::services::game_engine::orchestrator::run_agent_chat_speaker_turn(
+            &state.services.runtime.session_orchestrator,
+            db,
+            &state.services.llm_client,
+            &state.services.runtime.dialogue_pipeline,
+            &state.services.runtime.memory,
+            &session_id,
+            turn_index,
+            &recovery_journal,
+            &session,
+            &world,
+            &characters,
+            messages,
+            &target,
+            request.content.as_str(),
+            Some(NotificationToolRuntime {
+                app,
+                data_dir: &state.data_dir,
+            }),
+            Some(&mut emit_progress),
+        )
+        .await?
+    };
+    let messages = speaker_turn_result.messages.clone();
+    if let Some(failure) = speaker_turn_result.failure {
+        let overlay = {
+            let db = state.db.lock().await;
+            let failure_message = state
+                .services
+                .runtime
+                .session_orchestrator
+                .record_structured_output_failure(
+                    db.conn(),
+                    &session_id,
+                    turn_index,
+                    &request,
+                    &failure,
+                )?;
+            let mut snapshot = session.clone();
+            snapshot.messages = messages.clone();
+            snapshot.messages.push(failure_message);
+            snapshot
+        };
+        let _ = SessionEventEmitter::emit_snapshot(app, &session_id, &overlay);
+        return Ok(overlay);
+    }
+
+    let speaker_messages = messages
+        .iter()
+        .filter(|message| {
+            message
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata.get("turn_index"))
+                .and_then(|value| value.as_i64())
+                == Some(turn_index as i64)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let updated = state
+        .services
+        .runtime
+        .session_orchestrator
+        .build_agent_chat_updated_session(
+            crate::services::game_engine::orchestrator::AgentChatTurnInput {
+                service_config: &service_config,
+                asset_resolver: &state.services.runtime.asset_resolver,
+                data_dir: &state.data_dir,
+                session: &session,
+                world: &world,
+                characters: &characters,
+                turn_index,
+                messages: messages.clone(),
+                speaker_messages: &speaker_messages,
+                image_model: image_model.as_ref(),
+            },
+        )
+        .await;
+    let runtime_application =
+        crate::services::game_engine::runtime_effects::DirectorRuntimeApplication {
+            pending_notifications: speaker_turn_result.pending_notifications.clone(),
+            ..crate::services::game_engine::runtime_effects::DirectorRuntimeApplication::default()
+        };
+    {
+        let db = state.db.lock().await;
+        state.services.runtime.memory.commit_turn_memories(
+            db.conn(),
+            &recovery_journal,
+            &session_id,
+            turn_index,
+            &runtime_application,
+            &updated,
+            &session,
+            &world,
+            &characters,
+        )?;
+        state
+            .services
+            .runtime
+            .session_orchestrator
+            .writeback_agent_chat_turn(
+                crate::services::game_engine::orchestrator::AgentChatWritebackInput {
+                    conn: db.conn(),
+                    recovery_journal: &recovery_journal,
+                    session_id: &session_id,
+                    turn_index,
+                    runtime_application: &runtime_application,
+                    updated: &updated,
+                    service_config: &service_config,
+                    agent: &target.agent,
+                },
+            )?;
+        schedule_pending_notifications(
+            app,
+            &state.data_dir,
+            db.conn(),
+            &recovery_journal,
+            &session_id,
+            turn_index,
+            &runtime_application,
+            &world,
+        )?;
+    }
+    let _ = SessionEventEmitter::emit_snapshot(app, &session_id, &updated);
+    Ok(updated)
+}
+
 #[tauri::command]
 pub async fn get_session_runtime_attributes(
     state: State<'_, AppState>,
@@ -477,6 +687,7 @@ pub async fn get_session_runtime_attributes(
 
 fn finalize_turn_snapshot(
     app: &AppHandle,
+    data_dir: &std::path::Path,
     session_orchestrator: &crate::services::game_engine::orchestrator::SessionOrchestrator,
     conn: &Connection,
     director_service: &crate::services::game_engine::director::WorldDirectorService,
@@ -519,7 +730,90 @@ fn finalize_turn_snapshot(
             director_tool_loop_limit,
         },
     )?;
+    schedule_pending_notifications(
+        app,
+        data_dir,
+        conn,
+        recovery_journal,
+        session_id,
+        turn_index,
+        runtime_application,
+        world,
+    )?;
     let _ = SessionEventEmitter::emit_snapshot(app, session_id, updated);
+    Ok(())
+}
+
+fn schedule_pending_notifications(
+    app: &AppHandle,
+    data_dir: &std::path::Path,
+    conn: &Connection,
+    recovery_journal: &[serde_json::Value],
+    session_id: &str,
+    turn_index: i32,
+    runtime_application: &crate::services::game_engine::runtime_effects::DirectorRuntimeApplication,
+    world: &crate::models::world::WorldDefinition,
+) -> Result<(), String> {
+    if runtime_application.pending_notifications.is_empty()
+        || crate::services::game_engine::orchestrator::writeback::journal_has_completed_step(
+            recovery_journal,
+            "notifications_scheduled",
+        )
+    {
+        return Ok(());
+    }
+
+    let mut scheduled = Vec::new();
+    let mut failed = Vec::new();
+    for pending in &runtime_application.pending_notifications {
+        let result = NotificationScheduler::schedule_tool_notification(
+            conn,
+            app,
+            data_dir,
+            NotificationToolInput {
+                session_id,
+                world_name: &world.name,
+                source: &pending.source,
+                title: Some(&pending.title),
+                content: &pending.body,
+                requested_time: &pending.scheduled_at,
+                metadata: serde_json::json!({
+                    "tool_call_id": pending.tool_call_id,
+                    "requested_time": pending.requested_time,
+                    "arguments": pending.arguments,
+                    "turn_index": turn_index,
+                    "world_id": world.id,
+                }),
+            },
+        );
+        match result {
+            Ok(notification) => scheduled.push(serde_json::json!({
+                "id": notification.id,
+                "source": notification.source,
+                "scheduled_at": notification.scheduled_at,
+                "title": notification.title,
+            })),
+            Err(error) => failed.push(serde_json::json!({
+                "source": pending.source,
+                "scheduled_at": pending.scheduled_at,
+                "error": error,
+            })),
+        }
+    }
+
+    crate::services::game_engine::orchestrator::writeback::append_turn_journal(
+        conn,
+        session_id,
+        turn_index,
+        "notifications_scheduled",
+        "completed",
+        serde_json::json!({
+            "scheduled_count": scheduled.len(),
+            "failed_count": failed.len(),
+            "scheduled": scheduled,
+            "failed": failed,
+        }),
+    )?;
     Ok(())
 }
 
@@ -626,6 +920,77 @@ fn build_director_progress_snapshot(
         system_log: session.system_log.clone(),
         scene: session.scene.clone(),
         assets: session.assets.clone(),
+        state: session.state.clone(),
+    }
+}
+
+fn build_agent_chat_progress_snapshot(
+    session: &SessionSnapshot,
+    target: &crate::services::game_engine::orchestrator::AgentChatTarget,
+    progress: &crate::services::game_engine::orchestrator::SpeakerTurnProgress,
+    turn_index: i32,
+    base_message_count: usize,
+) -> SessionSnapshot {
+    let split_index = progress.messages.len().min(base_message_count);
+    let mut messages = progress.messages[..split_index].to_vec();
+
+    let mut speaker_messages = progress.messages[split_index..].to_vec();
+    normalize_progress_messages(
+        &mut speaker_messages,
+        turn_index,
+        progress.is_placeholder,
+        progress.is_error,
+    );
+    messages.extend(speaker_messages);
+
+    let current_speaker = messages
+        .iter()
+        .rev()
+        .find(|message| message.role == "agent")
+        .and_then(|message| message.speaker.clone())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| target.agent.name.clone());
+
+    let mut assets = session.assets.clone();
+    assets.active_speaker_portrait = current_speaker.clone();
+    assets.active_speaker_portrait_path = None;
+    assets.active_speaker_generation_prompt.clear();
+
+    SessionSnapshot {
+        id: session.id.clone(),
+        world_name: session.world_name.clone(),
+        location: target.next_location.clone(),
+        time_label: session.time_label.clone(),
+        current_speaker,
+        current_line: progress
+            .narration
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| session.current_line.clone()),
+        player_character_id: session.player_character_id.clone(),
+        player_character_name: session.player_character_name.clone(),
+        visible_characters: target.visible_chars.clone(),
+        messages,
+        player_stats: session.player_stats.clone(),
+        map_graph_nodes: session.map_graph_nodes.clone(),
+        map_graph_edges: session.map_graph_edges.clone(),
+        inventory_items: session.inventory_items.clone(),
+        system_log: session.system_log.clone(),
+        scene: crate::models::session::SceneRuntime {
+            scene_id: if session.scene.scene_id.trim().is_empty() {
+                slugify_progress_scene_id(&target.next_scene_name)
+            } else {
+                session.scene.scene_id.clone()
+            },
+            name: target.next_scene_name.clone(),
+            background_hint: session.scene.background_hint.clone(),
+            temporary_tags: session.scene.temporary_tags.clone(),
+            present_characters: build_progress_present_characters(
+                &target.visible_chars,
+                &session.player_character_name,
+            ),
+        },
+        assets,
         state: session.state.clone(),
     }
 }

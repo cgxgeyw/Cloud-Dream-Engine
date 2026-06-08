@@ -394,15 +394,17 @@ Seed world UI files:
 ```text
 src-tauri/src/db/seeds/assets/gwtw-desktop-ui.jsonc
 src-tauri/src/db/seeds/assets/gwtw-mobile-ui.jsonc
-src-tauri/src/db/seeds/assets/piao-desktop-ui.jsonc
-src-tauri/src/db/seeds/assets/piao-mobile-ui.jsonc
+src-tauri/src/db/seeds/assets/default-desktop-ui.jsonc
+src-tauri/src/db/seeds/assets/default-mobile-ui.jsonc
+src-tauri/src/db/seeds/assets/poetry-desktop-ui.jsonc
+src-tauri/src/db/seeds/assets/poetry-mobile-ui.jsonc
 ```
 
 Seed world config:
 
 ```text
-src-tauri/src/db/seeds/piao_world.rs
 src-tauri/src/db/seeds/feihualing_world.rs
+src-tauri/src/db/seeds/schedule_assistant_world.rs
 ```
 
 Seed maps are JSON object topology, not legacy arrays. Keep labels clean UTF-8 Chinese and keep edge labels aligned with node labels.
@@ -516,4 +518,3 @@ If world package UI differs after import/export:
 ```text
 world_package.rs -> manifest desktop_ui_file/mobile_ui_file -> ui_theme_config_json -> asset paths
 ```
-

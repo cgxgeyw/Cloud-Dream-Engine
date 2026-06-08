@@ -1,12 +1,12 @@
 use crate::models::character::*;
 use rusqlite::{params, Connection, Row};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 pub struct CharacterRepository<'a> {
     conn: &'a Connection,
 }
 
-const CHARACTER_SELECT_COLUMNS: &str = "id, name, world_id, role, background_prompt, model, memory_strategy, recent_dialogue_rounds, attributes_json, portrait_assets_json, custom_tabs_json, system_prompt_template, response_contract_prompt, narration_prompt, runtime_system_prompt";
+const CHARACTER_SELECT_COLUMNS: &str = "id, name, world_id, role, background_prompt, model, memory_strategy, recent_dialogue_rounds, attributes_json, portrait_assets_json, system_prompt_template, response_contract_prompt, narration_prompt, runtime_system_prompt";
 
 impl<'a> CharacterRepository<'a> {
     pub fn new(conn: &'a Connection) -> Self {
@@ -76,7 +76,6 @@ impl<'a> CharacterRepository<'a> {
         let recent_dialogue_rounds = req.recent_dialogue_rounds.max(0);
         let attributes = normalize_list(&req.attributes);
         let portrait_assets = normalize_list(&req.portrait_assets);
-        let custom_tabs = normalize_map(&req.custom_tabs);
         let system_prompt_template =
             resolve_character_system_prompt_template(Some(req.system_prompt_template.as_str()));
         let response_contract_prompt =
@@ -84,7 +83,7 @@ impl<'a> CharacterRepository<'a> {
         let narration_prompt =
             resolve_character_narration_prompt(Some(req.narration_prompt.as_str()));
         self.conn.execute(
-            "INSERT INTO characters (id, name, world_id, role, background_prompt, model, memory_strategy, recent_dialogue_rounds, attributes_json, portrait_assets_json, custom_tabs_json, system_prompt_template, response_contract_prompt, narration_prompt) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            "INSERT INTO characters (id, name, world_id, role, background_prompt, model, memory_strategy, recent_dialogue_rounds, attributes_json, portrait_assets_json, system_prompt_template, response_contract_prompt, narration_prompt) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 id,
                 name,
@@ -96,7 +95,6 @@ impl<'a> CharacterRepository<'a> {
                 recent_dialogue_rounds,
                 serde_json::to_string(&attributes).unwrap_or_default(),
                 serde_json::to_string(&portrait_assets).unwrap_or_default(),
-                serde_json::to_string(&custom_tabs).unwrap_or_default(),
                 system_prompt_template,
                 response_contract_prompt,
                 narration_prompt,
@@ -155,11 +153,6 @@ impl<'a> CharacterRepository<'a> {
             .as_ref()
             .map(|items| normalize_list(items))
             .unwrap_or(existing.portrait_assets);
-        let custom_tabs = req
-            .custom_tabs
-            .as_ref()
-            .map(|tabs| normalize_map(tabs))
-            .unwrap_or(existing.custom_tabs);
         let system_prompt_template = req
             .system_prompt_template
             .as_ref()
@@ -177,7 +170,7 @@ impl<'a> CharacterRepository<'a> {
             .unwrap_or(existing.narration_prompt);
 
         self.conn.execute(
-            "UPDATE characters SET name = ?1, role = ?2, background_prompt = ?3, model = ?4, memory_strategy = ?5, recent_dialogue_rounds = ?6, attributes_json = ?7, portrait_assets_json = ?8, custom_tabs_json = ?9, system_prompt_template = ?10, response_contract_prompt = ?11, narration_prompt = ?12 WHERE id = ?13",
+            "UPDATE characters SET name = ?1, role = ?2, background_prompt = ?3, model = ?4, memory_strategy = ?5, recent_dialogue_rounds = ?6, attributes_json = ?7, portrait_assets_json = ?8, system_prompt_template = ?9, response_contract_prompt = ?10, narration_prompt = ?11 WHERE id = ?12",
             params![
                 name,
                 role,
@@ -187,7 +180,6 @@ impl<'a> CharacterRepository<'a> {
                 recent_dialogue_rounds,
                 serde_json::to_string(&attributes).unwrap_or_default(),
                 serde_json::to_string(&portrait_assets).unwrap_or_default(),
-                serde_json::to_string(&custom_tabs).unwrap_or_default(),
                 system_prompt_template,
                 response_contract_prompt,
                 narration_prompt,
@@ -220,7 +212,6 @@ impl<'a> CharacterRepository<'a> {
             recent_dialogue_rounds: character.recent_dialogue_rounds,
             attributes: character.attributes,
             portrait_assets: character.portrait_assets,
-            custom_tabs: character.custom_tabs,
             system_prompt_template: character.system_prompt_template,
             response_contract_prompt: character.response_contract_prompt,
             narration_prompt: character.narration_prompt,
@@ -245,7 +236,6 @@ impl<'a> CharacterRepository<'a> {
             recent_dialogue_rounds: source.recent_dialogue_rounds,
             attributes: source.attributes,
             portrait_assets: source.portrait_assets,
-            custom_tabs: source.custom_tabs,
             system_prompt_template: source.system_prompt_template,
             response_contract_prompt: source.response_contract_prompt,
             narration_prompt: source.narration_prompt,
@@ -255,9 +245,9 @@ impl<'a> CharacterRepository<'a> {
 }
 
 fn map_character_definition(row: &Row<'_>) -> rusqlite::Result<CharacterDefinition> {
-    let system_prompt_template: String = row.get(11)?;
-    let response_contract_prompt: String = row.get(12)?;
-    let narration_prompt: String = row.get(13)?;
+    let system_prompt_template: String = row.get(10)?;
+    let response_contract_prompt: String = row.get(11)?;
+    let narration_prompt: String = row.get(12)?;
     Ok(CharacterDefinition {
         id: row.get(0)?,
         name: row.get(1)?,
@@ -269,7 +259,6 @@ fn map_character_definition(row: &Row<'_>) -> rusqlite::Result<CharacterDefiniti
         recent_dialogue_rounds: row.get(7)?,
         attributes: serde_json::from_str(&row.get::<_, String>(8)?).unwrap_or_default(),
         portrait_assets: serde_json::from_str(&row.get::<_, String>(9)?).unwrap_or_default(),
-        custom_tabs: serde_json::from_str(&row.get::<_, String>(10)?).unwrap_or_default(),
         system_prompt_template: resolve_character_system_prompt_template(Some(
             system_prompt_template.as_str(),
         )),
@@ -277,7 +266,7 @@ fn map_character_definition(row: &Row<'_>) -> rusqlite::Result<CharacterDefiniti
             response_contract_prompt.as_str(),
         )),
         narration_prompt: resolve_character_narration_prompt(Some(narration_prompt.as_str())),
-        runtime_system_prompt: row.get(14)?,
+        runtime_system_prompt: row.get(13)?,
     })
 }
 
@@ -295,16 +284,4 @@ fn normalize_list(values: &[String]) -> Vec<String> {
             }
         })
         .collect()
-}
-
-fn normalize_map(values: &HashMap<String, String>) -> HashMap<String, String> {
-    let mut map = HashMap::new();
-    for (key, value) in values {
-        let key = key.trim();
-        if key.is_empty() {
-            continue;
-        }
-        map.insert(key.to_string(), value.trim().to_string());
-    }
-    map
 }

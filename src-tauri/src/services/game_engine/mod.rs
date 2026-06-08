@@ -7,6 +7,7 @@ pub mod prompting;
 pub mod rule;
 pub mod runtime_effects;
 pub mod scene;
+pub mod service_mode;
 pub mod state;
 pub mod structured_output;
 pub mod trigger;

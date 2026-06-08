@@ -72,7 +72,7 @@ const COMPONENT_LIBRARY = [
     id: "side_panel_tabs",
     propsSchema: {
       show_map_tab: "boolean",
-      show_custom_tabs: "boolean",
+      show_attribute_tabs: "boolean",
       empty_text: "string",
     },
   },
@@ -264,9 +264,9 @@ export function GameUiStructureEditor({
     >
       <div className="flex flex--items-center flex--justify-between world-editor-section-head" style={{ gap: 12 }}>
         <div style={{ display: "grid", gap: 6 }}>
-          <div className="editor-field-label">Structured Tree Editor</div>
+          <div className="editor-field-label">结构化树编辑器</div>
           <div className="text-muted" style={{ fontSize: 12 }}>
-            {platform === "desktop" ? "Desktop" : "Mobile"} schema v2 component tree
+            {platform === "desktop" ? "桌面端" : "移动端"} schema v2 组件树
           </div>
         </div>
         <div className="flex flex--gap-sm" style={{ flexWrap: "wrap" }}>
@@ -286,7 +286,7 @@ export function GameUiStructureEditor({
           </select>
           {supportsChildren ? (
             <button type="button" className="action-btn" onClick={addChildNode}>
-              Add Child
+              添加子节点
             </button>
           ) : null}
           {selectedNode.type === "component" ? (
@@ -344,20 +344,20 @@ export function GameUiStructureEditor({
             </div>
             <div className="flex flex--gap-sm" style={{ flexWrap: "wrap" }}>
               <button type="button" className="action-btn" onClick={() => moveSelectedNode(-1)} disabled={!canMoveUp}>
-                Move Up
+                上移
               </button>
               <button type="button" className="action-btn" onClick={() => moveSelectedNode(1)} disabled={!canMoveDown}>
-                Move Down
+                下移
               </button>
               <button type="button" className="action-btn action-btn--danger" onClick={removeSelectedNode} disabled={!canRemove}>
-                Delete Node
+                删除节点
               </button>
             </div>
           </div>
 
           <div className="settings-form-grid" style={{ gap: 12 }}>
             <label className="editor-field">
-              <span className="editor-field-label">Node Type</span>
+              <span className="editor-field-label">节点类型</span>
               <select
                 value={selectedNode.type}
                 onChange={(event) => replaceSelectedNodeType(event.target.value as SupportedNodeType)}
@@ -384,18 +384,18 @@ export function GameUiStructureEditor({
 
           <div className="settings-form-grid" style={{ gap: 12 }}>
             {[
-              { key: "id", label: "Node ID" },
-              { key: "class_name", label: "Class Name" },
-              { key: "area", label: "Grid Area" },
-              { key: "width", label: "Width" },
-              { key: "height", label: "Height" },
-              { key: "min_width", label: "Min Width" },
-              { key: "min_height", label: "Min Height" },
-              { key: "max_width", label: "Max Width" },
-              { key: "max_height", label: "Max Height" },
-              { key: "padding", label: "Padding" },
-              { key: "margin", label: "Margin" },
-              { key: "align", label: "Align" },
+                { key: "id", label: "节点 ID" },
+                { key: "class_name", label: "类名" },
+                { key: "area", label: "网格区域" },
+                { key: "width", label: "宽度" },
+                { key: "height", label: "高度" },
+                { key: "min_width", label: "最小宽度" },
+                { key: "min_height", label: "最小高度" },
+                { key: "max_width", label: "最大宽度" },
+                { key: "max_height", label: "最大高度" },
+                { key: "padding", label: "内边距" },
+                { key: "margin", label: "外边距" },
+                { key: "align", label: "对齐" },
               { key: "justify", label: "Justify" },
             ].map((field) => (
               <label key={field.key} className="editor-field">
@@ -417,7 +417,7 @@ export function GameUiStructureEditor({
             <>
               <div className="settings-form-grid" style={{ gap: 12 }}>
                 <label className="editor-field">
-                  <span className="editor-field-label">Component</span>
+                  <span className="editor-field-label">组件</span>
                   <select
                     value={selectedNode.component}
                     onChange={(event) =>
@@ -475,7 +475,7 @@ export function GameUiStructureEditor({
           {selectedNode.type === "grid" ? (
             <>
               <label className="editor-field">
-                <span className="editor-field-label">Gap</span>
+                <span className="editor-field-label">间距</span>
                 <input
                   value={selectedNode.gap ?? ""}
                   onChange={(event) => updateSelectedNode((node) => setOptionalField(node, "gap", event.target.value.trim() ? event.target.value : undefined))}
@@ -506,7 +506,7 @@ export function GameUiStructureEditor({
           {selectedNode.type === "stack" ? (
             <div className="settings-form-grid" style={{ gap: 12 }}>
               <label className="editor-field">
-                <span className="editor-field-label">Direction</span>
+                <span className="editor-field-label">方向</span>
                 <select
                   value={selectedNode.direction ?? "vertical"}
                   onChange={(event) =>
@@ -530,7 +530,7 @@ export function GameUiStructureEditor({
                 />
               </label>
               <label className="editor-field" style={{ justifyContent: "center" }}>
-                <span className="editor-field-label">Wrap</span>
+                <span className="editor-field-label">换行</span>
                 <input
                   type="checkbox"
                   checked={selectedNode.wrap ?? false}
@@ -576,7 +576,7 @@ export function GameUiStructureEditor({
             <>
               <div className="settings-form-grid" style={{ gap: 12 }}>
                 <label className="editor-field">
-                  <span className="editor-field-label">Source</span>
+                  <span className="editor-field-label">数据源</span>
                   <input
                     value={selectedNode.source}
                     onChange={(event) =>
@@ -602,7 +602,7 @@ export function GameUiStructureEditor({
                   />
                 </label>
                 <label className="editor-field">
-                  <span className="editor-field-label">Index Alias</span>
+                  <span className="editor-field-label">索引别名</span>
                   <input
                     value={selectedNode.index_as ?? ""}
                     onChange={(event) =>

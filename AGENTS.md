@@ -12,6 +12,10 @@ Rules:
 - If a bounded script edit is necessary, use Node `fs.readFileSync(path, "utf8")` and `fs.writeFileSync(path, text, "utf8")`, and keep the replacement range narrow.
 - Never “repair” mojibake globally unless the user explicitly asks for an encoding cleanup pass.
 - Avoid replacing entire large TSX/Rust files from old backups unless the user explicitly approves losing current functionality.
+- When inserting Chinese text into Rust, TSX, JSONC, or seed assets through scripts, prefer Unicode escapes for short literals if there is any risk the shell or terminal encoding is not UTF-8 clean.
+- After any scripted replacement in Rust source, immediately inspect the affected string literals. A common failure here is quote duplication or truncation, for example turning `"on-demand"` into `""on-demand""`.
+- After any scripted replacement in JSONC seed files, immediately inspect nearby lines for unterminated strings. In this repo, damaged Chinese text often surfaces as a line that visually “looks fine” but is missing the closing `"`.
+- If a file is already partly garbled, do not try to preserve the exact broken text. Preserve syntax and behavior first; replace damaged prose with clean Chinese or ASCII.
 
 ## Before Editing
 
@@ -19,6 +23,7 @@ Rules:
 - If touching a file with lots of garbled text, identify syntax boundaries rather than matching the garbled prose itself.
 - For large broken blocks, replace by stable function/component boundaries, not by fragile mojibake substrings.
 - Keep unrelated user changes intact. This workspace may not be a git repo.
+- Before editing seed assets or prompt-heavy files, run a narrow search or line dump around the target region first. Do not trust search/replace on a file you have not visually inspected.
 
 ## After Editing
 
@@ -30,12 +35,20 @@ Run the narrowest relevant checks:
 
 When compiler output shows many impossible errors such as `unknown prefix`, `unterminated raw string`, JSX closing tag explosions, or unexpected tokens far below the edited area, suspect an earlier string/tag was broken by encoding damage.
 
+Also run targeted sanity checks when relevant:
+
+- For Rust files with string-heavy edits, inspect the edited literals directly.
+- For JSONC seed files, run an odd-quote scan if parsing errors point at unrelated later lines.
+- If one seed/test fix exposes another garbled file, continue cleaning the chain before assuming there is a logic regression.
+
 ## Common Failure Patterns Seen Here
 
 - JSX closing tags became text, for example `?/div>` instead of `</div>`.
 - Rust raw strings lost their terminator, for example `?#` instead of `"#`.
 - Rust and TS string literals lost a closing quote inside mojibake text.
+- Rust string replacements duplicated quotes around JSON payload strings, for example `""on-demand""`.
 - A single broken string caused misleading downstream errors such as `prefix a is unknown` for normal literals like `"char-a"`.
+- JSONC seed files failed much later than the real damage point because one Chinese string lost its closing quote and swallowed the next structural token.
 - TypeScript pages restored from old snapshots could compile worse because they lacked current functionality.
 
 ## Recovery Strategy
@@ -43,6 +56,7 @@ When compiler output shows many impossible errors such as `unknown prefix`, `unt
 - First fix syntax boundaries so compilers can parse the file.
 - Then fix real type errors.
 - Prefer replacing corrupted prompt/prose with clean, stable Chinese or ASCII text instead of trying to preserve mojibake.
+- If a scripted edit touched multiple encoding-sensitive files, validate each touched file immediately instead of waiting for one global build at the end.
 - Use odd-quote scans to locate likely broken lines, then verify manually:
 
 ```powershell

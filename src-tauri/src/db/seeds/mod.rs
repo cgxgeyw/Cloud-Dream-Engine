@@ -1,11 +1,33 @@
 pub mod feihualing_world;
-pub mod piao_world;
+pub mod schedule_assistant_world;
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 
+use crate::models::mcp_tool::MCP_TOOL_SCHEDULE_NOTIFICATION_ID;
+
 use feihualing_world::*;
-use piao_world::*;
+use schedule_assistant_world::*;
+
+fn default_seed_world_director_config_json() -> String {
+    serde_json::json!({
+        "allow_scene_transition": true,
+        "allow_npc_spawn": true,
+        "history_dialogue_rounds": 6,
+        "director_tool_loop_limit": 6,
+        "world_director_prompt": "",
+        "prompt_presets": [],
+        "return_processing_rules": [],
+        "allowed_mcp_tool_ids": [
+            "mcp-tool-list-scenes",
+            "mcp-tool-list-characters",
+            "mcp-tool-change-scene",
+            "mcp-tool-switch-player-character",
+            "mcp-tool-image-generation"
+        ]
+    })
+    .to_string()
+}
 
 const SEED_WORLD_TENSION_LABEL: &str = "世界紧张度";
 const SEED_WORLD_TENSION_DESCRIPTION: &str = "用于描述当前世界叙事压力的数值属性。";
@@ -13,18 +35,13 @@ const SEED_CHARACTER_TRUST_LABEL: &str = "信任度";
 const SEED_CHARACTER_TRUST_DESCRIPTION: &str = "角色对玩家或当前局势的信任数值。";
 const SEED_RULE_NAME: &str = "气氛升温规则";
 const SEED_RULE_DESCRIPTION: &str = "当世界紧张度较高时，进一步提升压力并追加阶段标签。";
-pub(crate) const SEED_RULE_EFFECT_MESSAGE: &str = "规则：当前场上气氛进一步升温。";
-
 fn sample_world_seeding_enabled() -> bool {
     true
 }
 
-fn seed_character_ids() -> [&'static str; 10] {
+fn seed_character_ids() -> [&'static str; 7] {
     [
-        SEED_CHARACTER_SCARLETT_ID,
-        SEED_CHARACTER_ASHLEY_ID,
-        SEED_CHARACTER_RHETT_ID,
-        SEED_CHARACTER_MELANIE_ID,
+        SEED_CHARACTER_SCHEDULE_ASSISTANT_ID,
         SEED_CHARACTER_GUEST_ID,
         SEED_CHARACTER_LIBAI_ID,
         SEED_CHARACTER_DUFU_ID,
@@ -45,7 +62,6 @@ fn insert_seed_world(
     time_system: &str,
     map_nodes_json: String,
     triggers_json: String,
-    custom_tabs_json: String,
     time_config_json: String,
     director_config_json: String,
     ui_theme_config_json: String,
@@ -57,9 +73,9 @@ fn insert_seed_world(
         "
         INSERT INTO worlds (
             id, name, genre, background_prompt, opening_scene, summary, time_system,
-            map_nodes_json, triggers_json, custom_tabs_json, time_config_json, director_config_json, ui_theme_config_json,
+            map_nodes_json, triggers_json, time_config_json, director_config_json, ui_theme_config_json,
             director_system_prompt_base, director_runtime_system_prompt, opening_messages_json, opening_character_ids_json, player_character_id
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, '', '', ?14, ?15, ?16)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, '', '', ?13, ?14, ?15)
         ",
         params![
             id,
@@ -71,7 +87,6 @@ fn insert_seed_world(
             time_system,
             map_nodes_json,
             triggers_json,
-            custom_tabs_json,
             time_config_json,
             director_config_json,
             ui_theme_config_json,
@@ -94,7 +109,6 @@ fn update_seed_world(
     time_system: &str,
     map_nodes_json: String,
     triggers_json: String,
-    custom_tabs_json: String,
     time_config_json: String,
     director_config_json: String,
     ui_theme_config_json: String,
@@ -102,8 +116,8 @@ fn update_seed_world(
     opening_character_ids_json: String,
     player_character_id: Option<&str>,
 ) -> Result<(), rusqlite::Error> {
-    conn.execute(
-        "UPDATE worlds SET name = ?1, genre = ?2, background_prompt = ?3, opening_scene = ?4, summary = ?5, time_system = ?6, map_nodes_json = ?7, triggers_json = ?8, custom_tabs_json = ?9, time_config_json = ?10, director_config_json = ?11, ui_theme_config_json = ?12, opening_messages_json = ?13, opening_character_ids_json = ?14, player_character_id = ?15 WHERE id = ?16",
+    let updated = conn.execute(
+        "UPDATE worlds SET name = ?1, genre = ?2, background_prompt = ?3, opening_scene = ?4, summary = ?5, time_system = ?6, map_nodes_json = ?7, triggers_json = ?8, time_config_json = ?9, director_config_json = ?10, ui_theme_config_json = ?11, opening_messages_json = ?12, opening_character_ids_json = ?13, player_character_id = ?14 WHERE id = ?15",
         params![
             name,
             genre,
@@ -113,7 +127,6 @@ fn update_seed_world(
             time_system,
             map_nodes_json,
             triggers_json,
-            custom_tabs_json,
             time_config_json,
             director_config_json,
             ui_theme_config_json,
@@ -123,6 +136,26 @@ fn update_seed_world(
             id
         ],
     )?;
+    if updated == 0 {
+        insert_seed_world(
+            conn,
+            id,
+            name,
+            genre,
+            background_prompt,
+            opening_scene,
+            summary,
+            time_system,
+            map_nodes_json,
+            triggers_json,
+            time_config_json,
+            director_config_json,
+            ui_theme_config_json,
+            opening_messages_json,
+            opening_character_ids_json,
+            player_character_id,
+        )?;
+    }
     Ok(())
 }
 
@@ -135,14 +168,13 @@ fn insert_seed_character(
     background_prompt: &str,
     memory_strategy: &str,
     attributes_json: String,
-    custom_tabs_json: String,
 ) -> Result<(), rusqlite::Error> {
     conn.execute(
         "
-        INSERT INTO characters (
+        INSERT OR IGNORE INTO characters (
             id, name, world_id, role, background_prompt, model, memory_strategy, recent_dialogue_rounds,
-            attributes_json, portrait_assets_json, custom_tabs_json, runtime_system_prompt
-        ) VALUES (?1, ?2, ?3, ?4, ?5, '', ?6, 8, ?7, '[]', ?8, '')
+            attributes_json, portrait_assets_json, runtime_system_prompt
+        ) VALUES (?1, ?2, ?3, ?4, ?5, '', ?6, 8, ?7, '[]', '')
         ",
         params![
             id,
@@ -151,8 +183,7 @@ fn insert_seed_character(
             role,
             background_prompt,
             memory_strategy,
-            attributes_json,
-            custom_tabs_json
+            attributes_json
         ],
     )?;
     Ok(())
@@ -166,17 +197,15 @@ fn update_seed_character(
     background_prompt: &str,
     memory_strategy: &str,
     attributes_json: String,
-    custom_tabs_json: String,
 ) -> Result<(), rusqlite::Error> {
     conn.execute(
-        "UPDATE characters SET name = ?1, role = ?2, background_prompt = ?3, memory_strategy = ?4, attributes_json = ?5, custom_tabs_json = ?6 WHERE id = ?7",
+        "UPDATE characters SET name = ?1, role = ?2, background_prompt = ?3, memory_strategy = ?4, attributes_json = ?5 WHERE id = ?6",
         params![
             name,
             role,
             background_prompt,
             memory_strategy,
             attributes_json,
-            custom_tabs_json,
             id
         ],
     )?;
@@ -224,7 +253,7 @@ fn repair_corrupted_world_prompts(conn: &Connection) -> Result<(), rusqlite::Err
 
         config.insert(
             "world_director_prompt".to_string(),
-            Value::String(DEFAULT_WORLD_DIRECTOR_PROMPT.to_string()),
+            Value::String(String::new()),
         );
 
         let Ok(repaired_json) = serde_json::to_string(&director_config) else {
@@ -237,6 +266,40 @@ fn repair_corrupted_world_prompts(conn: &Connection) -> Result<(), rusqlite::Err
         )?;
     }
 
+    Ok(())
+}
+
+fn remove_retired_gwtw_seed_world(conn: &Connection) -> Result<(), rusqlite::Error> {
+    let world_name = conn
+        .query_row(
+            "SELECT name FROM worlds WHERE id = ?1",
+            params!["gwtw"],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    let Some(world_name) = world_name else {
+        return Ok(());
+    };
+    let session_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sessions WHERE world_name = ?1",
+        params![world_name],
+        |row| row.get(0),
+    )?;
+    if session_count > 0 {
+        return Ok(());
+    }
+
+    conn.execute(
+        "DELETE FROM attribute_values WHERE owner_id IN (?1, ?2, ?3, ?4)",
+        params![
+            "character-seed-scarlett",
+            "character-seed-ashley",
+            "character-seed-rhett",
+            "character-seed-melanie"
+        ],
+    )?;
+    conn.execute("DELETE FROM memories WHERE world_id = ?1", params!["gwtw"])?;
+    conn.execute("DELETE FROM worlds WHERE id = ?1", params!["gwtw"])?;
     Ok(())
 }
 
@@ -267,23 +330,23 @@ fn ensure_default_plugins(conn: &Connection) -> Result<(), rusqlite::Error> {
     let default_plugins = [
         (
             "combat-plugin",
-            "战斗系统扩展",
+            "战斗扩展",
             1,
-            "提供可选的战斗结算钩子与战斗事件处理能力。",
+            "提供战斗相关的流程钩子，用于处理玩家行动前后的状态变化与战斗结算。",
             r#"["before_player_action","after_state_commit"]"#,
         ),
         (
             "inventory-plugin",
             "物品系统扩展",
             1,
-            "负责物品更新、消耗处理，以及导出阶段的元数据辅助。",
+            "提供物品记录与导出相关钩子，支持在玩家行动后同步更新背包文本内容。",
             r#"["after_player_action","on_export"]"#,
         ),
         (
             "world-rule-plugin",
             "世界规则扩展",
             0,
-            "注册额外的世界专属规则、状态变更钩子和触发器处理流程。",
+            "提供世界规则触发与说话人选择前的扩展钩子，用于承载额外规则逻辑。",
             r#"["before_speaker_selection","on_trigger_fired"]"#,
         ),
     ];
@@ -305,63 +368,73 @@ fn ensure_default_plugins(conn: &Connection) -> Result<(), rusqlite::Error> {
 
     Ok(())
 }
-
 fn ensure_builtin_mcp_tools(conn: &Connection) -> Result<(), rusqlite::Error> {
     let builtin_tools = [
         (
             "mcp-tool-image-generation",
-            "生成图片",
-            "根据世界主控提示生成场景背景或角色立绘，并保存到当前会话资源中。",
+            "图像生成",
+            "根据当前世界上下文生成场景图、角色肖像或其他视觉素材。",
             "builtin-image-generation",
             "generate_image",
             1,
-            "\"on-demand\"",
+            r#""on-demand""#,
             "medium",
             r#"["background","portrait","generate image","scene image"]"#,
         ),
         (
             "mcp-tool-list-scenes",
             "列出场景",
-            "在切换场景前返回可用场景、地图节点以及当前场景上下文。",
+            "读取当前世界地图与场景节点，列出可用场景及其基础信息。",
             "builtin-world-director",
             "list_scenes",
             1,
-            "\"on-demand\"",
+            r#""on-demand""#,
             "low",
             r#"["scene","map","location","list scenes"]"#,
         ),
         (
             "mcp-tool-list-characters",
             "列出角色",
-            "返回世界角色、身份摘要与当前在场信息，用于辅助主控决策。",
+            "读取当前世界中的角色列表，返回可参与互动的角色信息。",
             "builtin-world-director",
             "list_characters",
             1,
-            "\"on-demand\"",
+            r#""on-demand""#,
             "low",
             r#"["character","npc","list characters"]"#,
         ),
         (
             "mcp-tool-change-scene",
             "切换场景",
-            "允许世界主控切换场景、更新场景描述，并同步调整当前在场角色。",
+            "根据当前世界状态切换到目标场景，并同步场景描述与上下文。",
             "builtin-world-director",
             "change_scene",
             1,
-            "\"on-demand\"",
+            r#""on-demand""#,
             "medium",
             r#"["change scene","scene transition","enter scene"]"#,
         ),
         (
             "mcp-tool-switch-player-character",
             "切换玩家角色",
-            "允许世界主控在不强制切场的情况下，把玩家控制权切换到现有世界角色。",
+            "将当前玩家控制权切换到指定角色，并更新玩家角色上下文。",
             "builtin-world-director",
             "switch_player_character",
             1,
-            "\"on-demand\"",
+            r#""on-demand""#,
             "medium",
             r#"["switch player","switch character","possession","control character"]"#,
+        ),
+        (
+            MCP_TOOL_SCHEDULE_NOTIFICATION_ID,
+            "定时通知",
+            "创建、查询、修改或删除系统级定时通知，用于提醒用户后续待办或行程安排。",
+            "builtin-notification",
+            "schedule_notification",
+            1,
+            r#""on-demand""#,
+            "medium",
+            r#"["notification","reminder","remind","notify","schedule","定时提醒","通知安排","行程提醒"]"#,
         ),
     ];
 
@@ -409,75 +482,11 @@ fn ensure_builtin_mcp_tools(conn: &Connection) -> Result<(), rusqlite::Error> {
 
     Ok(())
 }
-
 fn ensure_core_seed_data(conn: &Connection) -> Result<(), rusqlite::Error> {
     if sample_world_seeding_enabled() {
         let world_count: i64 =
             conn.query_row("SELECT COUNT(*) FROM worlds", [], |row| row.get(0))?;
         if world_count == 0 {
-            insert_seed_world(
-                conn,
-                SEED_WORLD_GWTW_ID,
-                SEED_WORLD_GWTW_NAME,
-                SEED_WORLD_GWTW_GENRE,
-                SEED_WORLD_GWTW_BACKGROUND_PROMPT,
-                SEED_WORLD_GWTW_OPENING_SCENE,
-                SEED_WORLD_GWTW_SUMMARY,
-                SEED_WORLD_GWTW_TIME_SYSTEM,
-                gwtw_world_map_nodes_json(),
-                gwtw_world_triggers_json(),
-                gwtw_world_custom_tabs_json(),
-                gwtw_world_time_config_json(),
-                default_seed_world_director_config_json(),
-                gwtw_world_ui_theme_config_json(),
-                gwtw_world_opening_messages_json(),
-                gwtw_world_opening_character_ids_json(),
-                Some(SEED_CHARACTER_SCARLETT_ID),
-            )?;
-            insert_seed_character(
-                conn,
-                SEED_CHARACTER_SCARLETT_ID,
-                SEED_CHARACTER_SCARLETT_NAME,
-                SEED_WORLD_GWTW_ID,
-                SEED_CHARACTER_SCARLETT_ROLE,
-                SEED_CHARACTER_SCARLETT_BACKGROUND,
-                SEED_CHARACTER_SCARLETT_MEMORY,
-                scarlett_attributes_json(),
-                scarlett_custom_tabs_json(),
-            )?;
-            insert_seed_character(
-                conn,
-                SEED_CHARACTER_ASHLEY_ID,
-                SEED_CHARACTER_ASHLEY_NAME,
-                SEED_WORLD_GWTW_ID,
-                SEED_CHARACTER_ASHLEY_ROLE,
-                SEED_CHARACTER_ASHLEY_BACKGROUND,
-                SEED_CHARACTER_ASHLEY_MEMORY,
-                ashley_attributes_json(),
-                ashley_custom_tabs_json(),
-            )?;
-            insert_seed_character(
-                conn,
-                SEED_CHARACTER_RHETT_ID,
-                SEED_CHARACTER_RHETT_NAME,
-                SEED_WORLD_GWTW_ID,
-                SEED_CHARACTER_RHETT_ROLE,
-                SEED_CHARACTER_RHETT_BACKGROUND,
-                SEED_CHARACTER_RHETT_MEMORY,
-                rhett_attributes_json(),
-                rhett_custom_tabs_json(),
-            )?;
-            insert_seed_character(
-                conn,
-                SEED_CHARACTER_MELANIE_ID,
-                SEED_CHARACTER_MELANIE_NAME,
-                SEED_WORLD_GWTW_ID,
-                SEED_CHARACTER_MELANIE_ROLE,
-                SEED_CHARACTER_MELANIE_BACKGROUND,
-                SEED_CHARACTER_MELANIE_MEMORY,
-                melanie_attributes_json(),
-                melanie_custom_tabs_json(),
-            )?;
             insert_seed_world(
                 conn,
                 SEED_WORLD_POETRY_ID,
@@ -489,7 +498,6 @@ fn ensure_core_seed_data(conn: &Connection) -> Result<(), rusqlite::Error> {
                 SEED_WORLD_POETRY_TIME_SYSTEM,
                 poetry_world_map_nodes_json(),
                 poetry_world_triggers_json(),
-                poetry_world_custom_tabs_json(),
                 poetry_world_time_config_json(),
                 default_seed_world_director_config_json(),
                 poetry_world_ui_theme_config_json(),
@@ -506,7 +514,6 @@ fn ensure_core_seed_data(conn: &Connection) -> Result<(), rusqlite::Error> {
                 SEED_CHARACTER_GUEST_BACKGROUND,
                 SEED_CHARACTER_GUEST_MEMORY,
                 poetry_guest_attributes_json(),
-                poetry_guest_custom_tabs_json(),
             )?;
             insert_seed_character(
                 conn,
@@ -517,7 +524,6 @@ fn ensure_core_seed_data(conn: &Connection) -> Result<(), rusqlite::Error> {
                 SEED_CHARACTER_LIBAI_BACKGROUND,
                 SEED_CHARACTER_LIBAI_MEMORY,
                 libai_attributes_json(),
-                libai_custom_tabs_json(),
             )?;
             insert_seed_character(
                 conn,
@@ -528,7 +534,6 @@ fn ensure_core_seed_data(conn: &Connection) -> Result<(), rusqlite::Error> {
                 SEED_CHARACTER_DUFU_BACKGROUND,
                 SEED_CHARACTER_DUFU_MEMORY,
                 dufu_attributes_json(),
-                dufu_custom_tabs_json(),
             )?;
             insert_seed_character(
                 conn,
@@ -539,7 +544,6 @@ fn ensure_core_seed_data(conn: &Connection) -> Result<(), rusqlite::Error> {
                 SEED_CHARACTER_WANGWEI_BACKGROUND,
                 SEED_CHARACTER_WANGWEI_MEMORY,
                 wangwei_attributes_json(),
-                wangwei_custom_tabs_json(),
             )?;
             insert_seed_character(
                 conn,
@@ -550,7 +554,6 @@ fn ensure_core_seed_data(conn: &Connection) -> Result<(), rusqlite::Error> {
                 SEED_CHARACTER_LIQINGZHAO_BACKGROUND,
                 SEED_CHARACTER_LIQINGZHAO_MEMORY,
                 liqingzhao_attributes_json(),
-                liqingzhao_custom_tabs_json(),
             )?;
             insert_seed_character(
                 conn,
@@ -561,7 +564,6 @@ fn ensure_core_seed_data(conn: &Connection) -> Result<(), rusqlite::Error> {
                 SEED_CHARACTER_SUSHI_BACKGROUND,
                 SEED_CHARACTER_SUSHI_MEMORY,
                 sushi_attributes_json(),
-                sushi_custom_tabs_json(),
             )?;
         }
     }
@@ -582,7 +584,7 @@ fn ensure_core_seed_data(conn: &Connection) -> Result<(), rusqlite::Error> {
             ",
             params![
                 "model-seed-bge-small-embedding",
-                "内置 Embedding：BAAI/bge-small-zh-v1.5",
+                "闁告劕鎳愰悿?Embedding闁挎稒顑孉AI/bge-small-zh-v1.5",
                 "builtin-local",
                 "BAAI/bge-small-zh-v1.5",
                 "",
@@ -677,62 +679,40 @@ fn ensure_localized_builtin_content(conn: &Connection) -> Result<(), rusqlite::E
     )?;
     update_seed_world(
         conn,
-        SEED_WORLD_GWTW_ID,
-        SEED_WORLD_GWTW_NAME,
-        SEED_WORLD_GWTW_GENRE,
-        SEED_WORLD_GWTW_BACKGROUND_PROMPT,
-        SEED_WORLD_GWTW_OPENING_SCENE,
-        SEED_WORLD_GWTW_SUMMARY,
-        SEED_WORLD_GWTW_TIME_SYSTEM,
-        gwtw_world_map_nodes_json(),
-        gwtw_world_triggers_json(),
-        gwtw_world_custom_tabs_json(),
-        gwtw_world_time_config_json(),
-        default_seed_world_director_config_json(),
-        gwtw_world_ui_theme_config_json(),
-        gwtw_world_opening_messages_json(),
-        gwtw_world_opening_character_ids_json(),
-        Some(SEED_CHARACTER_SCARLETT_ID),
+        SEED_WORLD_SCHEDULE_ASSISTANT_ID,
+        SEED_WORLD_SCHEDULE_ASSISTANT_NAME,
+        SEED_WORLD_SCHEDULE_ASSISTANT_GENRE,
+        SEED_WORLD_SCHEDULE_ASSISTANT_BACKGROUND_PROMPT,
+        SEED_WORLD_SCHEDULE_ASSISTANT_OPENING_SCENE,
+        SEED_WORLD_SCHEDULE_ASSISTANT_SUMMARY,
+        SEED_WORLD_SCHEDULE_ASSISTANT_TIME_SYSTEM,
+        schedule_assistant_world_map_nodes_json(),
+        schedule_assistant_world_triggers_json(),
+        schedule_assistant_world_time_config_json(),
+        schedule_assistant_world_director_config_json(),
+        schedule_assistant_world_ui_theme_config_json(),
+        schedule_assistant_world_opening_messages_json(),
+        schedule_assistant_world_opening_character_ids_json(),
+        None,
+    )?;
+    insert_seed_character(
+        conn,
+        SEED_CHARACTER_SCHEDULE_ASSISTANT_ID,
+        SEED_CHARACTER_SCHEDULE_ASSISTANT_NAME,
+        SEED_WORLD_SCHEDULE_ASSISTANT_ID,
+        SEED_CHARACTER_SCHEDULE_ASSISTANT_ROLE,
+        SEED_CHARACTER_SCHEDULE_ASSISTANT_BACKGROUND,
+        SEED_CHARACTER_SCHEDULE_ASSISTANT_MEMORY,
+        schedule_assistant_attributes_json(),
     )?;
     update_seed_character(
         conn,
-        SEED_CHARACTER_SCARLETT_ID,
-        SEED_CHARACTER_SCARLETT_NAME,
-        SEED_CHARACTER_SCARLETT_ROLE,
-        SEED_CHARACTER_SCARLETT_BACKGROUND,
-        SEED_CHARACTER_SCARLETT_MEMORY,
-        scarlett_attributes_json(),
-        scarlett_custom_tabs_json(),
-    )?;
-    update_seed_character(
-        conn,
-        SEED_CHARACTER_ASHLEY_ID,
-        SEED_CHARACTER_ASHLEY_NAME,
-        SEED_CHARACTER_ASHLEY_ROLE,
-        SEED_CHARACTER_ASHLEY_BACKGROUND,
-        SEED_CHARACTER_ASHLEY_MEMORY,
-        ashley_attributes_json(),
-        ashley_custom_tabs_json(),
-    )?;
-    update_seed_character(
-        conn,
-        SEED_CHARACTER_RHETT_ID,
-        SEED_CHARACTER_RHETT_NAME,
-        SEED_CHARACTER_RHETT_ROLE,
-        SEED_CHARACTER_RHETT_BACKGROUND,
-        SEED_CHARACTER_RHETT_MEMORY,
-        rhett_attributes_json(),
-        rhett_custom_tabs_json(),
-    )?;
-    update_seed_character(
-        conn,
-        SEED_CHARACTER_MELANIE_ID,
-        SEED_CHARACTER_MELANIE_NAME,
-        SEED_CHARACTER_MELANIE_ROLE,
-        SEED_CHARACTER_MELANIE_BACKGROUND,
-        SEED_CHARACTER_MELANIE_MEMORY,
-        melanie_attributes_json(),
-        melanie_custom_tabs_json(),
+        SEED_CHARACTER_SCHEDULE_ASSISTANT_ID,
+        SEED_CHARACTER_SCHEDULE_ASSISTANT_NAME,
+        SEED_CHARACTER_SCHEDULE_ASSISTANT_ROLE,
+        SEED_CHARACTER_SCHEDULE_ASSISTANT_BACKGROUND,
+        SEED_CHARACTER_SCHEDULE_ASSISTANT_MEMORY,
+        schedule_assistant_attributes_json(),
     )?;
     update_seed_world(
         conn,
@@ -745,7 +725,6 @@ fn ensure_localized_builtin_content(conn: &Connection) -> Result<(), rusqlite::E
         SEED_WORLD_POETRY_TIME_SYSTEM,
         poetry_world_map_nodes_json(),
         poetry_world_triggers_json(),
-        poetry_world_custom_tabs_json(),
         poetry_world_time_config_json(),
         default_seed_world_director_config_json(),
         poetry_world_ui_theme_config_json(),
@@ -761,7 +740,6 @@ fn ensure_localized_builtin_content(conn: &Connection) -> Result<(), rusqlite::E
         SEED_CHARACTER_GUEST_BACKGROUND,
         SEED_CHARACTER_GUEST_MEMORY,
         poetry_guest_attributes_json(),
-        poetry_guest_custom_tabs_json(),
     )?;
     update_seed_character(
         conn,
@@ -771,7 +749,6 @@ fn ensure_localized_builtin_content(conn: &Connection) -> Result<(), rusqlite::E
         SEED_CHARACTER_LIBAI_BACKGROUND,
         SEED_CHARACTER_LIBAI_MEMORY,
         libai_attributes_json(),
-        libai_custom_tabs_json(),
     )?;
     update_seed_character(
         conn,
@@ -781,7 +758,6 @@ fn ensure_localized_builtin_content(conn: &Connection) -> Result<(), rusqlite::E
         SEED_CHARACTER_DUFU_BACKGROUND,
         SEED_CHARACTER_DUFU_MEMORY,
         dufu_attributes_json(),
-        dufu_custom_tabs_json(),
     )?;
     update_seed_character(
         conn,
@@ -791,7 +767,6 @@ fn ensure_localized_builtin_content(conn: &Connection) -> Result<(), rusqlite::E
         SEED_CHARACTER_WANGWEI_BACKGROUND,
         SEED_CHARACTER_WANGWEI_MEMORY,
         wangwei_attributes_json(),
-        wangwei_custom_tabs_json(),
     )?;
     update_seed_character(
         conn,
@@ -801,7 +776,6 @@ fn ensure_localized_builtin_content(conn: &Connection) -> Result<(), rusqlite::E
         SEED_CHARACTER_LIQINGZHAO_BACKGROUND,
         SEED_CHARACTER_LIQINGZHAO_MEMORY,
         liqingzhao_attributes_json(),
-        liqingzhao_custom_tabs_json(),
     )?;
     update_seed_character(
         conn,
@@ -811,7 +785,6 @@ fn ensure_localized_builtin_content(conn: &Connection) -> Result<(), rusqlite::E
         SEED_CHARACTER_SUSHI_BACKGROUND,
         SEED_CHARACTER_SUSHI_MEMORY,
         sushi_attributes_json(),
-        sushi_custom_tabs_json(),
     )?;
     Ok(())
 }
@@ -819,6 +792,7 @@ fn ensure_localized_builtin_content(conn: &Connection) -> Result<(), rusqlite::E
 pub(crate) fn ensure_all(conn: &Connection) -> Result<(), rusqlite::Error> {
     ensure_default_plugins(conn)?;
     ensure_builtin_mcp_tools(conn)?;
+    remove_retired_gwtw_seed_world(conn)?;
     ensure_core_seed_data(conn)?;
     ensure_localized_builtin_content(conn)?;
     repair_corrupted_world_prompts(conn)?;
@@ -829,6 +803,8 @@ pub(crate) fn ensure_all(conn: &Connection) -> Result<(), rusqlite::Error> {
 #[cfg(test)]
 mod tests {
     use super::feihualing_world;
+    use super::schedule_assistant_world;
+    use crate::models::mcp_tool::MCP_TOOL_SCHEDULE_NOTIFICATION_ID;
     use serde_json::Value;
 
     #[test]
@@ -853,7 +829,57 @@ mod tests {
         );
         assert_eq!(
             mobile_file.pointer("/meta/name").and_then(Value::as_str),
-            Some("Feihualing Mobile - Moonlit Poetry Album")
+            Some("Default Mobile Narrative UI")
+        );
+    }
+
+    #[test]
+    fn schedule_assistant_seed_uses_agent_chat_notification_tool() {
+        let config = serde_json::from_str::<Value>(
+            &schedule_assistant_world::schedule_assistant_world_director_config_json(),
+        )
+        .unwrap();
+        let allowed = config
+            .get("allowed_mcp_tool_ids")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+
+        assert_eq!(config.get("service_mode").and_then(Value::as_str), Some("agent_chat"));
+        assert_eq!(
+            config.get("default_agent_id").and_then(Value::as_str),
+            Some(schedule_assistant_world::SEED_CHARACTER_SCHEDULE_ASSISTANT_ID)
+        );
+        assert_eq!(allowed.len(), 1);
+        assert!(allowed
+            .iter()
+            .any(|value| value.as_str() == Some(MCP_TOOL_SCHEDULE_NOTIFICATION_ID)));
+    }
+
+    #[test]
+    fn schedule_assistant_seed_owns_dedicated_ui_files() {
+        let config = serde_json::from_str::<Value>(
+            &schedule_assistant_world::schedule_assistant_world_ui_theme_config_json(),
+        )
+        .unwrap();
+        let desktop_source = config
+            .get("desktop_file")
+            .and_then(Value::as_str)
+            .expect("schedule assistant desktop UI source");
+        let mobile_source = config
+            .get("mobile_file")
+            .and_then(Value::as_str)
+            .expect("schedule assistant mobile UI source");
+        let desktop_file = serde_json::from_str::<Value>(desktop_source).unwrap();
+        let mobile_file = serde_json::from_str::<Value>(mobile_source).unwrap();
+
+        assert_eq!(
+            desktop_file.pointer("/meta/name").and_then(Value::as_str),
+            Some("Schedule Assistant Desktop UI")
+        );
+        assert_eq!(
+            mobile_file.pointer("/meta/name").and_then(Value::as_str),
+            Some("Schedule Assistant Mobile UI")
         );
     }
 }

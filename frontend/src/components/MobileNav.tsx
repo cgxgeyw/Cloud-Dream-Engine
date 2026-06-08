@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft, Globe, Menu, Moon, Play, Save, Settings, Sun, Wrench, X } from "lucide-react";
 import appIconUrl from "../assets/app-icon.svg";
@@ -17,6 +17,10 @@ type MobileNavProps = {
   children: ReactNode;
 };
 
+type MobileViewportState = {
+  height: number;
+};
+
 const navItems = [
   { path: "/new-game", label: "新的游戏", Icon: Play },
   { path: "/saves", label: "读取存档", Icon: Save },
@@ -25,17 +29,102 @@ const navItems = [
   { path: "/mcp-tools", label: "MCP 工具", Icon: Wrench },
 ];
 
+function resolveParentPath(pathname: string, search: string) {
+  const params = new URLSearchParams(search);
+  const worldId = params.get("worldId");
+
+  if (pathname === "/" || pathname.startsWith("/game/") || pathname.startsWith("/debug/")) {
+    return "/";
+  }
+
+  if (pathname === "/new-game" || pathname === "/saves" || pathname === "/worlds" || pathname === "/settings" || pathname === "/mcp-tools") {
+    return "/";
+  }
+
+  if (pathname.startsWith("/new-game/setup/")) {
+    return "/new-game";
+  }
+
+  if (pathname === "/worlds/new" || /^\/worlds\/[^/]+\/edit$/.test(pathname)) {
+    return "/worlds";
+  }
+
+  if (/^\/worlds\/[^/]+\/characters$/.test(pathname)) {
+    return "/worlds";
+  }
+
+  if (pathname === "/characters/new" || /^\/characters\/[^/]+\/edit$/.test(pathname)) {
+    return worldId ? `/worlds/${encodeURIComponent(worldId)}/characters` : "/worlds";
+  }
+
+  const segments = pathname.split("/").filter(Boolean);
+  if (segments.length <= 1) {
+    return "/";
+  }
+  return `/${segments.slice(0, -1).join("/")}`;
+}
+
+function useMobileVisualViewport(): MobileViewportState {
+  const [viewport, setViewport] = useState<MobileViewportState>(() => ({
+    height: typeof window === "undefined" ? 0 : Math.round(window.visualViewport?.height ?? window.innerHeight),
+  }));
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    let frameId = 0;
+    const updateViewport = () => {
+      window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(() => {
+        const nextHeight = Math.round(window.visualViewport?.height ?? window.innerHeight);
+        setViewport((current) => (current.height === nextHeight ? current : { height: nextHeight }));
+      });
+    };
+
+    updateViewport();
+    window.visualViewport?.addEventListener("resize", updateViewport);
+    window.visualViewport?.addEventListener("scroll", updateViewport);
+    window.addEventListener("resize", updateViewport);
+    window.addEventListener("orientationchange", updateViewport);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.visualViewport?.removeEventListener("resize", updateViewport);
+      window.visualViewport?.removeEventListener("scroll", updateViewport);
+      window.removeEventListener("resize", updateViewport);
+      window.removeEventListener("orientationchange", updateViewport);
+    };
+  }, []);
+
+  return viewport;
+}
+
 export function MobileNav({ children }: MobileNavProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [mode, setMode] = useState<ThemeMode>(() => resolveInitialMode());
   const navigate = useNavigate();
   const location = useLocation();
+  const mobileViewport = useMobileVisualViewport();
+  const viewportHeight = mobileViewport.height > 0 ? `${mobileViewport.height}px` : "100dvh";
+  const mobileViewportStyle = useMemo(
+    () => ({
+      "--app-visual-viewport-height": viewportHeight,
+    }) as CSSProperties,
+    [viewportHeight],
+  );
   const isImmersiveRoute =
     location.pathname.startsWith("/game/") || location.pathname.startsWith("/debug/");
   const showBackButton = !isImmersiveRoute && location.pathname !== "/";
 
   const handleNavigate = (path: string) => {
     navigate(path);
+    setIsOpen(false);
+  };
+
+  const handleBack = () => {
+    navigate(resolveParentPath(location.pathname, location.search));
     setIsOpen(false);
   };
 
@@ -52,7 +141,10 @@ export function MobileNav({ children }: MobileNavProps) {
   };
 
   return (
-    <div className={`mobile-nav-container${isImmersiveRoute ? " mobile-nav-container--immersive" : ""}`}>
+    <div
+      className={`mobile-nav-container${isImmersiveRoute ? " mobile-nav-container--immersive" : ""}`}
+      style={mobileViewportStyle}
+    >
       <button
         type="button"
         className="mobile-fab"
@@ -65,7 +157,7 @@ export function MobileNav({ children }: MobileNavProps) {
         <button
           type="button"
           className="mobile-back-btn"
-          onClick={() => navigate(-1)}
+          onClick={handleBack}
           aria-label="返回"
         >
           <ArrowLeft size={17} />
@@ -81,7 +173,7 @@ export function MobileNav({ children }: MobileNavProps) {
                 type="button"
                 className="mobile-sidebar-brand-icon-btn"
                 onClick={() => setIsOpen(false)}
-                aria-label="Close menu"
+                  aria-label="关闭菜单"
               >
                 <CloudIcon size={36} />
               </button>

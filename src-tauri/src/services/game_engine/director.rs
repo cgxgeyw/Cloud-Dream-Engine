@@ -1,5 +1,7 @@
 ﻿use crate::models::character::CharacterCreateRequest;
 use crate::models::character::CharacterDefinition;
+use crate::db::Database;
+use crate::models::mcp_tool::MCP_TOOL_SCHEDULE_NOTIFICATION_ID;
 use crate::models::model_config::ModelConfig;
 use crate::models::session::{ChatMessage, MessageContent, SessionSnapshot};
 use crate::models::world::WorldDefinition;
@@ -8,6 +10,10 @@ use crate::services::llm::client::{
     ChatRequest, ChatToolCall, ChatToolChoice, ChatToolDefinition, LlmClient,
 };
 use crate::services::map_topology::extract_scene_names;
+use crate::services::notifications::{
+    notification_tool_definition, pending_notification_from_tool_call, NotificationScheduler,
+    NotificationToolContext, NotificationToolRuntime,
+};
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Default)]
@@ -54,92 +60,6 @@ pub struct ParsedDirectorRuntimePayload {
     pub switch_character_proposal: Option<serde_json::Value>,
 }
 
-#[allow(dead_code)]
-fn default_world_director_system_prompt() -> String {
-    r#"?????????????????????????????????????????????
-
-??????? JSON ??????????????????????
-- world_phase
-- next_scene_name
-- next_location
-- next_time_label
-- scene_visible_characters
-- planned_speakers
-- current_speaker
-- current_line
-- next_scene_background_hint
-- character_visual_directives
-
-???
-1. ??? JSON??????????
-2. ????????????????????
-3. current_scene_character_roster ? scene_visible_characters ????????????????????
-4. planned_speakers ???????????? NPC ???????????????????????
-5. ??????????? NPC???????????????????????????????? planned_speakers ???? 2 ? 3 ??????????
-6. ???????????????????????? NPC ?????????????????????? NPC ?????
-7. ????????????????????
-8. ???????????????? visible / planned ???
-9. scene_visible_characters ? planned_speakers ?????????????????????????????"#
-        .to_string()
-}
-
-#[allow(dead_code)]
-fn director_speech_boundary_prompt() -> &'static str {
-    r#"?????????
-1. ?????????????????????????????
-2. ????? NPC ??????????????????????????
-3. planned_speakers ??????????? NPC ???????????????????
-4. current_line ??????????????????????????????????????/?/?/?/????????
-5. system_messages?system_log?memory_events ?????????????????????????????
-6. ??????????????????? planned_speakers?
-7. scene_visible_characters ? planned_speakers ??????????????????????????"#
-}
-
-fn minimal_world_director_system_prompt() -> String {
-    r#"You are the world director. Decide the next world-state patch only from the player input, world data, current state, chat history, and tool results.
-
-Return exactly one JSON object. This JSON is a minimal decision patch for the current turn, not a full snapshot.
-
-Core decision fields:
-- planned_speakers
-- switch_character_proposal
-
-Scene update fields when changed:
-- world_phase
-- next_scene_name
-- next_location
-- next_time_label
-- scene_visible_characters
-- current_line
-- next_scene_background_hint
-- next_scene_tags
-- character_visual_directives
-- generated_characters
-
-Tool rule:
-- Use native tool calls only when a tool is needed.
-- Never return a tool_calls field inside the JSON body.
-
-Rules:
-1. Return JSON only. No markdown, no code fences, no explanation.
-2. Return only fields that changed in this turn.
-3. current_scene_character_roster and scene_visible_characters refer only to characters present in the current scene, not the full world roster.
-4. planned_speakers should usually not be empty.
-5. When multiple NPCs are present and the player did not clearly address exactly one of them, prefer 2 to 3 planned speakers in order.
-6. Do not include the player character name in scene_visible_characters or planned_speakers; the player is implicitly present.
-7. Do not return state_tags, system_messages, or system_log."#
-        .to_string()
-}
-
-fn minimal_director_speech_boundary_prompt() -> &'static str {
-    r#"World director boundary:
-1. Only decide world state, scene changes, visible characters, speaker order, and objective narration.
-2. Do not write dialogue, poems, answers, replies, commands, or inner monologue for NPCs or the player.
-3. planned_speakers may only list NPC names that should speak next; the corresponding character model must decide what they say.
-4. current_line may only contain objective non-dialogue scene changes.
-5. If character expression is needed, put that character into planned_speakers.
-6. Do not include the player character name in scene_visible_characters or planned_speakers."#
-}
 impl WorldDirectorService {
     pub fn new() -> Self {
         Self
@@ -284,19 +204,7 @@ impl WorldDirectorService {
 
     #[allow(unreachable_code)]
     fn resolve_director_system_prompt(&self, world: &WorldDefinition) -> String {
-        let prompt = world.director_runtime_system_prompt.trim();
-        let base = if prompt.is_empty() {
-            minimal_world_director_system_prompt()
-        } else {
-            prompt.to_string()
-        };
-        let new_character_rule = "New character rule: if you add a character who is not already in the current scene or world roster, create it in generated_characters first, then reference the same name in scene_visible_characters or planned_speakers. generated_characters must include at least name, role, and background_prompt.";
-        return format!(
-            "{base}\n\n{}\n\n{}\n\n{}",
-            minimal_director_speech_boundary_prompt(),
-            new_character_rule,
-            "Tool rule: use native tool calls only. Never return a `tool_calls` field inside the JSON body.",
-        );
+        world.director_runtime_system_prompt.trim().to_string()
     }
 
     fn build_runtime_prompt_messages(
@@ -589,17 +497,21 @@ impl WorldDirectorService {
                     .collect::<Vec<_>>()
             })
             .filter(|items| !items.is_empty());
+        let native_tools_active = tools
+            .as_ref()
+            .map(|items| !items.is_empty())
+            .unwrap_or(false);
         ChatRequest {
             model: model_id.to_string(),
             messages,
             temperature: Some(0.7),
             max_tokens: Some(max_tokens),
-            stream: Some(stream_enabled),
+            stream: Some(stream_enabled && !native_tools_active),
             json_mode: Some(true),
             response_schema: Some(self.build_director_response_schema()),
             tools,
-            tool_choice: Some(ChatToolChoice::Auto),
-            native_tool_calling: if stream_enabled { None } else { Some(true) },
+            tool_choice: native_tools_active.then_some(ChatToolChoice::Auto),
+            native_tool_calling: native_tools_active.then_some(true),
         }
     }
 
@@ -821,6 +733,8 @@ impl WorldDirectorService {
         characters: &[CharacterDefinition],
         initial_request: ChatRequest,
         _loop_limit: usize,
+        turn_index: i32,
+        notification_runtime: Option<NotificationToolRuntime<'_>>,
         mut progress_callback: Option<&mut (dyn FnMut(DirectorLoopStreamProgress) + Send)>,
     ) -> Result<DirectorLoopRunResult, String> {
         let mut active_request = initial_request;
@@ -896,8 +810,9 @@ impl WorldDirectorService {
                 llm.chat_completion(provider, &model.base_url, &model.api_key, &active_request)
                     .await?
             };
-            let parsed = self.parse_loose_json(&response.content);
-            let parsed = self.merge_native_tool_calls(&parsed, response.tool_calls.as_deref());
+            let parsed_body = self.parse_loose_json(&response.content);
+            let parsed_body = self.remove_response_body_tool_calls(&parsed_body);
+            let parsed = self.merge_native_tool_calls(&parsed_body, response.tool_calls.as_deref());
             let request_value = serde_json::json!({
                 "provider": provider,
                 "base_url": model.base_url,
@@ -911,7 +826,14 @@ impl WorldDirectorService {
                 "latency_ms": started.elapsed().as_millis() as i64,
                 "response": serde_json::to_value(&response).unwrap_or_default(),
             });
-            let tool_enriched = self.apply_tool_call_effects(&parsed, session, world, characters);
+            let tool_enriched = self.apply_tool_call_effects_with_notifications(
+                &parsed,
+                session,
+                world,
+                characters,
+                notification_runtime,
+                turn_index,
+            );
             let iteration = traces.len() + 1;
             traces.push(DirectorLoopIterationTrace {
                 iteration,
@@ -948,6 +870,18 @@ impl WorldDirectorService {
         world: &WorldDefinition,
         characters: &[CharacterDefinition],
     ) -> serde_json::Value {
+        self.apply_tool_call_effects_with_notifications(parsed, session, world, characters, None, 0)
+    }
+
+    fn apply_tool_call_effects_with_notifications(
+        &self,
+        parsed: &serde_json::Value,
+        session: &SessionSnapshot,
+        world: &WorldDefinition,
+        characters: &[CharacterDefinition],
+        notification_runtime: Option<NotificationToolRuntime<'_>>,
+        turn_index: i32,
+    ) -> serde_json::Value {
         let tool_calls = self.extract_tool_calls(parsed, Some(self.resolve_tool_call_limit(world)));
         if tool_calls.is_empty() {
             return parsed.clone();
@@ -957,6 +891,14 @@ impl WorldDirectorService {
             .get("tool_results")
             .and_then(|value| value.as_array().cloned())
             .unwrap_or_default();
+        let mut pending_notifications = merged
+            .get("pending_notifications")
+            .and_then(|value| value.as_array().cloned())
+            .unwrap_or_default();
+        let schedule_notification_allowed = self
+            .resolve_world_allowed_tool_ids(world)
+            .iter()
+            .any(|id| id == MCP_TOOL_SCHEDULE_NOTIFICATION_ID);
         for tool_call in &tool_calls {
             let Some(tool_call_obj) = tool_call.as_object() else {
                 continue;
@@ -1127,8 +1069,88 @@ impl WorldDirectorService {
                         }
                     }));
                 }
+                "schedule_notification" => {
+                    if !schedule_notification_allowed {
+                        tool_results.push(serde_json::json!({
+                            "id": call_id,
+                            "tool_name": "schedule_notification",
+                            "ok": false,
+                            "error": "schedule_notification is not allowed for this world",
+                        }));
+                        continue;
+                    }
+                    if let Some(runtime) = notification_runtime {
+                        let result = match Database::new(&runtime.data_dir.to_path_buf()) {
+                            Ok(db) => NotificationScheduler::execute_tool_call(
+                                db.conn(),
+                                runtime.app,
+                                runtime.data_dir,
+                                NotificationToolContext {
+                                    session_id: &session.id,
+                                    world_id: &world.id,
+                                    world_name: &world.name,
+                                    turn_index,
+                                },
+                                &call_id,
+                                &arguments,
+                            ),
+                            Err(error) => serde_json::json!({
+                                "id": call_id,
+                                "tool_name": "schedule_notification",
+                                "tool_call_id": call_id,
+                                "ok": false,
+                                "error": error,
+                            }),
+                        };
+                        tool_results.push(result);
+                        continue;
+                    }
+                    match pending_notification_from_tool_call(&session.id, &call_id, &arguments) {
+                        Ok(pending) => {
+                            let scheduled_at = pending.scheduled_at.clone();
+                            let body = pending.body.clone();
+                            let title = pending.title.clone();
+                            pending_notifications.push(
+                                serde_json::to_value(&pending).unwrap_or_else(|_| {
+                                    serde_json::json!({
+                                        "tool_call_id": call_id,
+                                        "source": format!("tool:schedule_notification:{}:{}", session.id, call_id),
+                                        "title": title,
+                                        "body": body,
+                                        "scheduled_at": scheduled_at,
+                                    })
+                                }),
+                            );
+                            tool_results.push(serde_json::json!({
+                                "id": call_id,
+                                "tool_name": "schedule_notification",
+                                "ok": true,
+                                "result": {
+                                    "status": "scheduled",
+                                    "scheduled_at": scheduled_at,
+                                    "content": body,
+                                    "title": title,
+                                }
+                            }));
+                        }
+                        Err(error) => {
+                            tool_results.push(serde_json::json!({
+                                "id": call_id,
+                                "tool_name": "schedule_notification",
+                                "ok": false,
+                                "error": error,
+                            }));
+                        }
+                    }
+                }
                 _ => {}
             }
+        }
+        if !pending_notifications.is_empty() {
+            merged.insert(
+                "pending_notifications".to_string(),
+                serde_json::Value::Array(pending_notifications),
+            );
         }
         if !tool_results.is_empty() {
             merged.insert(
@@ -1195,6 +1217,18 @@ impl WorldDirectorService {
             serde_json::Value::Array(serialized_tool_calls),
         );
         serde_json::Value::Object(merged)
+    }
+
+    fn remove_response_body_tool_calls(&self, parsed: &serde_json::Value) -> serde_json::Value {
+        let Some(object) = parsed.as_object() else {
+            return parsed.clone();
+        };
+        if !object.contains_key("tool_calls") {
+            return parsed.clone();
+        }
+        let mut stripped = object.clone();
+        stripped.remove("tool_calls");
+        serde_json::Value::Object(stripped)
     }
 
     pub fn build_tool_followup_request(
@@ -1281,49 +1315,9 @@ impl WorldDirectorService {
                 native_tool_calling: previous_request.native_tool_calling,
             });
         }
-        messages.push(crate::services::llm::client::ChatMessage {
-            role: "assistant".to_string(),
-            content: serde_json::Value::String(serde_json::to_string(parsed).map_err(|e| e.to_string())?),
-            reasoning_content: None,
-            speaker: None,
-            tool_call_id: None,
-            tool_calls: None,
-            metadata: Some(serde_json::json!({
-                "tool_phase": true,
-                "tool_calls": parsed.get("tool_calls").cloned().unwrap_or_else(|| serde_json::Value::Array(vec![])),
-            })),
-        });
-        let tool_results = tool_enriched
-            .get("tool_results")
-            .cloned()
-            .unwrap_or_else(|| serde_json::Value::Array(vec![]));
-        messages.push(crate::services::llm::client::ChatMessage {
-            role: "user".to_string(),
-            content: serde_json::Value::String(serde_json::to_string(&serde_json::json!({
-                "tool_results": tool_results,
-            }))
-            .map_err(|e| e.to_string())?),
-            reasoning_content: None,
-            speaker: None,
-            tool_call_id: None,
-            tool_calls: None,
-            metadata: Some(serde_json::json!({
-                "tool_phase": true,
-                "instruction": "Return final world-state JSON only.",
-            })),
-        });
-        Ok(crate::services::llm::client::ChatRequest {
-            model: previous_request.model.clone(),
-            messages,
-            temperature: previous_request.temperature,
-            max_tokens: previous_request.max_tokens,
-            stream: previous_request.stream,
-            json_mode: previous_request.json_mode,
-            response_schema: previous_request.response_schema.clone(),
-            tools: previous_request.tools.clone(),
-            tool_choice: previous_request.tool_choice.clone(),
-            native_tool_calling: previous_request.native_tool_calling,
-        })
+        let _ = parsed;
+        let _ = tool_enriched;
+        Err("Director tool follow-up requires native tool_calls".to_string())
     }
 
     pub fn resolve_tool_loop_limit(&self, world: &WorldDefinition) -> usize {
@@ -1588,7 +1582,6 @@ impl WorldDirectorService {
                 .max(1),
             attributes: vec![],
             portrait_assets: vec![],
-            custom_tabs: std::collections::HashMap::new(),
             system_prompt_template: String::new(),
             response_contract_prompt: String::new(),
             narration_prompt: String::new(),
@@ -1684,7 +1677,6 @@ impl WorldDirectorService {
                         .unwrap_or(6),
                     attributes: vec![],
                     portrait_assets: vec![],
-                    custom_tabs: std::collections::HashMap::new(),
                     system_prompt_template: String::new(),
                     response_contract_prompt: String::new(),
                     narration_prompt: String::new(),
@@ -1793,7 +1785,7 @@ impl WorldDirectorService {
     fn build_tool_protocol(&self) -> serde_json::Value {
         serde_json::json!({
             "format": {
-                "description": "When a tool is needed, use the provider's native tool channel. Each native tool call must carry exactly three logical fields: id (unique identifier string), tool_name (must match exactly one of the available_tools names above), and arguments (a JSON object of parameters, or {} if the tool takes no parameters). Do not place tool calls inside the JSON response body.",
+                "description": "When a tool is needed, use the provider-native tool_calls channel. Each native tool call must carry exactly three logical fields after normalization: id (unique identifier string), tool_name (must match exactly one of the available_tools names above), and arguments (a JSON object of parameters, or {} if the tool takes no parameters). Do not place tool calls, tool names, or tool arguments inside the JSON response body.",
                 "examples": [
                     {
                         "id": "call-1",
@@ -1820,8 +1812,9 @@ impl WorldDirectorService {
             },
             "rules": [
                 "tool_name must be exactly one of the tool_name values listed in available_tools; do not invent tool names.",
-                "Use the native tool channel whenever you need information from a tool.",
-                "Do not encode tool calls inside the JSON response body.",
+                "Use provider-native tool_calls for every tool invocation.",
+                "Do not encode tool calls, tool names, or tool arguments inside the JSON response body.",
+                "JSON-body tool_calls are invalid and will be ignored by the runtime.",
                 "Call tools only when you genuinely need information from a tool; do not fabricate tool calls for decoration.",
                 "If the player asks to add a new participant who is not already in the current scene or world roster, return generated_characters first, then place that character into scene_visible_characters and planned_speakers in the same response.",
                 "Each generated_characters item must contain a usable role and portrayal brief, not just a name.",
@@ -2110,6 +2103,9 @@ impl WorldDirectorService {
                     }
                 }
             }));
+        }
+        if allowed.contains(MCP_TOOL_SCHEDULE_NOTIFICATION_ID) {
+            tools.push(notification_tool_definition());
         }
         tools
     }
@@ -2807,9 +2803,6 @@ mod tests {
             time_system: "".to_string(),
             map_nodes: serde_json::json!({ "version": 1, "nodes": [] }),
             triggers: vec![],
-            custom_tabs: std::collections::HashMap::new(),
-            world_custom_attribute_definitions: vec![],
-            character_custom_attribute_definitions: vec![],
             time_config: serde_json::json!({}),
             director_config,
             ui_theme_config: serde_json::json!({}),
@@ -2879,17 +2872,13 @@ mod tests {
     }
 
     #[test]
-    fn resolve_director_prompt_falls_back_when_world_prompt_empty() {
+    fn resolve_director_prompt_is_empty_when_world_prompt_empty() {
         let service = WorldDirectorService::new();
         let world = sample_world(serde_json::json!({}));
 
         let prompt = service.resolve_director_system_prompt(&world);
 
-        assert!(!prompt.trim().is_empty());
-        assert!(prompt.contains("You are the world director"));
-        assert!(prompt.contains("World director boundary"));
-        assert!(prompt.contains("Do not write dialogue"));
-        assert!(prompt.contains("Do not include the player character name in scene_visible_characters or planned_speakers"));
+        assert!(prompt.trim().is_empty());
     }
 
     #[test]
@@ -2908,7 +2897,7 @@ mod tests {
     }
 
     #[test]
-    fn build_tool_followup_request_matches_python_role_shape() {
+    fn build_tool_followup_request_rejects_response_body_tool_calls() {
         let service = WorldDirectorService::new();
         let request = ChatRequest {
             model: "model".to_string(),
@@ -2941,21 +2930,11 @@ mod tests {
             ]
         });
 
-        let followup = service
+        let error = service
             .build_tool_followup_request(&request, &parsed, &tool_enriched, false, None)
-            .expect("followup request");
+            .expect_err("response body tool calls should be rejected");
 
-        assert_eq!(followup.messages.len(), 3);
-        assert_eq!(followup.messages[1].role, "assistant");
-        assert_eq!(followup.messages[2].role, "user");
-        let content = serde_json::from_str::<serde_json::Value>(
-            followup.messages[2].content.as_str().expect("tool results text"),
-        )
-        .expect("json tool results");
-        assert!(content
-            .get("tool_results")
-            .and_then(|value| value.as_array())
-            .is_some());
+        assert!(error.contains("native tool_calls"));
     }
 
     #[test]
@@ -3011,6 +2990,33 @@ mod tests {
                 .map(|items| items.len()),
             Some(1)
         );
+    }
+
+    #[test]
+    fn native_tool_calls_override_response_body_tool_calls() {
+        let service = WorldDirectorService::new();
+        let parsed_body = serde_json::json!({
+            "world_phase": "runtime",
+            "tool_calls": [
+                { "id": "body-call", "tool_name": "change_scene", "arguments": { "scene_name": "Body" } }
+            ]
+        });
+        let native_calls = vec![ChatToolCall {
+            id: "native-call".to_string(),
+            tool_name: "list_scenes".to_string(),
+            arguments: serde_json::json!({}),
+        }];
+
+        let stripped = service.remove_response_body_tool_calls(&parsed_body);
+        let merged = service.merge_native_tool_calls(&stripped, Some(&native_calls));
+        let tool_calls = merged
+            .get("tool_calls")
+            .and_then(|value| value.as_array())
+            .expect("native tool calls should be merged");
+
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0]["id"], "native-call");
+        assert_eq!(tool_calls[0]["tool_name"], "list_scenes");
     }
 
     #[test]
@@ -3138,7 +3144,6 @@ mod tests {
                 recent_dialogue_rounds: 6,
                 attributes: vec![],
                 portrait_assets: vec![],
-                custom_tabs: std::collections::HashMap::new(),
                 system_prompt_template: String::new(),
                 response_contract_prompt: String::new(),
                 narration_prompt: String::new(),
@@ -3155,7 +3160,6 @@ mod tests {
                 recent_dialogue_rounds: 6,
                 attributes: vec![],
                 portrait_assets: vec![],
-                custom_tabs: std::collections::HashMap::new(),
                 system_prompt_template: String::new(),
                 response_contract_prompt: String::new(),
                 narration_prompt: String::new(),
@@ -3235,17 +3239,6 @@ mod tests {
                     "player character name in scene_visible_characters or planned_speakers"
                 )))
             .unwrap_or(false));
-    }
-
-    #[test]
-    fn resolved_director_system_prompt_includes_new_character_creation_rule() {
-        let service = WorldDirectorService::new();
-        let world = sample_world(serde_json::json!({}));
-        let prompt = service.resolve_director_system_prompt(&world);
-        assert!(prompt.contains("generated_characters"));
-        assert!(prompt.contains("New character rule"));
-        assert!(prompt.contains("background_prompt"));
-        assert!(prompt.contains("background_prompt"));
     }
 
     #[test]

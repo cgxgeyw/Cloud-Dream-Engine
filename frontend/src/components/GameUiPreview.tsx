@@ -76,17 +76,17 @@ export function GameUiPreview({
         </div>
         <div className="game-simple-meta game-simple-meta-row">
           <div className="game-simple-meta-item">
-            <strong>Time</strong>
+            <strong>时间</strong>
             <span>{timeLabel}</span>
           </div>
           <div className="game-simple-meta-item">
-            <strong>Player</strong>
+            <strong>玩家</strong>
             <span>{playerName}</span>
           </div>
           {usedFallback || parseError ? (
             <div className="game-simple-meta-item">
-              <strong>UI</strong>
-              <span>{usedFallback ? "Fallback active" : "Loaded"}</span>
+              <strong>界面</strong>
+              <span>{usedFallback ? "使用回退配置" : "已加载"}</span>
             </div>
           ) : null}
         </div>
@@ -101,7 +101,7 @@ export function GameUiPreview({
           </div>
           <div className="game-scene-header-side">
             <span className="game-scene-badge game-ui-badge" data-variant="info">
-              {`Current player: ${playerName}`}
+              {`当前玩家：${playerName}`}
             </span>
           </div>
         </div>
@@ -126,8 +126,8 @@ export function GameUiPreview({
     ) : null,
     narration: (
       <div className="game-narration-panel game-ui-panel">
-        <div className="game-narration-label">Narration</div>
-        <div className="game-narration-content">{narration || "No narration available."}</div>
+        <div className="game-narration-label">旁白</div>
+        <div className="game-narration-content">{narration || "暂无旁白。"}</div>
       </div>
     ),
     message_list: (
@@ -137,7 +137,7 @@ export function GameUiPreview({
             <div className={`game-message game-message--${message.role} game-ui-message-bubble`} data-variant={message.role}>
               {message.role !== "system" ? (
                 <div className={`game-message-speaker${message.role === "player" ? " game-message-speaker--player" : ""} game-ui-message-speaker`} data-variant={message.role}>
-                  {message.speaker?.trim() || (message.role === "player" ? "Player" : "Character")}
+                  {message.speaker?.trim() || (message.role === "player" ? "玩家" : "角色")}
                 </div>
               ) : null}
               <div className={`game-message-content ${message.role === "system" ? "game-message-content--system" : "game-message-content--default"}`}>
@@ -166,14 +166,14 @@ export function GameUiPreview({
               ))}
             </div>
             <div className="game-panel game-side-content game-ui-panel" data-variant="sidebar">
-              <div className="game-card game-custom-tab-content">
-                {orderedStatusTabs[0]?.content || "No tab content."}
+              <div className="game-card game-attribute-tab-content">
+                {orderedStatusTabs[0]?.content || "暂无内容。"}
               </div>
             </div>
           </>
         ) : (
           <div className="game-panel game-side-content game-ui-panel" data-variant="sidebar">
-            <div className="game-card">No side tabs configured.</div>
+            <div className="game-card">未配置侧边栏标签。</div>
           </div>
         )}
       </div>
@@ -184,10 +184,10 @@ export function GameUiPreview({
           <textarea
             className="game-textarea game-ui-textarea"
             readOnly
-            value={"Type a message or action here.\nShift + Enter inserts a new line."}
+            value={"在这里输入消息或行动。\n按 Shift + Enter 换行。"}
           />
           <button type="button" className="game-submit-btn game-submit-btn--inline game-ui-button" data-variant="primary" disabled>
-            Send
+            发送
           </button>
         </div>
       </div>
@@ -195,7 +195,7 @@ export function GameUiPreview({
     floating_actions: (
       <div className="game-simple-actions">
         <span className="game-scene-badge game-ui-badge" data-variant="info">
-          {platform === "desktop" ? "Desktop UI" : "Mobile UI"}
+          {platform === "desktop" ? "桌面界面" : "移动界面"}
         </span>
       </div>
     ),

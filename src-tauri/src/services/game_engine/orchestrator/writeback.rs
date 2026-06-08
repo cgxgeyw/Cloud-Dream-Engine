@@ -175,6 +175,7 @@ pub(crate) fn append_runtime_effects_journal(
             "system_messages_count": runtime_application.system_messages.len(),
             "system_log_lines_count": runtime_application.system_log_lines.len(),
             "tool_call_logs_count": runtime_application.tool_call_logs.len(),
+            "pending_notifications_count": runtime_application.pending_notifications.len(),
             "session_attribute_updates_count": runtime_application.session_attribute_updates.len(),
             "character_attribute_updates_count": runtime_application.character_attribute_updates.len(),
             "memory_entries_count": runtime_application.memory_entries.len(),

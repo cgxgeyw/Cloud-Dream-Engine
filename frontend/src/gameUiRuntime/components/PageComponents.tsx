@@ -48,11 +48,11 @@ export function SceneHeaderComponent({ runtime, actions, node }: RuntimeComponen
     <div className={isMobileTitle ? "game-simple-top game-ui-panel" : "game-header"}>
       <div className={isMobileTitle ? "game-simple-top-main" : "game-header-left"}>
         <div className="game-title-group">
-          {showWorldName ? <div className="game-simple-world">{runtime.session.world_name || runtime.world?.name || "Current World"}</div> : null}
+          {showWorldName ? <div className="game-simple-world">{runtime.session.world_name || runtime.world?.name || "当前世界"}</div> : null}
           {showLocation ? (
             <div className="game-simple-place-row">
               <strong className={isMobileTitle ? "game-simple-place" : "game-scene-name"}>
-                {runtime.session.location || "Current Scene"}
+                {runtime.session.location || "当前场景"}
               </strong>
             </div>
           ) : null}
@@ -61,7 +61,7 @@ export function SceneHeaderComponent({ runtime, actions, node }: RuntimeComponen
       <div className={isMobileTitle ? "game-simple-meta" : "game-header-meta"}>
         {showTimeLabel && runtime.session.time_label ? (
           <span className="game-simple-meta-item">
-            <strong>Time</strong>
+            <strong>时间</strong>
             <span>{runtime.session.time_label}</span>
           </span>
         ) : null}
@@ -74,14 +74,14 @@ export function SceneHeaderComponent({ runtime, actions, node }: RuntimeComponen
             </span>
           ) : (
             <span className="game-simple-meta-item">
-              <strong>Player</strong>
+              <strong>玩家</strong>
               <span>{runtime.session.player_character_name}</span>
             </span>
           )
         ) : null}
         {showVisibleCharacters && runtime.visible_characters.length > 0 ? (
           <span className="game-simple-meta-item">
-            <strong>Present</strong>
+            <strong>在场</strong>
             <span>{runtime.visible_characters.join(" / ")}</span>
           </span>
         ) : null}
@@ -154,9 +154,9 @@ export function CharacterBarComponent({ runtime, node }: RuntimeComponentProps) 
 }
 
 export function NarrationCardComponent({ runtime, actions, node }: RuntimeComponentProps) {
-  const title = readStringProp(node, "title", "Narration");
+  const title = readStringProp(node, "title", "旁白");
   const showCopyButton = readBooleanProp(node, "show_copy_button", runtime.capabilities.platform === "mobile");
-  const emptyText = readStringProp(node, "empty_text", "No narration available.");
+  const emptyText = readStringProp(node, "empty_text", "暂无旁白。");
   const content = runtime.latest_narration || emptyText;
 
   return (
@@ -169,8 +169,8 @@ export function NarrationCardComponent({ runtime, actions, node }: RuntimeCompon
             className="game-message-action-btn game-message-action-btn--copy game-ui-button"
             data-variant="ghost"
             onClick={() => void actions.copyText(runtime.latest_narration)}
-            aria-label="Copy narration"
-            title="Copy narration"
+            aria-label="复制旁白"
+            title="复制旁白"
           >
             <Copy size={12} />
           </button>
@@ -184,16 +184,16 @@ export function NarrationCardComponent({ runtime, actions, node }: RuntimeCompon
 export function SidePanelTabsComponent({ runtime, actions, node }: RuntimeComponentProps) {
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const showMapTab = readBooleanProp(node, "show_map_tab", true);
-  const showCustomTabs = readBooleanProp(node, "show_custom_tabs", true);
-  const emptyText = readStringProp(node, "empty_text", "No side tabs configured.");
+  const showAttributeTabs = readBooleanProp(node, "show_attribute_tabs", true);
+  const emptyText = readStringProp(node, "empty_text", "暂无状态信息。");
   const drawerLabel = readStringProp(node, "drawer_label", "\u72b6\u6001");
 
   const visibleTabs = runtime.side_tabs.filter((tab) => {
     if (tab.key === "map") {
       return showMapTab;
     }
-    if (tab.key.startsWith("custom:")) {
-      return showCustomTabs;
+    if (tab.key.startsWith("attribute:")) {
+      return showAttributeTabs;
     }
     return true;
   });
@@ -227,8 +227,8 @@ export function SidePanelTabsComponent({ runtime, actions, node }: RuntimeCompon
             />
           </Suspense>
         ) : null}
-        {runtime.active_side_tab.startsWith("custom:") && runtime.active_custom_content ? (
-          <div className="game-card game-custom-tab-content">{runtime.active_custom_content}</div>
+        {runtime.active_side_tab.startsWith("attribute:") && runtime.active_attribute_content ? (
+          <div className="game-card game-attribute-tab-content">{runtime.active_attribute_content}</div>
         ) : null}
       </div>
     </>
@@ -240,7 +240,7 @@ export function SidePanelTabsComponent({ runtime, actions, node }: RuntimeCompon
       "game-status--mobile-drawer",
       mobileDrawerOpen ? "game-status--mobile-drawer-open" : "",
       runtime.active_side_tab === "map" ? "game-status--map-active" : "",
-      runtime.active_side_tab.startsWith("custom:") ? "game-status--custom-active" : "",
+      runtime.active_side_tab.startsWith("attribute:") ? "game-status--attribute-active" : "",
     ].filter(Boolean).join(" ");
 
     return (

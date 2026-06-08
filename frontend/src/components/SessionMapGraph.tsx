@@ -30,7 +30,6 @@ const NODE_HEIGHT = 48;
 export function SessionMapGraph({ nodes, edges, compact = false }: SessionMapGraphProps) {
   const [flowNodes, setFlowNodes] = useState<Node<MapNodeData>[]>([]);
   const currentNode = useMemo(() => nodes.find((node) => node.current) ?? null, [nodes]);
-  const discoveredCount = nodes.filter((node) => node.discovered).length;
 
   const flowEdges = useMemo<Edge[]>(() => {
     const nodeIds = new Set(nodes.map((node) => node.node_id));
@@ -143,12 +142,6 @@ export function SessionMapGraph({ nodes, edges, compact = false }: SessionMapGra
           <strong>{currentNode?.label || "\u5c1a\u672a\u5b9a\u4f4d"}</strong>
           <span>{currentNode ? "\u5f53\u524d\u5730\u70b9" : "\u5c1a\u672a\u5b9a\u4f4d"}</span>
         </div>
-        {!compact ? (
-          <div className="game-map-summary-meta">
-            <span>{discoveredCount} / {nodes.length} \u5df2\u53d1\u73b0</span>
-            <span>{edges.length} \u6761\u8def\u5f84</span>
-          </div>
-        ) : null}
       </div>
       <div className="game-map-flow-canvas" aria-label="地图拓扑图">
         <ReactFlow

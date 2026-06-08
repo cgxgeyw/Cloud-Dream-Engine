@@ -19,7 +19,6 @@ import {
   validateWorldUiBundle,
   verifyWorldPackageUiCompatibility,
   type CharacterResponse,
-  type CustomAttributeDefinition,
   type ModelConfigResponse,
   type McpToolResponse,
   type WorldUiBundleValidationResult,
@@ -31,6 +30,7 @@ import {
   type WorldOpeningMessage,
   type WorldResponse,
 } from "../data/apiAdapter";
+import { AttributePanel } from "../components/AttributePanel";
 import { ConfirmDialog } from "../components/ModalDialog";
 import { GameUiPreview } from "../components/GameUiPreview";
 import { GameUiStructureEditor } from "../components/game-ui-editor/GameUiStructureEditor";
@@ -229,6 +229,11 @@ type FoldableEditorSectionProps = {
 };
 
 type DirectorConfig = {
+  service_mode: "world_sim" | "agent_chat";
+  default_agent_id: string;
+  runtime_policy: {
+    memory_write_mode: "session" | "character" | "world_and_character";
+  };
   allow_scene_transition: boolean;
   allow_npc_spawn: boolean;
   history_dialogue_rounds: number;
@@ -289,31 +294,14 @@ type UiThemeConfig = {
 
 type GameUiSchemaVersion = 1 | 2;
 
-const defaultWorldDirectorPrompt = `你是世界主控。你只根据玩家可编辑提示词、世界资料、当前状态、聊天记录和工具资料做状态决策。
-
-你需要返回一个 JSON 对象，用于描述下一步世界状态。常用字段包括：
-- world_phase
-- next_scene_name
-- next_location
-- next_time_label
-- scene_visible_characters
-- planned_speakers
-- current_speaker
-- current_line
-- next_scene_background_hint
-- character_visual_directives
-
-要求：
-1. 只返回 JSON，不要输出额外解释。
-2. 你负责推进世界状态，不直接替角色说对白。
-3. current_scene_character_roster 和 scene_visible_characters 表示当前场景在场角色，不是世界全体角色。
-4. planned_speakers 表示本回合应当依次发言的 NPC 列表，通常不应为空，也不应长期只包含同一个人。
-5. 如果当前场景有多名在场 NPC，且玩家输入不是明确只点名某一人、也不是剧情上只需要单人回应，则 planned_speakers 默认安排 2 到 3 人，让多人依次发言。
-6. 只有在玩家明确只对一人说话、当前场景实际只有一名 NPC 在场，或剧情推进确实应由单人回应时，才让一名 NPC 单独发言。
-7. 如果场景不该切换，就保持当前场景和地点。
-8. 只让当前场景里合理存在的角色进入 visible / planned 列表。`;
+const defaultWorldDirectorPrompt = "";
 
 const defaultDirectorConfig: DirectorConfig = {
+  service_mode: "world_sim",
+  default_agent_id: "",
+  runtime_policy: {
+    memory_write_mode: "session",
+  },
   allow_scene_transition: true,
   allow_npc_spawn: true,
   history_dialogue_rounds: 6,
@@ -526,7 +514,21 @@ function FoldableEditorSection({
 function normalizeDirectorConfig(raw: Record<string, unknown> | undefined): DirectorConfig {
   const normalizeScope = (value: unknown): "director" | "character" | "both" =>
     value === "director" || value === "character" || value === "both" ? value : "both";
+  const rawRuntimePolicy = raw?.runtime_policy as Record<string, unknown> | undefined;
+  const serviceMode = raw?.service_mode === "agent_chat" ? "agent_chat" : "world_sim";
   return {
+    service_mode: serviceMode,
+    default_agent_id:
+      typeof raw?.default_agent_id === "string" ? raw.default_agent_id.trim() : defaultDirectorConfig.default_agent_id,
+    runtime_policy: {
+      memory_write_mode:
+        rawRuntimePolicy?.memory_write_mode === "character" ||
+        rawRuntimePolicy?.memory_write_mode === "world_and_character"
+          ? rawRuntimePolicy.memory_write_mode
+          : raw?.memory_write_mode === "character" || raw?.memory_write_mode === "world_and_character"
+            ? raw.memory_write_mode
+          : defaultDirectorConfig.runtime_policy.memory_write_mode,
+    },
     allow_scene_transition:
       typeof raw?.allow_scene_transition === "boolean"
         ? raw.allow_scene_transition
@@ -747,9 +749,6 @@ function createNewWorldDraft(): WorldResponse {
     time_system: "",
     map_nodes: defaultMapTopology(),
     triggers: [],
-    custom_tabs: {},
-    world_custom_attribute_definitions: [],
-    character_custom_attribute_definitions: [],
     time_config: { ...defaultTimeConfig },
     director_config: { ...defaultDirectorConfig },
     ui_theme_config: buildUiThemeEnvelope(defaultUiThemeConfig),
@@ -759,65 +758,6 @@ function createNewWorldDraft(): WorldResponse {
     opening_character_ids: [],
     player_character_id: null,
   };
-}
-
-function createCustomAttributeDefinition(name: string, order: number): CustomAttributeDefinition {
-  const trimmedName = name.trim();
-  const fallbackId = `custom_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
-  const id = trimmedName
-    .toLowerCase()
-    .replace(/[^\w-]+/g, "_")
-    .replace(/^_+|_+$/g, "") || fallbackId;
-
-  return {
-    id,
-    name: trimmedName || "新属性项",
-    value_type: "longText",
-    order,
-    enabled: true,
-    required: false,
-    placeholder: "",
-    default_value: "",
-  };
-}
-
-function normalizeCustomAttributeDefinitions(
-  definitions: CustomAttributeDefinition[] | undefined,
-): CustomAttributeDefinition[] {
-  return (definitions ?? [])
-    .filter((definition) => definition.name.trim())
-    .map((definition, index) => ({
-      ...definition,
-      id: definition.id.trim() || createCustomAttributeDefinition(definition.name, index).id,
-      name: definition.name.trim(),
-      value_type: definition.value_type === "text" ? "text" : "longText",
-      order: index,
-      enabled: definition.enabled !== false,
-      required: Boolean(definition.required),
-      placeholder: definition.placeholder ?? "",
-      default_value: definition.default_value ?? "",
-    }));
-}
-
-function buildCustomAttributeDefinitionsFromNames(names: string[]): CustomAttributeDefinition[] {
-  const seen = new Set<string>();
-  return names
-    .map((name) => name.trim())
-    .filter((name) => name && !seen.has(name) && seen.add(name))
-    .map((name, index) => createCustomAttributeDefinition(name, index));
-}
-
-function syncWorldCustomTabsWithDefinitions(
-  values: Record<string, string>,
-  definitions: CustomAttributeDefinition[],
-): Record<string, string> {
-  const next = { ...values };
-  for (const definition of definitions) {
-    if (!Object.prototype.hasOwnProperty.call(next, definition.name)) {
-      next[definition.name] = definition.default_value ?? "";
-    }
-  }
-  return next;
 }
 
 function buildTimeSystemSummary(config: TimeConfig): string {
@@ -842,7 +782,7 @@ function buildThemePreviewStyle(config: UiThemeConfig, openingScene: string): CS
   return assetRef ? { "--game-runtime-bg-image": `url("${assetUrl(assetRef)}")` } : {};
 }
 
-function buildStatusTabOptions(customTabs: Record<string, string>): StatusTabOption[] {
+function buildStatusTabOptions(): StatusTabOption[] {
   return [
     {
       key: "map",
@@ -850,100 +790,7 @@ function buildStatusTabOptions(customTabs: Record<string, string>): StatusTabOpt
       content: "地图拓扑由世界包 JSON 提供。",
       owners: ["系统"],
     },
-    ...Object.entries(customTabs)
-      .filter(([label]) => label.trim())
-      .map(([label, content]) => ({
-        key: `custom:${label}`,
-        label,
-        content: typeof content === "string" ? content : "",
-        owners: ["示例角色"],
-      })),
   ];
-}
-
-function buildStatusTabOptionsFromCharacters(
-  characters: CharacterResponse[],
-  definitions: CustomAttributeDefinition[] = [],
-): StatusTabOption[] {
-  const customTabs = new Map<string, StatusTabOption>();
-
-  for (const definition of normalizeCustomAttributeDefinitions(definitions).filter((item) => item.enabled)) {
-    customTabs.set(`custom:${definition.name}`, {
-      key: `custom:${definition.name}`,
-      label: definition.name,
-      content: definition.default_value,
-      owners: ["角色模板"],
-    });
-  }
-
-  for (const character of characters) {
-    const owner = character.name.trim() || "未命名角色";
-    for (const [rawLabel, rawContent] of Object.entries(character.custom_tabs ?? {})) {
-      const label = rawLabel.trim();
-      if (!label || (definitions.length > 0 && !customTabs.has(`custom:${label}`))) {
-        continue;
-      }
-      const key = `custom:${label}`;
-      const content = typeof rawContent === "string" ? rawContent.trim() : "";
-      const existing = customTabs.get(key);
-      if (existing) {
-        if (!existing.owners.includes(owner)) {
-          existing.owners.push(owner);
-        }
-        if (!existing.content && content) {
-          existing.content = content;
-        }
-        continue;
-      }
-
-      customTabs.set(key, {
-        key,
-        label,
-        content,
-        owners: [owner],
-      });
-    }
-  }
-
-  return [
-    {
-      key: "map",
-      label: "地图",
-      content: "地图拓扑由世界包 JSON 提供。",
-      owners: ["系统"],
-    },
-    ...Array.from(customTabs.values()),
-  ];
-}
-
-function resolveStatusTabPreviewContent(
-  tab: StatusTabOption | null,
-  previewCharacter: CharacterResponse | null,
-): string {
-  if (!tab) {
-    return "";
-  }
-
-  if (tab.key === "map") {
-    return tab.content;
-  }
-
-  const tabName = tab.key.startsWith("custom:") ? tab.key.slice("custom:".length) : tab.label;
-  const previewContent = previewCharacter?.custom_tabs?.[tabName];
-  if (typeof previewContent === "string" && previewContent.trim()) {
-    return previewContent.trim();
-  }
-  if (typeof previewContent === "string") {
-    return "该角色尚未填写这个自定义页签。";
-  }
-
-  const owners = tab.owners.join(" / ");
-  if (previewCharacter) {
-    return owners
-      ? `当前角色没有“${tab.label}”页签。拥有该页签的角色：${owners}。`
-      : "当前角色没有这个自定义页签。";
-  }
-  return owners ? `拥有该页签的角色：${owners}。` : "暂无预览内容。";
 }
 
 interface WorldEditorPageProps {
@@ -1026,12 +873,6 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
           fetchModels("text"),
         ]);
         if (!cancelled) {
-          const worldAttributeDefinitions = normalizeCustomAttributeDefinitions(
-            worldData.world_custom_attribute_definitions,
-          );
-          const characterAttributeDefinitions = normalizeCustomAttributeDefinitions(
-            worldData.character_custom_attribute_definitions,
-          );
           const normalizedWorld = {
             ...worldData,
             time_config: normalizeTimeConfig(worldData.time_config as Record<string, unknown>),
@@ -1039,14 +880,6 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
             ui_theme_config: buildUiThemeEnvelope(normalizeUiThemeConfig(worldData.ui_theme_config as Record<string, unknown>)),
             opening_messages: normalizeOpeningMessages(worldData.opening_messages),
             opening_character_ids: normalizeOpeningCharacterIds(worldData.opening_character_ids, characterData),
-            world_custom_attribute_definitions: worldAttributeDefinitions.length > 0
-              ? worldAttributeDefinitions
-              : buildCustomAttributeDefinitionsFromNames(Object.keys(worldData.custom_tabs ?? {})),
-            character_custom_attribute_definitions: characterAttributeDefinitions.length > 0
-              ? characterAttributeDefinitions
-              : buildCustomAttributeDefinitionsFromNames(
-                  characterData.flatMap((character) => Object.keys(character.custom_tabs ?? {})),
-                ),
           };
           setWorld(normalizedWorld);
           setMapTopologySource(formatMapTopologyJson(normalizedWorld.map_nodes));
@@ -1100,14 +933,7 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
     () => directorConfig.world_director_prompt,
     [directorConfig.world_director_prompt],
   );
-  const availableStatusTabs = useMemo(
-    () => buildStatusTabOptionsFromCharacters(characters, world?.character_custom_attribute_definitions ?? []),
-    [characters, world?.character_custom_attribute_definitions],
-  );
-  const customStatusTabs = useMemo(
-    () => availableStatusTabs.filter((item) => item.key.startsWith("custom:")),
-    [availableStatusTabs],
-  );
+  const availableStatusTabs = useMemo(() => buildStatusTabOptions(), []);
   const stylePreview = useMemo(
     () => buildThemePreviewStyle(uiThemeConfig, world?.opening_scene?.trim() || sceneNames[0] || "未命名场景"),
     [sceneNames, uiThemeConfig, world?.opening_scene],
@@ -1177,9 +1003,9 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
       availableStatusTabs.map((tab) => ({
         key: tab.key,
         label: tab.label,
-        content: resolveStatusTabPreviewContent(tab, previewCharacter),
+        content: tab.content,
       })),
-    [availableStatusTabs, previewCharacter],
+    [availableStatusTabs],
   );
   const previewNarration = useMemo(
     () =>
@@ -1208,12 +1034,18 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
     () => mcpTools.filter((tool) => directorConfig.allowed_mcp_tool_ids.includes(tool.id)),
     [directorConfig.allowed_mcp_tool_ids, mcpTools],
   );
+  const selectedDefaultAgent = useMemo(
+    () => characters.find((character) => character.id === directorConfig.default_agent_id) ?? null,
+    [characters, directorConfig.default_agent_id],
+  );
   const filteredMcpTools = useMemo(() => {
+    const selectedToolIds = new Set(directorConfig.allowed_mcp_tool_ids);
+    const availableTools = mcpTools.filter((tool) => !selectedToolIds.has(tool.id));
     const keyword = mcpToolSearch.trim().toLowerCase();
     if (!keyword) {
-      return mcpTools;
+      return availableTools;
     }
-    return mcpTools.filter((tool) =>
+    return availableTools.filter((tool) =>
       [
         tool.name,
         tool.description,
@@ -1227,7 +1059,7 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
         .toLowerCase()
         .includes(keyword),
       );
-  }, [mcpToolSearch, mcpTools]);
+  }, [directorConfig.allowed_mcp_tool_ids, mcpToolSearch, mcpTools]);
   const resolvedDirectorModelOption = useMemo(() => {
     const modelRef = directorConfig.director_model.trim();
     if (!modelRef) {
@@ -1360,75 +1192,6 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
     setWorld((current) => (current ? { ...current, ...patch } : current));
   }
 
-  function updateAttributeDefinitions(
-    field: "world_custom_attribute_definitions" | "character_custom_attribute_definitions",
-    updater: (definitions: CustomAttributeDefinition[]) => CustomAttributeDefinition[],
-  ) {
-    setWorld((current) => {
-      if (!current) return current;
-      const definitions = normalizeCustomAttributeDefinitions(updater(current[field] ?? []));
-      const patch: Partial<WorldResponse> = { [field]: definitions };
-      if (field === "world_custom_attribute_definitions") {
-        patch.custom_tabs = syncWorldCustomTabsWithDefinitions(current.custom_tabs, definitions);
-      }
-      return { ...current, ...patch };
-    });
-  }
-
-  function addAttributeDefinition(field: "world_custom_attribute_definitions" | "character_custom_attribute_definitions") {
-    updateAttributeDefinitions(field, (definitions) => [
-      ...definitions,
-      createCustomAttributeDefinition("新属性项", definitions.length),
-    ]);
-  }
-
-  function patchAttributeDefinition(
-    field: "world_custom_attribute_definitions" | "character_custom_attribute_definitions",
-    index: number,
-    patch: Partial<CustomAttributeDefinition>,
-  ) {
-    updateAttributeDefinitions(field, (definitions) =>
-      definitions.map((definition, definitionIndex) =>
-        definitionIndex === index ? { ...definition, ...patch } : definition,
-      ),
-    );
-  }
-
-  function removeAttributeDefinition(
-    field: "world_custom_attribute_definitions" | "character_custom_attribute_definitions",
-    index: number,
-  ) {
-    updateAttributeDefinitions(field, (definitions) =>
-      definitions.filter((_, definitionIndex) => definitionIndex !== index),
-    );
-  }
-
-  function moveAttributeDefinition(
-    field: "world_custom_attribute_definitions" | "character_custom_attribute_definitions",
-    index: number,
-    direction: -1 | 1,
-  ) {
-    updateAttributeDefinitions(field, (definitions) => {
-      const targetIndex = index + direction;
-      if (targetIndex < 0 || targetIndex >= definitions.length) {
-        return definitions;
-      }
-      const next = [...definitions];
-      [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
-      return next;
-    });
-  }
-
-  function updateWorldCustomAttributeValue(name: string, value: string) {
-    if (!world) return;
-    updateDraft({
-      custom_tabs: {
-        ...world.custom_tabs,
-        [name]: value,
-      },
-    });
-  }
-
   function updateMapTopologySource(source: string) {
     setMapTopologySource(source);
     try {
@@ -1531,7 +1294,7 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
     platform: GameUiPlatform,
     parsed: ParsedGameUiDocument,
   ) {
-    const label = platform === "desktop" ? "Desktop UI" : "Mobile UI";
+    const label = platform === "desktop" ? "桌面界面" : "移动界面";
     const source = platform === "desktop" ? uiThemeConfig.desktop_file : uiThemeConfig.mobile_file;
     const isActivePreview = previewPlatform === platform;
     const isLegacy = !parsed.error && parsed.document.schema_version === 1;
@@ -1572,7 +1335,7 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
               className="action-btn"
               onClick={() => replaceGameUiSchema(platform, 2)}
             >
-              Load v2 Template
+              载入 v2 模板
             </button>
           </div>
         </div>
@@ -1580,7 +1343,7 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
         {parsed.error ? <div className="game-input-bubble">{parsed.error}</div> : null}
         {isLegacy ? (
           <div className="text-muted" style={{ fontSize: 12 }}>
-            v1 is frozen for compatibility. New UI capabilities should be authored in v2.
+            v1 仅为兼容保留，新的界面能力请使用 v2 编写。
           </div>
         ) : null}
 
@@ -1615,19 +1378,19 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
               background: "var(--color-surface-2)",
             }}
           >
-            <div className="editor-field-label">Backend Compile Snapshot</div>
+            <div className="editor-field-label">后端编译快照</div>
             <div className="text-muted" style={{ fontSize: 12 }}>
-              {compileResult.ok ? "Compile OK" : "Compile has errors"}
-              {compatibilityDocument ? ` | Compatibility: ${compatibilityDocument.ok ? "OK" : "unsupported dependencies"}` : ""}
+              {compileResult.ok ? "编译通过" : "编译存在错误"}
+              {compatibilityDocument ? ` | 兼容性：${compatibilityDocument.ok ? "通过" : "存在不支持的依赖"}` : ""}
             </div>
             <div className="text-muted" style={{ fontSize: 12 }}>
-              Components: {compileResult.component_dependencies.join(", ") || "none"}
+              组件依赖：{compileResult.component_dependencies.join(", ") || "无"}
             </div>
             <div className="text-muted" style={{ fontSize: 12 }}>
-              Actions: {compileResult.action_dependencies.join(", ") || "none"}
+              动作依赖：{compileResult.action_dependencies.join(", ") || "无"}
             </div>
             <div className="text-muted" style={{ fontSize: 12 }}>
-              Capabilities: {compileResult.capability_requirements.join(", ") || "none"}
+              能力要求：{compileResult.capability_requirements.join(", ") || "无"}
             </div>
             {compileResult.diagnostics.length > 0 ? (
               <div style={{ display: "grid", gap: 6 }}>
@@ -1669,7 +1432,7 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
     const previewScopeId = previewPlatform === "mobile" ? mobilePreviewScopeId : desktopPreviewScopeId;
     const previewStylesheet = previewPlatform === "mobile" ? mobilePreviewStylesheet : desktopPreviewStylesheet;
     return (
-      <FoldableEditorSection title="鐣岄潰棰勮">
+      <FoldableEditorSection title="界面预览">
         <div className="flex flex--items-center flex--justify-between world-editor-section-head" style={{ gap: 12 }}>
           <div className="editor-field-label">{previewLabel}</div>
           <div className="world-editor-section-head-action" style={{ display: "flex", gap: 8 }}>
@@ -1679,7 +1442,7 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
               onClick={() => setPreviewPlatform("desktop")}
               disabled={previewPlatform === "desktop"}
             >
-              Desktop
+              桌面端
             </button>
             <button
               type="button"
@@ -1687,7 +1450,7 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
               onClick={() => setPreviewPlatform("mobile")}
               disabled={previewPlatform === "mobile"}
             >
-              Mobile
+              移动端
             </button>
           </div>
         </div>
@@ -1722,28 +1485,28 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
   function renderGameUiGovernanceSection() {
     const compatibilityDocuments = uiGovernance.compatibility?.documents ?? [];
     return (
-      <FoldableEditorSection title="UI Governance">
+      <FoldableEditorSection title="界面治理">
         <div
           className="editor-content"
           style={{ padding: 12, border: "1px solid var(--color-border)", borderRadius: 16, display: "grid", gap: 10 }}
         >
-          <div className="editor-field-label">Backend governance snapshot</div>
+          <div className="editor-field-label">后端治理快照</div>
           <div className="text-muted" style={{ fontSize: 12 }}>
             {uiGovernance.loading
-              ? "Refreshing backend validation, compile, and compatibility checks..."
+              ? "正在刷新后端校验、编译与兼容性检查..."
               : uiGovernance.error
                 ? uiGovernance.error
                 : uiGovernance.bundle
-                  ? `Bundle validation: ${uiGovernance.bundle.ok ? "OK" : "has issues"} | Compatibility: ${uiGovernance.compatibility?.ok ? "OK" : "has unsupported dependencies"}`
-                  : "No governance snapshot available."}
+                  ? `打包校验：${uiGovernance.bundle.ok ? "通过" : "存在问题"} | 兼容性：${uiGovernance.compatibility?.ok ? "通过" : "存在不支持的依赖"}`
+                  : "暂无治理快照。"}
           </div>
           {uiGovernance.bundle ? (
             <>
               <div className="text-muted" style={{ fontSize: 12 }}>
-                Desktop errors: {uiGovernance.bundle.desktop.errors.length} | Mobile errors: {uiGovernance.bundle.mobile.errors.length}
+                桌面端错误：{uiGovernance.bundle.desktop.errors.length} | 移动端错误：{uiGovernance.bundle.mobile.errors.length}
               </div>
               <div className="text-muted" style={{ fontSize: 12 }}>
-                Desktop warnings: {uiGovernance.bundle.desktop.warnings.length} | Mobile warnings: {uiGovernance.bundle.mobile.warnings.length}
+                桌面端警告：{uiGovernance.bundle.desktop.warnings.length} | 移动端警告：{uiGovernance.bundle.mobile.warnings.length}
               </div>
             </>
           ) : null}
@@ -1790,6 +1553,23 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
 
   function updateDirectorPatch(patch: Partial<DirectorConfig>) {
     updateDraft({ director_config: { ...directorConfig, ...patch } });
+  }
+
+  function updateServiceMode(nextMode: DirectorConfig["service_mode"]) {
+    const fallbackAgent =
+      characters.find((character) => character.id !== world?.player_character_id)
+      ?? characters[0]
+      ?? null;
+    updateDirectorPatch({
+      service_mode: nextMode,
+      default_agent_id:
+        nextMode === "agent_chat"
+          ? directorConfig.default_agent_id || fallbackAgent?.id || ""
+          : directorConfig.default_agent_id,
+      runtime_policy: {
+        ...directorConfig.runtime_policy,
+      },
+    });
   }
 
   function toggleAllowedMcpTool(toolId: string) {
@@ -1981,16 +1761,6 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
         time_system: timeSystemSummary,
         map_nodes: mapTopology,
         triggers: world.triggers,
-        custom_tabs: syncWorldCustomTabsWithDefinitions(
-          world.custom_tabs,
-          normalizeCustomAttributeDefinitions(world.world_custom_attribute_definitions),
-        ),
-        world_custom_attribute_definitions: normalizeCustomAttributeDefinitions(
-          world.world_custom_attribute_definitions,
-        ),
-        character_custom_attribute_definitions: normalizeCustomAttributeDefinitions(
-          world.character_custom_attribute_definitions,
-        ),
         time_config: timeConfig,
         director_config: directorConfig,
         ui_theme_config: buildUiThemeEnvelope(uiThemeConfig),
@@ -2006,12 +1776,6 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
         ui_theme_config: buildUiThemeEnvelope(normalizeUiThemeConfig(saved.ui_theme_config as Record<string, unknown>)),
         opening_messages: normalizeOpeningMessages(saved.opening_messages),
         opening_character_ids: normalizeOpeningCharacterIds(saved.opening_character_ids, characters),
-        world_custom_attribute_definitions: normalizeCustomAttributeDefinitions(
-          saved.world_custom_attribute_definitions,
-        ),
-        character_custom_attribute_definitions: normalizeCustomAttributeDefinitions(
-          saved.character_custom_attribute_definitions,
-        ),
       };
       setWorld(normalizedSaved);
       setMapTopologySource(formatMapTopologyJson(normalizedSaved.map_nodes));
@@ -2136,100 +1900,6 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
         </button>
       </div>
     ) : null;
-    const renderCustomAttributeDefinitionEditor = (
-      field: "world_custom_attribute_definitions" | "character_custom_attribute_definitions",
-      title: string,
-      description: string,
-      showWorldValues = false,
-    ) => {
-      const definitions = normalizeCustomAttributeDefinitions(world[field]);
-      return (
-        <FoldableEditorSection title={title} defaultOpen>
-          <div className="text-muted">{description}</div>
-          {definitions.length === 0 ? <div className="empty-text">还没有属性项。</div> : null}
-          {definitions.map((definition, index) => (
-            <div key={definition.id} className="editor-content" style={{ padding: 12, border: "1px solid var(--color-border)", borderRadius: 12 }}>
-              <div className="settings-form-grid">
-                <label className="editor-field">
-                  <span className="editor-field-label">属性名称</span>
-                  <input
-                    value={definition.name}
-                    onChange={(event) => patchAttributeDefinition(field, index, { name: event.target.value })}
-                    className="editor-field-input"
-                  />
-                </label>
-                <label className="editor-field">
-                  <span className="editor-field-label">输入类型</span>
-                  <select
-                    value={definition.value_type}
-                    onChange={(event) => patchAttributeDefinition(field, index, { value_type: event.target.value === "text" ? "text" : "longText" })}
-                    className="editor-field-input editor-field-select"
-                  >
-                    <option value="longText">长文本</option>
-                    <option value="text">短文本</option>
-                  </select>
-                </label>
-              </div>
-              <div className="settings-form-grid">
-                <label className="editor-field">
-                  <span className="editor-field-label">占位提示</span>
-                  <input
-                    value={definition.placeholder}
-                    onChange={(event) => patchAttributeDefinition(field, index, { placeholder: event.target.value })}
-                    className="editor-field-input"
-                  />
-                </label>
-                <label className="editor-field">
-                  <span className="editor-field-label">默认内容</span>
-                  <input
-                    value={definition.default_value}
-                    onChange={(event) => patchAttributeDefinition(field, index, { default_value: event.target.value })}
-                    className="editor-field-input"
-                  />
-                </label>
-              </div>
-              <div className="flex flex--wrap" style={{ gap: 8 }}>
-                <label className="settings-inline-toggle">
-                  <input
-                    type="checkbox"
-                    checked={definition.enabled}
-                    onChange={(event) => patchAttributeDefinition(field, index, { enabled: event.target.checked })}
-                  />
-                  启用
-                </label>
-                <label className="settings-inline-toggle">
-                  <input
-                    type="checkbox"
-                    checked={definition.required}
-                    onChange={(event) => patchAttributeDefinition(field, index, { required: event.target.checked })}
-                  />
-                  必填
-                </label>
-                <button type="button" className="action-btn" onClick={() => moveAttributeDefinition(field, index, -1)} disabled={index === 0}>上移</button>
-                <button type="button" className="action-btn" onClick={() => moveAttributeDefinition(field, index, 1)} disabled={index === definitions.length - 1}>下移</button>
-                <button type="button" className="action-btn action-btn--danger" onClick={() => removeAttributeDefinition(field, index)}>删除属性项</button>
-              </div>
-              {showWorldValues ? (
-                <label className="editor-field">
-                  <span className="editor-field-label">世界属性内容</span>
-                  <textarea
-                    value={world.custom_tabs[definition.name] ?? definition.default_value}
-                    onChange={(event) => updateWorldCustomAttributeValue(definition.name, event.target.value)}
-                    placeholder={definition.placeholder}
-                    className="editor-field-input editor-field-textarea"
-                    style={{ minHeight: definition.value_type === "text" ? 80 : 160 }}
-                  />
-                </label>
-              ) : null}
-            </div>
-          ))}
-          <button type="button" className="action-btn action-btn--accent" onClick={() => addAttributeDefinition(field)}>
-            新增属性项
-          </button>
-        </FoldableEditorSection>
-      );
-    };
-
     return (
       <div className="editor-content">
         {!embedded ? <div className="settings-detail-head">
@@ -2469,17 +2139,28 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
         {sectionId === "customAttributes" ? (
           <SurfacePanel className="surface-panel--pad-lg">
             <div className="editor-content">
-              {renderCustomAttributeDefinitionEditor(
-                "world_custom_attribute_definitions",
-                "世界自定义属性项",
-                "这些属性项用于记录世界观、规则、势力、历史等世界级资料。",
-                true,
-              )}
-              {renderCustomAttributeDefinitionEditor(
-                "character_custom_attribute_definitions",
-                "角色自定义属性项",
-                "这些属性项会作为所有角色共享的资料模板；角色编辑页只填写内容，不再单独增删 tab。",
-              )}
+              <FoldableEditorSection
+                title="世界属性"
+                description="定义并维护世界级结构化属性。这里既可以建 schema，也可以直接编辑当前世界的值。"
+                defaultOpen
+              >
+                <AttributePanel
+                  scope="world"
+                  ownerType="world"
+                  ownerId={isNew ? undefined : world.id}
+                />
+              </FoldableEditorSection>
+              <FoldableEditorSection
+                title="角色共享属性"
+                description="定义所有角色共用的属性 schema。具体数值在角色编辑页里填写。"
+                defaultOpen
+              >
+                <AttributePanel
+                  scope="character"
+                  ownerType="character"
+                  ownerId={undefined}
+                />
+              </FoldableEditorSection>
             </div>
           </SurfacePanel>
         ) : null}
@@ -2487,35 +2168,78 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
         {sectionId === "director" ? (
           <SurfacePanel className="surface-panel--pad-lg">
             <div className="editor-content">
-              <FoldableEditorSection title="基础权限" defaultOpen>
+              <FoldableEditorSection title="运行模式" defaultOpen>
                 <div className="settings-form-grid">
                   <label className="editor-field">
-                    <span className="editor-field-label">允许切换场景</span>
-                    <div className="settings-inline-toggle">
-                      <input type="checkbox" checked={directorConfig.allow_scene_transition} onChange={(e) => updateDirectorPatch({ allow_scene_transition: e.target.checked })} />
-                    </div>
+                    <span className="editor-field-label">服务模式</span>
+                    <select
+                      value={directorConfig.service_mode}
+                      onChange={(e) => updateServiceMode(e.target.value as DirectorConfig["service_mode"])}
+                      className="editor-field-input editor-field-select"
+                    >
+                      <option value="world_sim">世界模拟</option>
+                      <option value="agent_chat">单智能体对话</option>
+                    </select>
                   </label>
-                  <label className="editor-field">
-                    <span className="editor-field-label">允许生成新 NPC</span>
-                    <div className="settings-inline-toggle">
-                      <input type="checkbox" checked={directorConfig.allow_npc_spawn} onChange={(e) => updateDirectorPatch({ allow_npc_spawn: e.target.checked })} />
-                    </div>
-                  </label>
+                  {directorConfig.service_mode === "agent_chat" ? (
+                    <label className="editor-field">
+                      <span className="editor-field-label">默认回复角色</span>
+                      <select
+                        value={directorConfig.default_agent_id}
+                        onChange={(e) => updateDirectorPatch({ default_agent_id: e.target.value })}
+                        className="editor-field-input editor-field-select"
+                        disabled={characters.length === 0}
+                      >
+                        <option value="">自动选择</option>
+                        {characters.map((character) => (
+                          <option key={character.id} value={character.id}>
+                            {character.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
                 </div>
+                {directorConfig.service_mode === "agent_chat" ? (
+                  <div className="text-muted">
+                    当前默认回复者：{selectedDefaultAgent?.name ?? "自动选择第一个可用角色"}
+                  </div>
+                ) : null}
               </FoldableEditorSection>
 
-              <FoldableEditorSection title="运行上下文">
-                <div className="settings-form-grid">
-                  <label className="editor-field">
-                    <span className="editor-field-label">历史对话轮数</span>
-                    <input type="number" min="0" max="20" value={directorConfig.history_dialogue_rounds} onChange={(e) => updateDirectorPatch({ history_dialogue_rounds: Number(e.target.value) })} className="editor-field-input" />
-                  </label>
-                  <label className="editor-field">
-                    <span className="editor-field-label">工具循环上限</span>
-                    <input type="number" min="1" max="12" value={directorConfig.director_tool_loop_limit} onChange={(e) => updateDirectorPatch({ director_tool_loop_limit: Number(e.target.value) })} className="editor-field-input" />
-                  </label>
-                </div>
-              </FoldableEditorSection>
+              {directorConfig.service_mode === "world_sim" ? (
+                <FoldableEditorSection title="基础权限" defaultOpen>
+                  <div className="settings-form-grid">
+                    <label className="editor-field">
+                      <span className="editor-field-label">允许切换场景</span>
+                      <div className="settings-inline-toggle">
+                        <input type="checkbox" checked={directorConfig.allow_scene_transition} onChange={(e) => updateDirectorPatch({ allow_scene_transition: e.target.checked })} />
+                      </div>
+                    </label>
+                    <label className="editor-field">
+                      <span className="editor-field-label">允许生成新 NPC</span>
+                      <div className="settings-inline-toggle">
+                        <input type="checkbox" checked={directorConfig.allow_npc_spawn} onChange={(e) => updateDirectorPatch({ allow_npc_spawn: e.target.checked })} />
+                      </div>
+                    </label>
+                  </div>
+                </FoldableEditorSection>
+              ) : null}
+
+              {directorConfig.service_mode === "world_sim" ? (
+                <FoldableEditorSection title="运行上下文">
+                  <div className="settings-form-grid">
+                    <label className="editor-field">
+                      <span className="editor-field-label">历史对话轮数</span>
+                      <input type="number" min="0" max="20" value={directorConfig.history_dialogue_rounds} onChange={(e) => updateDirectorPatch({ history_dialogue_rounds: Number(e.target.value) })} className="editor-field-input" />
+                    </label>
+                    <label className="editor-field">
+                      <span className="editor-field-label">工具循环上限</span>
+                      <input type="number" min="1" max="12" value={directorConfig.director_tool_loop_limit} onChange={(e) => updateDirectorPatch({ director_tool_loop_limit: Number(e.target.value) })} className="editor-field-input" />
+                    </label>
+                  </div>
+                </FoldableEditorSection>
+              ) : null}
 
               <FoldableEditorSection title="角色记忆">
                 <div className="settings-form-grid">
@@ -2550,31 +2274,33 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
                 </div>
               </FoldableEditorSection>
 
-              <FoldableEditorSection title="主控提示词" defaultOpen>
-                <label className="editor-field">
-                  <span className="editor-field-label">世界主控提示词</span>
-                  <select
-                    value={directorModelSelectValue}
-                    onChange={(e) => updateDirectorPatch({ director_model: e.target.value })}
-                    className="editor-field-input editor-field-select"
-                    style={{ marginBottom: 12 }}
-                  >
-                    <option value="">Use default text model</option>
-                    {textModels.map((model) => (
-                      <option key={model.id} value={model.id}>
-                        {model.name || model.model_id}
-                      </option>
-                    ))}
-                    {!resolvedDirectorModelOption && directorConfig.director_model.trim() ? (
-                      <option value={directorConfig.director_model.trim()}>
-                        {directorConfig.director_model.trim()} (current unmatched)
-                      </option>
-                    ) : null}
-                  </select>
-                  <textarea value={directorConfig.world_director_prompt} onChange={(e) => updateMergedDirectorPrompt(e.target.value)} className="editor-field-input editor-field-textarea" style={{ minHeight: 300 }} />
-                </label>
-                <div className="text-muted">角色系统模板、角色返回契约和角色旁白提示词已经移到角色池，每个角色单独维护。</div>
-              </FoldableEditorSection>
+              {directorConfig.service_mode === "world_sim" ? (
+                <FoldableEditorSection title="主控提示词" defaultOpen>
+                  <label className="editor-field">
+                    <span className="editor-field-label">世界主控提示词</span>
+                    <select
+                      value={directorModelSelectValue}
+                      onChange={(e) => updateDirectorPatch({ director_model: e.target.value })}
+                      className="editor-field-input editor-field-select"
+                      style={{ marginBottom: 12 }}
+                    >
+                      <option value="">使用默认文本模型</option>
+                      {textModels.map((model) => (
+                        <option key={model.id} value={model.id}>
+                          {model.name || model.model_id}
+                        </option>
+                      ))}
+                      {!resolvedDirectorModelOption && directorConfig.director_model.trim() ? (
+                        <option value={directorConfig.director_model.trim()}>
+                          {directorConfig.director_model.trim()}（当前未匹配）
+                        </option>
+                      ) : null}
+                    </select>
+                    <textarea value={directorConfig.world_director_prompt} onChange={(e) => updateMergedDirectorPrompt(e.target.value)} className="editor-field-input editor-field-textarea" style={{ minHeight: 300 }} />
+                  </label>
+                  <div className="text-muted">角色系统模板、角色返回契约和角色旁白提示词已经移到角色池，每个角色单独维护。</div>
+                </FoldableEditorSection>
+              ) : null}
 
               <FoldableEditorSection title="MCP 工具权限">
                 <div className="editor-field-label">已选工具</div>
@@ -2600,7 +2326,7 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
                         <div className="text-muted">{tool.description}</div>
                       </div>
                       <div className="editor-field" style={{ alignSelf: "center" }}>
-                        <button type="button" className="action-btn" onClick={() => toggleAllowedMcpTool(tool.id)} disabled={directorConfig.allowed_mcp_tool_ids.includes(tool.id)}>添加</button>
+                        <button type="button" className="action-btn" onClick={() => toggleAllowedMcpTool(tool.id)}>添加</button>
                       </div>
                     </div>
                   ))}

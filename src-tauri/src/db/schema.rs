@@ -16,9 +16,6 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             time_system TEXT NOT NULL DEFAULT '',
             map_nodes_json TEXT NOT NULL DEFAULT '[]',
             triggers_json TEXT NOT NULL DEFAULT '[]',
-            custom_tabs_json TEXT NOT NULL DEFAULT '{}',
-            world_custom_attribute_definitions_json TEXT NOT NULL DEFAULT '[]',
-            character_custom_attribute_definitions_json TEXT NOT NULL DEFAULT '[]',
             time_config_json TEXT NOT NULL DEFAULT '{}',
             director_config_json TEXT NOT NULL DEFAULT '{}',
             ui_theme_config_json TEXT NOT NULL DEFAULT '{}',
@@ -40,7 +37,6 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             recent_dialogue_rounds INTEGER NOT NULL DEFAULT 10,
             attributes_json TEXT NOT NULL DEFAULT '[]',
             portrait_assets_json TEXT NOT NULL DEFAULT '[]',
-            custom_tabs_json TEXT NOT NULL DEFAULT '{}',
             system_prompt_template TEXT NOT NULL DEFAULT '',
             response_contract_prompt TEXT NOT NULL DEFAULT '',
             narration_prompt TEXT NOT NULL DEFAULT '',
@@ -126,7 +122,7 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             scope TEXT NOT NULL,
             key TEXT NOT NULL,
             label TEXT NOT NULL,
-            value_type TEXT NOT NULL DEFAULT 'string',
+            value_type TEXT NOT NULL DEFAULT 'text',
             description TEXT NOT NULL DEFAULT '',
             default_value_json TEXT NOT NULL DEFAULT 'null',
             enum_options_json TEXT NOT NULL DEFAULT '[]',
@@ -300,6 +296,29 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
 
         CREATE INDEX IF NOT EXISTS idx_llm_retry_capsules_session_status
             ON llm_retry_capsules(session_id, status, created_at);
+
+        CREATE TABLE IF NOT EXISTS scheduled_notifications (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL DEFAULT '',
+            world_name TEXT NOT NULL DEFAULT '',
+            source TEXT NOT NULL DEFAULT '',
+            title TEXT NOT NULL DEFAULT '',
+            body TEXT NOT NULL DEFAULT '',
+            scheduled_at TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT '',
+            fired_at TEXT,
+            status TEXT NOT NULL DEFAULT 'scheduled',
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_status_time
+            ON scheduled_notifications(status, scheduled_at);
+
+        CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_session
+            ON scheduled_notifications(session_id, status, scheduled_at);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_notifications_session_source
+            ON scheduled_notifications(session_id, source);
 
         INSERT OR IGNORE INTO settings (id) VALUES (1);
     ",

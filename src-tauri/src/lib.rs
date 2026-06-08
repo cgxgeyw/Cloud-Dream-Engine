@@ -23,14 +23,23 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let data_dir = get_data_dir(app)?;
             let db = Database::new(&data_dir)?;
             let services = BackendServices::new(data_dir.clone());
+            let notification_app = app.handle().clone();
+            let notification_data_dir = data_dir.clone();
             app.manage(AppState {
                 db: tokio::sync::Mutex::new(db),
                 services,
                 data_dir,
+            });
+            tauri::async_runtime::spawn(async move {
+                let _ = crate::services::notifications::NotificationScheduler::restore_pending(
+                    &notification_app,
+                    &notification_data_dir,
+                );
             });
             Ok(())
         })

@@ -69,12 +69,19 @@ impl<'a> AttributeRepository<'a> {
         req: &AttributeSchemaCreateRequest,
     ) -> Result<AttributeSchema, String> {
         let id = uuid::Uuid::new_v4().to_string();
-        let scope = req.scope.trim().to_string();
+        let scope = normalize_attribute_scope(req.scope.as_str())
+            .ok_or_else(|| format!("Unsupported attribute scope: {}", req.scope.trim()))?;
         let key = req.key.trim().to_string();
         let label = req.label.trim().to_string();
-        let value_type = req.value_type.trim().to_string();
+        let value_type = normalize_attribute_value_type(req.value_type.as_str()).ok_or_else(|| {
+            format!(
+                "Unsupported attribute value_type: {}",
+                req.value_type.trim()
+            )
+        })?;
         let description = req.description.trim().to_string();
         let enum_options = normalize_list(&req.enum_options);
+        validate_attribute_value(&value_type, &req.default_value)?;
         self.conn.execute(
             "INSERT INTO attribute_schemas (id, scope, key, label, value_type, description, default_value_json, enum_options_json, display_policy_json, access_policy_json, mutation_policy_json, influence_policy_json, projection_policy_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
@@ -97,10 +104,10 @@ impl<'a> AttributeRepository<'a> {
 
         Ok(AttributeSchema {
             id,
-            scope: req.scope.clone(),
+            scope,
             key: req.key.clone(),
             label: req.label.clone(),
-            value_type: req.value_type.clone(),
+            value_type,
             description: req.description.clone(),
             default_value: req.default_value.clone(),
             enum_options: req.enum_options.clone(),
@@ -117,12 +124,19 @@ impl<'a> AttributeRepository<'a> {
         id: &str,
         req: &AttributeSchemaCreateRequest,
     ) -> Result<AttributeSchema, String> {
-        let scope = req.scope.trim().to_string();
+        let scope = normalize_attribute_scope(req.scope.as_str())
+            .ok_or_else(|| format!("Unsupported attribute scope: {}", req.scope.trim()))?;
         let key = req.key.trim().to_string();
         let label = req.label.trim().to_string();
-        let value_type = req.value_type.trim().to_string();
+        let value_type = normalize_attribute_value_type(req.value_type.as_str()).ok_or_else(|| {
+            format!(
+                "Unsupported attribute value_type: {}",
+                req.value_type.trim()
+            )
+        })?;
         let description = req.description.trim().to_string();
         let enum_options = normalize_list(&req.enum_options);
+        validate_attribute_value(&value_type, &req.default_value)?;
         self.conn.execute(
             "UPDATE attribute_schemas SET scope = ?1, key = ?2, label = ?3, value_type = ?4, description = ?5, default_value_json = ?6, enum_options_json = ?7, display_policy_json = ?8, access_policy_json = ?9, mutation_policy_json = ?10, influence_policy_json = ?11, projection_policy_json = ?12 WHERE id = ?13",
             params![
@@ -234,6 +248,14 @@ impl<'a> AttributeRepository<'a> {
         &self,
         req: &AttributeValueUpsertRequest,
     ) -> Result<AttributeValue, String> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT value_type FROM attribute_schemas WHERE id = ?1")
+            .map_err(|e| e.to_string())?;
+        let schema_value_type: String = stmt
+            .query_row(params![req.schema_id], |row| row.get(0))
+            .map_err(|e| e.to_string())?;
+        validate_attribute_value(&schema_value_type, &req.value)?;
         let id = uuid::Uuid::new_v4().to_string();
         self.conn.execute(
             "INSERT OR REPLACE INTO attribute_values (id, schema_id, owner_type, owner_id, value_json, source) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -256,6 +278,25 @@ impl<'a> AttributeRepository<'a> {
             value: req.value.clone(),
             source: req.source.clone(),
         })
+    }
+}
+
+fn validate_attribute_value(
+    value_type: &str,
+    value: &serde_json::Value,
+) -> Result<(), String> {
+    let valid = match value_type {
+        ATTRIBUTE_VALUE_TYPE_TEXT => value.is_null() || value.is_string(),
+        ATTRIBUTE_VALUE_TYPE_NUMBER => value.is_null() || value.is_number(),
+        ATTRIBUTE_VALUE_TYPE_BOOLEAN => value.is_null() || value.is_boolean(),
+        ATTRIBUTE_VALUE_TYPE_LIST => value.is_null() || value.is_array(),
+        ATTRIBUTE_VALUE_TYPE_JSON => value.is_null() || value.is_object() || value.is_array(),
+        _ => false,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(format!("Value does not match attribute value_type: {value_type}"))
     }
 }
 

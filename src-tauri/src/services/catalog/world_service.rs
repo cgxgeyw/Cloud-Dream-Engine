@@ -110,13 +110,6 @@ impl WorldService {
             time_system: source_world.time_system.clone(),
             map_nodes: source_world.map_nodes.clone(),
             triggers: source_world.triggers.clone(),
-            custom_tabs: source_world.custom_tabs.clone(),
-            world_custom_attribute_definitions: source_world
-                .world_custom_attribute_definitions
-                .clone(),
-            character_custom_attribute_definitions: source_world
-                .character_custom_attribute_definitions
-                .clone(),
             time_config: source_world.time_config.clone(),
             director_config: source_world.director_config.clone(),
             ui_theme_config: Self::normalize_world_ui_theme_config(&source_world.ui_theme_config),
@@ -138,7 +131,6 @@ impl WorldService {
                     recent_dialogue_rounds: source_character.recent_dialogue_rounds,
                     attributes: source_character.attributes.clone(),
                     portrait_assets: source_character.portrait_assets.clone(),
-                    custom_tabs: source_character.custom_tabs.clone(),
                     system_prompt_template: source_character.system_prompt_template.clone(),
                     response_contract_prompt: source_character.response_contract_prompt.clone(),
                     narration_prompt: source_character.narration_prompt.clone(),
@@ -147,6 +139,11 @@ impl WorldService {
             character_id_map.insert(source_character.id, duplicated_character.id);
         }
 
+        let duplicated_director_config = remap_director_default_agent_id(
+            source_world.director_config.clone(),
+            &character_id_map,
+            None,
+        );
         let updated_world = world_repo.update(
             &duplicated_world.id,
             &WorldUpdateRequest {
@@ -158,11 +155,8 @@ impl WorldService {
                 time_system: None,
                 map_nodes: None,
                 triggers: None,
-                custom_tabs: None,
-                world_custom_attribute_definitions: None,
-                character_custom_attribute_definitions: None,
                 time_config: None,
-                director_config: None,
+                director_config: Some(duplicated_director_config),
                 ui_theme_config: None,
                 opening_messages: None,
                 opening_character_ids: Some(
@@ -321,6 +315,31 @@ impl WorldService {
             .get("allow_npc_spawn")
             .and_then(|value| value.as_bool())
             .unwrap_or(true);
+        let service_mode = object
+            .get("service_mode")
+            .and_then(|value| value.as_str())
+            .map(|value| value.trim().to_string())
+            .filter(|value| matches!(value.as_str(), "world_sim" | "agent_chat"))
+            .unwrap_or_else(|| "world_sim".to_string());
+        let default_agent_id = object
+            .get("default_agent_id")
+            .and_then(|value| value.as_str())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_default();
+        let memory_write_mode = object
+            .get("runtime_policy")
+            .and_then(|value| value.get("memory_write_mode"))
+            .or_else(|| object.get("memory_write_mode"))
+            .and_then(|value| value.as_str())
+            .map(|value| value.trim().to_string())
+            .filter(|value| {
+                matches!(
+                    value.as_str(),
+                    "session" | "character" | "world_and_character"
+                )
+            })
+            .unwrap_or_else(|| "session".to_string());
         let history_dialogue_rounds = object
             .get("history_dialogue_rounds")
             .and_then(|value| value.as_i64())
@@ -401,8 +420,8 @@ impl WorldService {
         let world_director_prompt = object
             .get("world_director_prompt")
             .and_then(|value| value.as_str())
-            .map(Self::resolve_world_director_prompt)
-            .unwrap_or_else(Self::minimal_world_director_prompt);
+            .map(|value| value.trim().to_string())
+            .unwrap_or_default();
         let director_model = object
             .get("director_model")
             .and_then(|value| value.as_str())
@@ -434,6 +453,11 @@ impl WorldService {
             .unwrap_or_default();
 
         serde_json::json!({
+            "service_mode": service_mode,
+            "default_agent_id": default_agent_id,
+            "runtime_policy": {
+                "memory_write_mode": memory_write_mode,
+            },
             "allow_scene_transition": allow_scene_transition,
             "allow_npc_spawn": allow_npc_spawn,
             "history_dialogue_rounds": history_dialogue_rounds,
@@ -541,32 +565,6 @@ impl WorldService {
         world
     }
 
-    fn minimal_world_director_prompt() -> String {
-        r#"You are the world director.
-Return exactly one JSON object describing only the next state changes that are needed for this turn.
-Typical fields include planned_speakers, tool_calls, switch_character_proposal, world_phase,
-next_scene_name, next_location, next_time_label, scene_visible_characters, current_line,
-next_scene_background_hint, next_scene_tags, and character_visual_directives.
-
-Rules:
-1. Return JSON only.
-2. Omit unchanged fields.
-3. current_scene_character_roster and scene_visible_characters describe only characters present in the current scene.
-4. planned_speakers should usually include one or more NPC speakers for the current turn.
-5. Keep the current scene and location unless a transition is justified.
-6. Do not emit state_tags, system_messages, or system_log."#
-            .to_string()
-    }
-
-    fn resolve_world_director_prompt(prompt: &str) -> String {
-        let trimmed = prompt.trim();
-        if trimmed.is_empty() {
-            Self::minimal_world_director_prompt()
-        } else {
-            trimmed.to_string()
-        }
-    }
-
     fn default_desktop_ui_file() -> String {
         include_str!("../../db/seeds/assets/default-desktop-ui.jsonc").to_string()
     }
@@ -598,13 +596,6 @@ Rules:
             time_system: imported_world.time_system.clone(),
             map_nodes: imported_world.map_nodes.clone(),
             triggers: imported_world.triggers.clone(),
-            custom_tabs: imported_world.custom_tabs.clone(),
-            world_custom_attribute_definitions: imported_world
-                .world_custom_attribute_definitions
-                .clone(),
-            character_custom_attribute_definitions: imported_world
-                .character_custom_attribute_definitions
-                .clone(),
             time_config: imported_world.time_config.clone(),
             director_config: Self::normalize_world_director_config(&imported_world.director_config),
             ui_theme_config: Self::normalize_world_ui_theme_config(&serde_json::json!({
@@ -645,7 +636,6 @@ Rules:
                     recent_dialogue_rounds: character.recent_dialogue_rounds,
                     attributes: character.attributes.clone(),
                     portrait_assets: character.portrait_assets.clone(),
-                    custom_tabs: character.custom_tabs.clone(),
                     system_prompt_template: character.system_prompt_template.clone(),
                     response_contract_prompt: character.response_contract_prompt.clone(),
                     narration_prompt: character.narration_prompt.clone(),
@@ -679,6 +669,11 @@ Rules:
                     .as_ref()
                     .and_then(|name| name_map.get(name).cloned())
             };
+        let director_config = remap_director_default_agent_id(
+            imported_world.director_config.clone(),
+            &id_map,
+            Some(&name_map),
+        );
 
         let updated_world = world_repo.update(
             &created_world.id,
@@ -691,11 +686,8 @@ Rules:
                 time_system: None,
                 map_nodes: None,
                 triggers: None,
-                custom_tabs: None,
-                world_custom_attribute_definitions: None,
-                character_custom_attribute_definitions: None,
                 time_config: None,
-                director_config: None,
+                director_config: Some(Self::normalize_world_director_config(&director_config)),
                 ui_theme_config: None,
                 opening_messages: None,
                 opening_character_ids: Some(opening_character_ids),
@@ -1011,4 +1003,33 @@ Rules:
         }
         normalized.trim_matches('-').to_string()
     }
+}
+
+fn remap_director_default_agent_id(
+    mut director_config: serde_json::Value,
+    id_map: &HashMap<String, String>,
+    name_map: Option<&HashMap<String, String>>,
+) -> serde_json::Value {
+    let Some(object) = director_config.as_object_mut() else {
+        return director_config;
+    };
+    let default_agent_id = object
+        .get("default_agent_id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let Some(default_agent_id) = default_agent_id else {
+        return director_config;
+    };
+    let remapped = id_map
+        .get(default_agent_id)
+        .cloned()
+        .or_else(|| name_map.and_then(|map| map.get(default_agent_id).cloned()));
+    if let Some(remapped) = remapped {
+        object.insert(
+            "default_agent_id".to_string(),
+            serde_json::Value::String(remapped),
+        );
+    }
+    director_config
 }

@@ -47,7 +47,7 @@ export const DesktopGameShell: React.FC<{
         <div className="game-scene-header-side">
           {session.player_character_name ? (
             <span className="game-scene-badge game-ui-badge" data-variant="info">
-              {`Current player: ${session.player_character_name}`}
+              {`当前玩家：${session.player_character_name}`}
             </span>
           ) : null}
           {runtime.copyable_dialogue_text ? (
@@ -57,7 +57,7 @@ export const DesktopGameShell: React.FC<{
               data-variant="ghost"
               onClick={() => void actions.copyText(runtime.copyable_dialogue_text)}
             >
-              Copy dialogue
+              复制对话
             </button>
           ) : null}
         </div>
@@ -68,7 +68,7 @@ export const DesktopGameShell: React.FC<{
   return (
     <div className="game-root game-root--session game-root--desktop-session game-ui-root" data-game-ui-scope={gameUiScopeId} style={runtimeBackgroundStyle}>
       {themeCustomCss ? <style nonce={cspNonce}>{themeCustomCss}</style> : null}
-      {loading ? <div className="game-loading">Loading session...</div> : null}
+      {loading ? <div className="game-loading">正在加载会话...</div> : null}
       {error ? <div className="game-loading game-error-text">{error}</div> : null}
       {!loading && !error && session ? (
         <GameUiRenderer

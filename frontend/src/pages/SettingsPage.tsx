@@ -303,7 +303,7 @@ export function SettingsPage({ isMobile = false }: SettingsPageProps) {
       const saved = await updateSettings(settings);
       setSettings(saved);
       await refreshGlobalSettings();
-      showToast(isMobile ? "Settings saved." : "设置已保存");
+      showToast("设置已保存");
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "保存设置失败");
     } finally {
@@ -387,7 +387,7 @@ export function SettingsPage({ isMobile = false }: SettingsPageProps) {
       }
 
       closeModelEditor();
-      showToast(isMobile ? "Model saved." : "模型已保存");
+      showToast("模型已保存");
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "保存模型失败");
     } finally {
@@ -403,7 +403,7 @@ export function SettingsPage({ isMobile = false }: SettingsPageProps) {
       setImageModels((prev) => prev.filter((item) => item.id !== model.id));
       setEmbeddingModels((prev) => prev.filter((item) => item.id !== model.id));
       setPendingDeleteModel(null);
-      showToast(isMobile ? "Model deleted." : "模型已删除");
+      showToast("模型已删除");
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "删除模型失败");
     }
@@ -440,7 +440,7 @@ export function SettingsPage({ isMobile = false }: SettingsPageProps) {
         await refreshGlobalSettings();
       }
 
-      showToast(isMobile ? "Default model updated." : "默认模型已更新");
+      showToast("默认模型已更新");
     } catch (setError_) {
       setError(setError_ instanceof Error ? setError_.message : "设置默认模型失败");
     }
@@ -449,6 +449,7 @@ export function SettingsPage({ isMobile = false }: SettingsPageProps) {
   async function handleTestModel(model: ModelConfigResponse) {
     try {
       setTestingModelId(model.id);
+      showToast("模型测试中...");
       const result = await testModel(model.id);
       showToast(result.detail, result.ok ? "success" : "error");
     } catch (testError_) {
@@ -492,7 +493,7 @@ export function SettingsPage({ isMobile = false }: SettingsPageProps) {
 
   async function handleDiscoverModels() {
     if (!supportsModelDiscovery) {
-      const message = isMobile ? "Current provider does not support model discovery." : "当前 provider 不支持拉取模型列表。";
+      const message = "当前提供商不支持拉取模型列表。";
       setModelDiscovery({ ok: false, detail: message, modelIds: [] });
       showToast(message, "error");
       return;
@@ -511,7 +512,7 @@ export function SettingsPage({ isMobile = false }: SettingsPageProps) {
       const rawMessage = discoverError instanceof Error ? discoverError.message : "读取模型列表失败";
       const message =
         rawMessage.includes("Model discovery not supported for provider")
-          ? (isMobile ? "Current provider does not support model discovery." : "当前 provider 不支持拉取模型列表。")
+          ? "当前提供商不支持拉取模型列表。"
           : rawMessage;
       setModelDiscovery({ ok: false, detail: message, modelIds: [] });
       showToast(message, "error");
@@ -537,7 +538,7 @@ export function SettingsPage({ isMobile = false }: SettingsPageProps) {
       const saved = await updateSettings(nextSettings);
       setSettings(saved);
       await refreshGlobalSettings();
-      showToast(isMobile ? "Background updated." : "背景已更新");
+      showToast("背景已更新");
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : "上传背景失败");
     } finally {
@@ -554,7 +555,7 @@ export function SettingsPage({ isMobile = false }: SettingsPageProps) {
       const saved = await updateSettings({ ...settings, home_background_strategy: "" });
       setSettings(saved);
       await refreshGlobalSettings();
-      showToast(isMobile ? "Background cleared." : "背景已清除");
+      showToast("背景已清除");
     } catch (clearError) {
       setError(clearError instanceof Error ? clearError.message : "清除背景失败");
     } finally {
@@ -580,7 +581,7 @@ export function SettingsPage({ isMobile = false }: SettingsPageProps) {
     }
 
     if (!supportsDirectoryPicker) {
-      showToast(isMobile ? "Directory picker is not available in this environment." : "当前环境不支持目录选择，请直接填写导出目录", "error");
+      showToast("当前环境不支持目录选择，请直接填写导出目录", "error");
       return;
     }
 
@@ -604,7 +605,7 @@ export function SettingsPage({ isMobile = false }: SettingsPageProps) {
     return (
       <div className="settings-page-shell">
         <div className="settings-mobile-overview-head">
-          <div className="settings-mobile-kicker">Settings</div>
+          <div className="settings-mobile-kicker">设置</div>
           <h1 className="settings-mobile-title">{"\u8bbe\u7f6e\u4e2d\u5fc3"}</h1>
           <p className="settings-mobile-summary">{"\u7ba1\u7406\u6a21\u578b\u3001\u4e3b\u9898\u3001\u80cc\u666f\u548c\u5bfc\u51fa\u504f\u597d\u3002"}</p>
         </div>
@@ -647,7 +648,7 @@ export function SettingsPage({ isMobile = false }: SettingsPageProps) {
             </label>
 
             <label className="field-label">
-              <span className="field-label-text">Provider</span>
+              <span className="field-label-text">提供商</span>
               <select
                 value={providerSelectValue}
                 onChange={(event) => {
@@ -815,7 +816,7 @@ export function SettingsPage({ isMobile = false }: SettingsPageProps) {
               取消
             </button>
           </div>
-          {!supportsDirectoryPicker ? <div className="text-muted">Directory picker is unavailable in this environment.</div> : null}
+          {!supportsDirectoryPicker ? <div className="text-muted">当前环境不支持目录选择器。</div> : null}
         </div>
       </SurfacePanel>
     );
@@ -836,9 +837,9 @@ export function SettingsPage({ isMobile = false }: SettingsPageProps) {
         <div className="settings-section">
           {activeModelTab === "embedding-model" ? (
             <div className="settings-section">
-              <h3 className="settings-section-title">Embedding</h3>
+              <h3 className="settings-section-title">嵌入模型</h3>
               <label className="field-label field-label--inline">
-                <span className="field-label-text">启用 Embedding</span>
+                <span className="field-label-text">启用嵌入模型</span>
                 <div className="settings-inline-toggle">
                   <input
                     type="checkbox"
@@ -959,7 +960,7 @@ export function SettingsPage({ isMobile = false }: SettingsPageProps) {
             </div>
           ) : (
             <div className="settings-upload-zone">
-              <div className="empty-text">No background configured.</div>
+              <div className="empty-text">尚未配置背景。</div>
             </div>
           )}
 
@@ -1082,9 +1083,9 @@ export function SettingsPage({ isMobile = false }: SettingsPageProps) {
           <SurfacePanel className="surface-panel--pad-lg">
             {activeTab === "embedding-model" ? (
               <div className="settings-section">
-                <h3 className="settings-section-title">Embedding</h3>
+                <h3 className="settings-section-title">嵌入模型</h3>
                 <label className="field-label field-label--inline">
-                  <span className="field-label-text">启用 Embedding</span>
+                  <span className="field-label-text">启用嵌入模型</span>
                   <div className="settings-inline-toggle">
                     <input
                       type="checkbox"
@@ -1114,7 +1115,7 @@ export function SettingsPage({ isMobile = false }: SettingsPageProps) {
                     />
                   </label>
                   <label className="field-label">
-                    <span className="field-label-text">Provider</span>
+                    <span className="field-label-text">提供商</span>
                     <select
                       value={providerSelectValue}
                       onChange={(event) => {
@@ -1477,7 +1478,7 @@ export function SettingsPage({ isMobile = false }: SettingsPageProps) {
       maxWidth={980}
     >
       {loading ? <SurfacePanel className="surface-panel--pad-lg">正在加载设置...</SurfacePanel> : null}
-      {error ? <SurfacePanel className="surface-panel--pad-lg text-error">Error: {error}</SurfacePanel> : null}
+      {error ? <SurfacePanel className="surface-panel--pad-lg text-error">错误：{error}</SurfacePanel> : null}
 
       {!loading && !error && isMobile ? renderMobileSectionContent() : null}
       {!loading && !error && !isMobile ? renderDesktopContent() : null}

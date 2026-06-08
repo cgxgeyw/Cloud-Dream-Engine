@@ -219,8 +219,8 @@ export function McpToolsPage({ isMobile = false }: McpToolsPageProps) {
           <strong style={{ fontSize: 20 }}>{editingId ? "编辑工具" : "新增工具"}</strong>
           <div className="grid grid--gap-sm" style={{ marginTop: 14 }}>
             <label className="editor-field"><span className="editor-field-label">显示名称</span><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></label>
-            <label className="editor-field"><span className="editor-field-label">MCP Server</span><input value={draft.server_name} onChange={(e) => setDraft({ ...draft, server_name: e.target.value })} /></label>
-            <label className="editor-field"><span className="editor-field-label">Tool Name</span><input value={draft.tool_name} onChange={(e) => setDraft({ ...draft, tool_name: e.target.value })} /></label>
+            <label className="editor-field"><span className="editor-field-label">MCP 服务</span><input value={draft.server_name} onChange={(e) => setDraft({ ...draft, server_name: e.target.value })} /></label>
+            <label className="editor-field"><span className="editor-field-label">工具名</span><input value={draft.tool_name} onChange={(e) => setDraft({ ...draft, tool_name: e.target.value })} /></label>
             <label className="editor-field"><span className="editor-field-label">说明</span><textarea value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></label>
             <label className="editor-field"><span className="editor-field-label">触发词</span><textarea value={keywordText} onChange={(e) => setKeywordText(e.target.value)} placeholder="逗号或换行分隔" /></label>
             <label className="editor-field"><span className="editor-field-label">暴露策略</span><select value={resolveExposurePolicyMode(draft.exposure_policy)} onChange={(e) => setDraft({ ...draft, exposure_policy: e.target.value })}><option value="on-demand">按需暴露</option><option value="manual-only">仅手动</option><option value="disabled">禁用</option></select></label>

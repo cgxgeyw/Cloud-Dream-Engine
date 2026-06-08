@@ -271,7 +271,7 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
 
             {!message.pending && !isMobile && message.role !== "agent" ? (
               <div className="game-message-actions">
-                <button type="button" className="game-message-action-btn game-message-action-btn--copy game-ui-button" data-variant="ghost" onClick={() => void actions.copyText(getMessageText(message.content))} aria-label="Copy message" title="Copy">
+                <button type="button" className="game-message-action-btn game-message-action-btn--copy game-ui-button" data-variant="ghost" onClick={() => void actions.copyText(getMessageText(message.content))} aria-label="复制消息" title="复制消息">
                   <Copy size={12} />
                 </button>
                 {message.role === "player" ? (
@@ -313,7 +313,7 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
 
             {!message.pending && !isMobile && message.role === "agent" ? (
               <div className="game-message-actions game-message-actions--agent">
-                <button type="button" className="game-message-action-btn game-message-action-btn--copy game-ui-button" data-variant="ghost" onClick={() => void actions.copyText(getMessageText(message.content))} aria-label="Copy reply" title="Copy">
+                <button type="button" className="game-message-action-btn game-message-action-btn--copy game-ui-button" data-variant="ghost" onClick={() => void actions.copyText(getMessageText(message.content))} aria-label="复制回复" title="复制回复">
                   <Copy size={12} />
                 </button>
                 <button

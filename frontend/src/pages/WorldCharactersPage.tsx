@@ -298,7 +298,7 @@ export function WorldCharactersPage() {
             onClick={() => navigate(`/characters/new?worldId=${worldId}`)}
             className="action-btn action-btn--accent"
           >
-            + \u65b0\u5efa\u89d2\u8272
+            {"\u002b \u65b0\u5efa\u89d2\u8272"}
           </button>
         </div>
       ) : null}

@@ -5,13 +5,14 @@ use serde_json::{Map, Value};
 
 use crate::models::world::{
     VerifyWorldPackageUiCompatibilityRequest, WorldUiBundleValidationRequest,
-    WorldUiBundleValidationResult, WorldUiCompileRequest, WorldUiCompileResult,
-    WorldUiCompatibilityDocumentReport, WorldUiCompatibilityReport, WorldUiCompatibilityTarget,
-    WorldUiDiagnostic, WorldUiDocumentRequest, WorldUiDocumentValidationResult,
+    WorldUiBundleValidationResult, WorldUiCompatibilityDocumentReport, WorldUiCompatibilityReport,
+    WorldUiCompatibilityTarget, WorldUiCompileRequest, WorldUiCompileResult, WorldUiDiagnostic,
+    WorldUiDocumentRequest, WorldUiDocumentValidationResult,
 };
 
 const SUPPORTED_SCHEMA_VERSIONS: [u32; 2] = [1, 2];
-const SUPPORTED_CAPABILITIES: [&str; 3] = ["supports_file_picker", "supports_hover", "supports_mic"];
+const SUPPORTED_CAPABILITIES: [&str; 3] =
+    ["supports_file_picker", "supports_hover", "supports_mic"];
 const LEGACY_MOUNT_IDS: [&str; 9] = [
     "header",
     "scene",
@@ -129,7 +130,12 @@ fn component_support(component_id: &str) -> Option<ComponentSupport> {
             allowed_slots: &[],
         }),
         "side_panel_tabs" => Some(ComponentSupport {
-            props: &["show_map_tab", "show_custom_tabs", "empty_text", "drawer_label"],
+            props: &[
+                "show_map_tab",
+                "show_attribute_tabs",
+                "empty_text",
+                "drawer_label",
+            ],
             implicit_actions: &["switch_side_tab"],
             implicit_capabilities: &[],
             allowed_slots: &[],
@@ -283,7 +289,10 @@ impl GameUiService {
         }
     }
 
-    pub fn compile_world_ui_document(&self, request: WorldUiCompileRequest) -> WorldUiCompileResult {
+    pub fn compile_world_ui_document(
+        &self,
+        request: WorldUiCompileRequest,
+    ) -> WorldUiCompileResult {
         let compiled = self.compile_snapshot(&request.source, request.platform.as_deref());
         WorldUiCompileResult {
             ok: !compiled
@@ -305,16 +314,10 @@ impl GameUiService {
         request: VerifyWorldPackageUiCompatibilityRequest,
     ) -> WorldUiCompatibilityReport {
         let target = normalize_compatibility_target(request.target);
-        let desktop = self.compatibility_report_for_document(
-            "desktop",
-            &request.desktop_file,
-            &target,
-        );
-        let mobile = self.compatibility_report_for_document(
-            "mobile",
-            &request.mobile_file,
-            &target,
-        );
+        let desktop =
+            self.compatibility_report_for_document("desktop", &request.desktop_file, &target);
+        let mobile =
+            self.compatibility_report_for_document("mobile", &request.mobile_file, &target);
 
         let mut diagnostics = Vec::new();
         diagnostics.extend(
@@ -556,11 +559,7 @@ impl GameUiService {
         }
 
         let Some(layout) = object.get("layout").and_then(Value::as_object) else {
-            state.error(
-                "missing_layout",
-                "layout.root is required.",
-                "layout",
-            );
+            state.error("missing_layout", "layout.root is required.", "layout");
             return build_snapshot(platform, schema_version, normalized, state);
         };
         let Some(root) = layout.get("root") else {
@@ -576,6 +575,10 @@ impl GameUiService {
             Some(1) => self.validate_v1_node(root, "layout.root", &mut state, &mut BTreeSet::new()),
             Some(2) => self.validate_v2_node(root, "layout.root", &mut state),
             Some(_) | None => {}
+        }
+
+        if platform.as_deref() == Some("mobile") {
+            validate_mobile_document_rules(root, object.get("custom_css"), &mut state);
         }
 
         build_snapshot(platform, schema_version, normalized, state)
@@ -756,7 +759,11 @@ impl GameUiService {
                         );
                     }
                     validate_prop_value(prop_value, &format!("{path}.props.{prop_key}"), state);
-                    infer_dependencies_from_value(prop_value, &format!("{path}.props.{prop_key}"), state);
+                    infer_dependencies_from_value(
+                        prop_value,
+                        &format!("{path}.props.{prop_key}"),
+                        state,
+                    );
                 }
             }
 
@@ -770,7 +777,11 @@ impl GameUiService {
                     return;
                 };
 
-                let allowed_slots = support.allowed_slots.iter().copied().collect::<BTreeSet<_>>();
+                let allowed_slots = support
+                    .allowed_slots
+                    .iter()
+                    .copied()
+                    .collect::<BTreeSet<_>>();
                 for (slot_name, slot_value) in slots_object {
                     if !allowed_slots.contains(slot_name.as_str()) {
                         state.error(
@@ -939,7 +950,11 @@ fn validate_grid_fields(object: &Map<String, Value>, path: &str, state: &mut Com
 
     if let Some(areas) = object.get("areas") {
         let Some(rows) = areas.as_array() else {
-            state.error("invalid_areas", "areas must be a 2D string array.", format!("{path}.areas"));
+            state.error(
+                "invalid_areas",
+                "areas must be a 2D string array.",
+                format!("{path}.areas"),
+            );
             return;
         };
 
@@ -967,7 +982,11 @@ fn validate_grid_fields(object: &Map<String, Value>, path: &str, state: &mut Com
             }
 
             for (column_index, area_name) in columns.iter().enumerate() {
-                if area_name.as_str().map(|value| value.trim().is_empty()).unwrap_or(true) {
+                if area_name
+                    .as_str()
+                    .map(|value| value.trim().is_empty())
+                    .unwrap_or(true)
+                {
                     state.error(
                         "invalid_grid_area_name",
                         "Grid area names must be non-empty strings.",
@@ -1018,7 +1037,12 @@ fn validate_children_v1(
             return;
         };
         for (index, child) in children.iter().enumerate() {
-            service.validate_v1_node(child, &format!("{path}.children[{index}]"), state, seen_mounts);
+            service.validate_v1_node(
+                child,
+                &format!("{path}.children[{index}]"),
+                state,
+                seen_mounts,
+            );
         }
     }
 }
@@ -1049,11 +1073,19 @@ fn validate_string_array(value: Option<&Value>, path: &str, state: &mut Compilat
         return;
     };
     let Some(items) = value.as_array() else {
-        state.error("invalid_string_array", "Value must be an array of strings.", path);
+        state.error(
+            "invalid_string_array",
+            "Value must be an array of strings.",
+            path,
+        );
         return;
     };
     for (index, item) in items.iter().enumerate() {
-        if item.as_str().map(|text| text.trim().is_empty()).unwrap_or(true) {
+        if item
+            .as_str()
+            .map(|text| text.trim().is_empty())
+            .unwrap_or(true)
+        {
             state.error(
                 "invalid_string_array_item",
                 "Array items must be non-empty strings.",
@@ -1070,7 +1102,10 @@ fn validate_style_object(value: &Value, path: &str, state: &mut CompilationState
     };
 
     for (key, entry) in object {
-        if !matches!(entry, Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)) {
+        if !matches!(
+            entry,
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)
+        ) {
             state.error(
                 "invalid_style_value",
                 format!("Style value `{key}` must be a primitive or null."),
@@ -1096,6 +1131,142 @@ fn validate_anchor(value: &Value, path: &str, state: &mut CompilationState) {
             }
         }
     }
+}
+
+fn validate_mobile_document_rules(
+    root: &Value,
+    custom_css: Option<&Value>,
+    state: &mut CompilationState,
+) {
+    if !state.components.contains("input_composer") {
+        state.warn(
+            "mobile_missing_input_composer",
+            "Mobile UI documents should include input_composer so the runtime can keep the composer visible when the keyboard opens.",
+            "layout.root",
+        );
+    }
+
+    if !state.components.contains("side_panel_tabs") {
+        state.warn(
+            "mobile_missing_side_panel_tabs",
+            "Mobile UI documents should put status, map, and custom tabs in side_panel_tabs instead of inline chat content.",
+            "layout.root",
+        );
+    }
+
+    inspect_mobile_node(root, "layout.root", state);
+
+    if let Some(Value::String(css)) = custom_css {
+        let normalized = css.to_ascii_lowercase();
+        if normalized.contains("game-root--mobile-session")
+            && (normalized.contains("height: 100dvh")
+                || normalized.contains("height:100dvh")
+                || normalized.contains("min-height: 100dvh")
+                || normalized.contains("min-height:100dvh")
+                || normalized.contains("height: 100vh")
+                || normalized.contains("height:100vh")
+                || normalized.contains("min-height: 100vh")
+                || normalized.contains("min-height:100vh"))
+        {
+            state.warn(
+                "mobile_css_fixed_viewport_height",
+                "Mobile custom_css should avoid fixed 100vh/100dvh heights on the session root; use the runtime visible-height variable so the keyboard can resize content.",
+                "custom_css",
+            );
+        }
+    }
+}
+
+fn inspect_mobile_node(node: &Value, path: &str, state: &mut CompilationState) {
+    let Some(object) = node.as_object() else {
+        return;
+    };
+
+    for key in ["height", "min_height"] {
+        if object
+            .get(key)
+            .and_then(Value::as_str)
+            .map(is_fixed_mobile_viewport_height)
+            .unwrap_or(false)
+        {
+            state.warn(
+                "mobile_fixed_viewport_height",
+                "Mobile layout nodes should not use fixed 100vh/100dvh heights; keyboard resizing works best with the runtime visible-height variable.",
+                format!("{path}.{key}"),
+            );
+        }
+    }
+
+    if let Some(style) = object.get("style").and_then(Value::as_object) {
+        for key in ["height", "min_height"] {
+            if style
+                .get(key)
+                .and_then(Value::as_str)
+                .map(is_fixed_mobile_viewport_height)
+                .unwrap_or(false)
+            {
+                state.warn(
+                    "mobile_fixed_viewport_height",
+                    "Mobile layout style should not use fixed 100vh/100dvh heights; keyboard resizing works best with the runtime visible-height variable.",
+                    format!("{path}.style.{key}"),
+                );
+            }
+        }
+
+        let has_fixed_viewport_height = ["height", "min_height"].iter().any(|key| {
+            style
+                .get(*key)
+                .and_then(Value::as_str)
+                .map(is_fixed_mobile_viewport_height)
+                .unwrap_or(false)
+        });
+
+        if path == "layout.root"
+            && has_fixed_viewport_height
+            && style
+                .get("overflow")
+                .and_then(Value::as_str)
+                .map(|value| value.trim().eq_ignore_ascii_case("hidden"))
+                .unwrap_or(false)
+        {
+            state.warn(
+                "mobile_root_overflow_hidden",
+                "Mobile root overflow:hidden can trap the focused composer under the keyboard. Prefer constraining the scroll area inside the layout.",
+                format!("{path}.style.overflow"),
+            );
+        }
+    }
+
+    for key in ["children"] {
+        if let Some(children) = object.get(key).and_then(Value::as_array) {
+            for (index, child) in children.iter().enumerate() {
+                inspect_mobile_node(child, &format!("{path}.{key}[{index}]"), state);
+            }
+        }
+    }
+
+    for key in ["child", "empty"] {
+        if let Some(child) = object.get(key) {
+            inspect_mobile_node(child, &format!("{path}.{key}"), state);
+        }
+    }
+
+    if let Some(slots) = object.get("slots").and_then(Value::as_object) {
+        for (slot_name, slot_value) in slots {
+            if let Some(items) = slot_value.as_array() {
+                for (index, item) in items.iter().enumerate() {
+                    inspect_mobile_node(item, &format!("{path}.slots.{slot_name}[{index}]"), state);
+                }
+            } else {
+                inspect_mobile_node(slot_value, &format!("{path}.slots.{slot_name}"), state);
+            }
+        }
+    }
+}
+
+fn is_fixed_mobile_viewport_height(value: &str) -> bool {
+    let normalized = value.trim().to_ascii_lowercase();
+    normalized == "100vh" || normalized == "100dvh"
 }
 
 fn validate_prop_value(value: &Value, path: &str, state: &mut CompilationState) {
@@ -1249,7 +1420,11 @@ fn dedupe_string_list(values: Vec<String>) -> Vec<String> {
 }
 
 fn dedupe_u32_list(values: Vec<u32>) -> Vec<u32> {
-    values.into_iter().collect::<BTreeSet<_>>().into_iter().collect()
+    values
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 #[cfg(test)]
@@ -1257,7 +1432,7 @@ mod tests {
     use super::GameUiService;
     use crate::models::world::{
         VerifyWorldPackageUiCompatibilityRequest, WorldUiBundleValidationRequest,
-        WorldUiCompileRequest, WorldUiCompatibilityTarget, WorldUiDocumentRequest,
+        WorldUiCompatibilityTarget, WorldUiCompileRequest, WorldUiDocumentRequest,
     };
 
     #[test]
@@ -1280,9 +1455,7 @@ mod tests {
         assert!(
             bundle.ok,
             "desktop errors: {:?}; mobile errors: {:?}; bundle errors: {:?}",
-            bundle.desktop.errors,
-            bundle.mobile.errors,
-            bundle.errors
+            bundle.desktop.errors, bundle.mobile.errors, bundle.errors
         );
 
         let compiled = service.compile_world_ui_document(WorldUiCompileRequest {
@@ -1296,38 +1469,25 @@ mod tests {
     }
 
     #[test]
-    fn validates_and_compiles_piao_v2_seed_documents() {
+    fn validates_additional_mobile_seed_documents() {
         let service = GameUiService::new();
-        let desktop = include_str!("../db/seeds/assets/piao-desktop-ui.jsonc");
-        let mobile = include_str!("../db/seeds/assets/piao-mobile-ui.jsonc");
+        for mobile in [
+            include_str!("../db/seeds/assets/default-mobile-ui.jsonc"),
+            include_str!("../db/seeds/assets/poetry-mobile-ui.jsonc"),
+        ] {
+            let result = service.validate_world_ui_document(WorldUiDocumentRequest {
+                source: mobile.to_string(),
+                platform: Some("mobile".to_string()),
+            });
 
-        let desktop_result = service.validate_world_ui_document(WorldUiDocumentRequest {
-            source: desktop.to_string(),
-            platform: Some("desktop".to_string()),
-        });
-        assert!(desktop_result.ok);
-        assert_eq!(desktop_result.schema_version, Some(2));
-
-        let bundle = service.validate_world_ui_bundle(WorldUiBundleValidationRequest {
-            desktop_file: desktop.to_string(),
-            mobile_file: mobile.to_string(),
-        });
-        assert!(
-            bundle.ok,
-            "desktop errors: {:?}; mobile errors: {:?}; bundle errors: {:?}",
-            bundle.desktop.errors,
-            bundle.mobile.errors,
-            bundle.errors
-        );
-
-        let compiled = service.compile_world_ui_document(WorldUiCompileRequest {
-            source: desktop.to_string(),
-            platform: Some("desktop".to_string()),
-        });
-        assert!(compiled.ok);
-        assert!(compiled
-            .component_dependencies
-            .contains(&"input_composer".to_string()));
+            assert!(
+                result.ok,
+                "mobile seed errors: {:?}; warnings: {:?}",
+                result.errors, result.warnings
+            );
+            assert!(result.components.contains(&"input_composer".to_string()));
+            assert!(result.components.contains(&"side_panel_tabs".to_string()));
+        }
     }
 
     #[test]

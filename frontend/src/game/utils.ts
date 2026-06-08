@@ -512,12 +512,12 @@ export function resolveDialogueSpeakerLabel(
 export function resolveStatusTabs(
   document: Parameters<typeof resolveSidePanelTabOrder>[0],
   mapCount: number,
-  customTabs: Array<[string, string]>,
+  attributeTabs: Array<[string, string]>,
 ): Array<{ key: string; label: string }> {
   const available = new Map<string, { key: string; label: string }>();
-  available.set("map", { key: "map", label: `地图 ${mapCount}` });
-  for (const [key] of customTabs) {
-    available.set(`custom:${key}`, { key: `custom:${key}`, label: key });
+  available.set("map", { key: "map", label: "地图" });
+  for (const [key] of attributeTabs) {
+    available.set(`attribute:${key}`, { key: `attribute:${key}`, label: key });
   }
   return resolveSidePanelTabOrder(document, Array.from(available.values()));
 }

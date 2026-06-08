@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "meta": {
-    "name": "GWTW Desktop UI",
+    "name": "乱世佳人桌面界面",
     "platform": "desktop"
   },
   "layout": {
@@ -102,7 +102,7 @@
               "component": "narration_card",
               "class_name": "gwtw-narration-card",
               "props": {
-                "title": "Narration",
+                "title": "旁白",
                 "show_copy_button": false
               }
             },
@@ -129,7 +129,7 @@
           "class_name": "gwtw-side-board",
           "props": {
             "show_map_tab": true,
-            "show_custom_tabs": true
+            "show_attribute_tabs": true
           }
         }
       ]
@@ -139,8 +139,8 @@
     "side_panel": {
       "tab_order": [
         "map",
-        "custom:\u5173\u7cfb",
-        "custom:\u793c\u4eea"
+        "attribute:\u5173\u7cfb",
+        "attribute:\u793c\u4eea"
       ]
     }
   },
@@ -236,3 +236,4 @@
   },
   "custom_css": ".game-ui-root {\n  --game-bg-from: #c8b39a;\n  --game-bg-via: #b99b83;\n  --game-bg-to: #a98a74;\n  --game-bg-accent: rgba(132, 98, 78, 0.16);\n  --game-text: #fff8f1;\n  --game-text-dim: rgba(255, 248, 241, 0.68);\n  --game-text-muted: rgba(255, 248, 241, 0.58);\n  --game-text-weak: rgba(255, 248, 241, 0.72);\n  --game-border: rgba(255, 231, 204, 0.20);\n  --game-border-dim: rgba(255, 231, 204, 0.14);\n  --game-border-light: rgba(255, 231, 204, 0.18);\n  --game-border-medium: rgba(255, 231, 204, 0.28);\n  --game-bg-panel: rgba(76, 52, 44, 0.78);\n  --game-bg-subtle: rgba(110, 82, 72, 0.42);\n  --game-bg-hover: rgba(255, 244, 230, 0.16);\n  --game-bg-active: rgba(240, 211, 178, 0.24);\n  --game-bg-input: rgba(255, 255, 255, 0.10);\n  --game-player-bg: #f0d3b2;\n  --game-speaker-blue: #f0d3b2;\n  --game-tag-text: #fff4e6;\n  color: #fff8f1;\n  background:\n    radial-gradient(circle at 18% 10%, rgba(255,239,220,0.24), transparent 18%),\n    radial-gradient(circle at 82% 18%, rgba(132, 98, 78, 0.16), transparent 22%),\n    linear-gradient(180deg, #c8b39a 0%, #a98a74 100%);\n}\n\n.gwtw-header-bar .game-header {\n  min-height: 100%;\n  align-items: center;\n  padding: 2px 6px 0;\n}\n\n.gwtw-header-bar .game-simple-world {\n  font-size: 11px;\n  letter-spacing: 0.08em;\n  text-transform: uppercase;\n}\n\n.gwtw-header-bar .game-scene-name {\n  font-family: var(--game-ui-token-font-display, serif);\n  font-size: 24px;\n  font-weight: 600;\n  letter-spacing: 0.08em;\n}\n\n.gwtw-visual-column,\n.gwtw-chat-column,\n.gwtw-chat-board,\n.gwtw-side-board {\n  min-height: 0;\n}\n\n.gwtw-focus-frame {\n  overflow: hidden;\n  padding: 0;\n  border: 0;\n  background: transparent;\n  box-shadow: none;\n}\n\n.gwtw-focus-frame .game-scene-center {\n  width: 100%;\n  min-height: 100%;\n  padding: 22px;\n  display: grid;\n  grid-template-rows: minmax(0, 1fr) auto;\n  align-items: end;\n  justify-items: center;\n  gap: 16px;\n  border-radius: 26px;\n  background:\n    linear-gradient(180deg, rgba(255,255,255,0.10), rgba(76,52,44,0.50)),\n    var(--game-runtime-bg-image, var(--game-local-bg-image, none));\n  background-size: cover;\n  background-position: center;\n  overflow: hidden;\n}\n\n.gwtw-focus-frame .game-avatar {\n  width: min(72%, 280px);\n  max-width: min(72%, 280px);\n  align-self: end;\n  border: 0;\n  border-radius: 0;\n  background: transparent;\n  box-shadow: none;\n}\n\n.gwtw-focus-frame .game-current-line {\n  width: min(100%, 36ch);\n  max-width: 36ch;\n  min-height: 124px;\n  max-height: 42%;\n  margin: 0 auto;\n  text-align: center;\n  font-size: 16px;\n  line-height: 1.75;\n  background: rgba(76, 52, 44, 0.70);\n}\n\n.gwtw-character-ribbon .game-scene-characters {\n  justify-content: center;\n  padding: 0;\n  background: transparent;\n  border: none;\n}\n\n.gwtw-narration-card .game-narration-panel {\n  padding: 0;\n  background: transparent;\n  border: none;\n  backdrop-filter: none;\n}\n\n.gwtw-chat-board .game-chat-messages {\n  height: 100%;\n  min-height: 0;\n  padding: 0;\n  background: transparent;\n  border: none;\n  backdrop-filter: none;\n}\n\n.gwtw-input-board .game-input-area {\n  padding: 0;\n  background: transparent;\n  border: none;\n  box-shadow: none;\n  backdrop-filter: none;\n}\n\n.gwtw-side-board .game-status {\n  height: 100%;\n}\n\n.gwtw-side-board .game-tabs {\n  display: grid;\n  grid-template-columns: repeat(3, minmax(0, 1fr));\n  gap: 8px;\n}\n\n.gwtw-side-board .game-panel {\n  height: 100%;\n  min-height: 0;\n}\n"
 }
+

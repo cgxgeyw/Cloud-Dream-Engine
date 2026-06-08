@@ -88,7 +88,7 @@ export const RenderCharacterCreation: React.FC<{
   <div className="game-system-action game-system-action--creation game-ui-panel" data-variant="system">
     <div className="game-system-action-header">
       <div>
-        <div className="game-system-action-kicker">New Character</div>
+        <div className="game-system-action-kicker">新角色</div>
         <div className="game-system-action-title">{creation.characterName}</div>
       </div>
     </div>

@@ -34,7 +34,6 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const imageInputId = useId();
-  const isMobile = runtime.capabilities.platform === "mobile";
 
   if (!runtime.session) {
     return null;
@@ -45,7 +44,7 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
       if (navigator.permissions?.query) {
         const status = await navigator.permissions.query({ name: "microphone" as PermissionName });
         if (status.state === "denied") {
-          setMicError("Microphone permission was denied.");
+          setMicError("麦克风权限被拒绝。");
           return false;
         }
       }
@@ -57,11 +56,11 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
     } catch (errorLike) {
       const errorState = errorLike as { name?: string };
       if (errorState.name === "NotAllowedError") {
-        setMicError("Microphone permission was denied.");
+        setMicError("麦克风权限被拒绝。");
       } else if (errorState.name === "NotFoundError") {
-        setMicError("No microphone device was found.");
+        setMicError("未找到可用麦克风。");
       } else {
-        setMicError(`Microphone is unavailable: ${errorState.name || "unknown error"}`);
+        setMicError(`麦克风不可用：${errorState.name || "未知错误"}`);
       }
       return false;
     }
@@ -102,7 +101,7 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
       mediaRecorder.start();
       setIsRecording(true);
     } catch {
-      setMicError("Failed to start recording.");
+      setMicError("启动录音失败。");
     }
   };
 
@@ -126,9 +125,9 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
   }, [actions, imageInputId]);
 
   const submitMode = runtime.editing ? "edit" : "submit";
-  const placeholder = readStringProp(node, "placeholder", "Type a message or action...");
-  const submitLabel = readStringProp(node, "submit_label", "Send");
-  const editingSubmitLabel = readStringProp(node, "editing_submit_label", "Save and Retry");
+  const placeholder = readStringProp(node, "placeholder", "输入消息或行动...");
+  const submitLabel = readStringProp(node, "submit_label", "发送");
+  const editingSubmitLabel = readStringProp(node, "editing_submit_label", "保存并重试");
   const showImageButton = readBooleanProp(node, "show_image_button", true)
     && runtime.capabilities.supports_file_picker;
   const showAudioButton = readBooleanProp(node, "show_audio_button", true)
@@ -141,8 +140,8 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
       {runtime.editing ? (
         <div className="game-input-mode">
           <div className="game-input-mode-copy">
-            <div className="game-input-mode-title">{`Editing turn ${runtime.editing.turnIndex}`}</div>
-            <div className="game-input-mode-text">Submitting will rewind to this turn and regenerate the following content.</div>
+            <div className="game-input-mode-title">{`正在编辑第 ${runtime.editing.turnIndex} 轮`}</div>
+            <div className="game-input-mode-text">提交后会回退到这一轮，并重新生成后续内容。</div>
           </div>
           <div className="game-input-mode-actions">
             <button
@@ -161,7 +160,7 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
               disabled={runtime.ui_state.submitting}
               onClick={actions.cancelEditingTurn}
             >
-              Cancel
+              取消
             </button>
           </div>
         </div>
@@ -187,7 +186,7 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
           className="game-textarea game-ui-textarea"
         />
 
-        {isMobile ? (
+        {runtime.capabilities.platform === "mobile" ? (
           <div className="game-input-actions">
             <input
               type="file"
@@ -202,12 +201,12 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
               }}
             />
             {showAudioButton ? (
-              <button type="button" className={`game-input-icon-btn game-ui-button${isRecording ? " game-input-icon-btn--recording" : ""}`} data-variant="ghost" onClick={() => void (isRecording ? actions.stopRecording() : actions.startRecording())} title={isRecording ? "Stop recording" : "Record audio"}>
+              <button type="button" className={`game-input-icon-btn game-ui-button${isRecording ? " game-input-icon-btn--recording" : ""}`} data-variant="ghost" onClick={() => void (isRecording ? actions.stopRecording() : actions.startRecording())} title={isRecording ? "停止录音" : "录音"}>
                 {isRecording ? <Square size={20} /> : <Mic size={20} />}
               </button>
             ) : null}
             {showImageButton ? (
-              <button type="button" className="game-input-icon-btn game-ui-button" data-variant="ghost" onClick={() => actions.pickImage()} title="Attach image">
+              <button type="button" className="game-input-icon-btn game-ui-button" data-variant="ghost" onClick={() => actions.pickImage()} title="添加图片">
                 <Image size={20} />
               </button>
             ) : null}
@@ -239,12 +238,12 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
                 }}
               />
               {showImageButton ? (
-                <button type="button" className="game-input-attach-btn game-ui-button" data-variant="ghost" onClick={() => actions.pickImage()} title="Attach image">
+                <button type="button" className="game-input-attach-btn game-ui-button" data-variant="ghost" onClick={() => actions.pickImage()} title="添加图片">
                   <Image size={18} />
                 </button>
               ) : null}
               {showAudioButton ? (
-                <button type="button" className={`game-input-attach-btn game-ui-button${isRecording ? " game-input-attach-btn--recording" : ""}`} data-variant="ghost" onClick={() => void (isRecording ? actions.stopRecording() : actions.startRecording())} title={isRecording ? "Stop recording" : "Record audio"}>
+                <button type="button" className={`game-input-attach-btn game-ui-button${isRecording ? " game-input-attach-btn--recording" : ""}`} data-variant="ghost" onClick={() => void (isRecording ? actions.stopRecording() : actions.startRecording())} title={isRecording ? "停止录音" : "录音"}>
                   {isRecording ? <Square size={18} /> : <Mic size={18} />}
                 </button>
               ) : null}
@@ -257,7 +256,7 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
               data-variant="primary"
             >
               <Send size={16} />
-              <span>{runtime.ui_state.submitting ? "Sending..." : submitLabel}</span>
+              <span>{runtime.ui_state.submitting ? "发送中..." : submitLabel}</span>
             </button>
           </div>
         )}
@@ -301,9 +300,9 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
       {micError ? <div className="game-input-bubble">{micError}</div> : null}
 
       {showSessionMeta ? (
-        <div className={`game-session-meta${isMobile ? " game-session-meta--compact" : ""}`}>
-          {runtime.current_save ? <span className="game-session-meta-id">{`Save ${runtime.current_save.id}`}</span> : null}
-          {runtime.session.id ? <span className="game-session-meta-id">{`Session ${runtime.session.id}`}</span> : null}
+        <div className={`game-session-meta${runtime.capabilities.platform === "mobile" ? " game-session-meta--compact" : ""}`}>
+          {runtime.current_save ? <span className="game-session-meta-id">{`存档 ${runtime.current_save.id}`}</span> : null}
+          {runtime.session.id ? <span className="game-session-meta-id">{`会话 ${runtime.session.id}`}</span> : null}
         </div>
       ) : null}
     </div>

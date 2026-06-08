@@ -28,6 +28,7 @@ data/
 *.log
 *.err
 *.err.log
+*.bak
 __pycache__/
 *.py[cod]
 

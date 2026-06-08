@@ -12,6 +12,7 @@ import {
   assetUrl,
   branchSave,
   fetchCharacter,
+  fetchSessionRuntimeAttributes,
   fetchSaves,
   fetchSession,
   fetchWorlds,
@@ -26,6 +27,7 @@ import {
   type PlayerActionMode,
   type RetryFailedLlmStepRequest,
   type SaveResponse,
+  type SessionRuntimeAttributesResponse,
   type SessionMapEdge,
   type SessionMapNode,
   type SessionSnapshotResponse,
@@ -66,6 +68,64 @@ function getMessageText(content: string | ContentPart[]): string {
     .filter((p): p is { type: "text"; text: string } => p.type === "text")
     .map((p) => p.text)
     .join("");
+}
+
+function stringifyRuntimeAttributeValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => stringifyRuntimeAttributeValue(item))
+      .filter(Boolean)
+      .join("\n");
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return "";
+  }
+}
+
+function shouldShowRuntimeAttributeInSidePanel(item: {
+  display_policy?: Record<string, unknown> | null;
+  influence_policy?: Record<string, unknown> | null;
+}): boolean {
+  const displayVisible = item.display_policy?.game_visible;
+  if (typeof displayVisible === "boolean") {
+    return displayVisible;
+  }
+  const panelConfig = item.influence_policy?.["ui.status_panel"];
+  if (panelConfig && typeof panelConfig === "object" && "enabled" in panelConfig) {
+    return Boolean((panelConfig as { enabled?: unknown }).enabled);
+  }
+  return false;
+}
+
+function buildAttributeSideTabsFromRuntimeAttributes(
+  runtimeAttributes: SessionRuntimeAttributesResponse,
+): Array<[string, string]> {
+  return [...runtimeAttributes.session_attributes, ...runtimeAttributes.character_attributes]
+    .map((group) => {
+      const lines = group.items
+        .filter((item) => shouldShowRuntimeAttributeInSidePanel(item))
+        .map((item) => {
+          const value = stringifyRuntimeAttributeValue(item.value);
+          if (!value) {
+            return "";
+          }
+          return `${item.label || item.key}: ${value}`;
+        })
+        .filter(Boolean);
+      return [group.owner_label.trim(), lines.join("\n")] as [string, string];
+    })
+    .filter(([label, content]) => label && content);
 }
 
 export interface GameSessionStateBag {
@@ -130,11 +190,11 @@ export interface GameSessionStateBag {
   themeCustomCss: string;
   mapGraphNodes: SessionMapNode[];
   mapGraphEdges: SessionMapEdge[];
-  customSideTabs: Array<[string, string]>;
+  attributeSideTabs: Array<[string, string]>;
   worldCharacterNameSet: Set<string>;
   sideTabs: Array<{ key: string; label: string }>;
-  activeCustomTab: string;
-  activeCustomContent: string;
+  activeAttributeTab: string;
+  activeAttributeContent: string;
   latestNarration: string;
   dialogueMessages: ChatMessageResponse[];
   renderedDialogueMessages: RenderChatMessage[];
@@ -169,6 +229,10 @@ export function useGameSession(
   const [themeWorld, setThemeWorld] = useState<WorldResponse | null>(null);
   const [playerCharacter, setPlayerCharacter] = useState<CharacterResponse | null>(null);
   const [worldCharacters, setWorldCharacters] = useState<CharacterResponse[]>([]);
+  const [runtimeAttributes, setRuntimeAttributes] = useState<SessionRuntimeAttributesResponse>({
+    session_attributes: [],
+    character_attributes: [],
+  });
   const [currentSave, setCurrentSave] = useState<SaveResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -216,6 +280,7 @@ export function useGameSession(
     setThemeWorld(null);
     setPlayerCharacter(null);
     setWorldCharacters([]);
+    setRuntimeAttributes({ session_attributes: [], character_attributes: [] });
     setCurrentSave(null);
     setLoading(true);
     setError(null);
@@ -408,6 +473,34 @@ export function useGameSession(
   }, [worldId]);
 
   useEffect(() => {
+    if (!sessionId) {
+      setRuntimeAttributes({ session_attributes: [], character_attributes: [] });
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadRuntimeAttributes() {
+      try {
+        const data = await fetchSessionRuntimeAttributes(sessionId);
+        if (!cancelled) {
+          setRuntimeAttributes(data);
+        }
+      } catch {
+        if (!cancelled) {
+          setRuntimeAttributes({ session_attributes: [], character_attributes: [] });
+        }
+      }
+    }
+
+    void loadRuntimeAttributes();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, session?.messages?.length, session?.current_line]);
+
+  useEffect(() => {
     if (!themeWorld?.id || !session?.messages?.length) {
       return;
     }
@@ -568,24 +661,9 @@ export function useGameSession(
     () => session?.map_graph_edges ?? [],
     [session?.map_graph_edges],
   );
-  const customSideTabs = useMemo<Array<[string, string]>>(
-    () => {
-      const tabs = new Map<string, string>();
-      for (const [label, content] of Object.entries(themeWorld?.custom_tabs ?? {})) {
-        const normalizedLabel = label.trim();
-        if (normalizedLabel) {
-          tabs.set(normalizedLabel, typeof content === "string" ? content : "");
-        }
-      }
-      for (const [label, content] of Object.entries(playerCharacter?.custom_tabs ?? {})) {
-        const normalizedLabel = label.trim();
-        if (normalizedLabel) {
-          tabs.set(normalizedLabel, typeof content === "string" ? content : "");
-        }
-      }
-      return Array.from(tabs.entries());
-    },
-    [playerCharacter, themeWorld],
+  const attributeSideTabs = useMemo<Array<[string, string]>>(
+    () => buildAttributeSideTabsFromRuntimeAttributes(runtimeAttributes),
+    [runtimeAttributes],
   );
   const worldCharacterNameSet = useMemo(
     () =>
@@ -598,8 +676,8 @@ export function useGameSession(
   );
   const sideTabs = useMemo(
     () =>
-      resolveStatusTabs(parsedGameUi.document, mapGraphNodes.length, customSideTabs),
-    [customSideTabs, mapGraphNodes.length, parsedGameUi.document],
+      resolveStatusTabs(parsedGameUi.document, mapGraphNodes.length, attributeSideTabs),
+    [attributeSideTabs, mapGraphNodes.length, parsedGameUi.document],
   );
 
   useEffect(() => {
@@ -615,15 +693,12 @@ export function useGameSession(
     }
   }, [sideTab, sideTabs]);
 
-  const activeCustomTab = sideTab.startsWith("custom:")
-    ? sideTab.slice("custom:".length)
+  const activeAttributeTab = sideTab.startsWith("attribute:")
+    ? sideTab.slice("attribute:".length)
     : "";
-  const activeCustomContent =
-    activeCustomTab && typeof playerCharacter?.custom_tabs?.[activeCustomTab] === "string"
-      ? playerCharacter.custom_tabs[activeCustomTab]
-      : activeCustomTab && typeof themeWorld?.custom_tabs?.[activeCustomTab] === "string"
-        ? themeWorld.custom_tabs[activeCustomTab]
-      : "";
+  const activeAttributeContent = activeAttributeTab
+    ? attributeSideTabs.find(([label]) => label === activeAttributeTab)?.[1] ?? ""
+    : "";
 
   const latestNarration = useMemo(() => {
     const currentLine = session?.current_line?.trim();
@@ -1172,11 +1247,11 @@ export function useGameSession(
     themeCustomCss,
     mapGraphNodes,
     mapGraphEdges,
-    customSideTabs,
+    attributeSideTabs,
     worldCharacterNameSet,
     sideTabs,
-    activeCustomTab,
-    activeCustomContent,
+    activeAttributeTab,
+    activeAttributeContent,
     latestNarration,
     dialogueMessages,
     renderedDialogueMessages,

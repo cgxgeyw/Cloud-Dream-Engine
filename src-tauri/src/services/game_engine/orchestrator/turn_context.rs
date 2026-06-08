@@ -1,5 +1,8 @@
 use crate::models::character::{resolve_character_narration_prompt, CharacterDefinition};
 use crate::models::memory::MemoryEntry;
+use crate::models::mcp_tool::{
+    director_config_allows_mcp_tool, MCP_TOOL_SCHEDULE_NOTIFICATION_ID,
+};
 use crate::models::model_config::ModelConfig;
 use crate::models::session::*;
 use crate::models::settings::AppSettings;
@@ -8,6 +11,7 @@ use crate::services::game_engine::dialogue::DialoguePipeline;
 use crate::services::game_engine::memory::MemoryService;
 use crate::services::game_engine::prompting::{build_prompt_call, llm_chat_messages_to_values};
 use crate::services::game_engine::structured_output::StructuredOutputFailure;
+use crate::services::notifications::notification_tool_definition;
 use rusqlite::{params, Connection};
 use std::collections::HashMap;
 
@@ -119,21 +123,13 @@ pub(crate) fn build_character_prompt_artifacts(
     let narration_prompt = resolve_character_narration_prompt(
         speaker_profile.map(|profile| profile.narration_prompt.as_str()),
     );
-    let mut system_prompt = dialogue_pipeline.build_character_system_prompt_with_contract(
+    let system_prompt = dialogue_pipeline.build_character_system_prompt_with_contract(
         speaker_name,
         speaker_profile,
         None,
         None,
     );
-    // 将世界背景信息加入角色系统提示词
-    if !world.background_prompt.trim().is_empty() {
-        system_prompt = format!(
-            "【世界背景】\n{}\n\n{}",
-            world.background_prompt.trim(),
-            system_prompt
-        );
-    }
-    let init_payload = build_character_init_payload(speaker_name, speaker_profile, session);
+    let init_payload = build_character_init_payload(world, speaker_name, speaker_profile, session);
     let turn_payload = build_character_turn_payload(
         world,
         speaker_name,
@@ -154,6 +150,7 @@ pub(crate) fn build_character_prompt_artifacts(
     let response_contract = serde_json::json!({
         "format": "json_object",
         "fields": ["speaker", "content", "intent", "emotion", "narration"],
+        "tool_policy": "Use provider-native tool_calls for every allowed tool; never include tool_calls, tool names, or tool arguments in the JSON body."
     });
     let scene_state = serde_json::json!({
         "scene_name": next_scene_name,
@@ -394,17 +391,46 @@ pub(crate) fn build_character_chat_request(
         location,
         &session.visible_characters,
     );
+    let notification_tool_allowed = director_config_allows_mcp_tool(
+        &world.director_config,
+        MCP_TOOL_SCHEDULE_NOTIFICATION_ID,
+    );
+    let tools = notification_tool_allowed.then(|| vec![build_notification_chat_tool_definition()]);
+    let native_tool_calling = tools
+        .as_ref()
+        .map(|items| !items.is_empty())
+        .unwrap_or(false);
     crate::services::llm::client::ChatRequest {
         model: model.model_id.to_string(),
         messages: artifacts.messages,
         temperature: Some(0.8),
         max_tokens: Some(model.max_tokens),
-        stream: Some(false),
+        stream: Some(model.streaming_enabled && !native_tool_calling),
         json_mode: Some(true),
         response_schema: Some(build_character_response_schema()),
-        tools: None,
-        tool_choice: None,
-        native_tool_calling: None,
+        tools,
+        tool_choice: native_tool_calling
+            .then_some(crate::services::llm::client::ChatToolChoice::Auto),
+        native_tool_calling: native_tool_calling.then_some(true),
+    }
+}
+
+fn build_notification_chat_tool_definition() -> crate::services::llm::client::ChatToolDefinition {
+    let tool = notification_tool_definition();
+    crate::services::llm::client::ChatToolDefinition {
+        name: tool
+            .get("tool_name")
+            .and_then(|value| value.as_str())
+            .unwrap_or("schedule_notification")
+            .to_string(),
+        description: tool
+            .get("description")
+            .and_then(|value| value.as_str())
+            .map(str::to_string),
+        input_schema: tool
+            .get("arguments_schema")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({ "type": "object" })),
     }
 }
 
@@ -451,6 +477,7 @@ pub(crate) fn build_director_transport_failure(
 }
 
 pub(crate) fn build_character_init_payload(
+    world: &WorldDefinition,
     speaker_name: &str,
     speaker_profile: Option<&CharacterDefinition>,
     session: &SessionSnapshot,
@@ -460,11 +487,14 @@ pub(crate) fn build_character_init_payload(
             "character": {
                 "name": speaker_name,
                 "role": speaker_profile.map(|profile| profile.role.clone()).unwrap_or_default(),
+                "background_prompt": speaker_profile
+                    .map(|profile| profile.background_prompt.clone())
+                    .unwrap_or_default(),
                 "attributes": speaker_profile.map(|profile| profile.attributes.clone()).unwrap_or_default(),
-                "custom_tabs": speaker_profile.map(|profile| profile.custom_tabs.clone()).unwrap_or_default(),
             },
             "world": {
                 "world_name": session.world_name,
+                "background_prompt": world.background_prompt,
             }
         }
     }))
@@ -1198,11 +1228,8 @@ pub(crate) fn resolve_history_speaker(
 pub(crate) fn resolve_character_memory_recall_limit(
     speaker_profile: Option<&CharacterDefinition>,
 ) -> i32 {
-    speaker_profile
-        .and_then(|profile| profile.custom_tabs.get("memory_recall_limit"))
-        .and_then(|value| value.trim().parse::<i32>().ok())
-        .map(|value| value.clamp(1, 24))
-        .unwrap_or(8)
+    let _ = speaker_profile;
+    8
 }
 
 pub(crate) fn resolve_character_memory_hit_turns(world: &WorldDefinition) -> usize {

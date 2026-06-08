@@ -5,6 +5,7 @@ import {
   fetchAttributeValues,
   upsertAttributeValue,
   type AttributeSchemaResponse,
+  type AttributeValueType,
 } from "../data/apiAdapter";
 
 type Scope = "world" | "character";
@@ -19,7 +20,7 @@ type AttributePanelProps = {
 type DraftState = {
   key: string;
   label: string;
-  valueType: string;
+  valueType: AttributeValueType;
   description: string;
   defaultValue: string;
   enumOptions: string;
@@ -28,7 +29,7 @@ type DraftState = {
 const emptyDraft: DraftState = {
   key: "",
   label: "",
-  valueType: "string",
+  valueType: "text",
   description: "",
   defaultValue: "",
   enumOptions: "",
@@ -51,7 +52,7 @@ function parseEnumOptions(raw: string) {
     .filter(Boolean);
 }
 
-function parseValue(valueType: string, raw: string) {
+function parseValue(valueType: AttributeValueType, raw: string) {
   const text = raw.trim();
 
   if (valueType === "number") {
@@ -60,9 +61,9 @@ function parseValue(valueType: string, raw: string) {
   if (valueType === "boolean") {
     return text.toLowerCase() === "true";
   }
-  if (valueType === "tags") {
+  if (valueType === "list") {
     return raw
-      .split(",")
+      .split("\n")
       .map((item) => item.trim())
       .filter(Boolean);
   }
@@ -152,10 +153,6 @@ export function AttributePanel({ scope, ownerType, ownerId }: AttributePanelProp
   }
 
   async function handleCreateSchema() {
-    if (!ownerId) {
-      setError("请先保存当前对象，再创建自定义属性。");
-      return;
-    }
     if (!draft.key.trim() || !draft.label.trim()) {
       setError("属性 key 和标签不能为空。");
       return;
@@ -180,13 +177,15 @@ export function AttributePanel({ scope, ownerType, ownerId }: AttributePanelProp
         projection_policy: buildProjectionPolicy(scope),
       });
 
-      await upsertAttributeValue({
-        schema_id: created.id,
-        owner_type: ownerType,
-        owner_id: ownerId,
-        value: parseValue(draft.valueType, draft.defaultValue),
-        source: "manual",
-      });
+      if (ownerId) {
+        await upsertAttributeValue({
+          schema_id: created.id,
+          owner_type: ownerType,
+          owner_id: ownerId,
+          value: parseValue(draft.valueType, draft.defaultValue),
+          source: "manual",
+        });
+      }
 
       setDraft(emptyDraft);
       await loadData();
@@ -249,15 +248,14 @@ export function AttributePanel({ scope, ownerType, ownerId }: AttributePanelProp
               <span className="editor-field-label">值类型</span>
               <select
                 value={draft.valueType}
-                onChange={(e) => updateDraftField("valueType", e.target.value)}
+                onChange={(e) => updateDraftField("valueType", e.target.value as AttributeValueType)}
                 className="editor-field-input editor-field-select"
               >
-                <option value="string">string</option>
-                <option value="number">number</option>
-                <option value="boolean">boolean</option>
-                <option value="tags">tags</option>
-                <option value="json">json</option>
-                <option value="enum">enum</option>
+                <option value="text">文本</option>
+                <option value="number">数值</option>
+                <option value="boolean">布尔</option>
+                <option value="list">列表</option>
+                <option value="json">JSON</option>
               </select>
             </label>
             <label className="editor-field">
@@ -270,16 +268,14 @@ export function AttributePanel({ scope, ownerType, ownerId }: AttributePanelProp
             </label>
           </div>
 
-          {draft.valueType === "enum" ? (
-            <label className="editor-field">
-              <span className="editor-field-label">枚举选项，每行一个</span>
-              <textarea
-                value={draft.enumOptions}
-                onChange={(e) => updateDraftField("enumOptions", e.target.value)}
-                className="editor-field-input editor-field-textarea"
-              />
-            </label>
-          ) : null}
+          <label className="editor-field">
+            <span className="editor-field-label">枚举选项（每行一个，可选）</span>
+            <textarea
+              value={draft.enumOptions}
+              onChange={(e) => updateDraftField("enumOptions", e.target.value)}
+              className="editor-field-input editor-field-textarea"
+            />
+          </label>
 
           <label className="editor-field">
             <span className="editor-field-label">说明</span>
@@ -294,7 +290,7 @@ export function AttributePanel({ scope, ownerType, ownerId }: AttributePanelProp
             <button
               type="button"
               onClick={() => void handleCreateSchema()}
-              disabled={savingSchema || !ownerId}
+              disabled={savingSchema}
               className="action-btn action-btn--accent"
             >
               {savingSchema ? "创建中..." : "创建属性"}

@@ -92,7 +92,7 @@ export function HomePage({ isMobile = false }: HomePageProps) {
   // ===== Mobile Layout (品牌着陆页+2个大按钮) =====
   const mobileLayout = (
     <div className="home-mobile-center">
-      <div className="home-mobile-brand">Cloud Dream Engine</div>
+      <div className="home-mobile-brand">云朵梦境引擎</div>
       <div className="home-mobile-actions">
         <button
           type="button"

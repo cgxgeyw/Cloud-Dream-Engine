@@ -111,7 +111,6 @@ export function NewGamePage(_props: PageProps = {}) {
             <div className="newgame-list-head">
               <div>
                 <strong className="newgame-section-title">选择世界</strong>
-                <div className="newgame-section-note">不同世界会带来不同角色、地图和界面风格。</div>
               </div>
               <button type="button" className="action-btn" onClick={() => navigate("/worlds")}>
                 管理世界
@@ -235,12 +234,8 @@ export function NewGameSetupPage(_props: PageProps = {}) {
 
       {!loading && !error && world ? (
         <div className="newgame-screen newgame-setup-screen">
-          <SurfacePanel className="surface-panel--pad-lg newgame-setup-panel">
-            <div className="newgame-setup-head">
-              <button type="button" className="action-btn" onClick={() => navigate(`/worlds/${world.id}/edit`)}>
-                编辑世界
-              </button>
-            </div>
+          <div className="newgame-setup-panel">
+
 
             <div className="newgame-preview-hero">
               <div className="newgame-label">即将开始</div>
@@ -283,15 +278,10 @@ export function NewGameSetupPage(_props: PageProps = {}) {
             </div>
 
             <div className="newgame-action-stack">
-              <button
-                type="button"
-                onClick={() => void handleCreateSession()}
-                disabled={creating || !selectedPlayerCharacterId}
-                className="action-btn action-btn--primary newgame-start-btn"
-              >
-                {creating ? "启动中..." : "进入世界"}
-              </button>
               <div className="newgame-secondary-actions">
+                <button type="button" className="action-btn" onClick={() => navigate(`/worlds/${world.id}/edit`)}>
+                  编辑世界
+                </button>
                 <button
                   type="button"
                   onClick={() => navigate(`/worlds/${world.id}/characters`)}
@@ -300,8 +290,16 @@ export function NewGameSetupPage(_props: PageProps = {}) {
                   角色池
                 </button>
               </div>
+              <button
+                type="button"
+                onClick={() => void handleCreateSession()}
+                disabled={creating || !selectedPlayerCharacterId}
+                className="action-btn action-btn--primary newgame-start-btn"
+              >
+                {creating ? "启动中..." : "进入世界"}
+              </button>
             </div>
-          </SurfacePanel>
+          </div>
         </div>
       ) : null}
     </ScreenLayout>

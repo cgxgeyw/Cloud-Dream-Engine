@@ -1,6 +1,7 @@
 use crate::models::attribute::AttributeValue;
 use crate::models::character::CharacterDefinition;
 use crate::models::model_config::ModelConfig;
+use crate::models::scheduled_notification::PendingScheduledNotification;
 use crate::models::session::*;
 use crate::models::world::WorldDefinition;
 use crate::services::assets::resolver::AssetResolver;
@@ -9,11 +10,16 @@ use crate::services::game_engine::director::{
     WorldDirectorService,
 };
 use crate::services::game_engine::runtime_effects::DirectorRuntimeApplication;
+use crate::services::game_engine::service_mode::{
+    agent_chat_virtual_player_id, agent_chat_virtual_player_name, resolve_service_runtime_config,
+    ServiceMode,
+};
 use crate::services::game_engine::structured_output::{
     validate_director_payload, StructuredOutputFailure,
 };
 use crate::services::llm::client::LlmClient;
 use crate::services::map_topology::compile_map_topology;
+use crate::services::notifications::NotificationToolRuntime;
 use chrono::Utc;
 use rusqlite::{params, Connection};
 use std::collections::HashMap;
@@ -50,6 +56,7 @@ pub struct DirectorTurnRun {
 pub struct SpeakerTurnRunResult {
     pub messages: Vec<ChatMessage>,
     pub failure: Option<StructuredOutputFailure>,
+    pub pending_notifications: Vec<PendingScheduledNotification>,
 }
 
 pub struct PreparedTurnContext {
@@ -286,9 +293,13 @@ pub fn build_streaming_director_trace_chat_message(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::repositories::character_repo::CharacterRepository;
+    use crate::db::repositories::world_repo::WorldRepository;
     use crate::db::schema;
+    use crate::models::character::CharacterCreateRequest;
     use crate::models::memory::MemoryEntry;
     use crate::models::session::{AssetSelection, SceneRuntime, SessionState};
+    use crate::models::world::WorldCreateRequest;
     use crate::services::assets::resolver::AssetResolver;
     use crate::services::game_engine::structured_output::StructuredFailureStage;
     use rusqlite::Connection;
@@ -304,9 +315,6 @@ mod tests {
             time_system: "".to_string(),
             map_nodes: serde_json::json!({ "version": 1, "nodes": [] }),
             triggers: vec![],
-            custom_tabs: std::collections::HashMap::new(),
-            world_custom_attribute_definitions: vec![],
-            character_custom_attribute_definitions: vec![],
             time_config: serde_json::json!({}),
             director_config: serde_json::json!({ "allowed_mcp_tool_ids": [] }),
             ui_theme_config: serde_json::json!({}),
@@ -364,6 +372,90 @@ mod tests {
             streaming_enabled: true,
             is_default: true,
         }
+    }
+
+    #[test]
+    fn create_agent_chat_session_uses_virtual_player_when_no_player_is_configured() {
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        schema::create_tables(&conn).expect("create schema");
+        let world = WorldRepository::new(&conn)
+            .create(&WorldCreateRequest {
+                name: "Helper".to_string(),
+                genre: "".to_string(),
+                background_prompt: "".to_string(),
+                opening_scene: "Desk".to_string(),
+                summary: "".to_string(),
+                time_system: "".to_string(),
+                map_nodes: serde_json::json!({ "version": 1, "nodes": [] }),
+                triggers: vec![],
+                time_config: serde_json::json!({}),
+                director_config: serde_json::json!({
+                    "service_mode": "agent_chat",
+                    "default_agent_id": "agent-source"
+                }),
+                ui_theme_config: serde_json::json!({}),
+                opening_messages: vec![],
+                opening_character_ids: vec![],
+                player_character_id: None,
+            })
+            .expect("create world");
+        let agent = CharacterRepository::new(&conn)
+            .create(
+                &world.id,
+                &CharacterCreateRequest {
+                    name: "Agent".to_string(),
+                    role: "assistant".to_string(),
+                    background_prompt: String::new(),
+                    model: String::new(),
+                    memory_strategy: "default".to_string(),
+                    recent_dialogue_rounds: 2,
+                    attributes: vec![],
+                    portrait_assets: vec![],
+                    system_prompt_template: String::new(),
+                    response_contract_prompt: String::new(),
+                    narration_prompt: String::new(),
+                },
+            )
+            .expect("create character");
+        let updated_world = WorldRepository::new(&conn)
+            .update(
+                &world.id,
+                &crate::models::world::WorldUpdateRequest {
+                    name: None,
+                    genre: None,
+                    background_prompt: None,
+                    opening_scene: None,
+                    summary: None,
+                    time_system: None,
+                    map_nodes: None,
+                    triggers: None,
+                    time_config: None,
+                    director_config: Some(serde_json::json!({
+                        "service_mode": "agent_chat",
+                        "default_agent_id": agent.id,
+                    })),
+                    ui_theme_config: None,
+                    opening_messages: None,
+                    opening_character_ids: None,
+                    player_character_id: Some(None),
+                },
+            )
+            .expect("update world");
+
+        let session = SessionOrchestrator::create_session(&conn, &updated_world.id, None)
+            .expect("create session");
+
+        assert_eq!(session.player_character_id, agent_chat_virtual_player_id());
+        assert_eq!(
+            session.player_character_name,
+            agent_chat_virtual_player_name()
+        );
+        assert_eq!(session.visible_characters, vec![agent.name.clone()]);
+        assert!(session.scene.present_characters.contains(&agent.name));
+        assert!(session
+            .scene
+            .present_characters
+            .contains(&agent_chat_virtual_player_name()));
     }
 
     #[test]
@@ -1022,6 +1114,7 @@ impl SessionOrchestrator {
         characters: &[CharacterDefinition],
         turn_index: i32,
         player_input: &str,
+        notification_runtime: Option<NotificationToolRuntime<'_>>,
         mut progress_callback: Option<&mut (dyn FnMut(DirectorLoopStreamProgress) + Send)>,
     ) -> Result<DirectorTurnRun, StructuredOutputFailure> {
         let provider = normalize_provider_name(&model.provider);
@@ -1056,6 +1149,8 @@ impl SessionOrchestrator {
                             characters,
                             request,
                             tool_loop_limit,
+                            turn_index,
+                            notification_runtime,
                             Some(callback),
                         )
                         .await
@@ -1080,6 +1175,8 @@ impl SessionOrchestrator {
                             characters,
                             request,
                             tool_loop_limit,
+                            turn_index,
+                            notification_runtime,
                             None,
                         )
                         .await
@@ -1121,6 +1218,8 @@ impl SessionOrchestrator {
                         characters,
                         request,
                         tool_loop_limit,
+                        turn_index,
+                        notification_runtime,
                         Some(callback),
                     )
                     .await
@@ -1144,6 +1243,8 @@ impl SessionOrchestrator {
                         characters,
                         request,
                         tool_loop_limit,
+                        turn_index,
+                        notification_runtime,
                         None,
                     )
                     .await
@@ -1235,24 +1336,53 @@ impl SessionOrchestrator {
         let char_repo = crate::db::repositories::character_repo::CharacterRepository::new(conn);
         let characters = char_repo.list_by_world(world_id)?;
 
-        let player_char = player_character_id
+        let service_config = resolve_service_runtime_config(&world);
+        let use_agent_chat_virtual_player = service_config.service_mode == ServiceMode::AgentChat
+            && player_character_id.is_none()
+            && world
+                .player_character_id
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or_default()
+                .is_empty();
+        let agent_chat_default_agent = service_config
+            .default_agent_id
+            .as_deref()
             .and_then(|cid| characters.iter().find(|c| c.id == cid).cloned())
-            .or_else(|| {
-                world
-                    .player_character_id
-                    .as_deref()
-                    .and_then(|cid| characters.iter().find(|c| c.id == cid).cloned())
-            })
             .or_else(|| characters.first().cloned());
 
-        let player_char = player_char.ok_or("No player character found")?;
-
-        let visible_chars: Vec<String> = characters
-            .iter()
-            .filter(|c| c.id != player_char.id)
-            .filter(|c| world.opening_character_ids.iter().any(|id| id == &c.id))
-            .map(|c| c.name.clone())
-            .collect();
+        let (player_character_id, player_character_name, visible_chars) =
+            if use_agent_chat_virtual_player {
+                let agent_char = agent_chat_default_agent
+                    .ok_or("agent_chat requires at least one agent character")?;
+                (
+                    agent_chat_virtual_player_id().to_string(),
+                    agent_chat_virtual_player_name(),
+                    vec![agent_char.name.clone()],
+                )
+            } else {
+                let player_char = player_character_id
+                    .and_then(|cid| characters.iter().find(|c| c.id == cid).cloned())
+                    .or_else(|| {
+                        world
+                            .player_character_id
+                            .as_deref()
+                            .and_then(|cid| characters.iter().find(|c| c.id == cid).cloned())
+                    })
+                    .or_else(|| characters.first().cloned())
+                    .ok_or("No player character found")?;
+                let visible_chars = characters
+                    .iter()
+                    .filter(|c| c.id != player_char.id)
+                    .filter(|c| world.opening_character_ids.iter().any(|id| id == &c.id))
+                    .map(|c| c.name.clone())
+                    .collect();
+                (
+                    player_char.id.clone(),
+                    player_char.name.clone(),
+                    visible_chars,
+                )
+            };
 
         let mut messages = Vec::new();
         for msg in &world.opening_messages {
@@ -1263,7 +1393,7 @@ impl SessionOrchestrator {
                 metadata: None,
             });
         }
-        let present_characters = std::iter::once(player_char.name.clone())
+        let present_characters = std::iter::once(player_character_name.clone())
             .chain(visible_chars.iter().cloned())
             .collect::<Vec<_>>();
 
@@ -1277,8 +1407,8 @@ impl SessionOrchestrator {
             time_label: String::new(),
             current_speaker: String::new(),
             current_line: String::new(),
-            player_character_id: player_char.id.clone(),
-            player_character_name: player_char.name.clone(),
+            player_character_id: player_character_id.clone(),
+            player_character_name: player_character_name.clone(),
             visible_characters: visible_chars,
             messages,
             player_stats: vec![],
@@ -1303,12 +1433,12 @@ impl SessionOrchestrator {
         let save = crate::models::save::SaveSummary {
             id: uuid::Uuid::new_v4().to_string(),
             session_id: session.id.clone(),
-            title: format!("{} - {}", world.name, player_char.name),
+            title: format!("{} - {}", world.name, player_character_name),
             world_name: world.name.clone(),
             updated_at: chrono::Utc::now().to_rfc3339(),
             progress: String::new(),
             summary: String::new(),
-            player_character_name: Some(player_char.name.clone()),
+            player_character_name: Some(player_character_name),
             parent_save_id: None,
             branch_root_save_id: None,
             branch_label: None,

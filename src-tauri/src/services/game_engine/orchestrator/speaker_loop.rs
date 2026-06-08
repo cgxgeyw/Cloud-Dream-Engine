@@ -1,4 +1,5 @@
 use crate::models::character::CharacterDefinition;
+use crate::models::mcp_tool::MCP_TOOL_SCHEDULE_NOTIFICATION_ID;
 use crate::models::session::*;
 use crate::models::world::WorldDefinition;
 use crate::services::game_engine::dialogue::DialoguePipeline;
@@ -6,7 +7,10 @@ use crate::services::game_engine::memory::MemoryService;
 use crate::services::game_engine::structured_output::{
     validate_character_payload, StructuredOutputFailure,
 };
-use crate::services::llm::client::LlmClient;
+use crate::services::llm::client::{ChatToolCall, LlmClient};
+use crate::services::notifications::{
+    NotificationScheduler, NotificationToolContext, NotificationToolRuntime,
+};
 
 use super::run::*;
 use super::turn_context::*;
@@ -31,9 +35,11 @@ impl SessionOrchestrator {
         next_scene_name: &str,
         next_location: &str,
         visible_chars: &[String],
+        notification_runtime: Option<NotificationToolRuntime<'_>>,
         mut progress_callback: Option<&mut (dyn FnMut(SpeakerTurnProgress) + Send)>,
     ) -> Result<SpeakerTurnRunResult, String> {
         let completed_speaker_steps = completed_speaker_steps_from_journal(recovery_journal);
+        let mut pending_notifications = Vec::new();
         let mut speaker_step_index = 0;
         for speaker_name in planned_speakers {
             if speaker_name == &session.player_character_name {
@@ -69,6 +75,7 @@ impl SessionOrchestrator {
                             "message_kind": "agent_response"
                         })),
                     });
+                    pending_notifications.extend(parse_recovered_pending_notifications(&payload));
                     continue;
                 }
             }
@@ -153,7 +160,10 @@ impl SessionOrchestrator {
                     &visible_inventory_lines,
                     &public_scene_state_lines,
                 );
-                speaker_request.stream = Some(speaker_model.streaming_enabled);
+                speaker_request.stream = Some(
+                    speaker_model.streaming_enabled
+                        && !speaker_request.native_tool_calling.unwrap_or(false),
+                );
                 let speaker_provider = normalize_provider_name(&speaker_model.provider);
                 let speaker_request_value = serde_json::json!({
                     "provider": speaker_provider,
@@ -200,7 +210,7 @@ impl SessionOrchestrator {
             let mut streamed_partial: Option<
                 crate::services::game_engine::dialogue::ParsedCharacterResponse,
             > = None;
-            let llm_result = if speaker_model.streaming_enabled {
+            let llm_result = if speaker_request.stream.unwrap_or(speaker_model.streaming_enabled) {
                 let streamed_result = llm_client
                     .chat_completion_stream(
                         &speaker_provider,
@@ -293,6 +303,50 @@ impl SessionOrchestrator {
             };
             match llm_result {
                 Ok(response) => {
+                    let notification_tool_results = if world_allows_mcp_tool(
+                        world,
+                        MCP_TOOL_SCHEDULE_NOTIFICATION_ID,
+                    ) {
+                        execute_speaker_notification_tool_calls(
+                            db.conn(),
+                            notification_runtime.as_ref(),
+                            session_id,
+                            world,
+                            turn_index,
+                            response.tool_calls.as_deref(),
+                        )
+                    } else {
+                        Vec::new()
+                    };
+                    let response = if notification_tool_results.is_empty() {
+                        response
+                    } else {
+                        let followup_request = build_speaker_tool_followup_request(
+                            &speaker_request,
+                            &response,
+                            &notification_tool_results,
+                        );
+                        match llm_client
+                            .chat_completion(
+                                &speaker_provider,
+                                &speaker_model.base_url,
+                                &speaker_model.api_key,
+                                &followup_request,
+                            )
+                            .await
+                        {
+                            Ok(followup_response) => followup_response,
+                            Err(_) if response.content.trim().is_empty() => {
+                                crate::services::llm::client::ChatResponse {
+                                    content: fallback_notification_tool_response(speaker_name),
+                                    reasoning: response.reasoning.clone(),
+                                    tool_calls: None,
+                                    usage: response.usage.clone(),
+                                }
+                            }
+                            Err(_) => response,
+                        }
+                    };
                     let conn = db.conn();
                     let speaker_latency_ms = speaker_started_at.elapsed().as_millis() as i64;
                     let reasoning_text = response.reasoning.clone().unwrap_or_default();
@@ -302,6 +356,7 @@ impl SessionOrchestrator {
                         "status": "completed",
                         "latency_ms": speaker_latency_ms,
                         "response": serde_json::to_value(&response).unwrap_or_default(),
+                        "notification_tool_results": notification_tool_results.iter().map(|item| item.result.clone()).collect::<Vec<_>>(),
                     });
                     let parsed_response = if let Some(partial) = streamed_partial
                         .as_ref()
@@ -409,9 +464,11 @@ impl SessionOrchestrator {
                         return Ok(SpeakerTurnRunResult {
                             messages,
                             failure: Some(failure),
+                            pending_notifications,
                         });
                     }
 
+                    let speaker_pending_notifications = Vec::new();
                     messages.push(ChatMessage {
                         role: "agent".to_string(),
                         content: MessageContent::Text(parsed_response.content.clone()),
@@ -424,7 +481,7 @@ impl SessionOrchestrator {
                             "message_kind": "agent_response",
                             "reasoning": reasoning_text,
                             "reasoning_expanded": false,
-                            "raw_response": raw_response
+                            "raw_response": raw_response.clone()
                         })),
                     });
                     if let Some(callback) = progress_callback.as_deref_mut() {
@@ -469,9 +526,12 @@ impl SessionOrchestrator {
                                 "emotion": parsed_response.emotion.clone(),
                                 "narration": parsed_response.narration.clone(),
                                 "raw_content": response.content.clone(),
+                                "pending_notifications": speaker_pending_notifications,
+                                "notification_tool_results": notification_tool_results.iter().map(|item| item.result.clone()).collect::<Vec<_>>(),
                             }
                         }),
                     );
+                    pending_notifications.extend(speaker_pending_notifications);
                 }
                 Err(e) => {
                     let conn = db.conn();
@@ -577,6 +637,7 @@ impl SessionOrchestrator {
                     return Ok(SpeakerTurnRunResult {
                         messages,
                         failure: Some(failure),
+                        pending_notifications,
                     });
                 }
             }
@@ -584,6 +645,124 @@ impl SessionOrchestrator {
         Ok(SpeakerTurnRunResult {
             messages,
             failure: None,
+            pending_notifications,
         })
     }
+}
+
+fn parse_recovered_pending_notifications(
+    payload: &serde_json::Value,
+) -> Vec<crate::models::scheduled_notification::PendingScheduledNotification> {
+    payload
+        .get("llm_output")
+        .and_then(|value| value.get("pending_notifications"))
+        .and_then(|value| value.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|value| serde_json::from_value(value.clone()).ok())
+        .collect()
+}
+
+struct SpeakerNotificationToolResult {
+    call: ChatToolCall,
+    result: serde_json::Value,
+}
+
+fn execute_speaker_notification_tool_calls(
+    conn: &rusqlite::Connection,
+    runtime: Option<&NotificationToolRuntime<'_>>,
+    session_id: &str,
+    world: &WorldDefinition,
+    turn_index: i32,
+    tool_calls: Option<&[ChatToolCall]>,
+) -> Vec<SpeakerNotificationToolResult> {
+    tool_calls
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|call| {
+            if call.tool_name.trim() != "schedule_notification" {
+                return None;
+            }
+            let result = match (runtime, call.arguments.as_object()) {
+                (Some(runtime), Some(arguments)) => NotificationScheduler::execute_tool_call(
+                    conn,
+                    runtime.app,
+                    runtime.data_dir,
+                    NotificationToolContext {
+                        session_id,
+                        world_id: &world.id,
+                        world_name: &world.name,
+                        turn_index,
+                    },
+                    &call.id,
+                    arguments,
+                ),
+                (None, _) => serde_json::json!({
+                    "tool_name": "schedule_notification",
+                    "tool_call_id": call.id,
+                    "ok": false,
+                    "error": "notification runtime is not available",
+                }),
+                (_, None) => serde_json::json!({
+                    "tool_name": "schedule_notification",
+                    "tool_call_id": call.id,
+                    "ok": false,
+                    "error": "tool arguments must be a JSON object",
+                }),
+            };
+            Some(SpeakerNotificationToolResult {
+                call: call.clone(),
+                result,
+            })
+        })
+        .collect()
+}
+
+fn build_speaker_tool_followup_request(
+    request: &crate::services::llm::client::ChatRequest,
+    response: &crate::services::llm::client::ChatResponse,
+    tool_results: &[SpeakerNotificationToolResult],
+) -> crate::services::llm::client::ChatRequest {
+    let mut messages = request.messages.clone();
+    messages.push(crate::services::llm::client::ChatMessage {
+        role: "assistant".to_string(),
+        content: serde_json::Value::String(response.content.clone()),
+        reasoning_content: response.reasoning.clone(),
+        speaker: None,
+        tool_call_id: None,
+        tool_calls: Some(tool_results.iter().map(|item| item.call.clone()).collect()),
+        metadata: None,
+    });
+    for item in tool_results {
+        messages.push(crate::services::llm::client::ChatMessage {
+            role: "tool".to_string(),
+            content: serde_json::Value::String(
+                serde_json::to_string(&item.result).unwrap_or_else(|_| "{}".to_string()),
+            ),
+            reasoning_content: None,
+            speaker: None,
+            tool_call_id: Some(item.call.id.clone()),
+            tool_calls: None,
+            metadata: None,
+        });
+    }
+
+    let mut followup = request.clone();
+    followup.messages = messages;
+    followup.stream = Some(false);
+    followup.tools = None;
+    followup.tool_choice = None;
+    followup.native_tool_calling = None;
+    followup
+}
+
+fn fallback_notification_tool_response(speaker_name: &str) -> String {
+    serde_json::json!({
+        "speaker": speaker_name,
+        "content": "\u{5df2}\u{5904}\u{7406}\u{901a}\u{77e5}\u{8bf7}\u{6c42}\u{3002}",
+        "intent": "notification_tool_result",
+        "emotion": "neutral",
+        "narration": ""
+    })
+    .to_string()
 }
