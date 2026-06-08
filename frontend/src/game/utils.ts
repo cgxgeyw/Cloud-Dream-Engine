@@ -515,7 +515,9 @@ export function resolveStatusTabs(
   attributeTabs: Array<[string, string]>,
 ): Array<{ key: string; label: string }> {
   const available = new Map<string, { key: string; label: string }>();
-  available.set("map", { key: "map", label: "地图" });
+  if (mapCount > 0) {
+    available.set("map", { key: "map", label: "地图" });
+  }
   for (const [key] of attributeTabs) {
     available.set(`attribute:${key}`, { key: `attribute:${key}`, label: key });
   }

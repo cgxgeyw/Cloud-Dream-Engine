@@ -90,6 +90,17 @@ fn repair_desktop_ui_question_marks(conn: &Connection) -> Result<(), rusqlite::E
     Ok(())
 }
 
+fn repair_schedule_status_attribute_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "UPDATE attribute_schemas
+         SET value_type = 'list',
+             default_value_json = '[]'
+         WHERE id = 'attr-schedule-assistant-notifications'",
+        [],
+    )?;
+    Ok(())
+}
+
 pub(crate) fn run(conn: &Connection) -> Result<(), rusqlite::Error> {
     ensure_column(
         conn,
@@ -163,5 +174,6 @@ pub(crate) fn run(conn: &Connection) -> Result<(), rusqlite::Error> {
         [],
     )?;
     repair_desktop_ui_question_marks(conn)?;
+    repair_schedule_status_attribute_schema(conn)?;
     Ok(())
 }

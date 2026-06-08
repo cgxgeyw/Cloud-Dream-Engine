@@ -423,7 +423,7 @@ pub(crate) fn sync_session_schedule_attribute(
     ensure_schedule_status_attribute_schema(conn)?;
     let notifications =
         ScheduledNotificationRepository::new(conn).list_for_session(session_id, Some("scheduled"), 50)?;
-    let value = format_schedule_status_value(&notifications);
+    let value = format_schedule_status_items(&notifications);
 
     conn.execute(
         "DELETE FROM attribute_values WHERE schema_id = ?1 AND owner_type = 'session' AND owner_id = ?2",
@@ -437,7 +437,10 @@ pub(crate) fn sync_session_schedule_attribute(
             uuid::Uuid::new_v4().to_string(),
             SCHEDULE_STATUS_SCHEMA_ID,
             session_id,
-            serde_json::to_string(&serde_json::Value::String(value)).unwrap_or_default(),
+            serde_json::to_string(&serde_json::Value::Array(
+                value.into_iter().map(serde_json::Value::String).collect(),
+            ))
+            .unwrap_or_default(),
         ],
     )
     .map_err(|error| error.to_string())?;
@@ -469,13 +472,14 @@ fn ensure_schedule_status_attribute_schema(conn: &rusqlite::Connection) -> Resul
             display_policy_json, access_policy_json, mutation_policy_json, influence_policy_json,
             projection_policy_json
          )
-         VALUES (?1, 'session', ?2, ?3, 'text', ?4, 'null', '[]', ?5, '{}', '{}', ?6, '{}')
+         VALUES (?1, 'session', ?2, ?3, 'list', ?4, '[]', '[]', ?5, '{}', '{}', ?6, '{}')
          ON CONFLICT(id) DO UPDATE SET
             scope = 'session',
             key = excluded.key,
             label = excluded.label,
-            value_type = 'text',
+            value_type = 'list',
             description = excluded.description,
+            default_value_json = excluded.default_value_json,
             display_policy_json = excluded.display_policy_json,
             influence_policy_json = excluded.influence_policy_json",
         params![
@@ -491,28 +495,22 @@ fn ensure_schedule_status_attribute_schema(conn: &rusqlite::Connection) -> Resul
     Ok(())
 }
 
-fn format_schedule_status_value(notifications: &[ScheduledNotification]) -> String {
-    if notifications.is_empty() {
-        return "\u{6682}\u{65e0}\u{5f85}\u{529e}\u{4e8b}\u{9879}".to_string();
-    }
-
+fn format_schedule_status_items(notifications: &[ScheduledNotification]) -> Vec<String> {
     notifications
         .iter()
-        .enumerate()
-        .map(|(index, notification)| {
+        .map(|notification| {
             let title = notification.title.trim();
             let body = notification.body.trim();
             let time_label = format_schedule_time(&notification.scheduled_at);
             if title.is_empty() || title == body {
-                format!("{}. [{}] {}", index + 1, time_label, body)
+                format!("[{}] {}", time_label, body)
             } else if body.is_empty() {
-                format!("{}. [{}] {}", index + 1, time_label, title)
+                format!("[{}] {}", time_label, title)
             } else {
-                format!("{}. [{}] {}\n   {}", index + 1, time_label, title, body)
+                format!("[{}] {} - {}", time_label, title, body)
             }
         })
         .collect::<Vec<_>>()
-        .join("\n\n")
 }
 
 fn format_schedule_time(value: &str) -> String {
