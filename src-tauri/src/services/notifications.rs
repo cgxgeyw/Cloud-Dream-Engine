@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration as StdDuration;
 
 use chrono::{DateTime, Duration, Local, NaiveDateTime, TimeZone, Utc};
+use rusqlite::params;
 use tauri::AppHandle;
 use tauri_plugin_notification::{NotificationExt, PermissionState};
 #[cfg(mobile)]
@@ -15,6 +16,9 @@ use crate::db::Database;
 use crate::models::scheduled_notification::{
     PendingScheduledNotification, ScheduledNotification, ScheduledNotificationCreate,
 };
+
+const SCHEDULE_STATUS_SCHEMA_ID: &str = "attr-schedule-assistant-notifications";
+const SCHEDULE_STATUS_SCHEMA_KEY: &str = "scheduled_notifications";
 
 pub struct NotificationScheduler;
 
@@ -159,6 +163,7 @@ impl NotificationScheduler {
                 metadata: tool_metadata(context, tool_call_id, "create", arguments),
             },
         )?;
+        sync_session_schedule_attribute(conn, context.session_id)?;
         Ok(notification_result(&notification))
     }
 
@@ -202,6 +207,7 @@ impl NotificationScheduler {
             .replace_scheduled(&existing.id, &title, &body, &scheduled_at, &metadata)?
             .ok_or_else(|| "Notification was not updated".to_string())?;
         Self::schedule_delivery(app.clone(), data_dir.to_path_buf(), updated.clone())?;
+        sync_session_schedule_attribute(conn, context.session_id)?;
         Ok(notification_result(&updated))
     }
 
@@ -224,6 +230,7 @@ impl NotificationScheduler {
         let canceled = repo
             .cancel(&existing.id, &reason)?
             .ok_or_else(|| "Notification was not canceled".to_string())?;
+        sync_session_schedule_attribute(conn, context.session_id)?;
         Ok(notification_result(&canceled))
     }
 
@@ -268,6 +275,7 @@ impl NotificationScheduler {
                 let _ = repo.mark_failed(&notification.id, &error);
             }
         }
+        let _ = sync_all_session_schedule_attributes(db.conn());
         Ok(count)
     }
 
@@ -371,9 +379,11 @@ impl NotificationScheduler {
             match result {
                 Ok(_) => {
                     let _ = repo.mark_fired(&current.id);
+                    let _ = sync_session_schedule_attribute(db.conn(), &current.session_id);
                 }
                 Err(error) => {
                     let _ = repo.mark_failed(&current.id, &error.to_string());
+                    let _ = sync_session_schedule_attribute(db.conn(), &current.session_id);
                 }
             }
         });
@@ -404,6 +414,115 @@ impl NotificationScheduler {
         }
         Ok(())
     }
+}
+
+pub(crate) fn sync_session_schedule_attribute(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+) -> Result<(), String> {
+    ensure_schedule_status_attribute_schema(conn)?;
+    let notifications =
+        ScheduledNotificationRepository::new(conn).list_for_session(session_id, Some("scheduled"), 50)?;
+    let value = format_schedule_status_value(&notifications);
+
+    conn.execute(
+        "DELETE FROM attribute_values WHERE schema_id = ?1 AND owner_type = 'session' AND owner_id = ?2",
+        params![SCHEDULE_STATUS_SCHEMA_ID, session_id],
+    )
+    .map_err(|error| error.to_string())?;
+    conn.execute(
+        "INSERT INTO attribute_values (id, schema_id, owner_type, owner_id, value_json, source)
+         VALUES (?1, ?2, 'session', ?3, ?4, 'schedule_notification')",
+        params![
+            uuid::Uuid::new_v4().to_string(),
+            SCHEDULE_STATUS_SCHEMA_ID,
+            session_id,
+            serde_json::to_string(&serde_json::Value::String(value)).unwrap_or_default(),
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+
+    Ok(())
+}
+
+pub(crate) fn sync_all_session_schedule_attributes(
+    conn: &rusqlite::Connection,
+) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare("SELECT DISTINCT session_id FROM scheduled_notifications")
+        .map_err(|error| error.to_string())?;
+    let session_ids = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    for session_id in session_ids {
+        sync_session_schedule_attribute(conn, &session_id)?;
+    }
+    Ok(())
+}
+
+fn ensure_schedule_status_attribute_schema(conn: &rusqlite::Connection) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO attribute_schemas (
+            id, scope, key, label, value_type, description, default_value_json, enum_options_json,
+            display_policy_json, access_policy_json, mutation_policy_json, influence_policy_json,
+            projection_policy_json
+         )
+         VALUES (?1, 'session', ?2, ?3, 'text', ?4, 'null', '[]', ?5, '{}', '{}', ?6, '{}')
+         ON CONFLICT(id) DO UPDATE SET
+            scope = 'session',
+            key = excluded.key,
+            label = excluded.label,
+            value_type = 'text',
+            description = excluded.description,
+            display_policy_json = excluded.display_policy_json,
+            influence_policy_json = excluded.influence_policy_json",
+        params![
+            SCHEDULE_STATUS_SCHEMA_ID,
+            SCHEDULE_STATUS_SCHEMA_KEY,
+            "\u{5f85}\u{529e}\u{4e8b}\u{9879}",
+            "Scheduled reminders for the current session.",
+            serde_json::json!({ "game_visible": true }).to_string(),
+            serde_json::json!({ "ui.status_panel": { "enabled": true } }).to_string(),
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn format_schedule_status_value(notifications: &[ScheduledNotification]) -> String {
+    if notifications.is_empty() {
+        return "\u{6682}\u{65e0}\u{5f85}\u{529e}\u{4e8b}\u{9879}".to_string();
+    }
+
+    notifications
+        .iter()
+        .enumerate()
+        .map(|(index, notification)| {
+            let title = notification.title.trim();
+            let body = notification.body.trim();
+            let time_label = format_schedule_time(&notification.scheduled_at);
+            if title.is_empty() || title == body {
+                format!("{}. [{}] {}", index + 1, time_label, body)
+            } else if body.is_empty() {
+                format!("{}. [{}] {}", index + 1, time_label, title)
+            } else {
+                format!("{}. [{}] {}\n   {}", index + 1, time_label, title, body)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn format_schedule_time(value: &str) -> String {
+    DateTime::parse_from_rfc3339(value)
+        .map(|time| {
+            time.with_timezone(&Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        })
+        .unwrap_or_else(|_| value.trim().to_string())
 }
 
 fn ensure_notification_permission(app: &AppHandle) -> Result<(), String> {

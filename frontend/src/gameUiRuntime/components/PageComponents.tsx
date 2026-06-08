@@ -286,7 +286,7 @@ export function FloatingActionsComponent({ runtime, actions, node }: RuntimeComp
   return (
     <div className={className}>
       {showBack ? (
-        <button type="button" onClick={actions.navigateHome} className="game-back-btn game-ui-button" data-variant="ghost">
+        <button type="button" onClick={actions.navigateBack} className="game-back-btn game-ui-button" data-variant="ghost">
           <ArrowLeft size={18} />
           {backLabel ? <span>{backLabel}</span> : null}
         </button>

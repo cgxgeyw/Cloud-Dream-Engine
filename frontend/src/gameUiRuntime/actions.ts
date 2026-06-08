@@ -21,7 +21,7 @@ export type GameUiRuntimeActions = {
   dismissRetryCard: (cardKey: string) => void;
   copyText: (text: string) => Promise<void>;
   switchSideTab: (tabKey: string) => void;
-  navigateHome: () => void;
+  navigateBack: () => void;
   navigateSettings: () => void;
   navigateDebug: () => void;
   pickImage: (files?: File[]) => void;
@@ -53,8 +53,8 @@ export function createGameUiRuntimeActions(
     switchSideTab: (tabKey) => {
       bag.setSideTab(tabKey);
     },
-    navigateHome: () => {
-      navigate("/");
+    navigateBack: () => {
+      navigate(-1);
     },
     navigateSettings: () => {
       navigate("/settings");

@@ -801,6 +801,8 @@ fn schedule_pending_notifications(
         }
     }
 
+    let scheduled_count = scheduled.len();
+    let failed_count = failed.len();
     crate::services::game_engine::orchestrator::writeback::append_turn_journal(
         conn,
         session_id,
@@ -808,12 +810,15 @@ fn schedule_pending_notifications(
         "notifications_scheduled",
         "completed",
         serde_json::json!({
-            "scheduled_count": scheduled.len(),
-            "failed_count": failed.len(),
+            "scheduled_count": scheduled_count,
+            "failed_count": failed_count,
             "scheduled": scheduled,
             "failed": failed,
         }),
     )?;
+    if scheduled_count > 0 {
+        crate::services::notifications::sync_session_schedule_attribute(conn, session_id)?;
+    }
     Ok(())
 }
 

@@ -519,5 +519,11 @@ export function resolveStatusTabs(
   for (const [key] of attributeTabs) {
     available.set(`attribute:${key}`, { key: `attribute:${key}`, label: key });
   }
-  return resolveSidePanelTabOrder(document, Array.from(available.values()));
+  const availableTabs = Array.from(available.values());
+  const orderedTabs = resolveSidePanelTabOrder(document, availableTabs);
+  const orderedKeys = new Set(orderedTabs.map((tab) => tab.key));
+  return [
+    ...orderedTabs,
+    ...availableTabs.filter((tab) => !orderedKeys.has(tab.key)),
+  ];
 }

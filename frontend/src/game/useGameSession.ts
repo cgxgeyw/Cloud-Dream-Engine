@@ -18,6 +18,7 @@ import {
   fetchWorlds,
   fetchWorldCharacters,
   isTauriEnvironment,
+  onSessionSnapshot,
   retryFailedLlmStep,
   streamPlayerAction,
   switchPlayerCharacter,
@@ -93,28 +94,12 @@ function stringifyRuntimeAttributeValue(value: unknown): string {
   }
 }
 
-function shouldShowRuntimeAttributeInSidePanel(item: {
-  display_policy?: Record<string, unknown> | null;
-  influence_policy?: Record<string, unknown> | null;
-}): boolean {
-  const displayVisible = item.display_policy?.game_visible;
-  if (typeof displayVisible === "boolean") {
-    return displayVisible;
-  }
-  const panelConfig = item.influence_policy?.["ui.status_panel"];
-  if (panelConfig && typeof panelConfig === "object" && "enabled" in panelConfig) {
-    return Boolean((panelConfig as { enabled?: unknown }).enabled);
-  }
-  return false;
-}
-
 function buildAttributeSideTabsFromRuntimeAttributes(
   runtimeAttributes: SessionRuntimeAttributesResponse,
 ): Array<[string, string]> {
   return [...runtimeAttributes.session_attributes, ...runtimeAttributes.character_attributes]
     .map((group) => {
       const lines = group.items
-        .filter((item) => shouldShowRuntimeAttributeInSidePanel(item))
         .map((item) => {
           const value = stringifyRuntimeAttributeValue(item.value);
           if (!value) {
@@ -233,6 +218,7 @@ export function useGameSession(
     session_attributes: [],
     character_attributes: [],
   });
+  const [runtimeAttributesRevision, setRuntimeAttributesRevision] = useState(0);
   const [currentSave, setCurrentSave] = useState<SaveResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -258,6 +244,11 @@ export function useGameSession(
   const [expandedDirectorTraceKeys, setExpandedDirectorTraceKeys] = useState<
     Set<string>
   >(new Set());
+
+  const applySessionSnapshot = useCallback((snapshot: SessionSnapshotResponse) => {
+    setSession(snapshot);
+    setRuntimeAttributesRevision((revision) => revision + 1);
+  }, []);
   const [activeCharacterCreationKeys, setActiveCharacterCreationKeys] =
     useState<string[]>([]);
 
@@ -299,7 +290,7 @@ export function useGameSession(
     setActiveCharacterCreationKeys([]);
     shouldAutoScrollRef.current = true;
     seenCharacterCreationsRef.current = readSeenCharacterCreationKeys(sessionId);
-  }, [sessionId]);
+  }, [applySessionSnapshot, sessionId]);
 
   useEffect(() => {
     if (!editingTurn || !inputRef.current) {
@@ -333,7 +324,7 @@ export function useGameSession(
         }
 
         hasLoadedSession = true;
-        setSession(data);
+        applySessionSnapshot(data);
         setLoading(false);
 
         if (isTauriEnvironment()) {
@@ -354,7 +345,7 @@ export function useGameSession(
 
           if (payload.type === "session.snapshot" && payload.payload) {
             hasLoadedSession = true;
-            setSession(payload.payload);
+            applySessionSnapshot(payload.payload);
           }
 
           if (payload.type === "error") {
@@ -383,7 +374,37 @@ export function useGameSession(
       cancelled = true;
       websocket?.close();
     };
-  }, [sessionId]);
+  }, [applySessionSnapshot, sessionId]);
+
+  useEffect(() => {
+    if (!sessionId || !isTauriEnvironment()) {
+      return;
+    }
+
+    let cancelled = false;
+    let unsubscribe: (() => void) | null = null;
+
+    void onSessionSnapshot(sessionId, (snapshot) => {
+      if (!cancelled) {
+        applySessionSnapshot(snapshot);
+      }
+    })
+      .then((nextUnsubscribe) => {
+        if (cancelled) {
+          nextUnsubscribe();
+        } else {
+          unsubscribe = nextUnsubscribe;
+        }
+      })
+      .catch((listenError) => {
+        console.warn("[useGameSession] session snapshot listener failed:", listenError);
+      });
+
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }, [applySessionSnapshot, sessionId]);
 
   useEffect(() => {
     if (!session?.world_name) {
@@ -498,7 +519,7 @@ export function useGameSession(
     return () => {
       cancelled = true;
     };
-  }, [sessionId, session?.messages?.length, session?.current_line]);
+  }, [runtimeAttributesRevision, sessionId]);
 
   useEffect(() => {
     if (!themeWorld?.id || !session?.messages?.length) {
@@ -1005,7 +1026,7 @@ export function useGameSession(
                   setOptimisticPlayerMessage(null);
                 }
               }
-              setSession(nextSnapshot);
+              applySessionSnapshot(nextSnapshot);
             },
             onError: (detail) => {
               setActionError(formatActionErrorMessage(detail));
@@ -1014,7 +1035,7 @@ export function useGameSession(
         );
 
         if (snapshot) {
-          setSession(snapshot);
+          applySessionSnapshot(snapshot);
         }
 
         setOptimisticPlayerMessage(null);
@@ -1042,7 +1063,7 @@ export function useGameSession(
         setSubmitting(false);
       }
     },
-    [editingTurn, inputValue, session, sessionId],
+    [applySessionSnapshot, editingTurn, inputValue, session, sessionId],
   );
 
   const startEditingTurn = useCallback((content: string, turnIndex: number) => {
@@ -1161,7 +1182,7 @@ export function useGameSession(
         setRetryingToken(request.retry_token);
         setActionError(null);
         const snapshot = await retryFailedLlmStep(session.id, request);
-        setSession(snapshot);
+        applySessionSnapshot(snapshot);
       } catch (retryError) {
         setActionError(
           retryError instanceof Error ? retryError.message : "重发失败",
@@ -1170,7 +1191,7 @@ export function useGameSession(
         setRetryingToken(null);
       }
     },
-    [session],
+    [applySessionSnapshot, session],
   );
 
   const handleCopyDialogue = useCallback(async () => {
