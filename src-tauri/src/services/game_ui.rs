@@ -138,7 +138,7 @@ fn component_support(component_id: &str) -> Option<ComponentSupport> {
             ],
             implicit_actions: &["switch_side_tab"],
             implicit_capabilities: &[],
-            allowed_slots: &[],
+            allowed_slots: &["content"],
         }),
         "floating_actions" => Some(ComponentSupport {
             props: &["show_back", "show_debug", "show_settings", "layout"],
@@ -558,6 +558,17 @@ impl GameUiService {
             }
         }
 
+        if let Some(ui_state) = object.get("state") {
+            let Some(ui_state_object) = ui_state.as_object() else {
+                state.error("invalid_state", "state must be an object.", "state");
+                return build_snapshot(platform, schema_version, normalized, state);
+            };
+            for (key, value) in ui_state_object {
+                validate_prop_value(value, &format!("state.{key}"), &mut state);
+                infer_dependencies_from_value(value, &format!("state.{key}"), &mut state);
+            }
+        }
+
         let Some(layout) = object.get("layout").and_then(Value::as_object) else {
             state.error("missing_layout", "layout.root is required.", "layout");
             return build_snapshot(platform, schema_version, normalized, state);
@@ -707,6 +718,85 @@ impl GameUiService {
                 }
                 if let Some(empty) = object.get("empty") {
                     self.validate_v2_node(empty, &format!("{path}.empty"), state);
+                }
+            }
+            Some("text") | Some("badge") => {
+                read_required_string(object, "text", path, state);
+                if let Some(variant) = object.get("variant") {
+                    if !variant.is_string() {
+                        state.error(
+                            "invalid_variant",
+                            "variant must be a string.",
+                            format!("{path}.variant"),
+                        );
+                    }
+                }
+            }
+            Some("image") => {
+                read_required_string(object, "src", path, state);
+                if let Some(alt) = object.get("alt") {
+                    if !alt.is_string() {
+                        state.error("invalid_alt", "alt must be a string.", format!("{path}.alt"));
+                    }
+                }
+                if let Some(fit) = object.get("fit").and_then(Value::as_str) {
+                    if !matches!(fit, "cover" | "contain" | "fill" | "none" | "scale-down") {
+                        state.error(
+                            "invalid_fit",
+                            "fit must be cover, contain, fill, none, or scale-down.",
+                            format!("{path}.fit"),
+                        );
+                    }
+                }
+            }
+            Some("button") => {
+                read_required_string(object, "label", path, state);
+                if let Some(variant) = object.get("variant") {
+                    if !variant.is_string() {
+                        state.error(
+                            "invalid_variant",
+                            "variant must be a string.",
+                            format!("{path}.variant"),
+                        );
+                    }
+                }
+                if let Some(disabled_when_empty_state) = object.get("disabled_when_empty_state") {
+                    if !disabled_when_empty_state.is_string() {
+                        state.error(
+                            "invalid_disabled_when_empty_state",
+                            "disabled_when_empty_state must be a string.",
+                            format!("{path}.disabled_when_empty_state"),
+                        );
+                    }
+                }
+                if let Some(action) = object.get("action") {
+                    validate_action_reference(action, &format!("{path}.action"), state);
+                    infer_dependencies_from_value(action, &format!("{path}.action"), state);
+                }
+            }
+            Some("checkbox") => {
+                read_required_string(object, "label", path, state);
+                read_required_string(object, "value", path, state);
+                read_required_string(object, "bind_checked_list", path, state);
+                for key in ["checked", "disabled"] {
+                    if let Some(value) = object.get(key) {
+                        if !value.is_boolean() {
+                            state.error(
+                                "invalid_checkbox_field",
+                                format!("{key} must be a boolean."),
+                                format!("{path}.{key}"),
+                            );
+                        }
+                    }
+                }
+                if let Some(variant) = object.get("variant") {
+                    if !variant.is_string() {
+                        state.error(
+                            "invalid_variant",
+                            "variant must be a string.",
+                            format!("{path}.variant"),
+                        );
+                    }
                 }
             }
             Some(other) => state.error(
@@ -1280,6 +1370,46 @@ fn validate_prop_value(value: &Value, path: &str, state: &mut CompilationState) 
         Value::Object(object) => {
             for (key, item) in object {
                 validate_prop_value(item, &format!("{path}.{key}"), state);
+            }
+        }
+    }
+}
+
+fn validate_action_reference(value: &Value, path: &str, state: &mut CompilationState) {
+    let Some(object) = value.as_object() else {
+        state.error("invalid_action", "action must be an object.", path);
+        return;
+    };
+
+    let Some(action_id) = read_required_string(object, "id", path, state) else {
+        return;
+    };
+    let normalized_action_id = action_id.trim().trim_start_matches('@');
+    state.add_action(normalized_action_id);
+
+    if let Some(args) = object.get("args") {
+        let Some(args_object) = args.as_object() else {
+            state.error(
+                "invalid_action_args",
+                "action.args must be an object.",
+                format!("{path}.args"),
+            );
+            return;
+        };
+        for (key, item) in args_object {
+            validate_prop_value(item, &format!("{path}.args.{key}"), state);
+            infer_dependencies_from_value(item, &format!("{path}.args.{key}"), state);
+        }
+    }
+
+    for key in ["content", "content_template", "mode"] {
+        if let Some(item) = object.get(key) {
+            if !item.is_string() {
+                state.error(
+                    "invalid_action_field",
+                    format!("action.{key} must be a string."),
+                    format!("{path}.{key}"),
+                );
             }
         }
     }

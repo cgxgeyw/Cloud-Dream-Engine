@@ -33,6 +33,8 @@ const SEED_WORLD_TENSION_LABEL: &str = "世界紧张度";
 const SEED_WORLD_TENSION_DESCRIPTION: &str = "用于描述当前世界叙事压力的数值属性。";
 const SEED_CHARACTER_TRUST_LABEL: &str = "信任度";
 const SEED_CHARACTER_TRUST_DESCRIPTION: &str = "角色对玩家或当前局势的信任数值。";
+const SCHEDULE_TODO_SCHEMA_ID: &str = "attr-schedule-assistant-todo-items";
+const SCHEDULE_COMPLETED_SCHEMA_ID: &str = "attr-schedule-assistant-completed-items";
 const SEED_RULE_NAME: &str = "气氛升温规则";
 const SEED_RULE_DESCRIPTION: &str = "当世界紧张度较高时，进一步提升压力并追加阶段标签。";
 fn sample_world_seeding_enabled() -> bool {
@@ -677,6 +679,7 @@ fn ensure_localized_builtin_content(conn: &Connection) -> Result<(), rusqlite::E
             "rule-seed-lockdown-escalation"
         ],
     )?;
+    ensure_schedule_assistant_task_attribute_schemas(conn)?;
     update_seed_world(
         conn,
         SEED_WORLD_SCHEDULE_ASSISTANT_ID,
@@ -786,6 +789,55 @@ fn ensure_localized_builtin_content(conn: &Connection) -> Result<(), rusqlite::E
         SEED_CHARACTER_SUSHI_MEMORY,
         sushi_attributes_json(),
     )?;
+    Ok(())
+}
+
+fn ensure_schedule_assistant_task_attribute_schemas(conn: &Connection) -> Result<(), rusqlite::Error> {
+    for (id, key, label, description) in [
+        (
+            SCHEDULE_TODO_SCHEMA_ID,
+            "todo_items",
+            "待办事项",
+            "行程助手当前会话的未完成待办事项列表。",
+        ),
+        (
+            SCHEDULE_COMPLETED_SCHEMA_ID,
+            "completed_items",
+            "已完成事项",
+            "行程助手当前会话中用户已确认完成的事项列表。",
+        ),
+    ] {
+        conn.execute(
+            "INSERT INTO attribute_schemas (
+                id, scope, key, label, value_type, description, default_value_json, enum_options_json,
+                display_policy_json, access_policy_json, mutation_policy_json, influence_policy_json, projection_policy_json
+            )
+            VALUES (?1, 'session', ?2, ?3, 'list', ?4, '[]', '[]', ?5, ?6, ?7, ?8, ?9)
+            ON CONFLICT(id) DO UPDATE SET
+                scope = 'session',
+                key = excluded.key,
+                label = excluded.label,
+                value_type = 'list',
+                description = excluded.description,
+                default_value_json = excluded.default_value_json,
+                display_policy_json = excluded.display_policy_json,
+                access_policy_json = excluded.access_policy_json,
+                mutation_policy_json = excluded.mutation_policy_json,
+                influence_policy_json = excluded.influence_policy_json,
+                projection_policy_json = excluded.projection_policy_json",
+            params![
+                id,
+                key,
+                label,
+                description,
+                r#"{"editor_visible":true,"game_visible":true,"debug_visible":true}"#,
+                r#"{"creator_read":true,"player_read":true,"agent_self_read":true,"director_read":true,"plugin_read":true}"#,
+                r#"{"creator_write":true,"rule_write":true,"trigger_write":true,"player_action_write":true,"allowed_ops":["set"]}"#,
+                r#"{"prompt.director":{"enabled":true,"mode":"raw"},"ui.status_panel":{"enabled":true}}"#,
+                r#"{"inherit_to_session":true,"session_owner_type":"session","mutable_in_session":true}"#,
+            ],
+        )?;
+    }
     Ok(())
 }
 

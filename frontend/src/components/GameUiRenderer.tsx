@@ -1,17 +1,23 @@
-import type { CSSProperties, ReactNode } from "react";
+import { useState, type CSSProperties, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import {
+  type GameUiActionReference,
+  type GameUiBadgeNode,
+  type GameUiButtonNode,
+  type GameUiCheckboxNode,
   type GameUiComponentNode,
   type GameUiAnchor,
   type GameUiDocument,
   type GameUiDocumentV1,
   type GameUiDocumentV2,
   type GameUiForEachNode,
+  type GameUiImageNode,
   type GameUiLayoutNode,
   type GameUiLayoutNodeV1,
   type GameUiLayoutNodeV2,
   type GameUiMountId,
   type GameUiMountNode,
   type GameUiMountOptions,
+  type GameUiTextNode,
   styleRecordToInlineStyle,
 } from "../data/gameUi";
 
@@ -35,6 +41,14 @@ type GameUiRendererProps = {
   componentRenderers?: Partial<Record<string, GameUiComponentRenderer>>;
   evaluateCondition?: (expr: string) => boolean;
   resolveLoopSource?: (source: string) => unknown[];
+  runtimeData?: Record<string, unknown>;
+  onAction?: (action: GameUiActionReference, context: GameUiRenderContext) => void | Promise<void>;
+};
+
+export type GameUiRenderContext = {
+  state: Record<string, unknown>;
+  data: Record<string, unknown>;
+  locals: Record<string, unknown>;
 };
 
 export function GameUiRenderer({
@@ -43,15 +57,35 @@ export function GameUiRenderer({
   componentRenderers,
   evaluateCondition,
   resolveLoopSource,
+  runtimeData = {},
+  onAction,
 }: GameUiRendererProps) {
+  const [uiState, setUiState] = useState<Record<string, unknown>>(() =>
+    document.schema_version === 2 ? normalizeInitialState(document.state) : {},
+  );
+  const context: GameUiRenderContext = {
+    state: uiState,
+    data: runtimeData,
+    locals: {},
+  };
+  const rendererActions: GameUiElementActions = {
+    setUiState,
+    onAction,
+  };
+
   return (
     <div className="game-ui-layout">
       {document.schema_version === 1
         ? renderV1Layout(document, mounts)
-        : renderV2Layout(document, componentRenderers, evaluateCondition, resolveLoopSource)}
+        : renderV2Layout(document, componentRenderers, evaluateCondition, resolveLoopSource, context, rendererActions)}
     </div>
   );
 }
+
+type GameUiElementActions = {
+  setUiState: Dispatch<SetStateAction<Record<string, unknown>>>;
+  onAction?: (action: GameUiActionReference, context: GameUiRenderContext) => void | Promise<void>;
+};
 
 function renderV1Layout(
   document: GameUiDocumentV1,
@@ -120,6 +154,8 @@ function renderV2Layout(
   componentRenderers: Partial<Record<string, GameUiComponentRenderer>> | undefined,
   evaluateCondition: ((expr: string) => boolean) | undefined,
   resolveLoopSource: ((source: string) => unknown[]) | undefined,
+  context: GameUiRenderContext,
+  actions: GameUiElementActions,
 ): ReactNode {
   return renderV2Node(
     document.layout.root,
@@ -127,6 +163,8 @@ function renderV2Layout(
     componentRenderers,
     evaluateCondition,
     resolveLoopSource,
+    context,
+    actions,
     "root",
   );
 }
@@ -137,6 +175,8 @@ function renderV2Node(
   componentRenderers: Partial<Record<string, GameUiComponentRenderer>> | undefined,
   evaluateCondition: ((expr: string) => boolean) | undefined,
   resolveLoopSource: ((source: string) => unknown[]) | undefined,
+  context: GameUiRenderContext,
+  actions: GameUiElementActions,
   key: string,
 ): ReactNode {
   if (node.visible === false) {
@@ -150,8 +190,30 @@ function renderV2Node(
       componentRenderers,
       evaluateCondition,
       resolveLoopSource,
+      context,
+      actions,
       key,
     );
+  }
+
+  if (node.type === "text") {
+    return renderTextNode(node, context, key);
+  }
+
+  if (node.type === "image") {
+    return renderImageNode(node, context, key);
+  }
+
+  if (node.type === "badge") {
+    return renderBadgeNode(node, context, key);
+  }
+
+  if (node.type === "button") {
+    return renderButtonNode(node, context, actions, key);
+  }
+
+  if (node.type === "checkbox") {
+    return renderCheckboxNode(node, context, actions, key);
   }
 
   if (node.type === "slot") {
@@ -175,6 +237,8 @@ function renderV2Node(
       componentRenderers,
       evaluateCondition,
       resolveLoopSource,
+      context,
+      actions,
       `${key}-child`,
     );
   }
@@ -186,6 +250,8 @@ function renderV2Node(
       componentRenderers,
       evaluateCondition,
       resolveLoopSource,
+      context,
+      actions,
       key,
     );
   }
@@ -199,6 +265,8 @@ function renderV2Node(
           componentRenderers,
           evaluateCondition,
           resolveLoopSource,
+          context,
+          actions,
           `${key}-${index}`,
         ),
       )
@@ -231,6 +299,8 @@ function renderV2Node(
             componentRenderers,
             evaluateCondition,
             resolveLoopSource,
+            context,
+            actions,
             `${key}-${index}`,
           ),
         )}
@@ -251,6 +321,8 @@ function renderV2Node(
           componentRenderers,
           evaluateCondition,
           resolveLoopSource,
+          context,
+          actions,
           `${key}-${index}`,
         ),
       )}
@@ -296,6 +368,8 @@ function renderComponentNode(
   componentRenderers: Partial<Record<string, GameUiComponentRenderer>> | undefined,
   evaluateCondition: ((expr: string) => boolean) | undefined,
   resolveLoopSource: ((source: string) => unknown[]) | undefined,
+  context: GameUiRenderContext,
+  actions: GameUiElementActions,
   key: string,
 ): ReactNode {
   const renderer = componentRenderers?.[node.component];
@@ -310,6 +384,8 @@ function renderComponentNode(
             componentRenderers,
             evaluateCondition,
             resolveLoopSource,
+            context,
+            actions,
             `${key}-slot-${slotName}`,
           ),
         renderSlotValue: (value, keyPrefix = `${key}-slot`) =>
@@ -319,6 +395,8 @@ function renderComponentNode(
             componentRenderers,
             evaluateCondition,
             resolveLoopSource,
+            context,
+            actions,
             keyPrefix,
           ),
       })
@@ -355,11 +433,14 @@ function renderLoopNode(
   componentRenderers: Partial<Record<string, GameUiComponentRenderer>> | undefined,
   evaluateCondition: ((expr: string) => boolean) | undefined,
   resolveLoopSource: ((source: string) => unknown[]) | undefined,
+  context: GameUiRenderContext,
+  actions: GameUiElementActions,
   key: string,
 ): ReactNode {
-  const items = resolveLoopSource?.(node.source) ?? [];
+  const items = resolveLoopSource?.(node.source) ?? resolvePath(context, node.source);
+  const normalizedItems = Array.isArray(items) ? items : [];
 
-  if (items.length === 0) {
+  if (normalizedItems.length === 0) {
     if (!node.empty) {
       return null;
     }
@@ -369,22 +450,34 @@ function renderLoopNode(
       componentRenderers,
       evaluateCondition,
       resolveLoopSource,
+      context,
+      actions,
       `${key}-empty`,
     );
   }
 
   return (
     <>
-      {items.map((_, index) =>
-        renderV2Node(
+      {normalizedItems.map((item, index) => {
+        const loopContext = {
+          ...context,
+          locals: {
+            ...context.locals,
+            [node.item_as]: item,
+            ...(node.index_as ? { [node.index_as]: index } : {}),
+          },
+        };
+        return renderV2Node(
           node.child,
           document,
           componentRenderers,
           evaluateCondition,
           resolveLoopSource,
+          loopContext,
+          actions,
           `${key}-${index}`,
-        ),
-      )}
+        );
+      })}
     </>
   );
 }
@@ -395,6 +488,8 @@ function renderSlotValue(
   componentRenderers: Partial<Record<string, GameUiComponentRenderer>> | undefined,
   evaluateCondition: ((expr: string) => boolean) | undefined,
   resolveLoopSource: ((source: string) => unknown[]) | undefined,
+  context: GameUiRenderContext,
+  actions: GameUiElementActions,
   keyPrefix: string,
 ): ReactNode {
   if (!value) {
@@ -409,6 +504,8 @@ function renderSlotValue(
         componentRenderers,
         evaluateCondition,
         resolveLoopSource,
+        context,
+        actions,
         `${keyPrefix}-${index}`,
       ),
     );
@@ -420,8 +517,225 @@ function renderSlotValue(
     componentRenderers,
     evaluateCondition,
     resolveLoopSource,
+    context,
+    actions,
     keyPrefix,
   );
+}
+
+function renderTextNode(
+  node: GameUiTextNode,
+  context: GameUiRenderContext,
+  key: string,
+): ReactNode {
+  return (
+    <span
+      key={key}
+      className={["game-ui-node", "game-ui-text", node.class_name].filter(Boolean).join(" ")}
+      data-variant={node.variant}
+      style={buildNodeStyle(node)}
+    >
+      {resolveText(node.text, context)}
+    </span>
+  );
+}
+
+function renderImageNode(
+  node: GameUiImageNode,
+  context: GameUiRenderContext,
+  key: string,
+): ReactNode {
+  const src = resolveText(node.src, context).trim();
+  if (!src) {
+    return null;
+  }
+
+  return (
+    <img
+      key={key}
+      className={["game-ui-node", "game-ui-image", node.class_name].filter(Boolean).join(" ")}
+      src={src}
+      alt={resolveText(node.alt ?? "", context)}
+      style={{
+        ...buildNodeStyle(node),
+        objectFit: node.fit,
+      }}
+    />
+  );
+}
+
+function renderBadgeNode(
+  node: GameUiBadgeNode,
+  context: GameUiRenderContext,
+  key: string,
+): ReactNode {
+  return (
+    <span
+      key={key}
+      className={["game-ui-node", "game-ui-badge", node.class_name].filter(Boolean).join(" ")}
+      data-variant={node.variant}
+      style={buildNodeStyle(node)}
+    >
+      {resolveText(node.text, context)}
+    </span>
+  );
+}
+
+function renderButtonNode(
+  node: GameUiButtonNode,
+  context: GameUiRenderContext,
+  actions: GameUiElementActions,
+  key: string,
+): ReactNode {
+  const disabled = node.disabled_when_empty_state
+    ? normalizeStringArray(context.state[node.disabled_when_empty_state]).length === 0
+    : false;
+  return (
+    <button
+      key={key}
+      type="button"
+      className={["game-ui-node", "game-ui-button", "game-ui-dsl-button", node.class_name].filter(Boolean).join(" ")}
+      data-variant={node.variant ?? "primary"}
+      style={buildNodeStyle(node)}
+      disabled={disabled}
+      onClick={() => {
+        if (disabled) {
+          return;
+        }
+        if (node.action) {
+          void actions.onAction?.(node.action, context);
+        }
+      }}
+    >
+      {resolveText(node.label, context)}
+    </button>
+  );
+}
+
+function renderCheckboxNode(
+  node: GameUiCheckboxNode,
+  context: GameUiRenderContext,
+  actions: GameUiElementActions,
+  key: string,
+): ReactNode {
+  const stateKey = node.bind_checked_list.trim();
+  const value = resolveText(node.value, context);
+  const selectedValues = normalizeStringArray(context.state[stateKey]);
+  const checked = node.checked === true || selectedValues.includes(value);
+
+  return (
+    <label
+      key={key}
+      className={["game-ui-node", "game-ui-checkbox", node.class_name].filter(Boolean).join(" ")}
+      data-variant={node.variant}
+      data-checked={checked ? "true" : "false"}
+      style={buildNodeStyle(node)}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={node.disabled}
+        value={value}
+        onChange={(event) => {
+          if (node.disabled) {
+            return;
+          }
+          actions.setUiState((previous) => {
+            const previousValues = normalizeStringArray(previous[stateKey]);
+            const nextValues = event.target.checked
+              ? [...previousValues.filter((item) => item !== value), value]
+              : previousValues.filter((item) => item !== value);
+            return {
+              ...previous,
+              [stateKey]: nextValues,
+            };
+          });
+        }}
+      />
+      <span className="game-ui-checkbox-label">{resolveText(node.label, context)}</span>
+    </label>
+  );
+}
+
+function normalizeInitialState(raw: Record<string, unknown> | undefined): Record<string, unknown> {
+  if (!raw) {
+    return {};
+  }
+  return structuredClone(raw);
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((item) => String(item)).filter(Boolean)
+    : [];
+}
+
+function resolveText(template: string, context: GameUiRenderContext): string {
+  const trimmed = template.trim();
+  if (trimmed.startsWith("$") && !trimmed.includes(" ")) {
+    return stringifyTemplateValue(resolvePath(context, trimmed));
+  }
+
+  return template.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, expression: string) =>
+    stringifyTemplateValue(resolvePath(context, expression.trim())),
+  );
+}
+
+function resolvePath(context: GameUiRenderContext, expression: string): unknown {
+  const normalized = expression.startsWith("$") ? expression.slice(1) : expression;
+  if (!normalized) {
+    return "";
+  }
+
+  const [root, ...parts] = normalized.split(".").filter(Boolean);
+  let current: unknown;
+  if (root === "state") {
+    current = context.state;
+  } else if (root === "data") {
+    current = context.data;
+  } else if (root in context.locals) {
+    current = context.locals[root];
+  } else {
+    current = context.data[root];
+  }
+
+  for (const part of parts) {
+    if (current == null) {
+      return "";
+    }
+    if (Array.isArray(current)) {
+      const index = Number(part);
+      current = Number.isInteger(index) ? current[index] : undefined;
+      continue;
+    }
+    if (typeof current === "object") {
+      current = (current as Record<string, unknown>)[part];
+      continue;
+    }
+    return "";
+  }
+
+  return current;
+}
+
+function stringifyTemplateValue(value: unknown): string {
+  if (value == null) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => stringifyTemplateValue(item)).filter(Boolean).join("、");
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "";
+  }
 }
 
 function toMountClassSuffix(mountId: GameUiMountId): string {

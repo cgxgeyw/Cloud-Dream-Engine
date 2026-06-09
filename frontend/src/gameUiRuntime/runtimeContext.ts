@@ -1,6 +1,7 @@
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import type {
   CharacterResponse,
+  RuntimeAttributeItem,
   SaveResponse,
   SessionMapEdge,
   SessionMapNode,
@@ -36,6 +37,8 @@ export type GameUiRuntimeContext = {
     name: string;
   } | null;
   world_characters: CharacterResponse[];
+  attributes: Record<string, unknown>;
+  attribute_items: RuntimeAttributeItem[];
   messages: RenderChatMessage[];
   latest_narration: string;
   copyable_dialogue_text: string;
@@ -117,6 +120,13 @@ export function createGameUiRuntimeContext(
         }
       : null,
     world_characters: bag.worldCharacters,
+    attributes: Object.fromEntries(
+      [...bag.runtimeAttributes.session_attributes, ...bag.runtimeAttributes.character_attributes]
+        .flatMap((group) => group.items)
+        .map((item) => [item.key, item.value]),
+    ),
+    attribute_items: [...bag.runtimeAttributes.session_attributes, ...bag.runtimeAttributes.character_attributes]
+      .flatMap((group) => group.items),
     messages: bag.renderedDialogueMessages,
     latest_narration: bag.latestNarration,
     copyable_dialogue_text: bag.copyableDialogueText,

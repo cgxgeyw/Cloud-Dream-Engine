@@ -5,6 +5,9 @@
     "platform": "mobile",
     "description": "行程助手专用移动界面。"
   },
+  "state": {
+    "checkedTodoItems": []
+  },
   "layout": {
     "root": {
       "type": "stack",
@@ -50,9 +53,92 @@
           "class_name": "schedule-m-side",
           "props": {
             "show_map_tab": false,
-            "show_attribute_tabs": true,
+            "show_attribute_tabs": false,
             "drawer_label": "待办",
             "empty_text": "暂无待办事项"
+          },
+          "slots": {
+            "content": {
+              "type": "stack",
+              "class_name": "schedule-task-panel",
+              "gap": "14px",
+              "children": [
+                {
+                  "type": "stack",
+                  "class_name": "schedule-task-list schedule-task-list--todo",
+                  "gap": "8px",
+                  "children": [
+                    {
+                      "type": "text",
+                      "class_name": "schedule-task-heading",
+                      "text": "待办事项"
+                    },
+                    {
+                      "type": "for_each",
+                      "source": "$attributes.todo_items",
+                      "item_as": "todo",
+                      "empty": {
+                        "type": "text",
+                        "class_name": "schedule-task-empty",
+                        "text": "暂无待办事项"
+                      },
+                      "child": {
+                        "type": "checkbox",
+                        "class_name": "schedule-task-checkbox",
+                        "label": "$todo",
+                        "value": "$todo",
+                        "bind_checked_list": "checkedTodoItems"
+                      }
+                    },
+                    {
+                      "type": "button",
+                      "class_name": "schedule-task-confirm",
+                      "label": "确认完成",
+                      "disabled_when_empty_state": "checkedTodoItems",
+                      "action": {
+                        "id": "@submit_message",
+                        "content_template": "我已完成以下待办事项：{{state.checkedTodoItems}}"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "stack",
+                  "class_name": "schedule-task-list schedule-task-list--done",
+                  "gap": "8px",
+                  "children": [
+                    {
+                      "type": "text",
+                      "class_name": "schedule-task-heading",
+                      "text": "已完成"
+                    },
+                    {
+                      "type": "for_each",
+                      "source": "$attributes.completed_items",
+                      "item_as": "done",
+                      "empty": {
+                        "type": "text",
+                        "class_name": "schedule-task-empty",
+                        "text": "暂无已完成事项"
+                      },
+                      "child": {
+                        "type": "checkbox",
+                        "class_name": "schedule-task-checkbox schedule-task-checkbox--done",
+                        "label": "$done",
+                        "value": "$done",
+                        "bind_checked_list": "completedDisplayItems",
+                        "checked": true,
+                        "disabled": true,
+                        "style": {
+                          "opacity": 0.52,
+                          "filter": "grayscale(1)"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
           }
         },
         {

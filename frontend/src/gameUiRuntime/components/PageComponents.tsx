@@ -10,6 +10,7 @@ type RuntimeComponentProps = {
   runtime: GameUiRuntimeContext;
   actions: GameUiRuntimeActions;
   node?: GameUiComponentNode;
+  renderSlot?: (slotName: string) => ReactNode;
 };
 
 function readBooleanProp(
@@ -181,12 +182,13 @@ export function NarrationCardComponent({ runtime, actions, node }: RuntimeCompon
   );
 }
 
-export function SidePanelTabsComponent({ runtime, actions, node }: RuntimeComponentProps) {
+export function SidePanelTabsComponent({ runtime, actions, node, renderSlot }: RuntimeComponentProps) {
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const showMapTab = readBooleanProp(node, "show_map_tab", true);
   const showAttributeTabs = readBooleanProp(node, "show_attribute_tabs", true);
   const emptyText = readStringProp(node, "empty_text", "暂无状态信息。");
   const drawerLabel = readStringProp(node, "drawer_label", "\u72b6\u6001");
+  const customContent = renderSlot?.("content");
 
   const visibleTabs = runtime.side_tabs.filter((tab) => {
     if (tab.key === "map") {
@@ -216,7 +218,8 @@ export function SidePanelTabsComponent({ runtime, actions, node }: RuntimeCompon
         </div>
       ) : null}
       <div className="game-panel game-side-content game-ui-panel" data-variant="sidebar">
-        {visibleTabs.length === 0 ? <div className="game-card">{emptyText}</div> : null}
+        {customContent ? customContent : null}
+        {!customContent && visibleTabs.length === 0 ? <div className="game-card">{emptyText}</div> : null}
         {runtime.active_side_tab === "map" && (runtime.capabilities.platform !== "mobile" || mobileDrawerOpen) ? (
           <Suspense fallback={<div className="game-map-graph" />}>
             <SessionMapGraph
@@ -227,7 +230,7 @@ export function SidePanelTabsComponent({ runtime, actions, node }: RuntimeCompon
             />
           </Suspense>
         ) : null}
-        {runtime.active_side_tab.startsWith("attribute:") && runtime.active_attribute_content ? (
+        {!customContent && runtime.active_side_tab.startsWith("attribute:") && runtime.active_attribute_content ? (
           <div className="game-card game-attribute-tab-content">{runtime.active_attribute_content}</div>
         ) : null}
       </div>

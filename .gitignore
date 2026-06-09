@@ -22,7 +22,8 @@ target/
 .uploads/
 artifacts/
 build/
-data/
+/data/
+/frontend/data/
 
 # Logs
 *.log

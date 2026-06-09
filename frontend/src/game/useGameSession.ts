@@ -175,6 +175,7 @@ export interface GameSessionStateBag {
   themeCustomCss: string;
   mapGraphNodes: SessionMapNode[];
   mapGraphEdges: SessionMapEdge[];
+  runtimeAttributes: SessionRuntimeAttributesResponse;
   attributeSideTabs: Array<[string, string]>;
   worldCharacterNameSet: Set<string>;
   sideTabs: Array<{ key: string; label: string }>;
@@ -1268,6 +1269,7 @@ export function useGameSession(
     themeCustomCss,
     mapGraphNodes,
     mapGraphEdges,
+    runtimeAttributes,
     attributeSideTabs,
     worldCharacterNameSet,
     sideTabs,

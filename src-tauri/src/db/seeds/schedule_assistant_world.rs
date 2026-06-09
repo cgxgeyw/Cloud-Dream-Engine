@@ -73,7 +73,7 @@ pub(crate) fn schedule_assistant_world_director_config_json() -> String {
         "allow_npc_spawn": false,
         "history_dialogue_rounds": 8,
         "director_tool_loop_limit": 4,
-        "world_director_prompt": "",
+        "world_director_prompt": "你是行程助手世界的主控。请维护两个 session 级列表属性：todo_items 表示未完成待办事项，completed_items 表示已完成事项。用户提出新任务、提醒或安排时，把可执行事项加入 todo_items；用户说已经完成某些事项，或界面发送“我已完成以下待办事项：...”时，把对应事项从 todo_items 移除并加入 completed_items。两个列表都使用字符串数组，保持条目简短、去重、可直接显示。若创建了系统提醒，也可以把提醒相关事项保留在 todo_items，直到用户确认完成。",
         "prompt_presets": [],
         "return_processing_rules": [],
         "runtime_policy": {

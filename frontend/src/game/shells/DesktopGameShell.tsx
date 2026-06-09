@@ -1,6 +1,7 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
-import { GameUiRenderer } from "../../components/GameUiRenderer";
+import { GameUiRenderer, type GameUiRenderContext } from "../../components/GameUiRenderer";
+import type { GameUiActionReference } from "../../data/gameUi";
 import { createGameUiRuntimeActions } from "../../gameUiRuntime/actions";
 import { InputComposerComponent } from "../../gameUiRuntime/components/InputComposer";
 import { MessageListComponent } from "../../gameUiRuntime/components/MessageList";
@@ -36,6 +37,31 @@ export const DesktopGameShell: React.FC<{
   const actions = createGameUiRuntimeActions(bag, runtime, navigate);
   const componentRenderers = createGameUiComponentRenderers(runtime, actions);
   const cspNonce = React.useMemo(() => getDocumentCspNonce(), []);
+  const runtimeData = React.useMemo(
+    () => ({
+      session: runtime.session,
+      world: runtime.world,
+      player: runtime.player,
+      attributes: runtime.attributes,
+      attribute_items: runtime.attribute_items,
+      messages: runtime.messages,
+      visible_characters: runtime.visible_characters,
+    }),
+    [runtime],
+  );
+  const handleDslAction = React.useCallback(
+    async (action: GameUiActionReference, context: GameUiRenderContext) => {
+      if (action.id !== "@submit_message" && action.id !== "submit_message") {
+        return;
+      }
+      const content = renderActionText(action.content_template ?? action.content ?? "", context).trim();
+      if (!content) {
+        return;
+      }
+      await actions.submitMessage({ mode: action.mode as never, content });
+    },
+    [actions],
+  );
 
   const headerMount = <SceneHeaderComponent runtime={runtime} actions={actions} />;
   const sceneMount = session ? (
@@ -85,8 +111,39 @@ export const DesktopGameShell: React.FC<{
             floating_actions: <FloatingActionsComponent runtime={runtime} actions={actions} />,
           }}
           componentRenderers={componentRenderers}
+          runtimeData={runtimeData}
+          onAction={handleDslAction}
         />
       ) : null}
     </div>
   );
 };
+
+function renderActionText(template: string, context: GameUiRenderContext): string {
+  return template.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, expression: string) => {
+    const value = resolveTemplatePath(context, expression.trim());
+    if (Array.isArray(value)) {
+      return value.map((item) => String(item)).filter(Boolean).join("、");
+    }
+    return value == null ? "" : String(value);
+  });
+}
+
+function resolveTemplatePath(context: GameUiRenderContext, expression: string): unknown {
+  const normalized = expression.startsWith("$") ? expression.slice(1) : expression;
+  const [root, ...parts] = normalized.split(".").filter(Boolean);
+  let current: unknown = root === "state"
+    ? context.state
+    : root === "data"
+      ? context.data
+      : root in context.locals
+        ? context.locals[root]
+        : context.data[root];
+  for (const part of parts) {
+    if (current == null || typeof current !== "object") {
+      return "";
+    }
+    current = (current as Record<string, unknown>)[part];
+  }
+  return current;
+}

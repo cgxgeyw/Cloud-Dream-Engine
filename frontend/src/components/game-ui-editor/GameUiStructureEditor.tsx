@@ -1074,6 +1074,16 @@ function describeNode(node: GameUiLayoutNodeV2): string {
       return `when:${node.expr || "condition"}`;
     case "for_each":
       return `for_each:${node.source || "items"}`;
+    case "text":
+      return `text:${node.text || "text"}`;
+    case "image":
+      return `image:${node.src || "image"}`;
+    case "badge":
+      return `badge:${node.text || "badge"}`;
+    case "button":
+      return `button:${node.label || "button"}`;
+    case "checkbox":
+      return `checkbox:${node.label || "checkbox"}`;
     case "grid":
     case "stack":
     case "absolute":

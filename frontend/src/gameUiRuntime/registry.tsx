@@ -100,8 +100,9 @@ export function createGameUiComponentRegistry(
         show_map_tab: "boolean",
         show_attribute_tabs: "boolean",
         empty_text: "string",
+        drawer_label: "string",
       },
-      render: ({ node }) => <SidePanelTabsComponent runtime={runtime} actions={actions} node={node} />,
+      render: ({ node, renderSlot }) => <SidePanelTabsComponent runtime={runtime} actions={actions} node={node} renderSlot={renderSlot} />,
     },
     floating_actions: {
       id: "floating_actions",
