@@ -122,6 +122,12 @@ pub(crate) fn run(conn: &Connection) -> Result<(), rusqlite::Error> {
     )?;
     ensure_column(
         conn,
+        "characters",
+        "avatar_asset",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+    ensure_column(
+        conn,
         "settings",
         "embedding_enabled",
         "INTEGER NOT NULL DEFAULT 1",
@@ -169,6 +175,12 @@ pub(crate) fn run(conn: &Connection) -> Result<(), rusqlite::Error> {
         "INTEGER NOT NULL DEFAULT 0",
     )?;
     ensure_column(conn, "saves", "turn_index", "INTEGER NOT NULL DEFAULT 0")?;
+    ensure_column(
+        conn,
+        "mcp_tools",
+        "input_schema_json",
+        "TEXT NOT NULL DEFAULT '{\"type\":\"object\",\"properties\":{}}'",
+    )?;
     conn.execute(
         "UPDATE settings SET home_background_strategy = '' WHERE home_background_strategy = 'static'",
         [],

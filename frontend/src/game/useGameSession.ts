@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { showToast } from "../components/Toast";
 import {
   assetUrl,
   branchSave,
@@ -17,6 +18,7 @@ import {
   fetchSession,
   fetchWorlds,
   fetchWorldCharacters,
+  isAndroidRuntime,
   isTauriEnvironment,
   onSessionSnapshot,
   retryFailedLlmStep,
@@ -63,12 +65,26 @@ import {
   resolveStatusTabs,
 } from "./utils";
 
+const SCHEDULE_NOTIFICATION_TOOL_ID = "mcp-tool-schedule-notification";
+
 function getMessageText(content: string | ContentPart[]): string {
   if (typeof content === "string") return content;
   return content
     .filter((p): p is { type: "text"; text: string } => p.type === "text")
     .map((p) => p.text)
     .join("");
+}
+
+function worldAllowsScheduleNotification(world: WorldResponse | null): boolean {
+  const toolIds = world?.director_config?.allowed_mcp_tool_ids;
+  return Array.isArray(toolIds) && toolIds.some((id) => id === SCHEDULE_NOTIFICATION_TOOL_ID);
+}
+
+function mayCreateNotificationFromInput(text: string, hasAudio: boolean): boolean {
+  if (hasAudio) {
+    return true;
+  }
+  return /提醒|通知|叫我|闹钟|定时|日程|安排|待办|稍后|明天|后天|今天|今晚|早上|中午|下午|晚上|分钟|小时|点|:[0-9]{2}|remind|notify|alarm|timer|schedule/i.test(text);
 }
 
 function stringifyRuntimeAttributeValue(value: unknown): string {
@@ -257,6 +273,8 @@ export function useGameSession(
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
   const seenCharacterCreationsRef = useRef<Set<string>>(new Set());
+  const runtimeAttributeRefreshTimersRef = useRef<number[]>([]);
+  const runtimeAttributeSessionIdRef = useRef("");
 
   const sessionId = sessionIdParam ?? "";
   const worldId = themeWorld?.id ?? "";
@@ -268,6 +286,53 @@ export function useGameSession(
   );
 
   useEffect(() => {
+    runtimeAttributeSessionIdRef.current = sessionId;
+  }, [sessionId]);
+
+  const clearRuntimeAttributeRefreshTimers = useCallback(() => {
+    runtimeAttributeRefreshTimersRef.current.forEach((timer) => {
+      window.clearTimeout(timer);
+    });
+    runtimeAttributeRefreshTimersRef.current = [];
+  }, []);
+
+  const refreshRuntimeAttributes = useCallback(async () => {
+    if (!sessionId) {
+      setRuntimeAttributes({ session_attributes: [], character_attributes: [] });
+      return;
+    }
+
+    try {
+      const data = await fetchSessionRuntimeAttributes(sessionId);
+      if (runtimeAttributeSessionIdRef.current !== sessionId) {
+        return;
+      }
+      setRuntimeAttributes(data);
+    } catch {
+      if (runtimeAttributeSessionIdRef.current !== sessionId) {
+        return;
+      }
+      setRuntimeAttributes({ session_attributes: [], character_attributes: [] });
+    }
+  }, [sessionId]);
+
+  const scheduleRuntimeAttributeRefresh = useCallback(() => {
+    clearRuntimeAttributeRefreshTimers();
+    void refreshRuntimeAttributes();
+    runtimeAttributeRefreshTimersRef.current = [250, 1000, 2000].map((delay) =>
+      window.setTimeout(() => void refreshRuntimeAttributes(), delay),
+    );
+  }, [clearRuntimeAttributeRefreshTimers, refreshRuntimeAttributes]);
+
+  useEffect(
+    () => () => {
+      clearRuntimeAttributeRefreshTimers();
+    },
+    [clearRuntimeAttributeRefreshTimers],
+  );
+
+  useEffect(() => {
+    clearRuntimeAttributeRefreshTimers();
     setSession(null);
     setThemeWorld(null);
     setPlayerCharacter(null);
@@ -291,7 +356,7 @@ export function useGameSession(
     setActiveCharacterCreationKeys([]);
     shouldAutoScrollRef.current = true;
     seenCharacterCreationsRef.current = readSeenCharacterCreationKeys(sessionId);
-  }, [applySessionSnapshot, sessionId]);
+  }, [applySessionSnapshot, clearRuntimeAttributeRefreshTimers, sessionId]);
 
   useEffect(() => {
     if (!editingTurn || !inputRef.current) {
@@ -500,27 +565,8 @@ export function useGameSession(
       return;
     }
 
-    let cancelled = false;
-
-    async function loadRuntimeAttributes() {
-      try {
-        const data = await fetchSessionRuntimeAttributes(sessionId);
-        if (!cancelled) {
-          setRuntimeAttributes(data);
-        }
-      } catch {
-        if (!cancelled) {
-          setRuntimeAttributes({ session_attributes: [], character_attributes: [] });
-        }
-      }
-    }
-
-    void loadRuntimeAttributes();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [runtimeAttributesRevision, sessionId]);
+    scheduleRuntimeAttributeRefresh();
+  }, [runtimeAttributesRevision, scheduleRuntimeAttributeRefresh, sessionId]);
 
   useEffect(() => {
     if (!themeWorld?.id || !session?.messages?.length) {
@@ -918,6 +964,33 @@ export function useGameSession(
     setActionError(null);
   }, []);
 
+  const ensureNotificationPermissionForSubmit = useCallback(
+    async (text: string, hasAudio: boolean): Promise<boolean> => {
+      if (
+        !isTauriEnvironment()
+        || !isAndroidRuntime()
+        || !worldAllowsScheduleNotification(themeWorld)
+        || !mayCreateNotificationFromInput(text, hasAudio)
+      ) {
+        return true;
+      }
+
+      try {
+        const { isPermissionGranted } = await import("@tauri-apps/plugin-notification");
+        if (await isPermissionGranted()) {
+          return true;
+        }
+        setActionError("\u901a\u77e5\u6743\u9650\u672a\u6388\u6743\uff0c\u65e0\u6cd5\u521b\u5efa\u7cfb\u7edf\u63d0\u9192\u3002\u8bf7\u5728\u7cfb\u7edf\u5f39\u7a97\u6216\u5e94\u7528\u8bbe\u7f6e\u4e2d\u5141\u8bb8\u901a\u77e5\u6743\u9650\u540e\u91cd\u8bd5\u3002");
+        return false;
+      } catch (permissionError) {
+        console.warn("[notification] failed to check Android notification permission:", permissionError);
+        setActionError("\u901a\u77e5\u6743\u9650\u68c0\u67e5\u5931\u8d25\uff0c\u65e0\u6cd5\u521b\u5efa\u7cfb\u7edf\u63d0\u9192\u3002\u8bf7\u5728\u7cfb\u7edf\u8bbe\u7f6e\u4e2d\u786e\u8ba4\u6743\u9650\u540e\u91cd\u8bd5\u3002");
+        return false;
+      }
+    },
+    [themeWorld],
+  );
+
   const handleSubmitAction = useCallback(
     async (options: SubmitActionOptions = {}) => {
       const mode: PlayerActionMode = options.mode ?? (editingTurn ? "edit" : "submit");
@@ -985,6 +1058,14 @@ export function useGameSession(
             ? "未找到要编辑的回合，无法重新生成。"
             : "未找到要重发的回合，无法重新生成。",
         );
+        return;
+      }
+
+      const notificationPermissionReady = await ensureNotificationPermissionForSubmit(
+        textContent,
+        audios.length > 0,
+      );
+      if (!notificationPermissionReady) {
         return;
       }
 
@@ -1062,9 +1143,18 @@ export function useGameSession(
         }
       } finally {
         setSubmitting(false);
+        scheduleRuntimeAttributeRefresh();
       }
     },
-    [applySessionSnapshot, editingTurn, inputValue, session, sessionId],
+    [
+      applySessionSnapshot,
+      editingTurn,
+      ensureNotificationPermissionForSubmit,
+      inputValue,
+      scheduleRuntimeAttributeRefresh,
+      session,
+      sessionId,
+    ],
   );
 
   const startEditingTurn = useCallback((content: string, turnIndex: number) => {
@@ -1190,9 +1280,10 @@ export function useGameSession(
         );
       } finally {
         setRetryingToken(null);
+        scheduleRuntimeAttributeRefresh();
       }
     },
-    [applySessionSnapshot, session],
+    [applySessionSnapshot, scheduleRuntimeAttributeRefresh, session],
   );
 
   const handleCopyDialogue = useCallback(async () => {
@@ -1202,6 +1293,7 @@ export function useGameSession(
     }
     try {
       await copyTextToClipboard(text);
+      showToast("已复制");
     } catch {
       // Ignore clipboard failures and keep the session usable.
     }
@@ -1214,6 +1306,7 @@ export function useGameSession(
     }
     try {
       await copyTextToClipboard(trimmed);
+      showToast("已复制");
     } catch {
       // Ignore clipboard failures and keep the session usable.
     }

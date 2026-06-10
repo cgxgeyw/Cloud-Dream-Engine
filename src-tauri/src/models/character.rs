@@ -19,6 +19,10 @@ pub fn resolve_character_narration_prompt(value: Option<&str>) -> String {
     normalize_runtime_prompt_value(value)
 }
 
+pub fn resolve_character_runtime_system_prompt(value: Option<&str>) -> String {
+    normalize_runtime_prompt_value(value)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CharacterDefinition {
     pub id: String,
@@ -31,9 +35,12 @@ pub struct CharacterDefinition {
     pub recent_dialogue_rounds: i32,
     pub attributes: Vec<String>,
     pub portrait_assets: Vec<String>,
+    #[serde(default)]
+    pub avatar_asset: String,
     pub system_prompt_template: String,
     pub response_contract_prompt: String,
     pub narration_prompt: String,
+    #[serde(default)]
     pub runtime_system_prompt: String,
 }
 
@@ -47,9 +54,13 @@ pub struct CharacterCreateRequest {
     pub recent_dialogue_rounds: i32,
     pub attributes: Vec<String>,
     pub portrait_assets: Vec<String>,
+    #[serde(default)]
+    pub avatar_asset: String,
     pub system_prompt_template: String,
     pub response_contract_prompt: String,
     pub narration_prompt: String,
+    #[serde(default)]
+    pub runtime_system_prompt: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,9 +73,11 @@ pub struct CharacterUpdateRequest {
     pub recent_dialogue_rounds: Option<i32>,
     pub attributes: Option<Vec<String>>,
     pub portrait_assets: Option<Vec<String>>,
+    pub avatar_asset: Option<String>,
     pub system_prompt_template: Option<String>,
     pub response_contract_prompt: Option<String>,
     pub narration_prompt: Option<String>,
+    pub runtime_system_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,9 +90,13 @@ pub struct CharacterTemplateExport {
     pub recent_dialogue_rounds: i32,
     pub attributes: Vec<String>,
     pub portrait_assets: Vec<String>,
+    #[serde(default)]
+    pub avatar_asset: String,
     pub system_prompt_template: String,
     pub response_contract_prompt: String,
     pub narration_prompt: String,
+    #[serde(default)]
+    pub runtime_system_prompt: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,9 +115,12 @@ pub struct CharacterTemplateImportRequest {
     pub recent_dialogue_rounds: i32,
     pub attributes: Vec<String>,
     pub portrait_assets: Vec<String>,
+    #[serde(default)]
+    pub avatar_asset: String,
     pub system_prompt_template: String,
     pub response_contract_prompt: String,
     pub narration_prompt: String,
+    pub runtime_system_prompt: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,7 +134,10 @@ pub struct CharacterPackageData {
     pub recent_dialogue_rounds: i32,
     pub attributes: Vec<String>,
     pub portrait_assets: Vec<String>,
+    #[serde(default)]
+    pub avatar_asset: String,
     pub system_prompt_template: String,
     pub response_contract_prompt: String,
     pub narration_prompt: String,
+    pub runtime_system_prompt: String,
 }

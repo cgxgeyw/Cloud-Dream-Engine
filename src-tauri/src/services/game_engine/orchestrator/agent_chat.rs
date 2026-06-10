@@ -325,6 +325,7 @@ fn fallback_agent_character(world: &WorldDefinition) -> CharacterDefinition {
         recent_dialogue_rounds: 2,
         attributes: Vec::new(),
         portrait_assets: Vec::new(),
+        avatar_asset: String::new(),
         system_prompt_template: String::new(),
         response_contract_prompt: String::new(),
         narration_prompt: String::new(),

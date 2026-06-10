@@ -1,4 +1,5 @@
 use crate::models::character::{resolve_character_response_contract_prompt, CharacterDefinition};
+use crate::services::game_engine::prompting::render_prompt_variables;
 
 pub struct DialoguePipeline;
 
@@ -9,6 +10,7 @@ pub struct ParsedCharacterResponse {
     pub intent: String,
     pub emotion: String,
     pub narration: String,
+    pub raw_payload: Option<serde_json::Value>,
 }
 
 impl DialoguePipeline {
@@ -30,9 +32,9 @@ impl DialoguePipeline {
                 speaker_profile.map(|profile| profile.response_contract_prompt.as_str())
             }));
         if base.trim().is_empty() {
-            contract
+            render_prompt_variables(&contract)
         } else {
-            format!("{base}\n\n{contract}")
+            render_prompt_variables(&format!("{base}\n\n{contract}"))
         }
     }
 
@@ -60,10 +62,12 @@ impl DialoguePipeline {
                 .unwrap_or_else(|| default_speaker.to_string());
             let content = payload
                 .get("content")
+                .or_else(|| payload.get("response"))
                 .or_else(|| payload.get("message"))
                 .or_else(|| payload.get("text"))
                 .map(clean_dialogue_text_value)
                 .filter(|value| !value.trim().is_empty())
+                .or_else(|| structured_payload_content_fallback(&payload))
                 .unwrap_or(fallback_content);
             let intent = payload
                 .get("intent")
@@ -86,6 +90,7 @@ impl DialoguePipeline {
                 intent,
                 emotion,
                 narration,
+                raw_payload: Some(payload),
             };
         }
         if let Some(recovered) =
@@ -100,6 +105,7 @@ impl DialoguePipeline {
             intent: "advance_objective".to_string(),
             emotion: "focused".to_string(),
             narration: String::new(),
+            raw_payload: None,
         }
     }
 
@@ -112,6 +118,7 @@ impl DialoguePipeline {
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| default_speaker.to_string());
         let content = extract_partial_json_string_field(raw_response_content, "content")
+            .or_else(|| extract_partial_json_string_field(raw_response_content, "response"))
             .or_else(|| extract_partial_json_string_field(raw_response_content, "message"))
             .or_else(|| extract_partial_json_string_field(raw_response_content, "text"))
             .map(|value| strip_dialogue_field_artifacts(&value))
@@ -131,6 +138,7 @@ impl DialoguePipeline {
             intent,
             emotion,
             narration,
+            raw_payload: None,
         })
     }
 }
@@ -165,10 +173,12 @@ fn render_character_system_prompt_template(
         .filter(|value| !value.is_empty())
         .unwrap_or("");
 
-    template
+    let rendered = template
         .replace("{{speaker}}", speaker)
         .replace("{{role}}", role)
-        .replace("{{background_prompt}}", background_prompt)
+        .replace("{{background_prompt}}", background_prompt);
+
+    render_prompt_variables(&rendered)
         .trim()
         .to_string()
 }
@@ -215,6 +225,36 @@ fn clean_dialogue_text_value(value: &serde_json::Value) -> String {
             .get("content")
             .map(clean_dialogue_text_value)
             .unwrap_or_default(),
+    }
+}
+
+fn structured_payload_content_fallback(payload: &serde_json::Value) -> Option<String> {
+    let updates = payload.get("session_attribute_updates")?.as_array()?;
+    if updates.is_empty() {
+        return None;
+    }
+
+    let has_todo_update = updates.iter().any(|item| {
+        item.get("key")
+            .and_then(|value| value.as_str())
+            .map(|value| value == "todo_items")
+            .unwrap_or(false)
+    });
+    let has_completed_update = updates.iter().any(|item| {
+        item.get("key")
+            .and_then(|value| value.as_str())
+            .map(|value| value == "completed_items")
+            .unwrap_or(false)
+    });
+
+    if has_todo_update && has_completed_update {
+        Some("好的，待办事项和已完成事项已更新。".to_string())
+    } else if has_todo_update {
+        Some("好的，已加入待办事项。".to_string())
+    } else if has_completed_update {
+        Some("好的，已更新已完成事项。".to_string())
+    } else {
+        Some("好的，状态已更新。".to_string())
     }
 }
 
@@ -342,6 +382,7 @@ fn extract_recoverable_character_response(
         intent,
         emotion,
         narration,
+        raw_payload: None,
     })
 }
 
@@ -411,5 +452,27 @@ mod tests {
             .extract_partial_character_response("{\"content\":\"第一句\\n第二句\\\"", "袭人")
             .expect("partial response");
         assert_eq!(parsed.content, "第一句\n第二句");
+    }
+
+    #[test]
+    fn parses_response_field_as_character_content() {
+        let pipeline = DialoguePipeline::new();
+        let parsed = pipeline.parse_character_response(
+            "{\"response\":\"好的，已加入待办事项。\",\"session_attribute_updates\":[{\"key\":\"todo_items\",\"value\":[\"吃饭\"]}]}",
+            "行程助手",
+        );
+        assert_eq!(parsed.content, "好的，已加入待办事项。");
+        assert!(parsed.raw_payload.is_some());
+    }
+
+    #[test]
+    fn hides_raw_json_for_attribute_only_payload() {
+        let pipeline = DialoguePipeline::new();
+        let parsed = pipeline.parse_character_response(
+            "{\"session_attribute_updates\":[{\"key\":\"todo_items\",\"value\":[\"吃饭\"]}]}",
+            "行程助手",
+        );
+        assert_eq!(parsed.content, "好的，已加入待办事项。");
+        assert!(parsed.raw_payload.is_some());
     }
 }

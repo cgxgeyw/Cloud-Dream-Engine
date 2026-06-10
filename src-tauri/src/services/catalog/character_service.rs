@@ -5,7 +5,6 @@ use crate::db::repositories::session_repo::SessionRepository;
 use crate::db::repositories::world_repo::WorldRepository;
 use crate::models::character::*;
 use crate::models::world::WorldUpdateRequest;
-use crate::services::game_engine::dialogue::DialoguePipeline;
 
 pub struct CharacterService;
 
@@ -251,22 +250,17 @@ impl CharacterService {
                 recent_dialogue_rounds: request.recent_dialogue_rounds,
                 attributes: request.attributes,
                 portrait_assets: request.portrait_assets,
+                avatar_asset: request.avatar_asset,
                 system_prompt_template: request.system_prompt_template,
                 response_contract_prompt: request.response_contract_prompt,
                 narration_prompt: request.narration_prompt,
+                runtime_system_prompt: request.runtime_system_prompt,
             },
         )
         .map(Self::enrich_character)
     }
 
-    pub fn enrich_character(mut character: CharacterDefinition) -> CharacterDefinition {
-        character.runtime_system_prompt = DialoguePipeline::new()
-            .build_character_system_prompt_with_contract(
-                &character.name,
-                Some(&character),
-                None,
-                None,
-            );
+    pub fn enrich_character(character: CharacterDefinition) -> CharacterDefinition {
         character
     }
 }

@@ -180,6 +180,7 @@ export type CharacterResponse = {
   recent_dialogue_rounds: number;
   attributes: string[];
   portrait_assets: string[];
+  avatar_asset: string;
   system_prompt_template: string;
   response_contract_prompt: string;
   narration_prompt: string;
@@ -195,9 +196,11 @@ export type CharacterCreateRequest = {
   recent_dialogue_rounds: number;
   attributes: string[];
   portrait_assets: string[];
+  avatar_asset: string;
   system_prompt_template: string;
   response_contract_prompt: string;
   narration_prompt: string;
+  runtime_system_prompt: string;
 };
 
 export type CharacterUpsertRequest = CharacterCreateRequest;
@@ -211,9 +214,11 @@ export type CharacterTemplateResponse = {
   recent_dialogue_rounds: number;
   attributes: string[];
   portrait_assets: string[];
+  avatar_asset: string;
   system_prompt_template: string;
   response_contract_prompt: string;
   narration_prompt: string;
+  runtime_system_prompt: string;
 };
 
 export type CharacterCreateFromTemplateRequest = {
@@ -491,6 +496,7 @@ export type McpToolResponse = {
   exposure_policy: McpToolExposurePolicy;
   risk_level: string;
   trigger_keywords: string[];
+  input_schema: Record<string, unknown>;
 };
 
 export type McpToolCreateRequest = {
@@ -502,6 +508,7 @@ export type McpToolCreateRequest = {
   exposure_policy: McpToolExposurePolicy;
   risk_level: string;
   trigger_keywords: string[];
+  input_schema: Record<string, unknown>;
 };
 
 export type McpToolUpsertRequest = McpToolCreateRequest;

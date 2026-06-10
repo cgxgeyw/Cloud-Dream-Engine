@@ -6,7 +6,7 @@ pub struct CharacterRepository<'a> {
     conn: &'a Connection,
 }
 
-const CHARACTER_SELECT_COLUMNS: &str = "id, name, world_id, role, background_prompt, model, memory_strategy, recent_dialogue_rounds, attributes_json, portrait_assets_json, system_prompt_template, response_contract_prompt, narration_prompt, runtime_system_prompt";
+const CHARACTER_SELECT_COLUMNS: &str = "id, name, world_id, role, background_prompt, model, memory_strategy, recent_dialogue_rounds, attributes_json, portrait_assets_json, avatar_asset, system_prompt_template, response_contract_prompt, narration_prompt, runtime_system_prompt";
 
 impl<'a> CharacterRepository<'a> {
     pub fn new(conn: &'a Connection) -> Self {
@@ -76,14 +76,17 @@ impl<'a> CharacterRepository<'a> {
         let recent_dialogue_rounds = req.recent_dialogue_rounds.max(0);
         let attributes = normalize_list(&req.attributes);
         let portrait_assets = normalize_list(&req.portrait_assets);
+        let avatar_asset = req.avatar_asset.trim().to_string();
         let system_prompt_template =
             resolve_character_system_prompt_template(Some(req.system_prompt_template.as_str()));
         let response_contract_prompt =
             resolve_character_response_contract_prompt(Some(req.response_contract_prompt.as_str()));
         let narration_prompt =
             resolve_character_narration_prompt(Some(req.narration_prompt.as_str()));
+        let runtime_system_prompt =
+            resolve_character_runtime_system_prompt(Some(req.runtime_system_prompt.as_str()));
         self.conn.execute(
-            "INSERT INTO characters (id, name, world_id, role, background_prompt, model, memory_strategy, recent_dialogue_rounds, attributes_json, portrait_assets_json, system_prompt_template, response_contract_prompt, narration_prompt) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            "INSERT INTO characters (id, name, world_id, role, background_prompt, model, memory_strategy, recent_dialogue_rounds, attributes_json, portrait_assets_json, avatar_asset, system_prompt_template, response_contract_prompt, narration_prompt, runtime_system_prompt) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 id,
                 name,
@@ -95,9 +98,11 @@ impl<'a> CharacterRepository<'a> {
                 recent_dialogue_rounds,
                 serde_json::to_string(&attributes).unwrap_or_default(),
                 serde_json::to_string(&portrait_assets).unwrap_or_default(),
+                avatar_asset,
                 system_prompt_template,
                 response_contract_prompt,
                 narration_prompt,
+                runtime_system_prompt,
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -153,6 +158,11 @@ impl<'a> CharacterRepository<'a> {
             .as_ref()
             .map(|items| normalize_list(items))
             .unwrap_or(existing.portrait_assets);
+        let avatar_asset = req
+            .avatar_asset
+            .as_ref()
+            .map(|value| value.trim().to_string())
+            .unwrap_or(existing.avatar_asset);
         let system_prompt_template = req
             .system_prompt_template
             .as_ref()
@@ -168,9 +178,14 @@ impl<'a> CharacterRepository<'a> {
             .as_ref()
             .map(|value| resolve_character_narration_prompt(Some(value.as_str())))
             .unwrap_or(existing.narration_prompt);
+        let runtime_system_prompt = req
+            .runtime_system_prompt
+            .as_ref()
+            .map(|value| resolve_character_runtime_system_prompt(Some(value.as_str())))
+            .unwrap_or(existing.runtime_system_prompt);
 
         self.conn.execute(
-            "UPDATE characters SET name = ?1, role = ?2, background_prompt = ?3, model = ?4, memory_strategy = ?5, recent_dialogue_rounds = ?6, attributes_json = ?7, portrait_assets_json = ?8, system_prompt_template = ?9, response_contract_prompt = ?10, narration_prompt = ?11 WHERE id = ?12",
+            "UPDATE characters SET name = ?1, role = ?2, background_prompt = ?3, model = ?4, memory_strategy = ?5, recent_dialogue_rounds = ?6, attributes_json = ?7, portrait_assets_json = ?8, avatar_asset = ?9, system_prompt_template = ?10, response_contract_prompt = ?11, narration_prompt = ?12, runtime_system_prompt = ?13 WHERE id = ?14",
             params![
                 name,
                 role,
@@ -180,9 +195,11 @@ impl<'a> CharacterRepository<'a> {
                 recent_dialogue_rounds,
                 serde_json::to_string(&attributes).unwrap_or_default(),
                 serde_json::to_string(&portrait_assets).unwrap_or_default(),
+                avatar_asset,
                 system_prompt_template,
                 response_contract_prompt,
                 narration_prompt,
+                runtime_system_prompt,
                 id,
             ],
         )
@@ -212,9 +229,11 @@ impl<'a> CharacterRepository<'a> {
             recent_dialogue_rounds: character.recent_dialogue_rounds,
             attributes: character.attributes,
             portrait_assets: character.portrait_assets,
+            avatar_asset: character.avatar_asset,
             system_prompt_template: character.system_prompt_template,
             response_contract_prompt: character.response_contract_prompt,
             narration_prompt: character.narration_prompt,
+            runtime_system_prompt: character.runtime_system_prompt,
         })
     }
 
@@ -236,18 +255,20 @@ impl<'a> CharacterRepository<'a> {
             recent_dialogue_rounds: source.recent_dialogue_rounds,
             attributes: source.attributes,
             portrait_assets: source.portrait_assets,
+            avatar_asset: source.avatar_asset,
             system_prompt_template: source.system_prompt_template,
             response_contract_prompt: source.response_contract_prompt,
             narration_prompt: source.narration_prompt,
+            runtime_system_prompt: source.runtime_system_prompt,
         };
         self.create(target_world_id, &request)
     }
 }
 
 fn map_character_definition(row: &Row<'_>) -> rusqlite::Result<CharacterDefinition> {
-    let system_prompt_template: String = row.get(10)?;
-    let response_contract_prompt: String = row.get(11)?;
-    let narration_prompt: String = row.get(12)?;
+    let system_prompt_template: String = row.get(11)?;
+    let response_contract_prompt: String = row.get(12)?;
+    let narration_prompt: String = row.get(13)?;
     Ok(CharacterDefinition {
         id: row.get(0)?,
         name: row.get(1)?,
@@ -259,6 +280,7 @@ fn map_character_definition(row: &Row<'_>) -> rusqlite::Result<CharacterDefiniti
         recent_dialogue_rounds: row.get(7)?,
         attributes: serde_json::from_str(&row.get::<_, String>(8)?).unwrap_or_default(),
         portrait_assets: serde_json::from_str(&row.get::<_, String>(9)?).unwrap_or_default(),
+        avatar_asset: row.get(10)?,
         system_prompt_template: resolve_character_system_prompt_template(Some(
             system_prompt_template.as_str(),
         )),
@@ -266,7 +288,7 @@ fn map_character_definition(row: &Row<'_>) -> rusqlite::Result<CharacterDefiniti
             response_contract_prompt.as_str(),
         )),
         narration_prompt: resolve_character_narration_prompt(Some(narration_prompt.as_str())),
-        runtime_system_prompt: row.get(13)?,
+        runtime_system_prompt: row.get(14)?,
     })
 }
 

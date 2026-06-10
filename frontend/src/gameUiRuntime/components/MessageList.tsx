@@ -210,64 +210,64 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
                   {getMessageText(message.content)}
                 </div>
               )}
-
-              {!message.pending && isMobile && (message.role === "agent" || message.role === "player") ? (
-                <div className={`game-message-inline-actions${message.role === "player" ? " game-message-inline-actions--player" : ""}${message.role === "agent" ? " game-message-inline-actions--agent" : ""}`}>
-                  {message.role === "player" ? (
-                    <>
-                      <button
-                        type="button"
-                        className={`game-message-action-btn game-ui-button${isEditingThisTurn ? " game-message-action-btn--active" : ""}`}
-                        data-variant="ghost"
-                        disabled={turnActionsLocked}
-                        onClick={() => {
-                          if (!turnActionsLocked) {
-                            actions.startEditingTurn(getMessageText(message.content), messageTurnIndex);
-                          }
-                        }}
-                      >
-                        {isEditingThisTurn ? "\u7f16\u8f91\u4e2d" : "\u7f16\u8f91"}
-                      </button>
-                      <button
-                        type="button"
-                        className="game-message-action-btn game-message-action-btn--resend game-ui-button"
-                        data-variant="ghost"
-                        disabled={runtime.ui_state.submitting || !canResendPlayerTurn || !!runtime.editing}
-                        onClick={() => {
-                          if (!(runtime.ui_state.submitting || !canResendPlayerTurn || runtime.editing)) {
-                            void actions.submitMessage({
-                              content: getMessageText(message.content),
-                              turnIndex: messageTurnIndex,
-                              mode: "resend",
-                            });
-                          }
-                        }}
-                      >
-                        {"\u91cd\u53d1"}
-                      </button>
-                    </>
-                  ) : null}
-                  {message.role === "agent" ? (
-                    <>
-                      <button type="button" className="game-message-action-btn game-message-action-btn--copy game-ui-button" data-variant="ghost" onClick={() => void actions.copyText(getMessageText(message.content))} aria-label="\u590d\u5236" title="\u590d\u5236">
-                        <Copy size={12} />
-                      </button>
-                      <button
-                        type="button"
-                        className="game-message-action-btn game-message-action-btn--branch game-ui-button"
-                        data-variant="ghost"
-                        disabled={runtime.ui_state.branching || runtime.ui_state.loading || !runtime.session}
-                        onClick={() => void actions.branchFromCurrent()}
-                        aria-label="\u521b\u5efa\u5206\u652f"
-                        title="\u521b\u5efa\u5206\u652f"
-                      >
-                        <GitBranch size={12} />
-                      </button>
-                    </>
-                  ) : null}
-                </div>
-              ) : null}
             </div>
+
+            {!message.pending && isMobile && (message.role === "agent" || message.role === "player") ? (
+              <div className={`game-message-inline-actions${message.role === "player" ? " game-message-inline-actions--player" : ""}${message.role === "agent" ? " game-message-inline-actions--agent" : ""}`}>
+                {message.role === "player" ? (
+                  <>
+                    <button
+                      type="button"
+                      className={`game-message-action-btn game-ui-button${isEditingThisTurn ? " game-message-action-btn--active" : ""}`}
+                      data-variant="ghost"
+                      disabled={turnActionsLocked}
+                      onClick={() => {
+                        if (!turnActionsLocked) {
+                          actions.startEditingTurn(getMessageText(message.content), messageTurnIndex);
+                        }
+                      }}
+                    >
+                      {isEditingThisTurn ? "\u7f16\u8f91\u4e2d" : "\u7f16\u8f91"}
+                    </button>
+                    <button
+                      type="button"
+                      className="game-message-action-btn game-message-action-btn--resend game-ui-button"
+                      data-variant="ghost"
+                      disabled={runtime.ui_state.submitting || !canResendPlayerTurn || !!runtime.editing}
+                      onClick={() => {
+                        if (!(runtime.ui_state.submitting || !canResendPlayerTurn || runtime.editing)) {
+                          void actions.submitMessage({
+                            content: getMessageText(message.content),
+                            turnIndex: messageTurnIndex,
+                            mode: "resend",
+                          });
+                        }
+                      }}
+                    >
+                      {"\u91cd\u53d1"}
+                    </button>
+                  </>
+                ) : null}
+                {message.role === "agent" ? (
+                  <>
+                    <button type="button" className="game-message-action-btn game-message-action-btn--copy game-ui-button" data-variant="ghost" onClick={() => void actions.copyText(getMessageText(message.content))} aria-label="\u590d\u5236" title="\u590d\u5236">
+                      <Copy size={12} />
+                    </button>
+                    <button
+                      type="button"
+                      className="game-message-action-btn game-message-action-btn--branch game-ui-button"
+                      data-variant="ghost"
+                      disabled={runtime.ui_state.branching || runtime.ui_state.loading || !runtime.session}
+                      onClick={() => void actions.branchFromCurrent()}
+                      aria-label="\u521b\u5efa\u5206\u652f"
+                      title="\u521b\u5efa\u5206\u652f"
+                    >
+                      <GitBranch size={12} />
+                    </button>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
 
             {!message.pending && !isMobile && message.role !== "agent" ? (
               <div className="game-message-actions">

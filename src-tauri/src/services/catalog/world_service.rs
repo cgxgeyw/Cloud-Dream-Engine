@@ -131,9 +131,11 @@ impl WorldService {
                     recent_dialogue_rounds: source_character.recent_dialogue_rounds,
                     attributes: source_character.attributes.clone(),
                     portrait_assets: source_character.portrait_assets.clone(),
+                    avatar_asset: source_character.avatar_asset.clone(),
                     system_prompt_template: source_character.system_prompt_template.clone(),
                     response_contract_prompt: source_character.response_contract_prompt.clone(),
                     narration_prompt: source_character.narration_prompt.clone(),
+                    runtime_system_prompt: source_character.runtime_system_prompt.clone(),
                 },
             )?;
             character_id_map.insert(source_character.id, duplicated_character.id);
@@ -625,6 +627,10 @@ impl WorldService {
                 .iter()
                 .map(|path| asset_map.get(path).cloned().unwrap_or_else(|| path.clone()))
                 .collect();
+            character.avatar_asset = asset_map
+                .get(&character.avatar_asset)
+                .cloned()
+                .unwrap_or_else(|| character.avatar_asset.clone());
             let created_character = char_repo.create(
                 &created_world.id,
                 &CharacterCreateRequest {
@@ -636,9 +642,11 @@ impl WorldService {
                     recent_dialogue_rounds: character.recent_dialogue_rounds,
                     attributes: character.attributes.clone(),
                     portrait_assets: character.portrait_assets.clone(),
+                    avatar_asset: character.avatar_asset.clone(),
                     system_prompt_template: character.system_prompt_template.clone(),
                     response_contract_prompt: character.response_contract_prompt.clone(),
                     narration_prompt: character.narration_prompt.clone(),
+                    runtime_system_prompt: character.runtime_system_prompt.clone(),
                 },
             )?;
             let created_character_id = created_character.id.clone();

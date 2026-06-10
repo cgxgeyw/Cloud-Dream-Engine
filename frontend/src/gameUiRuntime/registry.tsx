@@ -36,6 +36,7 @@ export function createGameUiComponentRegistry(
         show_player_identity: "boolean",
         player_identity_format: "label|action_phrase",
         show_visible_characters: "boolean",
+        show_copy_button: "boolean",
         title_mode: "desktop|mobile",
       },
       render: ({ node }) => <SceneHeaderComponent runtime={runtime} actions={actions} node={node} />,

@@ -37,6 +37,7 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             recent_dialogue_rounds INTEGER NOT NULL DEFAULT 10,
             attributes_json TEXT NOT NULL DEFAULT '[]',
             portrait_assets_json TEXT NOT NULL DEFAULT '[]',
+            avatar_asset TEXT NOT NULL DEFAULT '',
             system_prompt_template TEXT NOT NULL DEFAULT '',
             response_contract_prompt TEXT NOT NULL DEFAULT '',
             narration_prompt TEXT NOT NULL DEFAULT '',
@@ -175,7 +176,8 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             enabled INTEGER NOT NULL DEFAULT 1,
             exposure_policy_json TEXT NOT NULL DEFAULT '{}',
             risk_level TEXT NOT NULL DEFAULT 'low',
-            trigger_keywords_json TEXT NOT NULL DEFAULT '[]'
+            trigger_keywords_json TEXT NOT NULL DEFAULT '[]',
+            input_schema_json TEXT NOT NULL DEFAULT '{\"type\":\"object\",\"properties\":{}}'
         );
 
         CREATE TABLE IF NOT EXISTS rules (

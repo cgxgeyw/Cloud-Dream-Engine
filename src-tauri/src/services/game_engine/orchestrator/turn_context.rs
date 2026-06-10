@@ -9,7 +9,10 @@ use crate::models::settings::AppSettings;
 use crate::models::world::WorldDefinition;
 use crate::services::game_engine::dialogue::DialoguePipeline;
 use crate::services::game_engine::memory::MemoryService;
-use crate::services::game_engine::prompting::{build_prompt_call, llm_chat_messages_to_values};
+use crate::services::game_engine::prompting::{
+    build_prompt_call, llm_chat_messages_to_values, render_prompt_variables,
+    resolve_runtime_context_prompt,
+};
 use crate::services::game_engine::structured_output::StructuredOutputFailure;
 use crate::services::notifications::notification_tool_definition;
 use rusqlite::{params, Connection};
@@ -120,15 +123,21 @@ pub(crate) fn build_character_prompt_artifacts(
         speaker_character_id,
         speaker_name,
     );
-    let narration_prompt = resolve_character_narration_prompt(
+    let narration_prompt = render_prompt_variables(&resolve_character_narration_prompt(
         speaker_profile.map(|profile| profile.narration_prompt.as_str()),
-    );
+    ));
     let system_prompt = dialogue_pipeline.build_character_system_prompt_with_contract(
         speaker_name,
         speaker_profile,
         None,
         None,
     );
+    let runtime_context_prompt = resolve_runtime_context_prompt(world);
+    let character_runtime_context_prompt = speaker_profile
+        .map(|profile| render_prompt_variables(&profile.runtime_system_prompt))
+        .unwrap_or_default()
+        .trim()
+        .to_string();
     let init_payload = build_character_init_payload(world, speaker_name, speaker_profile, session);
     let turn_payload = build_character_turn_payload(
         world,
@@ -149,7 +158,18 @@ pub(crate) fn build_character_prompt_artifacts(
     );
     let response_contract = serde_json::json!({
         "format": "json_object",
-        "fields": ["speaker", "content", "intent", "emotion", "narration"],
+        "fields": ["speaker", "content", "intent", "emotion", "narration", "session_attribute_updates", "character_attribute_updates", "memory_entries"],
+        "runtime_update_format": {
+            "session_attribute_updates": [
+                { "key": "attribute_key", "value": "new_value" }
+            ],
+            "character_attribute_updates": [
+                { "character_name": "target_character_name", "key": "attribute_key", "value": "new_value" }
+            ],
+            "memory_entries": [
+                { "content": "memory text", "character_names": ["target_character_name"] }
+            ]
+        },
         "tool_policy": "Use provider-native tool_calls for every allowed tool; never include tool_calls, tool names, or tool arguments in the JSON body."
     });
     let scene_state = serde_json::json!({
@@ -158,7 +178,7 @@ pub(crate) fn build_character_prompt_artifacts(
         "visible_characters": visible_characters,
         "player_character_name": player_character_name
     });
-    let modules = vec![
+    let mut modules = vec![
         serde_json::json!({
             "name": "character_system_prompt",
             "source": "dialogue_pipeline.build_character_system_prompt_with_contract",
@@ -209,7 +229,31 @@ pub(crate) fn build_character_prompt_artifacts(
             "sent": true
         }),
     ];
-    let messages = vec![
+    if !runtime_context_prompt.trim().is_empty() {
+        modules.insert(
+            1,
+            serde_json::json!({
+                "name": "runtime_context",
+                "source": "world.director_config.runtime_context_prompt",
+                "content": runtime_context_prompt.clone(),
+                "editable": true,
+                "sent": true
+            }),
+        );
+    }
+    if !character_runtime_context_prompt.trim().is_empty() {
+        modules.insert(
+            1,
+            serde_json::json!({
+                "name": "character_runtime_context",
+                "source": "character.runtime_system_prompt",
+                "content": character_runtime_context_prompt.clone(),
+                "editable": true,
+                "sent": true
+            }),
+        );
+    }
+    let mut messages = vec![
         crate::services::llm::client::ChatMessage {
             role: "system".to_string(),
             content: serde_json::Value::String(system_prompt.clone()),
@@ -219,6 +263,30 @@ pub(crate) fn build_character_prompt_artifacts(
             tool_calls: None,
             metadata: None,
         },
+    ];
+    if !character_runtime_context_prompt.trim().is_empty() {
+        messages.push(crate::services::llm::client::ChatMessage {
+            role: "system".to_string(),
+            content: serde_json::Value::String(character_runtime_context_prompt.clone()),
+            reasoning_content: None,
+            speaker: None,
+            tool_call_id: None,
+            tool_calls: None,
+            metadata: None,
+        });
+    }
+    if !runtime_context_prompt.trim().is_empty() {
+        messages.push(crate::services::llm::client::ChatMessage {
+            role: "system".to_string(),
+            content: serde_json::Value::String(runtime_context_prompt.clone()),
+            reasoning_content: None,
+            speaker: None,
+            tool_call_id: None,
+            tool_calls: None,
+            metadata: None,
+        });
+    }
+    messages.extend([
         crate::services::llm::client::ChatMessage {
             role: "system".to_string(),
             content: serde_json::Value::String(narration_prompt.clone()),
@@ -246,7 +314,7 @@ pub(crate) fn build_character_prompt_artifacts(
             tool_calls: None,
             metadata: None,
         },
-    ];
+    ]);
 
     CharacterPromptArtifacts {
         system_prompt,
@@ -482,14 +550,15 @@ pub(crate) fn build_character_init_payload(
     speaker_profile: Option<&CharacterDefinition>,
     session: &SessionSnapshot,
 ) -> String {
+    let character_background_prompt = speaker_profile
+        .map(|profile| render_prompt_variables(&profile.background_prompt))
+        .unwrap_or_default();
     serde_json::to_string_pretty(&serde_json::json!({
         "basic_setting": {
             "character": {
                 "name": speaker_name,
                 "role": speaker_profile.map(|profile| profile.role.clone()).unwrap_or_default(),
-                "background_prompt": speaker_profile
-                    .map(|profile| profile.background_prompt.clone())
-                    .unwrap_or_default(),
+                "background_prompt": character_background_prompt,
                 "attributes": speaker_profile.map(|profile| profile.attributes.clone()).unwrap_or_default(),
             },
             "world": {

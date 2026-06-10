@@ -316,6 +316,7 @@ export function WorldCharactersPage() {
         <div className="card-grid character-pool-grid">
           {sortedCharacters.map((character) => {
             const isDeleting = deleting === character.id;
+            const cardImageAsset = character.avatar_asset || character.portrait_assets[0];
             return (
               <div
                 key={character.id}
@@ -335,9 +336,9 @@ export function WorldCharactersPage() {
                 >
                   <X size={14} />
                 </button>
-                {character.portrait_assets[0] ? (
+                {cardImageAsset ? (
                   <div className="card-item-icon card-item-icon--image">
-                    <img src={assetUrl(character.portrait_assets[0])} alt={character.name} className="card-item-icon-image" />
+                    <img src={assetUrl(cardImageAsset)} alt={character.name} className="card-item-icon-image" />
                   </div>
                 ) : (
                   <div className="card-item-icon"><Users size={18} /></div>

@@ -19,6 +19,8 @@ use crate::models::scheduled_notification::{
 
 const SCHEDULE_STATUS_SCHEMA_ID: &str = "attr-schedule-assistant-notifications";
 const SCHEDULE_STATUS_SCHEMA_KEY: &str = "scheduled_notifications";
+const SCHEDULE_TODO_SCHEMA_ID: &str = "attr-schedule-assistant-todo-items";
+const SCHEDULE_TODO_SCHEMA_KEY: &str = "todo_items";
 
 pub struct NotificationScheduler;
 
@@ -421,29 +423,13 @@ pub(crate) fn sync_session_schedule_attribute(
     session_id: &str,
 ) -> Result<(), String> {
     ensure_schedule_status_attribute_schema(conn)?;
+    ensure_schedule_todo_attribute_schema(conn)?;
     let notifications =
         ScheduledNotificationRepository::new(conn).list_for_session(session_id, Some("scheduled"), 50)?;
     let value = format_schedule_status_items(&notifications);
 
-    conn.execute(
-        "DELETE FROM attribute_values WHERE schema_id = ?1 AND owner_type = 'session' AND owner_id = ?2",
-        params![SCHEDULE_STATUS_SCHEMA_ID, session_id],
-    )
-    .map_err(|error| error.to_string())?;
-    conn.execute(
-        "INSERT INTO attribute_values (id, schema_id, owner_type, owner_id, value_json, source)
-         VALUES (?1, ?2, 'session', ?3, ?4, 'schedule_notification')",
-        params![
-            uuid::Uuid::new_v4().to_string(),
-            SCHEDULE_STATUS_SCHEMA_ID,
-            session_id,
-            serde_json::to_string(&serde_json::Value::Array(
-                value.into_iter().map(serde_json::Value::String).collect(),
-            ))
-            .unwrap_or_default(),
-        ],
-    )
-    .map_err(|error| error.to_string())?;
+    write_session_list_attribute(conn, session_id, SCHEDULE_STATUS_SCHEMA_ID, &value)?;
+    write_session_list_attribute(conn, session_id, SCHEDULE_TODO_SCHEMA_ID, &value)?;
 
     Ok(())
 }
@@ -495,6 +481,93 @@ fn ensure_schedule_status_attribute_schema(conn: &rusqlite::Connection) -> Resul
     Ok(())
 }
 
+fn ensure_schedule_todo_attribute_schema(conn: &rusqlite::Connection) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO attribute_schemas (
+            id, scope, key, label, value_type, description, default_value_json, enum_options_json,
+            display_policy_json, access_policy_json, mutation_policy_json, influence_policy_json,
+            projection_policy_json
+         )
+         VALUES (?1, 'session', ?2, ?3, 'list', ?4, '[]', '[]', ?5, ?6, ?7, ?8, ?9)
+         ON CONFLICT(id) DO UPDATE SET
+            scope = 'session',
+            key = excluded.key,
+            label = excluded.label,
+            value_type = 'list',
+            description = excluded.description,
+            default_value_json = excluded.default_value_json,
+            display_policy_json = excluded.display_policy_json,
+            access_policy_json = excluded.access_policy_json,
+            mutation_policy_json = excluded.mutation_policy_json,
+            influence_policy_json = excluded.influence_policy_json,
+            projection_policy_json = excluded.projection_policy_json",
+        params![
+            SCHEDULE_TODO_SCHEMA_ID,
+            SCHEDULE_TODO_SCHEMA_KEY,
+            "\u{5f85}\u{529e}\u{4e8b}\u{9879}",
+            "Pending schedule assistant todo items for the current session.",
+            serde_json::json!({ "editor_visible": true, "game_visible": true, "debug_visible": true }).to_string(),
+            serde_json::json!({
+                "creator_read": true,
+                "player_read": true,
+                "agent_self_read": true,
+                "director_read": true,
+                "plugin_read": true
+            })
+            .to_string(),
+            serde_json::json!({
+                "creator_write": true,
+                "rule_write": true,
+                "trigger_write": true,
+                "player_action_write": true,
+                "allowed_ops": ["set"]
+            })
+            .to_string(),
+            serde_json::json!({
+                "prompt.director": { "enabled": true, "mode": "raw" },
+                "ui.status_panel": { "enabled": true }
+            })
+            .to_string(),
+            serde_json::json!({
+                "inherit_to_session": true,
+                "session_owner_type": "session",
+                "mutable_in_session": true
+            })
+            .to_string(),
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn write_session_list_attribute(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+    schema_id: &str,
+    value: &[String],
+) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM attribute_values WHERE schema_id = ?1 AND owner_type = 'session' AND owner_id = ?2",
+        params![schema_id, session_id],
+    )
+    .map_err(|error| error.to_string())?;
+    conn.execute(
+        "INSERT INTO attribute_values (id, schema_id, owner_type, owner_id, value_json, source)
+         VALUES (?1, ?2, 'session', ?3, ?4, 'schedule_notification')",
+        params![
+            uuid::Uuid::new_v4().to_string(),
+            schema_id,
+            session_id,
+            serde_json::to_string(&serde_json::Value::Array(
+                value.iter().cloned().map(serde_json::Value::String).collect(),
+            ))
+            .unwrap_or_default(),
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 fn format_schedule_status_items(notifications: &[ScheduledNotification]) -> Vec<String> {
     notifications
         .iter()
@@ -523,6 +596,23 @@ fn format_schedule_time(value: &str) -> String {
         .unwrap_or_else(|_| value.trim().to_string())
 }
 
+#[cfg(mobile)]
+fn ensure_notification_permission(app: &AppHandle) -> Result<(), String> {
+    let notification = app.notification();
+    match notification
+        .permission_state()
+        .map_err(|error| error.to_string())?
+    {
+        PermissionState::Granted => Ok(()),
+        PermissionState::Denied => Err("Notification permission denied".to_string()),
+        PermissionState::Prompt | PermissionState::PromptWithRationale => Err(
+            "Notification permission is not granted yet. Please allow notifications and try again."
+                .to_string(),
+        ),
+    }
+}
+
+#[cfg(not(mobile))]
 fn ensure_notification_permission(app: &AppHandle) -> Result<(), String> {
     let notification = app.notification();
     let state = notification
@@ -571,7 +661,7 @@ pub fn notification_tool_definition() -> serde_json::Value {
                 },
                 "time": {
                     "type": "string",
-                    "description": "When to notify for create/update. Prefer RFC3339 with timezone, for example 2026-06-07T21:30:00+08:00. Also accepts local YYYY-MM-DD HH:MM, 10m, 2h, or 1d."
+                    "description": "When to notify for create/update. Prefer RFC3339 with timezone, for example 2026-06-07T21:30:00+08:00. Also accepts local YYYY-MM-DD HH:MM, YYYY-MM-DD HH:MM:SS, YYYY-MM-DDTHH:MM, YYYY-MM-DDTHH:MM:SS, 10m, 2h, or 1d."
                 },
                 "content": {
                     "type": "string",
@@ -733,17 +823,23 @@ pub fn parse_notification_time(input: &str) -> Result<DateTime<Utc>, String> {
     if let Ok(value) = DateTime::parse_from_rfc3339(raw) {
         return Ok(value.with_timezone(&Utc));
     }
-    if let Ok(value) = NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S") {
-        return local_naive_to_utc(value);
+
+    for format in [
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M",
+    ] {
+        if let Ok(value) = NaiveDateTime::parse_from_str(raw, format) {
+            return local_naive_to_utc(value);
+        }
     }
-    if let Ok(value) = NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M") {
-        return local_naive_to_utc(value);
-    }
+
     if let Some(value) = parse_relative_time(raw) {
         return Ok(value);
     }
     Err(format!(
-        "Unsupported notification time: {raw}. Use RFC3339, YYYY-MM-DD HH:MM, 10m, 2h, or 1d."
+        "Unsupported notification time: {raw}. Use RFC3339, YYYY-MM-DD HH:MM, YYYY-MM-DDTHH:MM:SS, 10m, 2h, or 1d."
     ))
 }
 
@@ -872,5 +968,11 @@ mod tests {
     fn parses_rfc3339_notification_time() {
         let parsed = parse_notification_time("2026-06-07T21:30:00+08:00").expect("rfc3339");
         assert_eq!(parsed.to_rfc3339(), "2026-06-07T13:30:00+00:00");
+    }
+
+    #[test]
+    fn parses_local_iso_notification_time_without_timezone() {
+        parse_notification_time("2026-06-10T16:55:00").expect("local iso seconds");
+        parse_notification_time("2026-06-10T16:55").expect("local iso minutes");
     }
 }

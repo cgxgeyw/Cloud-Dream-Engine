@@ -588,10 +588,12 @@ value 字段：
 - `ui_theme_config.assets.local_background_assets`
 - `ui_theme_config.assets.local_scene_backgrounds`
 - UI `custom_css` 间接依赖的背景变量。
-- 角色 `portrait_assets`
+- 角色 `avatar_asset` 和 `portrait_assets`
 - 运行时生成的场景背景/图片。
 
 世界包导入后如果 UI 样式还在但图没了，优先检查 asset_map 是否覆盖了 UI 文档和角色资源两条链路。
+
+角色/智能体头像使用单独的 `avatar_asset` 字段保存单张资源路径，和 `portrait_assets` 立绘列表分开。角色编辑器、角色卡片、模板导入导出、世界包导入导出、世界复制和资源清理都要同时维护这个字段；没有头像时前端列表可以回退显示第一张立绘，但不要把头像写回立绘数组。
 
 ### 移动端可视高度和键盘
 
@@ -639,6 +641,8 @@ Debug 信息通常能看到：
 
 项目级约定和架构变化要同步记录在 `project.md`。如果修改了世界包格式、UI DSL、运行时安全边界、提示词/记忆/属性管线、导入导出规则、提交或忽略规则，改代码时也要更新本文件。
 
+角色提示词和世界主控提示词允许保存模板变量。当前支持 `{{current_time}}` / `{{当前时间}}`，发送给模型前展开为本机当前时间，格式为 `YYYY-MM-DD HH:mm:ss`；数据库和编辑器里保留原始模板文本。
+
 源码目录不能被生成数据忽略规则遮住。根目录运行时数据使用 `/data/`，前端本地运行库数据使用 `/frontend/data/`；不要用裸 `data/` 规则误伤 `frontend/src/data/`。
 
 常用检查：
@@ -672,3 +676,29 @@ cargo check
 - 长期记忆召回不到：查 `layer = archive` 是否写入、候选上限、retrieval mode、embedding 设置、层配额排序。
 - 属性不进 prompt：查 `attribute_values.owner_type/owner_id`、schema `access_policy.agent_self_read/agent_other_read`、`load_character_visible_attribute_lines()`。
 - 属性不在 UI 里显示：查 `get_session_runtime_attributes()`、`buildAttributeSideTabsFromRuntimeAttributes()`、`side_panel_tabs.show_attribute_tabs`。
+
+## 运行时上下文提示词
+
+世界编辑器有独立的“运行时上下文”Tab，内容保存到 `world.director_config.runtime_context_prompt`。角色编辑器也有独立的“运行时上下文”Tab，内容保存到 `character.runtime_system_prompt`。两者都是可编辑内容数据；世界级字段随 `director_config_json` 保存，角色级字段使用已有的 `characters.runtime_system_prompt` 列保存，并随角色模板、世界包导入导出流转。
+
+发送给模型前，后端会对这些字段执行模板变量替换；当前支持 `{{current_time}}` / `{{当前时间}}`，格式为本机当前时间 `YYYY-MM-DD HH:mm:ss`。世界级运行时上下文会作为独立 `system` 消息注入世界主控和角色请求；角色级运行时上下文会作为独立 `system` 消息注入该角色请求。字段为空时不发送。Prompt 预览中世界级模块显示为 `runtime_context`，角色级模块显示为 `character_runtime_context`。
+
+内置行程助手通过 seed 世界配置填写 `runtime_context_prompt`，而不是在代码里做行程助手特判。
+
+角色回复解析会读取 JSON 里的 `content` / `response` / `message` / `text` 作为聊天正文；如果模型只返回 `session_attribute_updates` 这类状态更新 JSON，解析器要保留 raw payload 供写回，但聊天气泡使用自然语言兜底文案，不直接显示裸 JSON。行程助手 seed 提示词必须要求结构化回复同时包含 `response` 和 `session_attribute_updates`。
+
+运行时 UI 展示的 session/character 属性不只依赖重新进入页面加载。`useGameSession()` 在会话快照变化时会刷新运行时属性；玩家动作、重试动作完成后也会主动短窗口刷新一次运行时属性，覆盖 agent_chat 等流程先写属性、后续快照不携带属性明细的时序。世界包里的 checkbox/list/badge 等组件应读取同一份运行时属性，不要为某个内置世界写专属前端刷新逻辑。
+
+行程助手内置 desktop/mobile UI 使用世界包 `custom_css` 美化待办和已完成 checkbox 列表：两个列表分别有独立边框容器，确认完成按钮是渐变背景的圆角矩形主按钮。这类视觉调整应优先落在 seed UI 文档，避免写成运行时组件特判。
+
+`scene_header` 支持 `show_copy_button` 布尔属性控制标题区复制对话按钮，默认保持显示；行程助手 desktop/mobile UI 将其设为 `false`，避免标题下出现复制按钮。
+
+安卓通知权限由原生 Android 入口请求：`src-tauri/gen/android/app/src/main/AndroidManifest.xml` 声明 `POST_NOTIFICATIONS`，`MainActivity` 在 Android 13+ 启动时通过 `ActivityResultContracts.RequestPermission()` 请求通知权限；这两个文件在 `.gitignore` 中被显式 unignore，必须随 Android 通知逻辑一起提交。`useGameSession()` 在发送可能创建提醒/定时事项的消息前只检查通知权限，不再通过 JS 插件调用 `requestPermission()`。麦克风权限保持在语音按钮点击后通过 `getUserMedia({ audio: true })` 按需触发。后端 `ensure_notification_permission()` 在移动端只检查权限状态，不再从 Rust 工具调用路径直接触发 `request_permission()`，避免 Tauri 通知插件的 `requestPermissionsLauncher` 未初始化错误污染行程助手回复。
+
+`schedule_notification` 工具的 `time` 参数描述会传给模型，但工具端不能假设模型一定严格输出首选格式。解析器接受带时区 RFC3339、相对时间，以及本地时间 `YYYY-MM-DD HH:MM[:SS]` / `YYYY-MM-DDTHH:MM[:SS]`；无时区格式按本机本地时间解释后转 UTC 存储。
+
+MCP 工具定义包含可编辑的 `input_schema` JSON Schema。工具管理页保存 `input_schema`，后端持久化到 `mcp_tools.input_schema_json`；世界主控构建 `available_tools` 时，会把世界已授权、已启用、暴露策略不是 `disabled` 的自定义工具连同 `arguments_schema` 发给模型。当前通用 MCP 执行器尚未实现，模型调用非内置工具时后端会返回明确的未实现工具错误，避免静默吞掉调用。
+
+Android APK 打包脚本 `scripts/build_android_apk.ps1` 会在调用 Tauri build 前清理 Android 构建目录中复制出来的 `embedding-models` 资源副本，并做一次临时复制预检，用来提前暴露 Windows `os error 1224` 这类 safetensors 文件被 mmap/进程占用的问题。Tauri build 失败后不要再用 Gradle `assembleUniversalRelease` 作为兜底重试；生成的 Android Studio Gradle task 依赖 Tauri CLI 的 live context，脱离 Tauri build 直接运行会触发 `android-studio-script` WebSocket 连接失败，不能修复资源复制错误。
+
+移动端消息操作按钮需要位于气泡外侧，不要放在气泡同一背景里。复制成功通过全局 toast 提示“已复制”；复制/分支等小图标按钮有按压缩放反馈；编辑/重发文字按钮在移动端使用更小字号。行程助手移动 UI 也在 seed `custom_css` 中补了同样的按钮尺寸和按压状态，避免世界包样式覆盖通用规则。

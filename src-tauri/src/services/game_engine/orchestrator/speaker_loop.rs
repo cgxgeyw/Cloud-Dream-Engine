@@ -40,6 +40,7 @@ impl SessionOrchestrator {
     ) -> Result<SpeakerTurnRunResult, String> {
         let completed_speaker_steps = completed_speaker_steps_from_journal(recovery_journal);
         let mut pending_notifications = Vec::new();
+        let mut runtime_payloads = Vec::<serde_json::Value>::new();
         let mut speaker_step_index = 0;
         for speaker_name in planned_speakers {
             if speaker_name == &session.player_character_name {
@@ -465,10 +466,14 @@ impl SessionOrchestrator {
                             messages,
                             failure: Some(failure),
                             pending_notifications,
+                            runtime_payloads,
                         });
                     }
 
                     let speaker_pending_notifications = Vec::new();
+                    if let Some(raw_payload) = parsed_response.raw_payload.clone() {
+                        runtime_payloads.push(raw_payload);
+                    }
                     messages.push(ChatMessage {
                         role: "agent".to_string(),
                         content: MessageContent::Text(parsed_response.content.clone()),
@@ -638,6 +643,7 @@ impl SessionOrchestrator {
                         messages,
                         failure: Some(failure),
                         pending_notifications,
+                        runtime_payloads,
                     });
                 }
             }
@@ -646,6 +652,7 @@ impl SessionOrchestrator {
             messages,
             failure: None,
             pending_notifications,
+            runtime_payloads,
         })
     }
 }

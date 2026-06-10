@@ -1,3 +1,25 @@
+use chrono::Local;
+
+use crate::models::world::WorldDefinition;
+
+pub fn render_prompt_variables(template: &str) -> String {
+    let current_time = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    template
+        .replace("{{current_time}}", &current_time)
+        .replace("{{当前时间}}", &current_time)
+}
+
+pub fn resolve_runtime_context_prompt(world: &WorldDefinition) -> String {
+    world
+        .director_config
+        .get("runtime_context_prompt")
+        .and_then(|value| value.as_str())
+        .map(render_prompt_variables)
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
 pub fn llm_chat_message_to_value(
     message: &crate::services::llm::client::ChatMessage,
 ) -> serde_json::Value {

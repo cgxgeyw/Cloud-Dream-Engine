@@ -9,6 +9,17 @@ frontend/*.tsbuildinfo
 # Rust/Tauri build output
 src-tauri/target/
 src-tauri/gen/
+!src-tauri/gen/
+!src-tauri/gen/android/
+!src-tauri/gen/android/app/
+!src-tauri/gen/android/app/src/
+!src-tauri/gen/android/app/src/main/
+!src-tauri/gen/android/app/src/main/AndroidManifest.xml
+!src-tauri/gen/android/app/src/main/java/
+!src-tauri/gen/android/app/src/main/java/com/
+!src-tauri/gen/android/app/src/main/java/com/dreamnarrativeengine/
+!src-tauri/gen/android/app/src/main/java/com/dreamnarrativeengine/app/
+!src-tauri/gen/android/app/src/main/java/com/dreamnarrativeengine/app/MainActivity.kt
 src-tauri/binaries/*.exe
 target/
 

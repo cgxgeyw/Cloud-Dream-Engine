@@ -11,6 +11,11 @@ import {
 import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
 import { showToast } from "../components/Toast";
 
+const defaultInputSchema: Record<string, unknown> = {
+  type: "object",
+  properties: {},
+};
+
 const emptyDraft: McpToolUpsertRequest = {
   name: "",
   description: "",
@@ -20,7 +25,10 @@ const emptyDraft: McpToolUpsertRequest = {
   exposure_policy: "on-demand",
   risk_level: "low",
   trigger_keywords: [],
+  input_schema: defaultInputSchema,
 };
+
+const defaultInputSchemaText = JSON.stringify(defaultInputSchema, null, 2);
 
 function keywordsToText(values: string[]) {
   return values.join(", ");
@@ -31,6 +39,25 @@ function textToKeywords(value: string) {
     .split(/[,，\n]/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function schemaToText(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return defaultInputSchemaText;
+  }
+  return JSON.stringify(value, null, 2) ?? defaultInputSchemaText;
+}
+
+function parseInputSchema(value: string): Record<string, unknown> {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return defaultInputSchema;
+  }
+  const parsed = JSON.parse(trimmed) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("参数 Schema 必须是 JSON 对象");
+  }
+  return parsed as Record<string, unknown>;
 }
 
 function resolveExposurePolicyMode(policy: string | Record<string, unknown> | undefined): string {
@@ -72,6 +99,7 @@ export function McpToolsPage({ isMobile = false }: McpToolsPageProps) {
   const [tools, setTools] = useState<McpToolResponse[]>([]);
   const [draft, setDraft] = useState<McpToolUpsertRequest>(emptyDraft);
   const [keywordText, setKeywordText] = useState("");
+  const [schemaText, setSchemaText] = useState(defaultInputSchemaText);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -100,6 +128,7 @@ export function McpToolsPage({ isMobile = false }: McpToolsPageProps) {
     setEditingId(null);
     setDraft(emptyDraft);
     setKeywordText("");
+    setSchemaText(defaultInputSchemaText);
     setEditorOpen(true);
     setError(null);
   }
@@ -115,8 +144,10 @@ export function McpToolsPage({ isMobile = false }: McpToolsPageProps) {
       exposure_policy: resolveExposurePolicyMode(tool.exposure_policy),
       risk_level: tool.risk_level,
       trigger_keywords: tool.trigger_keywords,
+      input_schema: tool.input_schema ?? defaultInputSchema,
     });
     setKeywordText(keywordsToText(tool.trigger_keywords));
+    setSchemaText(schemaToText(tool.input_schema));
     setEditorOpen(true);
     setError(null);
   }
@@ -125,6 +156,7 @@ export function McpToolsPage({ isMobile = false }: McpToolsPageProps) {
     setEditingId(null);
     setDraft(emptyDraft);
     setKeywordText("");
+    setSchemaText(defaultInputSchemaText);
     setEditorOpen(false);
   }
 
@@ -132,7 +164,8 @@ export function McpToolsPage({ isMobile = false }: McpToolsPageProps) {
     try {
       setSaving(true);
       setError(null);
-      const payload = { ...draft, trigger_keywords: textToKeywords(keywordText) };
+      const inputSchema = parseInputSchema(schemaText);
+      const payload = { ...draft, trigger_keywords: textToKeywords(keywordText), input_schema: inputSchema };
       const saved = editingId ? await updateMcpTool(editingId, payload) : await createMcpTool(payload);
       setTools((current) =>
         editingId ? current.map((tool) => (tool.id === saved.id ? saved : tool)) : [saved, ...current],
@@ -222,6 +255,7 @@ export function McpToolsPage({ isMobile = false }: McpToolsPageProps) {
             <label className="editor-field"><span className="editor-field-label">MCP 服务</span><input value={draft.server_name} onChange={(e) => setDraft({ ...draft, server_name: e.target.value })} /></label>
             <label className="editor-field"><span className="editor-field-label">工具名</span><input value={draft.tool_name} onChange={(e) => setDraft({ ...draft, tool_name: e.target.value })} /></label>
             <label className="editor-field"><span className="editor-field-label">说明</span><textarea value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></label>
+            <label className="editor-field"><span className="editor-field-label">参数 Schema</span><textarea value={schemaText} onChange={(e) => setSchemaText(e.target.value)} spellCheck={false} style={{ minHeight: 180, fontFamily: "Consolas, 'SFMono-Regular', monospace" }} /></label>
             <label className="editor-field"><span className="editor-field-label">触发词</span><textarea value={keywordText} onChange={(e) => setKeywordText(e.target.value)} placeholder="逗号或换行分隔" /></label>
             <label className="editor-field"><span className="editor-field-label">暴露策略</span><select value={resolveExposurePolicyMode(draft.exposure_policy)} onChange={(e) => setDraft({ ...draft, exposure_policy: e.target.value })}><option value="on-demand">按需暴露</option><option value="manual-only">仅手动</option><option value="disabled">禁用</option></select></label>
             <label className="editor-field"><span className="editor-field-label">风险等级</span><select value={draft.risk_level} onChange={(e) => setDraft({ ...draft, risk_level: e.target.value })}><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label>
@@ -303,6 +337,17 @@ export function McpToolsPage({ isMobile = false }: McpToolsPageProps) {
                   onChange={(event) => setDraft({ ...draft, description: event.target.value })}
                   className="field-input"
                   style={{ minHeight: 120, resize: "vertical" }}
+                />
+              </label>
+
+              <label className="field-label">
+                <span className="field-label-text">参数 Schema</span>
+                <textarea
+                  value={schemaText}
+                  onChange={(event) => setSchemaText(event.target.value)}
+                  className="field-input"
+                  spellCheck={false}
+                  style={{ minHeight: 160, resize: "vertical", fontFamily: "Consolas, 'SFMono-Regular', monospace" }}
                 />
               </label>
 

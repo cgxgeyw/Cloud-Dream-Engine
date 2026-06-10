@@ -30,6 +30,7 @@ pub struct McpToolDefinition {
     pub exposure_policy: serde_json::Value,
     pub risk_level: String,
     pub trigger_keywords: Vec<String>,
+    pub input_schema: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,4 +43,5 @@ pub struct McpToolCreateRequest {
     pub exposure_policy: serde_json::Value,
     pub risk_level: String,
     pub trigger_keywords: Vec<String>,
+    pub input_schema: serde_json::Value,
 }

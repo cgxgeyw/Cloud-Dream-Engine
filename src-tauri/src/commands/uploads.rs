@@ -283,23 +283,36 @@ async fn cleanup_asset_references(
 
     {
         let mut stmt = conn
-            .prepare("SELECT id, portrait_assets_json FROM characters")
+            .prepare("SELECT id, portrait_assets_json, avatar_asset FROM characters")
             .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
             })
             .map_err(|e| e.to_string())?;
         for row in rows {
-            let (id, raw) = row.map_err(|e| e.to_string())?;
+            let (id, raw, avatar_asset) = row.map_err(|e| e.to_string())?;
             let parsed = serde_json::from_str::<serde_json::Value>(&raw)
                 .unwrap_or_else(|_| serde_json::json!([]));
             let items = parsed.as_array().cloned().unwrap_or_default();
             let next = remove_asset_from_list(&items, refs);
-            if next != items {
+            let next_avatar_asset = if refs.contains(avatar_asset.as_str()) {
+                ""
+            } else {
+                avatar_asset.as_str()
+            };
+            if next != items || next_avatar_asset != avatar_asset {
                 conn.execute(
-                    "UPDATE characters SET portrait_assets_json = ?1 WHERE id = ?2",
-                    params![serde_json::to_string(&next).map_err(|e| e.to_string())?, id],
+                    "UPDATE characters SET portrait_assets_json = ?1, avatar_asset = ?2 WHERE id = ?3",
+                    params![
+                        serde_json::to_string(&next).map_err(|e| e.to_string())?,
+                        next_avatar_asset,
+                        id
+                    ],
                 )
                 .map_err(|e| e.to_string())?;
             }

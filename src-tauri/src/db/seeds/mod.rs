@@ -15,6 +15,7 @@ fn default_seed_world_director_config_json() -> String {
         "allow_npc_spawn": true,
         "history_dialogue_rounds": 6,
         "director_tool_loop_limit": 6,
+        "runtime_context_prompt": "",
         "world_director_prompt": "",
         "prompt_presets": [],
         "return_processing_rules": [],
@@ -927,11 +928,11 @@ mod tests {
 
         assert_eq!(
             desktop_file.pointer("/meta/name").and_then(Value::as_str),
-            Some("Schedule Assistant Desktop UI")
+            Some("行程助手桌面界面")
         );
         assert_eq!(
             mobile_file.pointer("/meta/name").and_then(Value::as_str),
-            Some("Schedule Assistant Mobile UI")
+            Some("行程助手移动界面")
         );
     }
 }

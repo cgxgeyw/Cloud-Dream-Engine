@@ -21,6 +21,8 @@ import { showToast } from "../components/Toast";
 const fixedTabs = [
   { id: "basic", label: "基础信息" },
   { id: "prompt", label: "提示词" },
+  { id: "runtimeContext", label: "运行时上下文" },
+  { id: "avatar", label: "头像" },
   { id: "portrait", label: "立绘" },
   { id: "memory", label: "记忆" },
   { id: "attribute", label: "属性" },
@@ -40,6 +42,7 @@ const newCharacterDraft: CharacterResponse = {
   recent_dialogue_rounds: 2,
   attributes: [],
   portrait_assets: [],
+  avatar_asset: "",
   system_prompt_template: "",
   response_contract_prompt: "",
   narration_prompt: "",
@@ -168,9 +171,11 @@ export function CharacterEditorPage() {
                 recent_dialogue_rounds: character.recent_dialogue_rounds,
                 attributes: character.attributes,
                 portrait_assets: character.portrait_assets,
+                avatar_asset: character.avatar_asset,
                 system_prompt_template: character.system_prompt_template,
                 response_contract_prompt: character.response_contract_prompt,
                 narration_prompt: character.narration_prompt,
+                runtime_system_prompt: character.runtime_system_prompt,
               }
             : null,
           world: selectedWorld
@@ -208,6 +213,19 @@ export function CharacterEditorPage() {
     }
   }
 
+  async function handleUploadAvatar(file: File | null) {
+    if (!file || !character) {
+      return;
+    }
+
+    try {
+      const uploaded = await uploadFile(file);
+      updateDraft({ avatar_asset: uploaded.url });
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : "上传头像失败");
+    }
+  }
+
   async function handleSave() {
     if (!character || !character.name.trim()) {
       setError("角色名称不能为空");
@@ -231,9 +249,11 @@ export function CharacterEditorPage() {
         recent_dialogue_rounds: Math.max(0, Number(character.recent_dialogue_rounds) || 0),
         attributes: character.attributes.filter(Boolean),
         portrait_assets: character.portrait_assets.filter(Boolean),
+        avatar_asset: character.avatar_asset.trim(),
         system_prompt_template: character.system_prompt_template,
         response_contract_prompt: character.response_contract_prompt,
         narration_prompt: character.narration_prompt,
+        runtime_system_prompt: character.runtime_system_prompt,
       };
 
       const saved = isNew
@@ -275,7 +295,7 @@ export function CharacterEditorPage() {
   return (
     <ScreenLayout
       title={character?.name ?? "角色编辑"}
-      subtitle="维护角色资料、可编辑提示词和结构化属性。"
+      subtitle=""
       toolbar={(
         <>
           <button type="button" onClick={() => navigate(-1)} className="action-btn">返回</button>
@@ -379,8 +399,8 @@ export function CharacterEditorPage() {
 
             {activeTab === "prompt" ? (
               <div className="editor-content">
-                <div className="text-muted">
-                  提示词全部可编辑。这里不再内置默认角色提示词文案。
+                <div className="text-muted" style={{ fontSize: 12 }}>
+                  当前支持的变量：{"{{current_time}}"}、{"{{当前时间}}"}
                 </div>
                 <label className="editor-field">
                   <span className="editor-field-label">长期背景提示词</span>
@@ -418,6 +438,63 @@ export function CharacterEditorPage() {
                     style={{ minHeight: 160 }}
                   />
                 </label>
+              </div>
+            ) : null}
+
+            {activeTab === "runtimeContext" ? (
+              <div className="editor-content">
+                <label className="editor-field">
+                  <span className="editor-field-label">运行时上下文</span>
+                  <div className="text-muted" style={{ fontSize: 12 }}>
+                    当前支持的变量：{"{{current_time}}"}、{"{{当前时间}}"}
+                  </div>
+                  <textarea
+                    value={character.runtime_system_prompt}
+                    onChange={(event) => updateDraft({ runtime_system_prompt: event.target.value })}
+                    className="editor-field-input editor-field-textarea"
+                    style={{ minHeight: 300 }}
+                  />
+                </label>
+              </div>
+            ) : null}
+
+            {activeTab === "avatar" ? (
+              <div className="editor-content">
+                <label className="action-btn" style={{ cursor: "pointer", width: "fit-content" }}>
+                  上传头像
+                  <input
+                    type="file"
+                    accept="image/*"
+                    style={{ display: "none" }}
+                    onChange={(event) => void handleUploadAvatar(event.target.files?.[0] ?? null)}
+                  />
+                </label>
+                {character.avatar_asset.trim() ? (
+                  <div className="asset-gallery">
+                    <div className="asset-gallery-card">
+                      <div className="asset-gallery-thumb-wrap">
+                        <img
+                          src={assetUrl(character.avatar_asset)}
+                          alt={`${character.name}-头像`}
+                          className="asset-gallery-thumb"
+                        />
+                        <span className="asset-gallery-badge">头像</span>
+                        <button
+                          type="button"
+                          className="asset-gallery-delete"
+                          onClick={() => updateDraft({ avatar_asset: "" })}
+                        >
+                          清除
+                        </button>
+                      </div>
+                      <div className="asset-gallery-path" title={character.avatar_asset}>
+                        {getAssetDisplayName(character.avatar_asset)}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-muted">当前还没有头像。</div>
+                )}
               </div>
             ) : null}
 
@@ -473,7 +550,7 @@ export function CharacterEditorPage() {
             {activeTab === "memory" ? (
               <div className="editor-content">
                 <label className="editor-field">
-                  <span className="editor-field-label">记忆策略说明</span>
+                  <span className="editor-field-label">记忆策略</span>
                   <textarea
                     value={character.memory_strategy}
                     onChange={(event) => updateDraft({ memory_strategy: event.target.value })}
@@ -512,9 +589,6 @@ export function CharacterEditorPage() {
                 <SurfacePanel className="surface-panel--pad-lg">
                   <div className="editor-content">
                     <div className="editor-field-label">结构化属性</div>
-                    <div className="text-muted">
-                      角色共享属性 schema 在世界编辑页维护，这里只填写当前角色的属性值。
-                    </div>
                     <AttributePanel
                       scope="character"
                       ownerType="character"

@@ -42,6 +42,7 @@ export function SceneHeaderComponent({ runtime, actions, node }: RuntimeComponen
   const showPlayerIdentity = readBooleanProp(node, "show_player_identity", true);
   const playerIdentityFormat = readStringProp(node, "player_identity_format", "label");
   const showVisibleCharacters = readBooleanProp(node, "show_visible_characters", false);
+  const showCopyButton = readBooleanProp(node, "show_copy_button", true);
   const titleMode = readStringProp(node, "title_mode", runtime.capabilities.platform);
   const isMobileTitle = titleMode === "mobile";
 
@@ -86,7 +87,7 @@ export function SceneHeaderComponent({ runtime, actions, node }: RuntimeComponen
             <span>{runtime.visible_characters.join(" / ")}</span>
           </span>
         ) : null}
-        {runtime.copyable_dialogue_text && runtime.capabilities.platform !== "mobile" ? (
+        {showCopyButton && runtime.copyable_dialogue_text && runtime.capabilities.platform !== "mobile" ? (
           <button
             type="button"
             className="game-quick-btn game-ui-button"
@@ -220,7 +221,7 @@ export function SidePanelTabsComponent({ runtime, actions, node, renderSlot }: R
       <div className="game-panel game-side-content game-ui-panel" data-variant="sidebar">
         {customContent ? customContent : null}
         {!customContent && visibleTabs.length === 0 ? <div className="game-card">{emptyText}</div> : null}
-        {runtime.active_side_tab === "map" && (runtime.capabilities.platform !== "mobile" || mobileDrawerOpen) ? (
+        {!customContent && runtime.active_side_tab === "map" && (runtime.capabilities.platform !== "mobile" || mobileDrawerOpen) ? (
           <Suspense fallback={<div className="game-map-graph" />}>
             <SessionMapGraph
               key={runtime.capabilities.platform === "mobile" ? `mobile-map-${mobileDrawerOpen ? "open" : "closed"}` : "desktop-map"}

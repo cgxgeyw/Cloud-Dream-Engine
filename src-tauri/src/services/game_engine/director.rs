@@ -1,11 +1,14 @@
 ﻿use crate::models::character::CharacterCreateRequest;
 use crate::models::character::CharacterDefinition;
 use crate::db::Database;
-use crate::models::mcp_tool::MCP_TOOL_SCHEDULE_NOTIFICATION_ID;
+use crate::models::mcp_tool::{McpToolDefinition, MCP_TOOL_SCHEDULE_NOTIFICATION_ID};
 use crate::models::model_config::ModelConfig;
 use crate::models::session::{ChatMessage, MessageContent, SessionSnapshot};
 use crate::models::world::WorldDefinition;
-use crate::services::game_engine::prompting::{build_prompt_call, llm_chat_messages_to_values};
+use crate::services::game_engine::prompting::{
+    build_prompt_call, llm_chat_messages_to_values, render_prompt_variables,
+    resolve_runtime_context_prompt,
+};
 use crate::services::llm::client::{
     ChatRequest, ChatToolCall, ChatToolChoice, ChatToolDefinition, LlmClient,
 };
@@ -75,20 +78,43 @@ impl WorldDirectorService {
         stage: &str,
         tool_loop_messages: Option<Vec<serde_json::Value>>,
     ) -> serde_json::Value {
+        self.build_runtime_prompt_call_with_mcp_tools(
+            world,
+            session,
+            characters,
+            player_input,
+            stage,
+            tool_loop_messages,
+            &[],
+        )
+    }
+
+    pub fn build_runtime_prompt_call_with_mcp_tools(
+        &self,
+        world: &WorldDefinition,
+        session: &SessionSnapshot,
+        characters: &[CharacterDefinition],
+        player_input: &str,
+        stage: &str,
+        tool_loop_messages: Option<Vec<serde_json::Value>>,
+        mcp_tools: &[McpToolDefinition],
+    ) -> serde_json::Value {
         let history_rounds = self.resolve_director_history_rounds(world);
         let chat_history = self.build_history_dialogue(
             &session.messages,
             history_rounds,
             Some(session.player_character_name.as_str()),
         );
-        let payload = self.build_runtime_turn_payload(
+        let payload = self.build_runtime_turn_payload_with_mcp_tools(
             world,
             session,
             characters,
             player_input,
             chat_history.clone(),
+            mcp_tools,
         );
         let system_prompt = self.resolve_director_system_prompt(world);
+        let runtime_context_prompt = resolve_runtime_context_prompt(world);
         let payload_text =
             serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string());
         let tool_loop_messages = tool_loop_messages.unwrap_or_default();
@@ -102,6 +128,7 @@ impl WorldDirectorService {
             &payload_text,
             self.build_runtime_prompt_messages(
                 &system_prompt,
+                &runtime_context_prompt,
                 &payload_text,
                 tool_loop_messages.clone(),
             ),
@@ -111,6 +138,7 @@ impl WorldDirectorService {
                 characters,
                 &payload,
                 &system_prompt,
+                &runtime_context_prompt,
             ),
             payload
                 .get("response_contract")
@@ -204,12 +232,15 @@ impl WorldDirectorService {
 
     #[allow(unreachable_code)]
     fn resolve_director_system_prompt(&self, world: &WorldDefinition) -> String {
-        world.director_runtime_system_prompt.trim().to_string()
+        render_prompt_variables(&world.director_runtime_system_prompt)
+            .trim()
+            .to_string()
     }
 
     fn build_runtime_prompt_messages(
         &self,
         system_prompt: &str,
+        runtime_context_prompt: &str,
         user_prompt: &str,
         tool_loop_messages: Vec<serde_json::Value>,
     ) -> Vec<serde_json::Value> {
@@ -218,11 +249,19 @@ impl WorldDirectorService {
                 "role": "system",
                 "content": system_prompt,
             }),
+        ];
+        if !runtime_context_prompt.trim().is_empty() {
+            messages.push(serde_json::json!({
+                "role": "system",
+                "content": runtime_context_prompt,
+            }));
+        }
+        messages.push(
             serde_json::json!({
                 "role": "user",
                 "content": user_prompt,
             }),
-        ];
+        );
         messages.extend(tool_loop_messages);
         messages
     }
@@ -234,6 +273,7 @@ impl WorldDirectorService {
         characters: &[CharacterDefinition],
         payload: &serde_json::Value,
         system_prompt: &str,
+        runtime_context_prompt: &str,
     ) -> Vec<serde_json::Value> {
         let mut modules = self.build_prompt_presets(world, session, characters);
         modules.push(serde_json::json!({
@@ -243,6 +283,15 @@ impl WorldDirectorService {
             "editable": true,
             "sent": true
         }));
+        if !runtime_context_prompt.trim().is_empty() {
+            modules.push(serde_json::json!({
+                "name": "runtime_context",
+                "source": "world.director_config.runtime_context_prompt",
+                "content": runtime_context_prompt,
+                "editable": true,
+                "sent": true
+            }));
+        }
         modules.push(serde_json::json!({
             "name": "basic_setting",
             "source": "runtime_payload.basic_setting",
@@ -289,6 +338,25 @@ impl WorldDirectorService {
         player_input: &str,
         chat_history: Vec<serde_json::Value>,
     ) -> serde_json::Value {
+        self.build_runtime_turn_payload_with_mcp_tools(
+            world,
+            session,
+            characters,
+            player_input,
+            chat_history,
+            &[],
+        )
+    }
+
+    pub fn build_runtime_turn_payload_with_mcp_tools(
+        &self,
+        world: &WorldDefinition,
+        session: &SessionSnapshot,
+        characters: &[CharacterDefinition],
+        player_input: &str,
+        chat_history: Vec<serde_json::Value>,
+        mcp_tools: &[McpToolDefinition],
+    ) -> serde_json::Value {
         let world_character_roster = characters
             .iter()
             .map(|character| character.name.clone())
@@ -315,7 +383,7 @@ impl WorldDirectorService {
             },
             "chat_history": chat_history,
             "tool_data": {
-                "available_tools": self.build_director_tool_capabilities(world),
+                "available_tools": self.build_director_tool_capabilities(world, mcp_tools),
                 "tool_protocol": self.build_tool_protocol(),
                 "visual_capabilities": visual_capabilities
             },
@@ -595,6 +663,7 @@ impl WorldDirectorService {
                 characters,
                 &payload,
                 &self.resolve_director_system_prompt(world),
+                &resolve_runtime_context_prompt(world),
             ),
             payload
                 .get("response_contract")
@@ -1143,7 +1212,14 @@ impl WorldDirectorService {
                         }
                     }
                 }
-                _ => {}
+                _ => {
+                    tool_results.push(serde_json::json!({
+                        "id": call_id,
+                        "tool_name": tool_name,
+                        "ok": false,
+                        "error": format!("Tool execution is not implemented for custom MCP tool: {tool_name}"),
+                    }));
+                }
             }
         }
         if !pending_notifications.is_empty() {
@@ -1582,17 +1658,15 @@ impl WorldDirectorService {
                 .max(1),
             attributes: vec![],
             portrait_assets: vec![],
+            avatar_asset: String::new(),
             system_prompt_template: String::new(),
             response_contract_prompt: String::new(),
             narration_prompt: String::new(),
+            runtime_system_prompt: String::new(),
         };
         let created = crate::db::repositories::character_repo::CharacterRepository::new(conn)
             .create(&world.id, &request)?;
-        let enriched = CharacterDefinition {
-            runtime_system_prompt: self
-                .build_character_system_prompt_with_contract(&created.name, Some(&created)),
-            ..created
-        };
+        let enriched = created;
         characters.push(enriched.clone());
         Ok(Some(enriched))
     }
@@ -1677,16 +1751,14 @@ impl WorldDirectorService {
                         .unwrap_or(6),
                     attributes: vec![],
                     portrait_assets: vec![],
+                    avatar_asset: String::new(),
                     system_prompt_template: String::new(),
                     response_contract_prompt: String::new(),
                     narration_prompt: String::new(),
+                    runtime_system_prompt: String::new(),
                 },
             )?;
-            let enriched = CharacterDefinition {
-                runtime_system_prompt: self
-                    .build_character_system_prompt_with_contract(&created.name, Some(&created)),
-                ..created
-            };
+            let enriched = created;
             creation_messages
                 .push(self.build_character_created_message(turn_index, &enriched, true));
             characters.push(enriched.clone());
@@ -2045,7 +2117,11 @@ impl WorldDirectorService {
             .collect()
     }
 
-    fn build_director_tool_capabilities(&self, world: &WorldDefinition) -> Vec<serde_json::Value> {
+    fn build_director_tool_capabilities(
+        &self,
+        world: &WorldDefinition,
+        mcp_tools: &[McpToolDefinition],
+    ) -> Vec<serde_json::Value> {
         let allowed = self.resolve_world_allowed_tool_ids(world);
         let allowed = allowed.into_iter().collect::<BTreeSet<_>>();
         let mut tools = vec![
@@ -2106,6 +2182,25 @@ impl WorldDirectorService {
         }
         if allowed.contains(MCP_TOOL_SCHEDULE_NOTIFICATION_ID) {
             tools.push(notification_tool_definition());
+        }
+        for tool in mcp_tools {
+            if !tool.enabled || !allowed.contains(&tool.id) || is_builtin_mcp_tool_id(&tool.id) {
+                continue;
+            }
+            if mcp_tool_exposure_mode(&tool.exposure_policy) == "disabled" {
+                continue;
+            }
+            let tool_name = tool.tool_name.trim();
+            if tool_name.is_empty() {
+                continue;
+            }
+            tools.push(serde_json::json!({
+                "tool_name": tool_name,
+                "description": tool.description.trim(),
+                "arguments_schema": tool.input_schema.clone(),
+                "server_name": tool.server_name.clone(),
+                "mcp_tool_id": tool.id.clone(),
+            }));
         }
         tools
     }
@@ -2196,15 +2291,6 @@ impl WorldDirectorService {
                     .unwrap_or(false)
             })
             .unwrap_or(false)
-    }
-
-    fn build_character_system_prompt_with_contract(
-        &self,
-        speaker_name: &str,
-        speaker_profile: Option<&CharacterDefinition>,
-    ) -> String {
-        crate::services::game_engine::dialogue::DialoguePipeline::new()
-            .build_character_system_prompt_with_contract(speaker_name, speaker_profile, None, None)
     }
 
     fn build_character_created_message(
@@ -2787,6 +2873,26 @@ fn arg_string_list(value: Option<&serde_json::Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn is_builtin_mcp_tool_id(id: &str) -> bool {
+    matches!(
+        id,
+        "mcp-tool-list-scenes"
+            | "mcp-tool-list-characters"
+            | "mcp-tool-change-scene"
+            | "mcp-tool-switch-player-character"
+            | "mcp-tool-image-generation"
+    ) || id == MCP_TOOL_SCHEDULE_NOTIFICATION_ID
+}
+
+fn mcp_tool_exposure_mode(policy: &serde_json::Value) -> &str {
+    policy
+        .as_str()
+        .or_else(|| policy.get("mode").and_then(|value| value.as_str()))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("on-demand")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3144,6 +3250,7 @@ mod tests {
                 recent_dialogue_rounds: 6,
                 attributes: vec![],
                 portrait_assets: vec![],
+                avatar_asset: String::new(),
                 system_prompt_template: String::new(),
                 response_contract_prompt: String::new(),
                 narration_prompt: String::new(),
@@ -3160,6 +3267,7 @@ mod tests {
                 recent_dialogue_rounds: 6,
                 attributes: vec![],
                 portrait_assets: vec![],
+                avatar_asset: String::new(),
                 system_prompt_template: String::new(),
                 response_contract_prompt: String::new(),
                 narration_prompt: String::new(),

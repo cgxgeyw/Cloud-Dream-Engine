@@ -50,6 +50,104 @@ function Remove-FileWithRetry {
     }
 }
 
+function Remove-DirectoryWithRetry {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$LiteralPath,
+        [int]$Retries = 8,
+        [int]$DelayMilliseconds = 750
+    )
+
+    if (-not (Test-Path -LiteralPath $LiteralPath)) {
+        return
+    }
+
+    for ($attempt = 1; $attempt -le $Retries; $attempt++) {
+        try {
+            Remove-Item -LiteralPath $LiteralPath -Recurse -Force -ErrorAction Stop
+            return
+        } catch {
+            if ($attempt -ge $Retries) {
+                throw "Unable to remove generated directory because a file is still in use: $LiteralPath. Close any running app, Android build, Explorer preview/properties window, or antivirus scan that may be using these files, then retry. Original error: $($_.Exception.Message)"
+            }
+
+            Start-Sleep -Milliseconds $DelayMilliseconds
+        }
+    }
+}
+
+function Get-AndroidRustTargetTriple {
+    param([string]$BuildTarget)
+
+    switch ($BuildTarget) {
+        "aarch64" { return "aarch64-linux-android" }
+        "armv7" { return "armv7-linux-androideabi" }
+        "i686" { return "i686-linux-android" }
+        "x86_64" { return "x86_64-linux-android" }
+    }
+
+    throw "Unsupported Android target: $BuildTarget"
+}
+
+function Test-ResourceTreeCopyable {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourcePath
+    )
+
+    if (-not (Test-Path -LiteralPath $SourcePath)) {
+        return
+    }
+
+    $scratchRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("rustweb-resource-copy-" + [guid]::NewGuid().ToString("N"))
+    $scratchTarget = Join-Path $scratchRoot "embedding-models"
+
+    try {
+        New-Item -ItemType Directory -Force -Path $scratchRoot | Out-Null
+        Copy-Item -LiteralPath $SourcePath -Destination $scratchTarget -Recurse -Force -ErrorAction Stop
+    } catch {
+        throw "Unable to pre-copy Android embedding resources from $SourcePath. Close any running app or process using the local embedding model files, then retry. Original error: $($_.Exception.Message)"
+    } finally {
+        if (Test-Path -LiteralPath $scratchRoot) {
+            Remove-Item -LiteralPath $scratchRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Prepare-AndroidEmbeddingResources {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$BuildTarget
+    )
+
+    $sourceDir = Join-Path $RepoRoot "src-tauri\resources\embedding-models"
+    if (-not (Test-Path -LiteralPath $sourceDir)) {
+        return
+    }
+
+    $targetTriple = Get-AndroidRustTargetTriple -BuildTarget $BuildTarget
+    $generatedDirs = @(
+        (Join-Path $RepoRoot "src-tauri\target\$targetTriple\release\embedding-models"),
+        (Join-Path $RepoRoot "src-tauri\gen\android\app\src\main\assets\embedding-models")
+    )
+
+    foreach ($dir in $generatedDirs) {
+        Remove-DirectoryWithRetry -LiteralPath $dir
+    }
+
+    $intermediatesAssetsDir = Join-Path $RepoRoot "src-tauri\gen\android\app\build\intermediates\assets"
+    if (Test-Path -LiteralPath $intermediatesAssetsDir) {
+        Get-ChildItem -Path $intermediatesAssetsDir -Directory -Recurse -Filter "embedding-models" |
+            ForEach-Object {
+                Remove-DirectoryWithRetry -LiteralPath $_.FullName
+            }
+    }
+
+    Test-ResourceTreeCopyable -SourcePath $sourceDir
+}
+
 function Ensure-AndroidAdjustResize {
     param([string]$ManifestPath)
 
@@ -263,39 +361,15 @@ try {
         }
     }
 
-    $abiList = "arm64-v8a"
-    $archList = "arm64"
-    switch ($Target) {
-        "armv7" {
-            $abiList = "armeabi-v7a"
-            $archList = "arm"
-        }
-        "i686" {
-            $abiList = "x86"
-            $archList = "x86"
-        }
-        "x86_64" {
-            $abiList = "x86_64"
-            $archList = "x86_64"
-        }
-    }
+    Write-Host "Preparing Android embedding resources..." -ForegroundColor Cyan
+    Prepare-AndroidEmbeddingResources -RepoRoot $repoRoot -BuildTarget $Target
 
     Write-Host "Building Android APK..." -ForegroundColor Cyan
     npx tauri android build --apk --ci -t $Target
     $tauriExitCode = $LASTEXITCODE
 
     if ($tauriExitCode -ne 0) {
-        Write-Host "Tauri build failed, retrying Android packaging from local Gradle cache..." -ForegroundColor DarkYellow
-        $env:GRADLE_USER_HOME = $defaultGradleUserHome
-        & $gradleWrapper `
-            --project-dir $androidProjectDir `
-            --no-daemon `
-            --offline `
-            assembleUniversalRelease `
-            "-PabiList=$abiList" `
-            "-ParchList=$archList" `
-            "-PtargetList=$Target"
-        $tauriExitCode = $LASTEXITCODE
+        Write-Host "Tauri build failed. Skipping the Gradle-only retry because Android Studio Gradle tasks require a live Tauri CLI context and cannot recover a failed resource copy." -ForegroundColor DarkYellow
     }
 
     $generatedApks = Get-ChildItem -Path $apkOutputDir -Recurse -Filter *.apk -File |
@@ -305,9 +379,9 @@ try {
 
     if (-not $freshGeneratedApks -or $freshGeneratedApks.Count -eq 0) {
         if (-not $generatedApks -or $generatedApks.Count -eq 0) {
-            throw "Build completed, but no APK output was found."
+            throw "Tauri Android APK build failed before producing an APK. If the error mentioned model.safetensors or os error 1224, close any running app/process using the local embedding model files and retry."
         }
-        throw "Build completed, but no fresh APK was generated for this run. Refusing to archive stale artifacts."
+        throw "Tauri Android APK build failed without producing a fresh APK. Refusing to archive stale artifacts."
     }
 
     $latestApk = $freshGeneratedApks | Select-Object -First 1

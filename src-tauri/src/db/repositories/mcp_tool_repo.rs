@@ -14,7 +14,9 @@ impl<'a> McpToolRepository<'a> {
     pub fn list(&self) -> Result<Vec<McpToolDefinition>, String> {
         let mut stmt = self
             .conn
-            .prepare("SELECT * FROM mcp_tools ORDER BY name")
+            .prepare(
+                "SELECT id, name, description, server_name, tool_name, enabled, exposure_policy_json, risk_level, trigger_keywords_json, input_schema_json FROM mcp_tools ORDER BY name",
+            )
             .map_err(|e| e.to_string())?;
 
         let tools = stmt
@@ -31,6 +33,11 @@ impl<'a> McpToolRepository<'a> {
                     risk_level: row.get(7)?,
                     trigger_keywords: serde_json::from_str(&row.get::<_, String>(8)?)
                         .unwrap_or_default(),
+                    input_schema: normalize_input_schema(
+                        serde_json::from_str(&row.get::<_, String>(9)?).unwrap_or_else(|_| {
+                            default_input_schema()
+                        }),
+                    ),
                 })
             })
             .map_err(|e| e.to_string())?
@@ -53,8 +60,9 @@ impl<'a> McpToolRepository<'a> {
         let exposure_policy = normalize_exposure_policy(req.exposure_policy.clone());
         let risk_level = normalize_risk_level(&req.risk_level);
         let trigger_keywords = normalize_keywords(&req.trigger_keywords);
+        let input_schema = normalize_input_schema(req.input_schema.clone());
         self.conn.execute(
-            "INSERT INTO mcp_tools (id, name, description, server_name, tool_name, enabled, exposure_policy_json, risk_level, trigger_keywords_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO mcp_tools (id, name, description, server_name, tool_name, enabled, exposure_policy_json, risk_level, trigger_keywords_json, input_schema_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 id,
                 req.name.trim(),
@@ -65,6 +73,9 @@ impl<'a> McpToolRepository<'a> {
                 serde_json::to_string(&exposure_policy).unwrap_or_default(),
                 risk_level,
                 serde_json::to_string(&trigger_keywords).unwrap_or_default(),
+                serde_json::to_string(&input_schema).unwrap_or_else(|_| {
+                    serde_json::to_string(&default_input_schema()).unwrap_or_default()
+                }),
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -79,6 +90,7 @@ impl<'a> McpToolRepository<'a> {
             exposure_policy,
             risk_level: risk_level.to_string(),
             trigger_keywords,
+            input_schema,
         })
     }
 
@@ -90,8 +102,9 @@ impl<'a> McpToolRepository<'a> {
         let exposure_policy = normalize_exposure_policy(req.exposure_policy.clone());
         let risk_level = normalize_risk_level(&req.risk_level);
         let trigger_keywords = normalize_keywords(&req.trigger_keywords);
+        let input_schema = normalize_input_schema(req.input_schema.clone());
         self.conn.execute(
-            "UPDATE mcp_tools SET name = ?1, description = ?2, server_name = ?3, tool_name = ?4, enabled = ?5, exposure_policy_json = ?6, risk_level = ?7, trigger_keywords_json = ?8 WHERE id = ?9",
+            "UPDATE mcp_tools SET name = ?1, description = ?2, server_name = ?3, tool_name = ?4, enabled = ?5, exposure_policy_json = ?6, risk_level = ?7, trigger_keywords_json = ?8, input_schema_json = ?9 WHERE id = ?10",
             params![
                 req.name.trim(),
                 req.description.trim(),
@@ -101,6 +114,9 @@ impl<'a> McpToolRepository<'a> {
                 serde_json::to_string(&exposure_policy).unwrap_or_default(),
                 risk_level,
                 serde_json::to_string(&trigger_keywords).unwrap_or_default(),
+                serde_json::to_string(&input_schema).unwrap_or_else(|_| {
+                    serde_json::to_string(&default_input_schema()).unwrap_or_default()
+                }),
                 id,
             ],
         )
@@ -108,7 +124,9 @@ impl<'a> McpToolRepository<'a> {
 
         let mut stmt = self
             .conn
-            .prepare("SELECT * FROM mcp_tools WHERE id = ?1")
+            .prepare(
+                "SELECT id, name, description, server_name, tool_name, enabled, exposure_policy_json, risk_level, trigger_keywords_json, input_schema_json FROM mcp_tools WHERE id = ?1",
+            )
             .map_err(|e| e.to_string())?;
         let mut rows = stmt
             .query_map(params![id], |row| {
@@ -124,6 +142,11 @@ impl<'a> McpToolRepository<'a> {
                     risk_level: row.get(7)?,
                     trigger_keywords: serde_json::from_str(&row.get::<_, String>(8)?)
                         .unwrap_or_default(),
+                    input_schema: normalize_input_schema(
+                        serde_json::from_str(&row.get::<_, String>(9)?).unwrap_or_else(|_| {
+                            default_input_schema()
+                        }),
+                    ),
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -222,4 +245,26 @@ fn normalize_keywords(values: &[String]) -> Vec<String> {
             }
         })
         .collect()
+}
+
+fn default_input_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {}
+    })
+}
+
+fn normalize_input_schema(value: serde_json::Value) -> serde_json::Value {
+    let serde_json::Value::Object(mut object) = value else {
+        return default_input_schema();
+    };
+
+    if !object.contains_key("type") {
+        object.insert(
+            "type".to_string(),
+            serde_json::Value::String("object".to_string()),
+        );
+    }
+
+    serde_json::Value::Object(object)
 }

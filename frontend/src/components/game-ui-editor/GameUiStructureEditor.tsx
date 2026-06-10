@@ -22,6 +22,7 @@ const COMPONENT_LIBRARY = [
       show_time_label: "boolean",
       show_player_identity: "boolean",
       show_visible_characters: "boolean",
+      show_copy_button: "boolean",
       title_mode: "desktop|mobile",
     },
   },

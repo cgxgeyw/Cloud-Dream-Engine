@@ -69,10 +69,12 @@ export type CharacterUpsertRequest = {
   recent_dialogue_rounds: number;
   attributes: string[];
   portrait_assets: string[];
+  avatar_asset: string;
   custom_tabs: Record<string, string>;
   system_prompt_template: string;
   response_contract_prompt: string;
   narration_prompt: string;
+  runtime_system_prompt: string;
 };
 
 export type CharacterMemoryGroupResponse = { character_id: string; character_name: string; memories: MemoryEntryResponse[]; };

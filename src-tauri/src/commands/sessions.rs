@@ -142,6 +142,10 @@ pub async fn submit_player_action(
     }
 
     let director_service = &state.services.runtime.world_director;
+    let mcp_tools = {
+        let db = state.db.lock().await;
+        crate::db::repositories::mcp_tool_repo::McpToolRepository::new(db.conn()).list()?
+    };
     let mut emit_director_progress =
         |progress: crate::services::game_engine::director::DirectorLoopStreamProgress| {
             let trace_message =
@@ -172,6 +176,7 @@ pub async fn submit_player_action(
             &characters,
             turn_index,
             request.content.as_str(),
+            &mcp_tools,
             Some(NotificationToolRuntime {
                 app: &app,
                 data_dir: &state.data_dir,
@@ -623,13 +628,35 @@ async fn run_agent_chat_player_action(
             },
         )
         .await;
-    let runtime_application =
-        crate::services::game_engine::runtime_effects::DirectorRuntimeApplication {
-            pending_notifications: speaker_turn_result.pending_notifications.clone(),
-            ..crate::services::game_engine::runtime_effects::DirectorRuntimeApplication::default()
-        };
+    let agent_runtime_payload =
+        merge_agent_chat_runtime_payloads(&speaker_turn_result.runtime_payloads);
     {
         let db = state.db.lock().await;
+        let mut runtime_application = if agent_runtime_payload
+            .as_object()
+            .map(|object| object.is_empty())
+            .unwrap_or(true)
+        {
+            crate::services::game_engine::runtime_effects::DirectorRuntimeApplication::default()
+        } else {
+            crate::services::game_engine::runtime_effects::apply_director_runtime_effects(
+                db.conn(),
+                &state.services.runtime.inventory,
+                &state.services.runtime.trigger_engine,
+                &state.services.runtime.rule_engine,
+                &state.services.runtime.scene_manager,
+                &state.services.runtime.state_engine,
+                &world,
+                &session,
+                &characters,
+                turn_index,
+                request.content.as_str(),
+                &agent_runtime_payload,
+            )?
+        };
+        runtime_application
+            .pending_notifications
+            .extend(speaker_turn_result.pending_notifications.clone());
         state.services.runtime.memory.commit_turn_memories(
             db.conn(),
             &recovery_journal,
@@ -670,6 +697,53 @@ async fn run_agent_chat_player_action(
     }
     let _ = SessionEventEmitter::emit_snapshot(app, &session_id, &updated);
     Ok(updated)
+}
+
+fn merge_agent_chat_runtime_payloads(payloads: &[serde_json::Value]) -> serde_json::Value {
+    const ARRAY_KEYS: &[&str] = &[
+        "session_attribute_updates",
+        "attribute_updates",
+        "character_attribute_updates",
+        "pending_notifications",
+        "memory_entries",
+        "tool_calls",
+    ];
+    const VALUE_KEYS: &[&str] = &[
+        "inventory_items",
+        "inventory",
+        "state_metrics",
+        "session_metrics",
+        "metrics",
+        "state_phase",
+        "world_phase",
+        "player_stats",
+    ];
+
+    let mut merged = serde_json::Map::new();
+    for payload in payloads {
+        let Some(object) = payload.as_object() else {
+            continue;
+        };
+        for key in ARRAY_KEYS {
+            let Some(items) = object.get(*key).and_then(|value| value.as_array()) else {
+                continue;
+            };
+            let entry = merged
+                .entry((*key).to_string())
+                .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+            if let Some(target) = entry.as_array_mut() {
+                target.extend(items.iter().cloned());
+            }
+        }
+        for key in VALUE_KEYS {
+            if let Some(value) = object.get(*key) {
+                if !value.is_null() {
+                    merged.insert((*key).to_string(), value.clone());
+                }
+            }
+        }
+    }
+    serde_json::Value::Object(merged)
 }
 
 #[tauri::command]

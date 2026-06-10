@@ -2543,6 +2543,48 @@
   to { opacity: 0; transform: translateY(-8px) scale(0.96); }
 }
 
+.game-root--mobile-session .game-message-inline-actions .game-message-action-btn,
+.game-root--mobile-session .game-message-actions .game-message-action-btn {
+  min-height: 24px;
+  font-size: 11px;
+  line-height: 1;
+  transition:
+    transform 140ms ease,
+    background-color 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.game-root--mobile-session .game-message-inline-actions {
+  margin-top: 5px;
+  padding-top: 0;
+  border-top: 0;
+  background: transparent;
+}
+
+.game-root--mobile-session .game-message-inline-actions .game-message-action-btn {
+  min-width: 26px;
+  height: 24px;
+  padding: 0 7px;
+  background: transparent;
+}
+
+.game-root--mobile-session .game-message-action-btn--copy,
+.game-root--mobile-session .game-message-action-btn--branch {
+  touch-action: manipulation;
+}
+
+.game-root--mobile-session .game-message-action-btn:not(:disabled):active {
+  transform: scale(0.94);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.10);
+}
+
+.game-root--mobile-session .game-message-action-btn--copy:not(:disabled):active,
+.game-root--mobile-session .game-message-action-btn--branch:not(:disabled):active {
+  background: color-mix(in srgb, var(--color-accent) 14%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--color-accent) 42%, var(--color-border));
+}
+
 /* ═══════════════════════════════════════════════════════════════
    Mobile Responsive Styles (< 768px)
    ═══════════════════════════════════════════════════════════════ */

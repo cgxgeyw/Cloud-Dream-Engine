@@ -53,16 +53,17 @@ import {
 } from "../data/gameUi";
 
 const fixedTabs = [
-  { id: "basic", label: "基础信息", summary: "维护世界名称、类型、摘要和默认玩家身份。" },
-  { id: "background", label: "世界背景", summary: "维护世界客观设定和共享背景资料。" },
-  { id: "opening", label: "开场配置", summary: "配置新游戏开局消息和初始在场角色。" },
-  { id: "time", label: "时间系统", summary: "配置时间推进模式、起始时间和时段列表。" },
-  { id: "map", label: "地图", summary: "使用 JSON 描述世界地图层级拓扑。" },
-  { id: "customAttributes", label: "自定义属性", summary: "配置世界自定义属性项和角色共享属性项。" },
-  { id: "director", label: "世界主控", summary: "配置世界主控权限、记忆和提示词。" },
-  { id: "promptPreview", label: "Prompt 预览", summary: "查看实际发送给模型的 prompt 内容。" },
-  { id: "style", label: "界面风格", summary: "配置背景素材和世界包 UI 文档。" },
-  { id: "configPreview", label: "配置预览", summary: "查看当前世界完整 JSON 配置。" },
+  { id: "basic", label: "基础信息" },
+  { id: "background", label: "世界背景" },
+  { id: "opening", label: "开场配置" },
+  { id: "time", label: "时间系统" },
+  { id: "map", label: "地图" },
+  { id: "customAttributes", label: "自定义属性" },
+  { id: "runtimeContext", label: "运行时上下文" },
+  { id: "director", label: "世界主控" },
+  { id: "promptPreview", label: "Prompt 预览" },
+  { id: "style", label: "界面风格" },
+  { id: "configPreview", label: "配置预览" },
 ] as const;
 
 function createLegacyGameUiFile(platform: GameUiPlatform): string {
@@ -245,6 +246,7 @@ type DirectorConfig = {
   character_memory_retrieval_mode: "lexical_only" | "hybrid" | "semantic_only";
   character_memory_candidate_limit: number;
   character_memory_semantic_weight: number;
+  runtime_context_prompt: string;
   world_director_prompt: string;
   prompt_presets: PromptPreset[];
   return_processing_rules: ReturnProcessingRule[];
@@ -313,6 +315,7 @@ const defaultDirectorConfig: DirectorConfig = {
   character_memory_retrieval_mode: "hybrid",
   character_memory_candidate_limit: 200,
   character_memory_semantic_weight: 0.65,
+  runtime_context_prompt: "",
   world_director_prompt: defaultWorldDirectorPrompt,
   prompt_presets: [],
   return_processing_rules: [],
@@ -577,6 +580,10 @@ function normalizeDirectorConfig(raw: Record<string, unknown> | undefined): Dire
       typeof raw?.world_director_prompt === "string" && raw.world_director_prompt.trim()
         ? raw.world_director_prompt
         : defaultDirectorConfig.world_director_prompt,
+    runtime_context_prompt:
+      typeof raw?.runtime_context_prompt === "string"
+        ? raw.runtime_context_prompt
+        : defaultDirectorConfig.runtime_context_prompt,
     prompt_presets: Array.isArray(raw?.prompt_presets)
       ? raw.prompt_presets.map((item, index) => {
           const row = item as Record<string, unknown>;
@@ -974,7 +981,7 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
     () =>
       openingMessages.length > 0
         ? openingMessages
-        : ([{ role: "system", content: "开场消息会显示在这里。请在开场配置中添加旁白或角色消息。" }] as WorldOpeningMessage[]),
+        : ([{ role: "system", content: "暂无开场消息。" }] as WorldOpeningMessage[]),
     [openingMessages],
   );
   const previewWorldName = world?.name?.trim() || "未命名世界";
@@ -1011,7 +1018,7 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
     () =>
       previewMessages.find((message) => message.role === "system" && message.content.trim())?.content.trim()
       || world?.summary?.trim()
-      || "这里会显示世界旁白或当前场景说明。",
+      || "暂无场景说明。",
     [previewMessages, world?.summary],
   );
   const previewTimeLabel = useMemo(() => {
@@ -1870,10 +1877,7 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
                 borderRadius: 18,
               }}
             >
-              <span style={{ display: "grid", gap: 4 }}>
-                <span style={{ fontSize: 16, fontWeight: 700 }}>{tab.label}</span>
-                <span className="text-muted" style={{ fontSize: 13 }}>{tab.summary}</span>
-              </span>
+              <span style={{ fontSize: 16, fontWeight: 700 }}>{tab.label}</span>
               <span aria-hidden="true" style={{ fontSize: 18, opacity: 0.72 }}>›</span>
             </button>
           ))}
@@ -1936,9 +1940,6 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
         {sectionId === "background" ? (
           <SurfacePanel className="surface-panel--pad-lg">
             <div className="editor-content">
-              <div className="text-muted">
-                这里填写世界的客观背景设定。这部分会作为角色和世界主控共享的世界常识读取，所以不要写“系统会怎样”“世界主控负责怎样”这类元信息。
-              </div>
               <label className="editor-field">
                 <span className="editor-field-label">世界背景设定</span>
                 <textarea value={world.background_prompt} onChange={(e) => updateDraft({ background_prompt: e.target.value })} className="editor-field-input editor-field-textarea" style={{ minHeight: 220 }} />
@@ -1950,10 +1951,8 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
         {sectionId === "opening" ? (
           <SurfacePanel className="surface-panel--pad-lg">
             <div className="editor-content">
-              <div className="text-muted">这里配置新游戏开场时直接出现在聊天区里的内容，不会再让 NPC 自动代替世界做说明。</div>
               <div className="editor-content" style={{ padding: 12, border: "1px solid var(--color-border)", borderRadius: 16 }}>
                 <div className="editor-field-label">开局在场 NPC</div>
-                <div className="text-muted">这里决定新游戏开局时已经出现在场景里的角色。未勾选的世界角色不会自动出现在开局场景；如果它在开场消息里直接发言，也会自动视为在场。</div>
                 {characters.length === 0 ? (
                   <div className="text-muted">当前世界还没有角色，先去角色池创建角色。</div>
                 ) : (
@@ -2032,7 +2031,6 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
               </div>
               <div className="editor-content" style={{ padding: 12, border: "1px solid var(--color-border)", borderRadius: 16 }}>
                 <div className="editor-field-label">开场预览</div>
-                <div className="text-muted">保存后，新游戏会直接以这里的消息列表作为聊天开局。</div>
                 <div className="editor-content" style={{ gap: 8, padding: 0 }}>
                   <div className="editor-field-label">开场场景内角色</div>
                   {openingSceneCharacters.length > 0 ? (
@@ -2085,7 +2083,6 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
                     <div className="flex flex--items-center flex--justify-between world-editor-section-head" style={{ gap: 12 }}>
                       <div>
                         <div className="editor-field-label">时段列表</div>
-                        <div className="text-muted">标签序列模式下按列表推进，每个时段都可以单独填写名称和时刻。</div>
                       </div>
                       <div className="world-editor-section-head-action">
                         <button type="button" className="action-btn" onClick={() => addTimeSlot()}>新增时段</button>
@@ -2141,7 +2138,6 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
             <div className="editor-content">
               <FoldableEditorSection
                 title="世界属性"
-                description="定义并维护世界级结构化属性。这里既可以建 schema，也可以直接编辑当前世界的值。"
                 defaultOpen
               >
                 <AttributePanel
@@ -2152,7 +2148,6 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
               </FoldableEditorSection>
               <FoldableEditorSection
                 title="角色共享属性"
-                description="定义所有角色共用的属性 schema。具体数值在角色编辑页里填写。"
                 defaultOpen
               >
                 <AttributePanel
@@ -2161,6 +2156,25 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
                   ownerId={undefined}
                 />
               </FoldableEditorSection>
+            </div>
+          </SurfacePanel>
+        ) : null}
+
+        {sectionId === "runtimeContext" ? (
+          <SurfacePanel className="surface-panel--pad-lg">
+            <div className="editor-content">
+              <label className="editor-field">
+                <span className="editor-field-label">运行时上下文</span>
+                <div className="text-muted" style={{ fontSize: 12 }}>
+                  当前支持的变量：{"{{current_time}}"}、{"{{当前时间}}"}
+                </div>
+                <textarea
+                  value={directorConfig.runtime_context_prompt}
+                  onChange={(e) => updateDirectorPatch({ runtime_context_prompt: e.target.value })}
+                  className="editor-field-input editor-field-textarea"
+                  style={{ minHeight: 300 }}
+                />
+              </label>
             </div>
           </SurfacePanel>
         ) : null}
@@ -2296,9 +2310,11 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
                         </option>
                       ) : null}
                     </select>
+                    <div className="text-muted" style={{ fontSize: 12 }}>
+                      当前支持的变量：{"{{current_time}}"}、{"{{当前时间}}"}
+                    </div>
                     <textarea value={directorConfig.world_director_prompt} onChange={(e) => updateMergedDirectorPrompt(e.target.value)} className="editor-field-input editor-field-textarea" style={{ minHeight: 300 }} />
                   </label>
-                  <div className="text-muted">角色系统模板、角色返回契约和角色旁白提示词已经移到角色池，每个角色单独维护。</div>
                 </FoldableEditorSection>
               ) : null}
 
@@ -2339,7 +2355,6 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
         {sectionId === "promptPreview" ? (
           <SurfacePanel className="surface-panel--pad-lg">
             <div className="editor-content">
-              <div className="text-muted">这里展示实际发送给模型的 prompt 预览。</div>
               {promptPreviewLoading ? <div className="empty-text">正在加载 prompt 预览...</div> : null}
               {promptPreviewError ? <div className="text-error">{promptPreviewError}</div> : null}
               {promptPreview ? (
@@ -2436,7 +2451,6 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
         {sectionId === "configPreview" ? (
           <SurfacePanel className="surface-panel--pad-lg">
             <div className="editor-content">
-              <div className="text-muted">当前世界完整 JSON 配置。</div>
               <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-all", fontSize: 12, padding: 16, background: "var(--color-surface-2)", borderRadius: 12 }}>{previewJson}</pre>
             </div>
           </SurfacePanel>
@@ -2468,12 +2482,7 @@ export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
   return (
     <ScreenLayout
       title={isMobile && activeSection ? fixedTabs.find((tab) => tab.id === activeSection)?.label ?? "世界编辑" : world?.name ?? "世界编辑"}
-      subtitle={
-        isMobile && activeSection
-          ? fixedTabs.find((tab) => tab.id === activeSection)?.summary ??
-            "这里维护世界级信息、时间系统、地图、世界主控，以及跟世界绑定的游戏界面风格。"
-          : "这里维护世界级信息、时间系统、地图、世界主控，以及跟世界绑定的游戏界面风格。"
-      }
+      subtitle=""
       toolbar={
         <div className="world-editor-toolbar">
           {isMobile ? (

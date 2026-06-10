@@ -1,5 +1,6 @@
 use crate::models::attribute::AttributeValue;
 use crate::models::character::CharacterDefinition;
+use crate::models::mcp_tool::McpToolDefinition;
 use crate::models::model_config::ModelConfig;
 use crate::models::scheduled_notification::PendingScheduledNotification;
 use crate::models::session::*;
@@ -57,6 +58,7 @@ pub struct SpeakerTurnRunResult {
     pub messages: Vec<ChatMessage>,
     pub failure: Option<StructuredOutputFailure>,
     pub pending_notifications: Vec<PendingScheduledNotification>,
+    pub runtime_payloads: Vec<serde_json::Value>,
 }
 
 pub struct PreparedTurnContext {
@@ -411,9 +413,11 @@ mod tests {
                     recent_dialogue_rounds: 2,
                     attributes: vec![],
                     portrait_assets: vec![],
+                    avatar_asset: String::new(),
                     system_prompt_template: String::new(),
                     response_contract_prompt: String::new(),
                     narration_prompt: String::new(),
+                    runtime_system_prompt: String::new(),
                 },
             )
             .expect("create character");
@@ -1114,6 +1118,7 @@ impl SessionOrchestrator {
         characters: &[CharacterDefinition],
         turn_index: i32,
         player_input: &str,
+        mcp_tools: &[McpToolDefinition],
         notification_runtime: Option<NotificationToolRuntime<'_>>,
         mut progress_callback: Option<&mut (dyn FnMut(DirectorLoopStreamProgress) + Send)>,
     ) -> Result<DirectorTurnRun, StructuredOutputFailure> {
@@ -1124,13 +1129,14 @@ impl SessionOrchestrator {
             if let Some(payload) = recovery.recovered_completed_payload {
                 payload
             } else {
-                let prompt_call = world_director.build_runtime_prompt_call(
+                let prompt_call = world_director.build_runtime_prompt_call_with_mcp_tools(
                     world,
                     session,
                     characters,
                     player_input,
                     "director_decision",
                     None,
+                    mcp_tools,
                 );
                 let request = world_director.build_chat_request_from_prompt_call(
                     &prompt_call,
@@ -1193,13 +1199,14 @@ impl SessionOrchestrator {
                 }
             }
         } else {
-            let prompt_call = world_director.build_runtime_prompt_call(
+            let prompt_call = world_director.build_runtime_prompt_call_with_mcp_tools(
                 world,
                 session,
                 characters,
                 player_input,
                 "director_decision",
                 None,
+                mcp_tools,
             );
             let request = world_director.build_chat_request_from_prompt_call(
                 &prompt_call,

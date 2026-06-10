@@ -59,9 +59,11 @@ impl WorldPackageService {
                             recent_dialogue_rounds: character.recent_dialogue_rounds,
                             attributes: character.attributes.clone(),
                             portrait_assets: character.portrait_assets.clone(),
+                            avatar_asset: character.avatar_asset.clone(),
                             system_prompt_template: character.system_prompt_template.clone(),
                             response_contract_prompt: character.response_contract_prompt.clone(),
                             narration_prompt: character.narration_prompt.clone(),
+                            runtime_system_prompt: character.runtime_system_prompt.clone(),
                         },
                     )
                 })
@@ -382,6 +384,12 @@ fn collect_asset_descriptors(
         }
     }
     for character in characters {
+        push_asset(
+            &mut assets,
+            &character.avatar_asset,
+            "character_avatar",
+            character.id.clone(),
+        );
         for asset in &character.portrait_assets {
             push_asset(
                 &mut assets,
