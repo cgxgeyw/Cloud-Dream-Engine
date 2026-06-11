@@ -11,10 +11,6 @@ import {
 import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
 import { ArrowLeft } from "lucide-react";
 
-type PageProps = {
-  isMobile?: boolean;
-};
-
 function countMapNodes(value: WorldResponse["map_nodes"]): number {
   let count = 0;
   function visit(node: unknown) {
@@ -80,7 +76,7 @@ function useWorldList(preferredWorldId?: string | null) {
   return { worlds, loading, error };
 }
 
-export function NewGamePage(_props: PageProps = {}) {
+export function NewGamePage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const preferredWorldId = searchParams.get("worldId");
@@ -144,7 +140,7 @@ export function NewGamePage(_props: PageProps = {}) {
   );
 }
 
-export function NewGameSetupPage(_props: PageProps = {}) {
+export function NewGameSetupPage() {
   const navigate = useNavigate();
   const { worldId = "" } = useParams();
   const [world, setWorld] = useState<WorldResponse | null>(null);

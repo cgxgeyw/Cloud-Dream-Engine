@@ -533,15 +533,21 @@ export function deleteRule(ruleId: string): Promise<void> {
 }
 
 export function onSessionSnapshot(sessionId: string, callback: (snapshot: SessionSnapshot) => void): () => void {
-  const unlisten = listen<SessionSnapshot>(`session:${sessionId}:snapshot`, (event) => {
+  const unlistenPromise = listen<SessionSnapshot>(`session:${sessionId}:snapshot`, (event) => {
     callback(event.payload);
   });
 
-  let unlistened = false;
+  let resolvedUnlisten: (() => void) | null = null;
+  unlistenPromise.then(fn => { resolvedUnlisten = fn; });
+
+  let cancelled = false;
   return () => {
-    if (!unlistened) {
-      unlistened = true;
-      unlisten.then(fn => fn());
+    if (cancelled) return;
+    cancelled = true;
+    if (resolvedUnlisten) {
+      resolvedUnlisten();
+    } else {
+      unlistenPromise.then(fn => fn());
     }
   };
 }

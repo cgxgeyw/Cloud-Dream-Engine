@@ -1,4 +1,5 @@
 import { useNavigate } from "react-router-dom";
+import { useIsMobile } from "../components/ResponsiveLayout";
 import { MenuButton, ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
 import { Play, Save, Globe, Settings, Wrench } from "lucide-react";
 import type { ReactNode } from "react";
@@ -45,11 +46,8 @@ const desktopMenuItems: MenuItem[] = [
   },
 ];
 
-export interface HomePageProps {
-  isMobile?: boolean;
-}
-
-export function HomePage({ isMobile = false }: HomePageProps) {
+export function HomePage() {
+  const isMobile = useIsMobile();
   const navigate = useNavigate();
 
   // ===== Desktop Layout (菜单网格+描述) =====

@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
+import { useIsMobile } from "../components/ResponsiveLayout";
 import {
   createMcpTool,
   deleteMcpTool,
@@ -90,11 +91,8 @@ function resolveRiskLevelLabel(level: string | undefined): string {
   }
 }
 
-export interface McpToolsPageProps {
-  isMobile?: boolean;
-}
-
-export function McpToolsPage({ isMobile = false }: McpToolsPageProps) {
+export function McpToolsPage() {
+  const isMobile = useIsMobile();
   const navigate = useNavigate();
   const [tools, setTools] = useState<McpToolResponse[]>([]);
   const [draft, setDraft] = useState<McpToolUpsertRequest>(emptyDraft);

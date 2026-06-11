@@ -928,12 +928,7 @@ pub(crate) fn build_turn_participants(
 }
 
 pub(crate) fn normalize_provider_name(provider: &str) -> String {
-    match provider.trim().to_ascii_lowercase().as_str() {
-        "anthropic" | "claude" | "claude / anthropic" => "anthropic".to_string(),
-        "openai" | "openai-compatible" | "openai compatible" | "ollama" | "lm studio"
-        | "lmstudio" => "openai".to_string(),
-        _ => "openai".to_string(),
-    }
+    crate::services::llm::normalize_provider(provider)
 }
 
 pub(crate) fn world_allows_mcp_tool(world: &WorldDefinition, tool_id: &str) -> bool {

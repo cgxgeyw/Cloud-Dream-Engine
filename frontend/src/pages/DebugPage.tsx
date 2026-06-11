@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { useIsMobile } from "../components/ResponsiveLayout";
 import { PromptCallCard, TraceBlock } from "../components/PromptTraceView";
 import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
 import { fetchSessionDebug, type SessionDebugResponse } from "../data/apiAdapter";
@@ -44,11 +45,8 @@ const backToTopStyle = {
   backdropFilter: "blur(14px)",
 };
 
-interface DebugPageProps {
-  isMobile?: boolean;
-}
-
-export function DebugPage({ isMobile = false }: DebugPageProps) {
+export function DebugPage() {
+  const isMobile = useIsMobile();
   const navigate = useNavigate();
   const { sessionId } = useParams();
   const [debugData, setDebugData] = useState<SessionDebugResponse | null>(null);

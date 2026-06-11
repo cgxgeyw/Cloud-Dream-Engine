@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useId } from "react";
 import { useLayoutEffect, useRef } from "react";
@@ -32,6 +32,7 @@ import {
 } from "../data/apiAdapter";
 import { AttributePanel } from "../components/AttributePanel";
 import { ConfirmDialog } from "../components/ModalDialog";
+import { useIsMobile } from "../components/ResponsiveLayout";
 import { GameUiPreview } from "../components/GameUiPreview";
 import { GameUiStructureEditor } from "../components/game-ui-editor/GameUiStructureEditor";
 import { PromptSendPreviewCard } from "../components/PromptTraceView";
@@ -800,10 +801,6 @@ function buildStatusTabOptions(): StatusTabOption[] {
   ];
 }
 
-interface WorldEditorPageProps {
-  isMobile?: boolean;
-}
-
 type UiGovernanceSnapshot = {
   loading: boolean;
   error: string | null;
@@ -813,7 +810,8 @@ type UiGovernanceSnapshot = {
   compatibility: WorldUiCompatibilityReport | null;
 };
 
-export function WorldEditorPage({ isMobile = false }: WorldEditorPageProps) {
+export function WorldEditorPage() {
+  const isMobile = useIsMobile();
   const navigate = useNavigate();
   const { id } = useParams();
   const isNew = id === "new" || !id;

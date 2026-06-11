@@ -199,7 +199,7 @@ impl LlmClient {
     }
 }
 
-fn normalize_provider(provider: &str) -> String {
+pub fn normalize_provider(provider: &str) -> String {
     match provider.trim().to_ascii_lowercase().as_str() {
         "openai-compatible" | "openai compatible" | "openai" => "openai".to_string(),
         "claude" | "anthropic" | "claude / anthropic" => "anthropic".to_string(),

@@ -4,7 +4,6 @@ import { ResponsiveLayout } from "./components/ResponsiveLayout";
 import { SettingsProvider } from "./data/SettingsContext";
 import { isTauriEnvironment } from "./data/apiAdapter";
 import { ToastContainer } from "./components/Toast";
-import { useIsMobile } from "./components/ResponsiveLayout";
 
 const HomePage = lazy(() => import("./pages/HomePage").then((module) => ({ default: module.HomePage })));
 const NewGamePage = lazy(() => import("./pages/NewGamePage").then((module) => ({ default: module.NewGamePage })));
@@ -20,26 +19,24 @@ const SettingsPage = lazy(() => import("./pages/SettingsPage").then((module) => 
 const McpToolsPage = lazy(() => import("./pages/McpToolsPage").then((module) => ({ default: module.McpToolsPage })));
 
 function AppRoutes() {
-  const isMobile = useIsMobile();
-
   return (
     <Suspense fallback={<div className="app-route-loading" />}>
       <Routes>
-        <Route path="/" element={<HomePage isMobile={isMobile} />} />
-        <Route path="/new-game" element={<NewGamePage isMobile={isMobile} />} />
-        <Route path="/new-game/setup/:worldId" element={<NewGameSetupPage isMobile={isMobile} />} />
-        <Route path="/saves" element={<SavesPage isMobile={isMobile} />} />
-        <Route path="/worlds" element={<WorldsPage isMobile={isMobile} />} />
-        <Route path="/worlds/new" element={<WorldEditorPage isMobile={isMobile} />} />
-        <Route path="/worlds/:id/edit" element={<WorldEditorPage isMobile={isMobile} />} />
+        <Route path="/" element={<HomePage />} />
+        <Route path="/new-game" element={<NewGamePage />} />
+        <Route path="/new-game/setup/:worldId" element={<NewGameSetupPage />} />
+        <Route path="/saves" element={<SavesPage />} />
+        <Route path="/worlds" element={<WorldsPage />} />
+        <Route path="/worlds/new" element={<WorldEditorPage />} />
+        <Route path="/worlds/:id/edit" element={<WorldEditorPage />} />
         <Route path="/worlds/:worldId/characters" element={<WorldCharactersPage />} />
         <Route path="/characters/new" element={<CharacterEditorPage />} />
         <Route path="/characters/:id/edit" element={<CharacterEditorPage />} />
         <Route path="/game/:sessionId" element={<GamePage />} />
-        <Route path="/debug/:sessionId" element={<DebugPage isMobile={isMobile} />} />
-        <Route path="/settings" element={<SettingsPage isMobile={isMobile} />} />
-        <Route path="/mcp-tools" element={<McpToolsPage isMobile={isMobile} />} />
-        <Route path="*" element={<HomePage isMobile={isMobile} />} />
+        <Route path="/debug/:sessionId" element={<DebugPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/mcp-tools" element={<McpToolsPage />} />
+        <Route path="*" element={<HomePage />} />
       </Routes>
     </Suspense>
   );

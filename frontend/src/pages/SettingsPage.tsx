@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { useNavigate } from "react-router-dom";
+import { useIsMobile } from "../components/ResponsiveLayout";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   assetUrl,
@@ -108,11 +109,8 @@ function resolveUploadedAssetPath(result: { url?: string; asset_path?: string; r
   return result.url?.trim() || result.asset_path?.trim() || result.relative_path?.trim() || "";
 }
 
-interface SettingsPageProps {
-  isMobile?: boolean;
-}
-
-export function SettingsPage({ isMobile = false }: SettingsPageProps) {
+export function SettingsPage() {
+  const isMobile = useIsMobile();
   const navigate = useNavigate();
   const { refresh: refreshGlobalSettings } = useSettings();
 

@@ -13,13 +13,10 @@ import {
   type WorldResponse,
 } from "../data/apiAdapter";
 import { ConfirmDialog } from "../components/ModalDialog";
+import { useIsMobile } from "../components/ResponsiveLayout";
 import { ScreenLayout } from "../components/ScreenLayout";
 import { showToast } from "../components/Toast";
 import { X } from "lucide-react";
-
-type WorldsPageProps = {
-  isMobile?: boolean;
-};
 
 function normalizeAssetList(value: unknown): string[] {
   if (!Array.isArray(value)) {
@@ -66,7 +63,8 @@ function countMapNodes(value: WorldResponse["map_nodes"]): number {
   return count;
 }
 
-export function WorldsPage({ isMobile = false }: WorldsPageProps = {}) {
+export function WorldsPage() {
+  const isMobile = useIsMobile();
   const navigate = useNavigate();
   const [worlds, setWorlds] = useState<WorldResponse[]>([]);
   const [worldCharacters, setWorldCharacters] = useState<Record<string, CharacterResponse[]>>({});

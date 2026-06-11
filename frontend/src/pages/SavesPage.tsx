@@ -2,13 +2,11 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { branchSave, deleteAllSaves, deleteSave, fetchSaves, type SaveResponse } from "../data/apiAdapter";
 import { ConfirmDialog } from "../components/ModalDialog";
+import { useIsMobile } from "../components/ResponsiveLayout";
 import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
 
-interface SavesPageProps {
-  isMobile?: boolean;
-}
-
-export function SavesPage({ isMobile = false }: SavesPageProps) {
+export function SavesPage() {
+  const isMobile = useIsMobile();
   const navigate = useNavigate();
 
   function formatTime(iso: string): string {
