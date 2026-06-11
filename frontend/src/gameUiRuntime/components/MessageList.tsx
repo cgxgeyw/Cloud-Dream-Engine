@@ -23,6 +23,23 @@ import {
 import type { GameUiRuntimeActions } from "../actions";
 import type { GameUiRuntimeContext } from "../runtimeContext";
 
+function TypingIndicator({ speakerName }: { speakerName: string }) {
+  return (
+    <div className="game-message-row game-message-row--typing">
+      <div className="game-message game-message--agent game-ui-message-bubble game-typing-bubble" data-variant="agent">
+        <div className="game-message-speaker game-ui-message-speaker" data-variant="agent">
+          {speakerName}
+        </div>
+        <div className="game-typing-dots">
+          <span className="game-typing-dot" />
+          <span className="game-typing-dot" />
+          <span className="game-typing-dot" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function getMessageText(content: string | ContentPart[]): string {
   if (typeof content === "string") {
     return content;
@@ -332,6 +349,11 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
           </div>
         );
       })}
+      {runtime.ui_state.submitting && (() => {
+        const lastAgent = [...runtime.messages].reverse().find((m) => m.role === "agent");
+        const speakerName = lastAgent?.speaker || runtime.session?.player_character_name || "";
+        return <TypingIndicator speakerName={speakerName} />;
+      })()}
     </div>
   );
 }
