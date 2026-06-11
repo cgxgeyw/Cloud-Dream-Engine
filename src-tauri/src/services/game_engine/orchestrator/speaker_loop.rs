@@ -314,6 +314,10 @@ impl SessionOrchestrator {
                             session_id,
                             world,
                             turn_index,
+                            speaker_name,
+                            speaker_char
+                                .map(|character| character.avatar_asset.as_str())
+                                .unwrap_or(""),
                             response.tool_calls.as_deref(),
                         )
                     } else {
@@ -681,6 +685,8 @@ fn execute_speaker_notification_tool_calls(
     session_id: &str,
     world: &WorldDefinition,
     turn_index: i32,
+    speaker_name: &str,
+    speaker_avatar_asset: &str,
     tool_calls: Option<&[ChatToolCall]>,
 ) -> Vec<SpeakerNotificationToolResult> {
     tool_calls
@@ -700,6 +706,8 @@ fn execute_speaker_notification_tool_calls(
                         world_id: &world.id,
                         world_name: &world.name,
                         turn_index,
+                        speaker_name: Some(speaker_name),
+                        speaker_avatar_asset: Some(speaker_avatar_asset),
                     },
                     &call.id,
                     arguments,

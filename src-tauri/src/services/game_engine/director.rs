@@ -1159,6 +1159,8 @@ impl WorldDirectorService {
                                     world_id: &world.id,
                                     world_name: &world.name,
                                     turn_index,
+                                    speaker_name: None,
+                                    speaker_avatar_asset: None,
                                 },
                                 &call_id,
                                 &arguments,

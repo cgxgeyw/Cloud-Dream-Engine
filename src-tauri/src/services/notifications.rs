@@ -4,19 +4,28 @@ use std::time::Duration as StdDuration;
 use chrono::{DateTime, Duration, Local, NaiveDateTime, TimeZone, Utc};
 use rusqlite::params;
 use tauri::AppHandle;
-use tauri_plugin_notification::{NotificationExt, PermissionState};
 #[cfg(mobile)]
 use tauri_plugin_notification::Schedule;
+#[cfg(target_os = "android")]
+use tauri_plugin_notification::{Channel, Importance, Visibility};
+use tauri_plugin_notification::{NotificationExt, PermissionState};
 
-#[cfg(mobile)]
-const MIN_NATIVE_SCHEDULE_DELAY: StdDuration = StdDuration::from_secs(5);
+#[cfg(target_os = "android")]
+const ANDROID_REMINDER_CHANNEL_ID: &str = "schedule_reminders_high_v1";
 
+use crate::db::repositories::character_repo::CharacterRepository;
 use crate::db::repositories::scheduled_notification_repo::ScheduledNotificationRepository;
+use crate::db::repositories::session_repo::SessionRepository;
+use crate::db::repositories::world_repo::WorldRepository;
 use crate::db::Database;
+use crate::events::session_events::SessionEventEmitter;
 use crate::models::scheduled_notification::{
     PendingScheduledNotification, ScheduledNotification, ScheduledNotificationCreate,
 };
+use crate::models::session::{ChatMessage, MessageContent};
+use crate::services::game_engine::orchestrator::turn_context::next_turn_index;
 
+const APP_DISPLAY_NAME: &str = "\u{4e91}\u{6735}\u{68a6}\u{5883}";
 const SCHEDULE_STATUS_SCHEMA_ID: &str = "attr-schedule-assistant-notifications";
 const SCHEDULE_STATUS_SCHEMA_KEY: &str = "scheduled_notifications";
 const SCHEDULE_TODO_SCHEMA_ID: &str = "attr-schedule-assistant-todo-items";
@@ -39,6 +48,8 @@ pub struct NotificationToolContext<'a> {
     pub world_id: &'a str,
     pub world_name: &'a str,
     pub turn_index: i32,
+    pub speaker_name: Option<&'a str>,
+    pub speaker_avatar_asset: Option<&'a str>,
 }
 
 #[derive(Clone, Copy)]
@@ -65,7 +76,7 @@ impl NotificationScheduler {
             .title
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .unwrap_or("Dream Engine");
+            .unwrap_or(APP_DISPLAY_NAME);
         let repo = ScheduledNotificationRepository::new(conn);
         let source = input.source.trim();
         if !source.is_empty() {
@@ -74,17 +85,15 @@ impl NotificationScheduler {
             }
         }
         let metadata = metadata_with_revision(input.metadata);
-        let notification = repo.create(
-            &ScheduledNotificationCreate {
-                session_id: input.session_id.to_string(),
-                world_name: input.world_name.to_string(),
-                source: input.source.to_string(),
-                title: title.to_string(),
-                body: body.to_string(),
-                scheduled_at: scheduled_at.to_rfc3339(),
-                metadata,
-            },
-        )?;
+        let notification = repo.create(&ScheduledNotificationCreate {
+            session_id: input.session_id.to_string(),
+            world_name: input.world_name.to_string(),
+            source: input.source.to_string(),
+            title: title.to_string(),
+            body: body.to_string(),
+            scheduled_at: scheduled_at.to_rfc3339(),
+            metadata,
+        })?;
         Self::schedule_delivery(app.clone(), data_dir.to_path_buf(), notification.clone())?;
         Ok(notification)
     }
@@ -99,8 +108,12 @@ impl NotificationScheduler {
     ) -> serde_json::Value {
         let action = normalize_notification_action(arguments);
         let result = match action.as_str() {
-            "create" => Self::execute_create(conn, app, data_dir, &context, tool_call_id, arguments),
-            "update" => Self::execute_update(conn, app, data_dir, &context, tool_call_id, arguments),
+            "create" => {
+                Self::execute_create(conn, app, data_dir, &context, tool_call_id, arguments)
+            }
+            "update" => {
+                Self::execute_update(conn, app, data_dir, &context, tool_call_id, arguments)
+            }
             "delete" => Self::execute_delete(conn, app, &context, arguments),
             "list" => Self::execute_list(conn, &context, arguments),
             "get" => Self::execute_get(conn, &context, arguments),
@@ -141,7 +154,9 @@ impl NotificationScheduler {
             .or_else(|| arg_text(arguments, "body"))
             .or_else(|| arg_text(arguments, "message"))
             .ok_or_else(|| "Notification content is required".to_string())?;
-        let title = arg_text(arguments, "title").unwrap_or_else(|| "Dream Engine".to_string());
+        let title = arg_text(arguments, "title")
+            .or_else(|| context.speaker_name.map(str::to_string))
+            .unwrap_or_else(|| APP_DISPLAY_NAME.to_string());
         let source = arg_text(arguments, "source")
             .or_else(|| arg_text(arguments, "key"))
             .or_else(|| arg_text(arguments, "notification_key"))
@@ -269,6 +284,7 @@ impl NotificationScheduler {
         for notification in pending {
             if is_native_delivery(&notification) && is_due(&notification.scheduled_at) {
                 let _ = repo.mark_fired(&notification.id);
+                let _ = append_fired_notification_message(db.conn(), app, &notification);
                 continue;
             }
             if let Err(error) =
@@ -288,12 +304,10 @@ impl NotificationScheduler {
     ) -> Result<(), String> {
         #[cfg(mobile)]
         {
-            if should_use_native_schedule(&notification.scheduled_at) {
-                return Self::schedule_native_notification(&app, &data_dir, &notification);
-            }
+            return Self::schedule_native_notification(&app, &data_dir, &notification);
         }
 
-        Self::spawn_notification_task(app, data_dir, notification);
+        Self::spawn_notification_task(app, data_dir, notification, true);
         Ok(())
     }
 
@@ -304,6 +318,7 @@ impl NotificationScheduler {
         notification: &ScheduledNotification,
     ) -> Result<(), String> {
         ensure_notification_permission(app)?;
+        ensure_reminder_notification_channel(app)?;
         let scheduled_at = parse_stored_notification_time(&notification.scheduled_at)?;
         let date = chrono_to_offset_datetime(scheduled_at)?;
         let native_id = native_notification_id(&notification.id);
@@ -311,6 +326,7 @@ impl NotificationScheduler {
             .notification()
             .builder()
             .id(native_id)
+            .channel_id(ANDROID_REMINDER_CHANNEL_ID)
             .title(notification.title.clone())
             .body(notification.body.clone())
             .schedule(Schedule::At {
@@ -324,6 +340,12 @@ impl NotificationScheduler {
                 let db = Database::new(&data_dir.to_path_buf())?;
                 ScheduledNotificationRepository::new(db.conn())
                     .mark_native_scheduled(&notification.id, native_id)?;
+                Self::spawn_notification_task(
+                    app.clone(),
+                    data_dir.to_path_buf(),
+                    (*notification).clone(),
+                    false,
+                );
                 Ok(())
             }
             Err(error) => Err(error.to_string()),
@@ -334,6 +356,7 @@ impl NotificationScheduler {
         app: AppHandle,
         data_dir: PathBuf,
         notification: ScheduledNotification,
+        show_system_notification: bool,
     ) {
         tauri::async_runtime::spawn(async move {
             let expected_revision = notification
@@ -368,19 +391,21 @@ impl NotificationScheduler {
                     return;
                 }
             }
-            if let Err(error) = ensure_notification_permission(&app) {
-                let _ = repo.mark_failed(&current.id, &error);
-                return;
+            if show_system_notification {
+                if let Err(error) = ensure_notification_permission(&app) {
+                    let _ = repo.mark_failed(&current.id, &error);
+                    return;
+                }
             }
-            let result = app
-                .notification()
-                .builder()
-                .title(current.title.clone())
-                .body(current.body.clone())
-                .show();
+            let result = if show_system_notification {
+                show_os_notification(&app, &data_dir, &current)
+            } else {
+                Ok(())
+            };
             match result {
                 Ok(_) => {
                     let _ = repo.mark_fired(&current.id);
+                    let _ = append_fired_notification_message(db.conn(), &app, &current);
                     let _ = sync_session_schedule_attribute(db.conn(), &current.session_id);
                 }
                 Err(error) => {
@@ -418,14 +443,321 @@ impl NotificationScheduler {
     }
 }
 
+fn append_fired_notification_message(
+    conn: &rusqlite::Connection,
+    app: &AppHandle,
+    notification: &ScheduledNotification,
+) -> Result<(), String> {
+    let repo = SessionRepository::new(conn);
+    let Some(mut session) = repo.get(&notification.session_id)? else {
+        return Ok(());
+    };
+    if session.messages.iter().any(|message| {
+        message
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("notification_id"))
+            .and_then(|value| value.as_str())
+            == Some(notification.id.as_str())
+            && message
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata.get("message_kind"))
+                .and_then(|value| value.as_str())
+                == Some("notification_fired")
+    }) {
+        return Ok(());
+    }
+
+    let speaker = notification_speaker_name(notification);
+    let content = notification.body.trim().to_string();
+    let avatar_asset = notification_speaker_avatar_asset(conn, notification, &speaker);
+    let fired_at = Utc::now().to_rfc3339();
+    let created_in_turn_index = notification
+        .metadata
+        .get("turn_index")
+        .and_then(|value| value.as_i64())
+        .and_then(|value| i32::try_from(value).ok())
+        .filter(|value| *value > 0);
+    let turn_index = latest_message_turn_index(&session.messages)
+        .or_else(|| {
+            next_turn_index(conn, &notification.session_id)
+                .ok()
+                .map(|value| value - 1)
+        })
+        .unwrap_or(0)
+        .max(0);
+
+    session.current_speaker = speaker.clone();
+    session.current_line = content.clone();
+    session.messages.push(ChatMessage {
+        role: "agent".to_string(),
+        content: MessageContent::Text(content),
+        speaker: Some(speaker.clone()),
+        metadata: Some(serde_json::json!({
+            "message_kind": "notification_fired",
+            "notification_id": notification.id,
+            "notification_source": notification.source,
+            "notification_title": notification.title,
+            "notification_scheduled_at": notification.scheduled_at,
+            "notification_fired_at": fired_at,
+            "speaker_avatar_asset": avatar_asset,
+            "turn_index": turn_index,
+            "notification_created_turn_index": created_in_turn_index,
+            "created_at": fired_at,
+        })),
+    });
+    sort_messages_by_runtime_time(&mut session.messages);
+    repo.upsert(&session)?;
+    let _ = SessionEventEmitter::emit_snapshot(app, &session.id, &session);
+    Ok(())
+}
+
+fn latest_message_turn_index(messages: &[ChatMessage]) -> Option<i32> {
+    messages
+        .iter()
+        .filter_map(message_turn_index)
+        .filter(|value| *value > 0)
+        .max()
+}
+
+fn sort_messages_by_runtime_time(messages: &mut [ChatMessage]) {
+    messages.sort_by(|left, right| {
+        message_sort_turn_index(left)
+            .cmp(&message_sort_turn_index(right))
+            .then_with(|| message_created_at(left).cmp(message_created_at(right)))
+            .then_with(|| message_kind_rank(left).cmp(&message_kind_rank(right)))
+    });
+}
+
+fn message_sort_turn_index(message: &ChatMessage) -> i32 {
+    message_turn_index(message).unwrap_or(i32::MAX)
+}
+
+fn message_turn_index(message: &ChatMessage) -> Option<i32> {
+    message
+        .metadata
+        .as_ref()
+        .and_then(|metadata| {
+            metadata
+                .get("system_index")
+                .or_else(|| metadata.get("turn_index"))
+        })
+        .and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_str()?.trim().parse::<i64>().ok())
+        })
+        .and_then(|value| i32::try_from(value).ok())
+}
+
+fn message_created_at(message: &ChatMessage) -> &str {
+    message
+        .metadata
+        .as_ref()
+        .and_then(|metadata| {
+            metadata
+                .get("created_at")
+                .or_else(|| metadata.get("notification_fired_at"))
+        })
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+}
+
+fn message_kind_rank(message: &ChatMessage) -> i32 {
+    match message
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("message_kind"))
+        .and_then(|value| value.as_str())
+    {
+        Some("player_action") => 10,
+        Some("agent_answer") => 20,
+        Some("notification_fired") => 90,
+        _ => 50,
+    }
+}
+
+fn notification_speaker_name(notification: &ScheduledNotification) -> String {
+    notification
+        .metadata
+        .get("speaker_name")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            notification
+                .title
+                .trim()
+                .is_empty()
+                .then_some(APP_DISPLAY_NAME)
+        })
+        .unwrap_or_else(|| notification.title.trim())
+        .to_string()
+}
+
+fn notification_speaker_avatar_asset(
+    conn: &rusqlite::Connection,
+    notification: &ScheduledNotification,
+    speaker_name: &str,
+) -> String {
+    if let Some(value) = notification
+        .metadata
+        .get("speaker_avatar_asset")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return value.to_string();
+    }
+
+    let world_id = notification
+        .metadata
+        .get("world_id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let Some(world_id) = world_id else {
+        return String::new();
+    };
+
+    let char_repo = CharacterRepository::new(conn);
+    if let Ok(characters) = char_repo.list_by_world(world_id) {
+        if let Some(character) = characters.iter().find(|character| {
+            character.name.trim() == speaker_name && !character.avatar_asset.trim().is_empty()
+        }) {
+            return character.avatar_asset.trim().to_string();
+        }
+    }
+
+    let Ok(Some(world)) = WorldRepository::new(conn).get(world_id) else {
+        return String::new();
+    };
+    let default_agent_id = world
+        .director_config
+        .get("default_agent_id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let Some(default_agent_id) = default_agent_id else {
+        return String::new();
+    };
+    char_repo
+        .get(default_agent_id)
+        .ok()
+        .flatten()
+        .map(|character| character.avatar_asset.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default()
+}
+
+#[cfg(windows)]
+fn show_os_notification(
+    app: &AppHandle,
+    data_dir: &Path,
+    notification: &ScheduledNotification,
+) -> Result<(), String> {
+    let title = notification_title(notification);
+    app.notification()
+        .builder()
+        .title(title.clone())
+        .body(notification.body.clone())
+        .show()
+        .map(|_| ())
+        .or_else(|plugin_error| {
+            let mut toast = notify_rust::Notification::new();
+            toast
+                .app_id(&app.config().identifier)
+                .summary(title.trim())
+                .body(notification.body.trim());
+            if let Some(image_path) = notification_avatar_file(data_dir, notification) {
+                toast.image_path(&image_path.to_string_lossy());
+            }
+            toast
+                .show()
+                .map(|_| ())
+                .map_err(|toast_error| format!("{plugin_error}; fallback failed: {toast_error}"))
+        })
+}
+
+#[cfg(not(windows))]
+fn show_os_notification(
+    app: &AppHandle,
+    _data_dir: &Path,
+    notification: &ScheduledNotification,
+) -> Result<(), String> {
+    app.notification()
+        .builder()
+        .title(notification_title(notification))
+        .body(notification.body.clone())
+        .show()
+        .map_err(|error| error.to_string())
+}
+
+fn notification_title(notification: &ScheduledNotification) -> String {
+    notification
+        .title
+        .trim()
+        .is_empty()
+        .then(|| APP_DISPLAY_NAME.to_string())
+        .unwrap_or_else(|| notification.title.trim().to_string())
+}
+
+#[cfg(windows)]
+fn notification_avatar_file(
+    data_dir: &Path,
+    notification: &ScheduledNotification,
+) -> Option<PathBuf> {
+    let asset = notification
+        .metadata
+        .get("speaker_avatar_asset")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let relative = normalize_asset_relative_path(asset)?;
+    let path = data_dir.join("assets").join(relative);
+    path.is_file().then_some(path)
+}
+
+#[cfg(windows)]
+fn normalize_asset_relative_path(asset_path: &str) -> Option<PathBuf> {
+    let value = asset_path.trim().replace('\\', "/");
+    let trimmed = if let Some(path) = value.strip_prefix("/assets/") {
+        path
+    } else if let Some(path) = value.strip_prefix("assets/") {
+        path
+    } else {
+        value.as_str()
+    };
+    if trimmed.is_empty()
+        || trimmed.starts_with("http://")
+        || trimmed.starts_with("https://")
+        || trimmed.starts_with("data:")
+    {
+        return None;
+    }
+    let path = PathBuf::from(trimmed);
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return None;
+    }
+    Some(path)
+}
+
 pub(crate) fn sync_session_schedule_attribute(
     conn: &rusqlite::Connection,
     session_id: &str,
 ) -> Result<(), String> {
     ensure_schedule_status_attribute_schema(conn)?;
     ensure_schedule_todo_attribute_schema(conn)?;
-    let notifications =
-        ScheduledNotificationRepository::new(conn).list_for_session(session_id, Some("scheduled"), 50)?;
+    let notifications = ScheduledNotificationRepository::new(conn).list_for_session(
+        session_id,
+        Some("scheduled"),
+        50,
+    )?;
     let value = format_schedule_status_items(&notifications);
 
     write_session_list_attribute(conn, session_id, SCHEDULE_STATUS_SCHEMA_ID, &value)?;
@@ -559,7 +891,11 @@ fn write_session_list_attribute(
             schema_id,
             session_id,
             serde_json::to_string(&serde_json::Value::Array(
-                value.iter().cloned().map(serde_json::Value::String).collect(),
+                value
+                    .iter()
+                    .cloned()
+                    .map(serde_json::Value::String)
+                    .collect(),
             ))
             .unwrap_or_default(),
         ],
@@ -594,6 +930,29 @@ fn format_schedule_time(value: &str) -> String {
                 .to_string()
         })
         .unwrap_or_else(|_| value.trim().to_string())
+}
+
+#[cfg(target_os = "android")]
+fn ensure_reminder_notification_channel(app: &AppHandle) -> Result<(), String> {
+    app.notification()
+        .create_channel(
+            Channel::builder(
+                ANDROID_REMINDER_CHANNEL_ID,
+                "\u{884c}\u{7a0b}\u{63d0}\u{9192}",
+            )
+            .description("\u{884c}\u{7a0b}\u{52a9}\u{624b}\u{7684}\u{5b9a}\u{65f6}\u{63d0}\u{9192}")
+            .importance(Importance::High)
+            .visibility(Visibility::Public)
+            .vibration(true)
+            .lights(true)
+            .build(),
+        )
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(all(mobile, not(target_os = "android")))]
+fn ensure_reminder_notification_channel(_app: &AppHandle) -> Result<(), String> {
+    Ok(())
 }
 
 #[cfg(mobile)]
@@ -706,7 +1065,7 @@ pub fn pending_notification_from_tool_call(
         .or_else(|| arg_text(arguments, "message"))
         .ok_or_else(|| "Notification content is required".to_string())?;
     let scheduled_at = parse_notification_time(&requested_time)?.to_rfc3339();
-    let title = arg_text(arguments, "title").unwrap_or_else(|| "Dream Engine".to_string());
+    let title = arg_text(arguments, "title").unwrap_or_else(|| APP_DISPLAY_NAME.to_string());
     Ok(PendingScheduledNotification {
         tool_call_id: tool_call_id.to_string(),
         source: format!("tool:schedule_notification:{session_id}:{tool_call_id}"),
@@ -780,13 +1139,54 @@ fn merge_tool_metadata(
     arguments: &serde_json::Map<String, serde_json::Value>,
 ) -> serde_json::Value {
     let mut object = base.as_object().cloned().unwrap_or_default();
-    object.insert("revision".to_string(), serde_json::Value::String(uuid::Uuid::new_v4().to_string()));
-    object.insert("tool_call_id".to_string(), serde_json::Value::String(tool_call_id.to_string()));
-    object.insert("tool_name".to_string(), serde_json::Value::String("schedule_notification".to_string()));
-    object.insert("action".to_string(), serde_json::Value::String(action.to_string()));
-    object.insert("arguments".to_string(), serde_json::Value::Object(arguments.clone()));
-    object.insert("turn_index".to_string(), serde_json::json!(context.turn_index));
-    object.insert("world_id".to_string(), serde_json::Value::String(context.world_id.to_string()));
+    object.insert(
+        "revision".to_string(),
+        serde_json::Value::String(uuid::Uuid::new_v4().to_string()),
+    );
+    object.insert(
+        "tool_call_id".to_string(),
+        serde_json::Value::String(tool_call_id.to_string()),
+    );
+    object.insert(
+        "tool_name".to_string(),
+        serde_json::Value::String("schedule_notification".to_string()),
+    );
+    object.insert(
+        "action".to_string(),
+        serde_json::Value::String(action.to_string()),
+    );
+    object.insert(
+        "arguments".to_string(),
+        serde_json::Value::Object(arguments.clone()),
+    );
+    object.insert(
+        "turn_index".to_string(),
+        serde_json::json!(context.turn_index),
+    );
+    object.insert(
+        "world_id".to_string(),
+        serde_json::Value::String(context.world_id.to_string()),
+    );
+    if let Some(speaker_name) = context
+        .speaker_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        object.insert(
+            "speaker_name".to_string(),
+            serde_json::Value::String(speaker_name.to_string()),
+        );
+    }
+    if let Some(avatar_asset) = context
+        .speaker_avatar_asset
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        object.insert(
+            "speaker_avatar_asset".to_string(),
+            serde_json::Value::String(avatar_asset.to_string()),
+        );
+    }
     serde_json::Value::Object(object)
 }
 
@@ -894,13 +1294,6 @@ fn is_native_delivery(notification: &ScheduledNotification) -> bool {
         .get("delivery")
         .and_then(|value| value.as_str())
         == Some("native")
-}
-
-#[cfg(mobile)]
-fn should_use_native_schedule(scheduled_at: &str) -> bool {
-    delay_until(scheduled_at)
-        .map(|delay| delay >= MIN_NATIVE_SCHEDULE_DELAY)
-        .unwrap_or(false)
 }
 
 #[cfg(mobile)]

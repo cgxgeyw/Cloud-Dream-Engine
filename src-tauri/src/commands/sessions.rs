@@ -16,6 +16,7 @@ pub async fn get_session(
 ) -> Result<SessionSnapshot, String> {
     let prepared = {
         let db = state.db.lock().await;
+        crate::services::notifications::sync_session_schedule_attribute(db.conn(), &id)?;
         state
             .services
             .runtime

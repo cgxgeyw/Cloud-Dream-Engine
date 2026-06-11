@@ -54,3 +54,6 @@ anyhow = "1"
 # 编码与压缩
 base64 = "0.22"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[target.'cfg(windows)'.dependencies]
+notify-rust = "4.17.0"

@@ -697,6 +697,12 @@ cargo check
 
 `schedule_notification` 工具的 `time` 参数描述会传给模型，但工具端不能假设模型一定严格输出首选格式。解析器接受带时区 RFC3339、相对时间，以及本地时间 `YYYY-MM-DD HH:MM[:SS]` / `YYYY-MM-DDTHH:MM[:SS]`；无时区格式按本机本地时间解释后转 UTC 存储。
 
+通知工具触发系统通知时，会把同一条提醒内容作为 `agent` 消息追加到对应 session 的 `messages`，`metadata.message_kind = "notification_fired"`，并带上 `notification_id`、原始标题、计划时间和 `speaker_avatar_asset`。前端监听 `session:{id}:snapshot`，所以应用运行中触发的提醒应实时出现在聊天记录里；Android 原生长定时如果在应用未运行时触发，会在下次恢复 pending 通知时补写记录。通知默认应用名/标题使用“云朵梦境”；Windows 桌面发送分支会设置 AppUserModelID，避免开发环境通知落到 PowerShell 身份。Android 系统通知的小图标和应用名由应用清单/launcher 图标决定，运行时上传的智能体头像不能替换系统小图标；头像路径保存在消息 metadata，可用于应用内消息头像或 Windows toast image。
+
+Windows 桌面通知优先走 Tauri notification 插件，失败时才回退到 `notify-rust`，避免开发环境下备用 toast 不触发或身份不稳定。通知触发后补写的智能体消息按触发时当前会话最新 `turn_index` 和 `created_at` 排序；创建提醒时的 turn 保留为 `metadata.notification_created_turn_index`，不要用它决定消息显示位置，否则未来提醒会被插回旧对话附近。
+
+Android 行程提醒必须走系统原生定时，不使用 Rust 进程内 timer 作为短延迟兜底；否则应用被关闭后提醒会丢失。移动端创建提醒时使用高优先级通知 channel `schedule_reminders_high_v1`，并在 Android manifest 声明 `SCHEDULE_EXACT_ALARM` 以提高定时可靠性。打开会话前会从 `scheduled_notifications` 重新同步行程提醒属性，避免重新进入行程助手时待办列表丢失。
+
 MCP 工具定义包含可编辑的 `input_schema` JSON Schema。工具管理页保存 `input_schema`，后端持久化到 `mcp_tools.input_schema_json`；世界主控构建 `available_tools` 时，会把世界已授权、已启用、暴露策略不是 `disabled` 的自定义工具连同 `arguments_schema` 发给模型。当前通用 MCP 执行器尚未实现，模型调用非内置工具时后端会返回明确的未实现工具错误，避免静默吞掉调用。
 
 Android APK 打包脚本 `scripts/build_android_apk.ps1` 会在调用 Tauri build 前清理 Android 构建目录中复制出来的 `embedding-models` 资源副本，并做一次临时复制预检，用来提前暴露 Windows `os error 1224` 这类 safetensors 文件被 mmap/进程占用的问题。Tauri build 失败后不要再用 Gradle `assembleUniversalRelease` 作为兜底重试；生成的 Android Studio Gradle task 依赖 Tauri CLI 的 live context，脱离 Tauri build 直接运行会触发 `android-studio-script` WebSocket 连接失败，不能修复资源复制错误。
