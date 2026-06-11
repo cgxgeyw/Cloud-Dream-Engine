@@ -262,13 +262,12 @@ pub async fn submit_player_action(
                 );
                 let _ = SessionEventEmitter::emit_snapshot(&app, &session_id, &snapshot);
             };
-        let db = state.db.lock().await;
         state
             .services
             .runtime
             .session_orchestrator
             .run_speaker_turns(
-                db,
+                &state.db,
                 &state.services.llm_client,
                 &state.services.runtime.dialogue_pipeline,
                 &state.services.runtime.memory,
@@ -550,10 +549,9 @@ async fn run_agent_chat_player_action(
                 );
                 let _ = SessionEventEmitter::emit_snapshot(app, &session_id, &snapshot);
             };
-        let db = state.db.lock().await;
         crate::services::game_engine::orchestrator::run_agent_chat_speaker_turn(
             &state.services.runtime.session_orchestrator,
-            db,
+            &state.db,
             &state.services.llm_client,
             &state.services.runtime.dialogue_pipeline,
             &state.services.runtime.memory,

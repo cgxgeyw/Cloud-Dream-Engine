@@ -19,7 +19,7 @@ use super::writeback::*;
 impl SessionOrchestrator {
     pub async fn run_speaker_turns(
         &self,
-        db: tokio::sync::MutexGuard<'_, crate::db::Database>,
+        db: &tokio::sync::Mutex<crate::db::Database>,
         llm_client: &LlmClient,
         dialogue_pipeline: &DialoguePipeline,
         memory_service: &MemoryService,
@@ -95,7 +95,8 @@ impl SessionOrchestrator {
                 speaker_provider,
                 speaker_request_value,
             ) = {
-                let conn = db.conn();
+                let db_guard = db.lock().await;
+                let conn = db_guard.conn();
                 let speaker_model = resolve_text_model(
                     conn,
                     speaker_char
@@ -308,8 +309,9 @@ impl SessionOrchestrator {
                         world,
                         MCP_TOOL_SCHEDULE_NOTIFICATION_ID,
                     ) {
+                        let db_guard = db.lock().await;
                         execute_speaker_notification_tool_calls(
-                            db.conn(),
+                            db_guard.conn(),
                             notification_runtime.as_ref(),
                             session_id,
                             world,
@@ -352,7 +354,8 @@ impl SessionOrchestrator {
                             Err(_) => response,
                         }
                     };
-                    let conn = db.conn();
+                    let db_guard = db.lock().await;
+                    let conn = db_guard.conn();
                     let speaker_latency_ms = speaker_started_at.elapsed().as_millis() as i64;
                     let reasoning_text = response.reasoning.clone().unwrap_or_default();
                     let speaker_response_value = serde_json::json!({
@@ -543,7 +546,8 @@ impl SessionOrchestrator {
                     pending_notifications.extend(speaker_pending_notifications);
                 }
                 Err(e) => {
-                    let conn = db.conn();
+                    let db_guard = db.lock().await;
+                    let conn = db_guard.conn();
                     let speaker_latency_ms = speaker_started_at.elapsed().as_millis() as i64;
                     let speaker_response_value = serde_json::json!({
                         "provider": speaker_provider,

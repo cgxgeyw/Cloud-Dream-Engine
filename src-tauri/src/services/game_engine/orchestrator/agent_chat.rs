@@ -357,7 +357,7 @@ fn slugify_agent_scene_id(value: &str) -> String {
 
 pub(crate) async fn run_agent_chat_speaker_turn(
     orchestrator: &SessionOrchestrator,
-    db: tokio::sync::MutexGuard<'_, crate::db::Database>,
+    db: &tokio::sync::Mutex<crate::db::Database>,
     llm_client: &LlmClient,
     dialogue_pipeline: &DialoguePipeline,
     memory_service: &MemoryService,
