@@ -69,6 +69,7 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
   const autoScroll = readBooleanProp(node, "auto_scroll", true);
   const showPendingState = readBooleanProp(node, "show_pending_state", true);
   const showAgentReasoning = readBooleanProp(node, "show_agent_reasoning", true);
+  const showTypingIndicator = readBooleanProp(node, "show_typing_indicator", true);
   const mobileSimple = readBooleanProp(node, "mobile_simple", false) && runtime.capabilities.platform === "mobile";
 
   useEffect(() => {
@@ -349,7 +350,7 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
           </div>
         );
       })}
-      {runtime.ui_state.submitting && (() => {
+      {showTypingIndicator && runtime.ui_state.submitting && (() => {
         const lastAgent = [...runtime.messages].reverse().find((m) => m.role === "agent");
         const speakerName = lastAgent?.speaker || runtime.session?.player_character_name || "";
         return <TypingIndicator speakerName={speakerName} />;
