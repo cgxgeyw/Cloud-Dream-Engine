@@ -79,6 +79,9 @@ enum StructuredOutputMode {
 #[derive(Clone, Copy)]
 enum ToolMode {
     Include,
+    /// 保留：用于显式构造不带工具的请求（当前流式/非流式均走 Include，
+    /// 由 build_openai_request 内部按 native_tool_calling 决定是否真正附带工具）。
+    #[allow(dead_code)]
     Omit,
 }
 
@@ -218,12 +221,11 @@ fn supports_response_format_fallback(
         return false;
     }
 
-    let lowered = body.to_ascii_lowercase();
-    lowered.contains("response_format")
-        && (lowered.contains("json_object")
-            || lowered.contains("json_schema")
-            || lowered.contains("unsupported")
-            || lowered.contains("must be 'json_schema' or 'text'"))
+    // Any 400 that mentions response_format while we are requesting structured
+    // output means this endpoint rejects our response_format; drop it and retry.
+    // (Different OpenAI-compatible providers word this many ways, e.g.
+    // "This response_format type is unavailable now", "unsupported", etc.)
+    body.to_ascii_lowercase().contains("response_format")
 }
 
 async fn send_chat_completion(
@@ -246,6 +248,34 @@ async fn send_chat_completion(
 struct OpenAIStreamChoiceDelta {
     content: Option<String>,
     reasoning_content: Option<String>,
+    #[serde(default)]
+    tool_calls: Option<Vec<OpenAIStreamToolCallDelta>>,
+}
+
+#[derive(Deserialize)]
+struct OpenAIStreamToolCallDelta {
+    #[serde(default)]
+    index: Option<usize>,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    function: Option<OpenAIStreamFunctionDelta>,
+}
+
+#[derive(Deserialize)]
+struct OpenAIStreamFunctionDelta {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    arguments: Option<String>,
+}
+
+/// 流式工具调用分片累积器：按 index 聚合 id / function.name / arguments 片段。
+#[derive(Default)]
+struct StreamingToolCall {
+    id: String,
+    name: String,
+    arguments: String,
 }
 
 #[derive(Deserialize)]
@@ -262,6 +292,7 @@ fn apply_stream_data_chunk<F>(
     data: &str,
     content: &mut String,
     reasoning: &mut String,
+    tool_calls: &mut Vec<StreamingToolCall>,
     on_chunk: &mut F,
 ) -> bool
 where
@@ -285,6 +316,9 @@ where
         if let Some(reasoning_piece) = &reasoning_delta {
             reasoning.push_str(reasoning_piece);
         }
+        if let Some(call_deltas) = delta.tool_calls {
+            accumulate_tool_call_deltas(tool_calls, call_deltas);
+        }
         if !content_delta.is_empty() || reasoning_delta.is_some() {
             on_chunk(ChatStreamChunk {
                 delta: content_delta,
@@ -293,6 +327,63 @@ where
         }
     }
     false
+}
+
+/// 将一批工具调用分片并入累积缓冲。OpenAI 流式协议里同一个工具调用的
+/// id/name/arguments 会跨多个 chunk 分片到达，用 index 对齐；缺失 index
+/// 时退化为追加到最后一个调用。
+fn accumulate_tool_call_deltas(
+    tool_calls: &mut Vec<StreamingToolCall>,
+    deltas: Vec<OpenAIStreamToolCallDelta>,
+) {
+    for delta in deltas {
+        let index = delta.index.unwrap_or_else(|| tool_calls.len().saturating_sub(1));
+        if index >= tool_calls.len() {
+            tool_calls.resize_with(index + 1, StreamingToolCall::default);
+        }
+        let slot = &mut tool_calls[index];
+        if let Some(id) = delta.id {
+            if !id.trim().is_empty() {
+                slot.id = id;
+            }
+        }
+        if let Some(function) = delta.function {
+            if let Some(name) = function.name {
+                if !name.trim().is_empty() {
+                    slot.name = name;
+                }
+            }
+            if let Some(arguments) = function.arguments {
+                slot.arguments.push_str(&arguments);
+            }
+        }
+    }
+}
+
+/// 把累积好的流式工具调用组装成 ChatToolCall 列表（丢弃无名调用）。
+fn finalize_streaming_tool_calls(tool_calls: Vec<StreamingToolCall>) -> Option<Vec<ChatToolCall>> {
+    let calls = tool_calls
+        .into_iter()
+        .filter(|call| !call.name.trim().is_empty())
+        .enumerate()
+        .map(|(position, call)| {
+            let id = if call.id.trim().is_empty() {
+                format!("tool-call-{position}")
+            } else {
+                call.id
+            };
+            ChatToolCall {
+                id,
+                tool_name: call.name.trim().to_string(),
+                arguments: parse_tool_call_arguments(&call.arguments),
+            }
+        })
+        .collect::<Vec<_>>();
+    if calls.is_empty() {
+        None
+    } else {
+        Some(calls)
+    }
 }
 
 fn extract_message_content(message: &OpenAIMessageResponse, request: &ChatRequest) -> String {
@@ -440,33 +531,50 @@ where
     F: FnMut(ChatStreamChunk) + Send,
 {
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
-    let structured_mode = if request.json_mode == Some(true) {
+    let mut structured_mode = if request.json_mode == Some(true) {
         StructuredOutputMode::JsonObject
     } else {
         StructuredOutputMode::Omit
     };
-    let streaming_request = OpenAIRequest {
-        stream: true,
-        ..build_openai_request(request, structured_mode, ToolMode::Omit)
-    };
 
-    let response = client
-        .post(&url)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("Content-Type", "application/json")
-        .json(&streaming_request)
-        .send()
-        .await
-        .map_err(|e| format!("HTTP request failed: {}", e))?;
+    let response = loop {
+        let streaming_request = OpenAIRequest {
+            stream: true,
+            ..build_openai_request(request, structured_mode, ToolMode::Include)
+        };
+        let response = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .json(&streaming_request)
+            .send()
+            .await
+            .map_err(|e| format!("HTTP request failed: {}", e))?;
 
-    if !response.status().is_success() {
+        if response.status().is_success() {
+            break response;
+        }
+
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
+        // Some OpenAI-compatible endpoints reject response_format. Drop it and
+        // retry (same escalation as the non-streaming path) instead of failing.
+        if supports_response_format_fallback(status, &body, request) {
+            structured_mode = match structured_mode {
+                StructuredOutputMode::JsonObject => StructuredOutputMode::JsonSchema,
+                StructuredOutputMode::JsonSchema => StructuredOutputMode::Omit,
+                StructuredOutputMode::Omit => {
+                    return Err(format!("API error {}: {}", status, body));
+                }
+            };
+            continue;
+        }
         return Err(format!("API error {}: {}", status, body));
-    }
+    };
 
     let mut content = String::new();
     let mut reasoning = String::new();
+    let mut tool_calls: Vec<StreamingToolCall> = Vec::new();
     let mut stream = response.bytes_stream();
     let mut pending = String::new();
     let mut finished = false;
@@ -483,7 +591,13 @@ where
                 continue;
             }
             let data = line["data:".len()..].trim();
-            if apply_stream_data_chunk(data, &mut content, &mut reasoning, &mut on_chunk) {
+            if apply_stream_data_chunk(
+                data,
+                &mut content,
+                &mut reasoning,
+                &mut tool_calls,
+                &mut on_chunk,
+            ) {
                 finished = true;
                 break;
             }
@@ -496,7 +610,13 @@ where
     if !finished {
         let tail = pending.trim();
         if let Some(data) = tail.strip_prefix("data:").map(str::trim) {
-            apply_stream_data_chunk(data, &mut content, &mut reasoning, &mut on_chunk);
+            apply_stream_data_chunk(
+                data,
+                &mut content,
+                &mut reasoning,
+                &mut tool_calls,
+                &mut on_chunk,
+            );
         }
     }
 
@@ -516,7 +636,7 @@ where
         } else {
             Some(reasoning)
         },
-        tool_calls: None,
+        tool_calls: finalize_streaming_tool_calls(tool_calls),
         usage: None,
     })
 }
@@ -582,6 +702,29 @@ mod tests {
         assert!(supports_response_format_fallback(
             reqwest::StatusCode::BAD_REQUEST,
             "{\"error\":\"'response_format.type' must be 'json_schema' or 'text'\"}",
+            &request,
+        ));
+    }
+
+    #[test]
+    fn retries_for_response_format_unavailable_wording() {
+        // Regression: deepseek-v4-flash style endpoints return this exact 400.
+        let request = ChatRequest {
+            model: "test-model".to_string(),
+            messages: vec![],
+            temperature: Some(0.1),
+            max_tokens: Some(32),
+            stream: Some(true),
+            json_mode: Some(true),
+            response_schema: None,
+            tools: None,
+            tool_choice: None,
+            native_tool_calling: None,
+        };
+
+        assert!(supports_response_format_fallback(
+            reqwest::StatusCode::BAD_REQUEST,
+            "{\"error\":{\"message\":\"This response_format type is unavailable now\",\"type\":\"invalid_request_error\"}}",
             &request,
         ));
     }
@@ -658,17 +801,53 @@ mod tests {
     fn stream_done_chunk_reports_completion() {
         let mut content = String::new();
         let mut reasoning = String::new();
+        let mut tool_calls = Vec::new();
         let mut chunks = Vec::new();
 
-        let finished =
-            apply_stream_data_chunk("[DONE]", &mut content, &mut reasoning, &mut |chunk| {
+        let finished = apply_stream_data_chunk(
+            "[DONE]",
+            &mut content,
+            &mut reasoning,
+            &mut tool_calls,
+            &mut |chunk| {
                 chunks.push(chunk.delta);
-            });
+            },
+        );
 
         assert!(finished);
         assert!(content.is_empty());
         assert!(reasoning.is_empty());
         assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn stream_accumulates_split_tool_call_deltas() {
+        let mut content = String::new();
+        let mut reasoning = String::new();
+        let mut tool_calls = Vec::new();
+        let mut noop = |_chunk: ChatStreamChunk| {};
+
+        // 工具调用分片跨多个 chunk：先 id+name，再 arguments 分两段。
+        apply_stream_data_chunk(
+            "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\":\"}}]}}]}",
+            &mut content,
+            &mut reasoning,
+            &mut tool_calls,
+            &mut noop,
+        );
+        apply_stream_data_chunk(
+            "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"北京\\\"}\"}}]}}]}",
+            &mut content,
+            &mut reasoning,
+            &mut tool_calls,
+            &mut noop,
+        );
+
+        let finalized = finalize_streaming_tool_calls(tool_calls).expect("tool calls");
+        assert_eq!(finalized.len(), 1);
+        assert_eq!(finalized[0].id, "call_1");
+        assert_eq!(finalized[0].tool_name, "get_weather");
+        assert_eq!(finalized[0].arguments["city"], "北京");
     }
 
     #[test]

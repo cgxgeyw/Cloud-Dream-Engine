@@ -1,7 +1,8 @@
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 
 use crate::models::world::*;
 use crate::services::catalog::world_service::WorldService;
+use crate::services::world_builder::AiWorldBuilderService;
 use crate::services::world_package::WorldPackageService;
 use crate::state::AppState;
 
@@ -24,6 +25,47 @@ pub async fn create_world(
 ) -> Result<WorldDefinition, String> {
     let db = state.db.lock().await;
     WorldService::new().create_world(db.conn(), request)
+}
+
+#[tauri::command]
+pub async fn create_world_with_ai(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: AiWorldCreateRequest,
+) -> Result<AiWorldCreateResponse, String> {
+    let model = {
+        let db = state.db.lock().await;
+        let repo = crate::db::repositories::model_repo::ModelRepository::new(db.conn());
+        let models = repo.list(Some("text"))?;
+        models
+            .iter()
+            .find(|model| model.is_default)
+            .cloned()
+            .or_else(|| models.first().cloned())
+            .ok_or_else(|| {
+                "No text model configured. Please add a text model in Settings first.".to_string()
+            })?
+    };
+
+    // Emit live progress (accumulated character count) so the UI can show the
+    // model is actively generating.
+    let mut emit_progress = |received: usize| {
+        let _ = app.emit(
+            "ai_world_create:progress",
+            serde_json::json!({ "received_chars": received }),
+        );
+    };
+
+    let draft = AiWorldBuilderService::generate_draft(
+        &state.services.llm_client,
+        &model,
+        request.clone(),
+        Some(&mut emit_progress),
+    )
+    .await?;
+
+    let db = state.db.lock().await;
+    AiWorldBuilderService::persist_world(db.conn(), &model, &request, draft)
 }
 
 #[tauri::command]

@@ -64,6 +64,19 @@ export type WorldUpsertRequest = {
 
 export type WorldCreateRequest = WorldUpsertRequest;
 
+export type AiWorldCreateMode = "single_agent" | "multi_agent";
+
+export type AiWorldCreateRequest = {
+  mode: AiWorldCreateMode;
+  concept: string;
+};
+
+export type AiWorldCreateResponse = {
+  world: WorldResponse;
+  characters: CharacterResponse[];
+  notes: string[];
+};
+
 export type WorldOpeningPromptPreviewResponse = {
   opening_calls_llm: boolean;
   opening_messages: ChatMessage[];
@@ -576,6 +589,13 @@ export type AttributeValueUpsertRequest = {
   owner_id: string;
   value: unknown;
   source: string;
+};
+
+export type WorldPermissionStatus = {
+  permission: string;
+  requested: boolean;
+  granted: boolean | null;
+  error: string | null;
 };
 
 // ==============================

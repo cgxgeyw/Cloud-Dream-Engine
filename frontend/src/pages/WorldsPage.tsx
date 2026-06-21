@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   assetUrl,
+  createWorldWithAi,
+  onAiWorldCreateProgress,
   deleteAllWorlds,
   deleteWorld,
   downloadWorldPackage,
@@ -10,12 +12,14 @@ import {
   fetchWorlds,
   importWorldPackage,
   type CharacterResponse,
+  type AiWorldCreateMode,
   type WorldResponse,
 } from "../data/apiAdapter";
-import { ConfirmDialog } from "../components/ModalDialog";
+import { ConfirmDialog, ModalDialog } from "../components/ModalDialog";
 import { useIsMobile } from "../components/ResponsiveLayout";
 import { ScreenLayout } from "../components/ScreenLayout";
 import { showToast } from "../components/Toast";
+import { useT } from "../data/i18n/context";
 import { X } from "lucide-react";
 
 function normalizeAssetList(value: unknown): string[] {
@@ -23,6 +27,20 @@ function normalizeAssetList(value: unknown): string[] {
     return [];
   }
   return value.map((item) => String(item).trim()).filter(Boolean);
+}
+
+// Tauri rejects commands with a plain string (the Rust Err(String)), not an
+// Error instance, so `instanceof Error` misses it. Extract a usable message
+// from whatever was thrown.
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  if (err == null) return "";
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
 }
 
 function resolveWorldDefaultBackgroundAsset(world: WorldResponse): string {
@@ -66,6 +84,7 @@ function countMapNodes(value: WorldResponse["map_nodes"]): number {
 export function WorldsPage() {
   const isMobile = useIsMobile();
   const navigate = useNavigate();
+  const t = useT();
   const [worlds, setWorlds] = useState<WorldResponse[]>([]);
   const [worldCharacters, setWorldCharacters] = useState<Record<string, CharacterResponse[]>>({});
   const [loading, setLoading] = useState(true);
@@ -75,6 +94,12 @@ export function WorldsPage() {
   const [duplicating, setDuplicating] = useState<string | null>(null);
   const [exporting, setExporting] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  const [showAiCreateDialog, setShowAiCreateDialog] = useState(false);
+  const [aiCreateMode, setAiCreateMode] = useState<AiWorldCreateMode>("single_agent");
+  const [aiConcept, setAiConcept] = useState("");
+  const [aiCreating, setAiCreating] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiProgressChars, setAiProgressChars] = useState(0);
   const [pendingDelete, setPendingDelete] = useState<WorldResponse | null>(null);
   const [showDeleteAllDialog, setShowDeleteAllDialog] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
@@ -96,7 +121,7 @@ export function WorldsPage() {
         }
       } catch (loadError) {
         if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : "加载世界列表失败");
+          setError(loadError instanceof Error ? loadError.message : t("worlds.loadFailed"));
         }
       } finally {
         if (!cancelled) {
@@ -128,7 +153,7 @@ export function WorldsPage() {
       });
       setPendingDelete((current) => (current?.id === worldId ? null : current));
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : "删除世界失败");
+      setError(deleteError instanceof Error ? deleteError.message : t("worlds.deleteWorldFailed"));
     } finally {
       setDeleting(null);
     }
@@ -145,9 +170,9 @@ export function WorldsPage() {
         ...prev,
         [duplicated.id]: duplicatedCharacters,
       }));
-      showToast("世界已复制");
+      showToast(t("worlds.duplicated"));
     } catch (duplicateError) {
-      setError(duplicateError instanceof Error ? duplicateError.message : "复制世界失败");
+      setError(duplicateError instanceof Error ? duplicateError.message : t("worlds.duplicateFailed"));
     } finally {
       setDuplicating(null);
     }
@@ -163,7 +188,7 @@ export function WorldsPage() {
       setPendingDelete(null);
       setShowDeleteAllDialog(false);
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : "删除全部世界失败");
+      setError(deleteError instanceof Error ? deleteError.message : t("worlds.deleteAllFailed"));
     } finally {
       setDeletingAll(false);
     }
@@ -173,21 +198,22 @@ export function WorldsPage() {
     try {
       setExporting(world.id);
       setError(null);
-      const { blob, filename } = await downloadWorldPackage(world.id);
-      if (!blob) {
-        throw new Error("世界包导出失败：未收到文件内容。");
+      const { blob, filename, savedPath } = await downloadWorldPackage(world.id);
+      if (blob) {
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = filename;
+        document.body.append(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(url);
+        showToast(t("worlds.exported"));
+      } else {
+        showToast(t("worlds.exportedTo").replace("{path}", savedPath ?? filename));
       }
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = filename;
-      document.body.append(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
-      showToast("世界包已导出");
     } catch (exportError) {
-      setError(exportError instanceof Error ? exportError.message : "导出世界包失败");
+      setError(exportError instanceof Error ? exportError.message : t("worlds.exportFailed"));
     } finally {
       setExporting(null);
     }
@@ -209,19 +235,60 @@ export function WorldsPage() {
         ...prev,
         [importedWorld.id]: importedCharacters,
       }));
-      showToast("世界包已导入");
+      showToast(t("worlds.imported"));
     } catch (importError) {
-      setError(importError instanceof Error ? importError.message : "导入世界包失败");
+      setError(importError instanceof Error ? importError.message : t("worlds.importFailed"));
     } finally {
       setImporting(false);
       event.target.value = "";
     }
   }
 
+  async function handleAiCreate() {
+    const concept = aiConcept.trim();
+    if (!concept) {
+      setAiError(t("worlds.conceptRequired"));
+      return;
+    }
+
+    try {
+      setAiCreating(true);
+      setAiError(null);
+      setAiProgressChars(0);
+      const stopProgress = await onAiWorldCreateProgress((received) => {
+        setAiProgressChars(received);
+      });
+      let created;
+      try {
+        created = await createWorldWithAi({
+          mode: aiCreateMode,
+          concept,
+        });
+      } finally {
+        stopProgress();
+      }
+      setWorlds((prev) => [created.world, ...prev]);
+      setWorldCharacters((prev) => ({
+        ...prev,
+        [created.world.id]: created.characters,
+      }));
+      setShowAiCreateDialog(false);
+      setAiConcept("");
+      showToast(t("worlds.aiCreated"));
+    } catch (createError) {
+      // Show the real backend message (e.g. token-truncation / provider 400),
+      // not just the generic fallback.
+      const detail = errorMessage(createError).trim();
+      setAiError(detail ? `${t("worlds.aiCreateFailed")}：${detail}` : t("worlds.aiCreateFailed"));
+    } finally {
+      setAiCreating(false);
+    }
+  }
+
   return (
     <ScreenLayout
-      title={isMobile ? "" : "\u4e16\u754c\u5de5\u574a"}
-      subtitle={isMobile ? undefined : "\u521b\u5efa\u3001\u7f16\u8f91\u3001\u5bfc\u5165\u548c\u5bfc\u51fa\u4e16\u754c\u5305\u3002"}
+      title={isMobile ? "" : t("worlds.title")}
+      subtitle={isMobile ? undefined : t("worlds.subtitle")}
       compactHeader
       maxWidth={980}
       toolbar={
@@ -234,66 +301,82 @@ export function WorldsPage() {
             onChange={(event) => void handleImport(event)}
           />
           <button type="button" onClick={() => navigate(-1)} className="action-btn">
-            返回首页
+            {t("common.back")}
           </button>
           <button
             type="button"
             onClick={() => importInputRef.current?.click()}
-            disabled={importing || deletingAll || Boolean(deleting) || Boolean(duplicating) || Boolean(exporting)}
+            disabled={importing || aiCreating || deletingAll || Boolean(deleting) || Boolean(duplicating) || Boolean(exporting)}
             className="action-btn"
           >
-            {importing ? "导入中..." : "导入"}
+            {importing ? t("worlds.importing") : t("worlds.import")}
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowAiCreateDialog(true)}
+            disabled={importing || aiCreating || deletingAll || Boolean(deleting) || Boolean(duplicating) || Boolean(exporting)}
+            className="action-btn"
+          >
+            {aiCreating ? t("worlds.aiCreating") : t("worlds.aiCreate")}
           </button>
           {worlds.length > 0 ? (
             <button
               type="button"
               onClick={() => setShowDeleteAllDialog(true)}
-              disabled={deletingAll || importing || Boolean(deleting) || Boolean(duplicating) || Boolean(exporting)}
+              disabled={deletingAll || importing || aiCreating || Boolean(deleting) || Boolean(duplicating) || Boolean(exporting)}
               className="action-btn action-btn--danger"
             >
-              {deletingAll ? "删除中..." : "清空全部"}
+              {deletingAll ? t("worlds.deleting") : t("worlds.clearAll")}
             </button>
           ) : null}
           <button
             type="button"
             onClick={() => navigate("/worlds/new")}
-            disabled={deletingAll || importing || Boolean(exporting)}
+            disabled={deletingAll || importing || aiCreating || Boolean(exporting)}
             className="action-btn action-btn--accent"
           >
-            + 新建世界
+            {t("worlds.newWorld")}
           </button>
         </div>
       }
     >
       {isMobile ? (
         <div className="worlds-mobile-header">
-          <h1 className="worlds-mobile-title">{"\u4e16\u754c\u5217\u8868"}</h1>
+          <h1 className="worlds-mobile-title">{t("worlds.mobileTitle")}</h1>
           <div className="worlds-mobile-actions">
             <button
               type="button"
               onClick={() => navigate("/worlds/new")}
-              disabled={deletingAll || importing || Boolean(exporting)}
+              disabled={deletingAll || importing || aiCreating || Boolean(exporting)}
               className="action-btn"
             >
-              {"\u65b0\u589e\u4e16\u754c"}
+              {t("worlds.mobileNewWorld")}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowAiCreateDialog(true)}
+              disabled={deletingAll || importing || aiCreating || Boolean(deleting) || Boolean(duplicating) || Boolean(exporting)}
+              className="action-btn"
+            >
+              {aiCreating ? t("worlds.aiCreating") : t("worlds.aiCreate")}
             </button>
             <button
               type="button"
               onClick={() => setShowDeleteAllDialog(true)}
-              disabled={worlds.length === 0 || deletingAll || importing || Boolean(deleting) || Boolean(duplicating) || Boolean(exporting)}
+              disabled={worlds.length === 0 || deletingAll || importing || aiCreating || Boolean(deleting) || Boolean(duplicating) || Boolean(exporting)}
               className="action-btn action-btn--danger"
             >
-              {deletingAll ? "\u5220\u9664\u4e2d..." : "\u5220\u9664\u5168\u90e8\u4e16\u754c"}
+              {deletingAll ? t("worlds.deleting") : t("worlds.mobileClearAll")}
             </button>
           </div>
         </div>
       ) : null}
 
-      {loading ? <div className="empty-text">正在加载世界列表...</div> : null}
-      {error ? <div className="error-text">加载失败：{error}</div> : null}
+      {loading ? <div className="empty-text">{t("worlds.loading")}</div> : null}
+      {error ? <div className="error-text">{t("worlds.loadError").replace("{error}", error)}</div> : null}
 
       {!loading && !error && worlds.length === 0 ? (
-        <div className="empty-text">暂无世界。</div>
+        <div className="empty-text">{t("worlds.empty")}</div>
       ) : null}
 
       {!loading && !error ? (
@@ -322,8 +405,8 @@ export function WorldsPage() {
               >
                 <button
                   type="button"
-                  aria-label={`删除世界 ${world.name}`}
-                  title="删除世界"
+                  aria-label={t("worlds.deleteWorldAria").replace("{name}", world.name)}
+                  title={t("worlds.deleteWorld")}
                   disabled={isDeleting || deletingAll || isExporting}
                   onClick={() => setPendingDelete(world)}
                   className="card-delete-btn"
@@ -333,9 +416,9 @@ export function WorldsPage() {
 
                 <div className="card-item-title">{world.name}</div>
                 <div className="card-item-meta">
-                  <span>{world.genre || "未分类"}</span>
-                  <span>地图 {countMapNodes(world.map_nodes)}</span>
-                  <span>角色 {getCharacterCount(world.id)}</span>
+                  <span>{world.genre || t("worlds.uncategorized")}</span>
+                  <span>{t("worlds.mapCount")} {countMapNodes(world.map_nodes)}</span>
+                  <span>{t("worlds.characterCount")} {getCharacterCount(world.id)}</span>
                 </div>
 
                 <div className="card-item-actions world-card-actions">
@@ -345,7 +428,7 @@ export function WorldsPage() {
                     disabled={deletingAll || isExporting}
                     onClick={() => navigate(`/new-game/setup/${world.id}`)}
                   >
-                    进入
+                    {t("worlds.cardEnter")}
                   </button>
                   <button
                     type="button"
@@ -353,7 +436,7 @@ export function WorldsPage() {
                     disabled={deletingAll || isExporting}
                     onClick={() => navigate(`/worlds/${world.id}/edit`)}
                   >
-                    编辑
+                    {t("worlds.cardEdit")}
                   </button>
                   <button
                     type="button"
@@ -361,7 +444,7 @@ export function WorldsPage() {
                     disabled={deletingAll || isExporting}
                     onClick={() => navigate(`/worlds/${world.id}/characters`)}
                   >
-                    角色池
+                    {t("worlds.cardCharacters")}
                   </button>
                   <button
                     type="button"
@@ -369,7 +452,7 @@ export function WorldsPage() {
                     disabled={deletingAll || importing || isDeleting || isDuplicating || isExporting}
                     onClick={() => void handleExport(world)}
                   >
-                    {isExporting ? "导出中..." : "导出"}
+                    {isExporting ? t("worlds.cardExporting") : t("worlds.cardExport")}
                   </button>
                   <button
                     type="button"
@@ -377,7 +460,7 @@ export function WorldsPage() {
                     disabled={isDuplicating || deletingAll || isExporting}
                     onClick={() => void handleDuplicate(world.id)}
                   >
-                    {isDuplicating ? "复制中..." : "复制"}
+                    {isDuplicating ? t("worlds.cardDuplicating") : t("worlds.cardDuplicate")}
                   </button>
                   <button
                     type="button"
@@ -385,7 +468,7 @@ export function WorldsPage() {
                     className="card-action-btn card-action-btn--secondary"
                     onClick={() => setPendingDelete(world)}
                   >
-                    {isDeleting ? "删除中..." : "删除"}
+                    {isDeleting ? t("worlds.cardDeleting") : t("worlds.cardDelete")}
                   </button>
                 </div>
               </div>
@@ -394,11 +477,85 @@ export function WorldsPage() {
         </div>
       ) : null}
 
+      <ModalDialog
+        open={showAiCreateDialog}
+        title={t("worlds.aiDialogTitle")}
+        maxWidth={640}
+        onClose={() => {
+          if (!aiCreating) {
+            setShowAiCreateDialog(false);
+            setAiError(null);
+          }
+        }}
+        footer={
+          <>
+            <button
+              type="button"
+              className="action-btn"
+              disabled={aiCreating}
+              onClick={() => { setShowAiCreateDialog(false); setAiError(null); }}
+            >
+              {t("common.cancel")}
+            </button>
+            <button
+              type="button"
+              className="action-btn action-btn--accent"
+              disabled={aiCreating || !aiConcept.trim()}
+              onClick={() => void handleAiCreate()}
+            >
+              {aiCreating ? t("worlds.creating") : t("worlds.startCreate")}
+            </button>
+          </>
+        }
+      >
+        <div className="ai-world-create">
+          <div className="ai-world-mode-group" role="group" aria-label={t("worlds.worldType")}>
+            <button
+              type="button"
+              className={`ai-world-mode-btn${aiCreateMode === "single_agent" ? " is-active" : ""}`}
+              onClick={() => setAiCreateMode("single_agent")}
+              disabled={aiCreating}
+            >
+              {t("worlds.singleAgent")}
+            </button>
+            <button
+              type="button"
+              className={`ai-world-mode-btn${aiCreateMode === "multi_agent" ? " is-active" : ""}`}
+              onClick={() => setAiCreateMode("multi_agent")}
+              disabled={aiCreating}
+            >
+              {t("worlds.multiAgent")}
+            </button>
+          </div>
+          <label className="ai-world-field">
+            <span>{t("worlds.concept")}</span>
+            <textarea
+              value={aiConcept}
+              onChange={(event) => setAiConcept(event.target.value)}
+              disabled={aiCreating}
+              rows={8}
+              placeholder={t("worlds.conceptPlaceholder")}
+            />
+          </label>
+          <p className="ai-world-hint">
+            {t("worlds.aiHint")}
+          </p>
+          {aiCreating ? (
+            <p className="ai-world-hint">
+              {t("worlds.aiGenerating").replace("{n}", String(aiProgressChars))}
+            </p>
+          ) : null}
+          {aiError ? (
+            <p className="error-text" style={{ whiteSpace: "pre-wrap" }}>{aiError}</p>
+          ) : null}
+        </div>
+      </ModalDialog>
+
       <ConfirmDialog
         open={Boolean(pendingDelete)}
-        title="删除世界"
-        description={pendingDelete ? `确定要删除「${pendingDelete.name}」吗？此操作不可撤销。` : ""}
-        confirmLabel={deleting ? "删除中..." : "删除世界"}
+        title={t("worlds.deleteWorld")}
+        description={pendingDelete ? t("worlds.deleteConfirm").replace("{name}", pendingDelete.name) : ""}
+        confirmLabel={deleting ? t("worlds.cardDeleting") : t("worlds.deleteWorldAction")}
         confirmVariant="danger"
         confirmDisabled={!pendingDelete || Boolean(deleting) || deletingAll || importing || Boolean(exporting)}
         onClose={() => {
@@ -416,9 +573,9 @@ export function WorldsPage() {
 
       <ConfirmDialog
         open={showDeleteAllDialog}
-        title="删除全部世界"
-        description="确定删除当前全部世界吗？此操作不可撤销。"
-        confirmLabel={deletingAll ? "删除中..." : "删除全部世界"}
+        title={t("worlds.deleteAllTitle")}
+        description={t("worlds.deleteAllConfirm")}
+        confirmLabel={deletingAll ? t("worlds.cardDeleting") : t("worlds.deleteAllAction")}
         confirmVariant="danger"
         confirmDisabled={deletingAll || importing || Boolean(deleting) || Boolean(duplicating) || Boolean(exporting)}
         onClose={() => {

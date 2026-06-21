@@ -69,6 +69,7 @@ export type GameUiRuntimeContext = {
     loading: boolean;
     page_error: string | null;
     submitting: boolean;
+    streaming_response_active: boolean;
     branching: boolean;
     switching: boolean;
     retrying_token: string | null;
@@ -159,6 +160,7 @@ export function createGameUiRuntimeContext(
       loading: bag.loading,
       page_error: bag.error,
       submitting: bag.submitting,
+      streaming_response_active: bag.streamingResponseActive,
       branching: bag.branching,
       switching: bag.switching,
       retrying_token: bag.retryingToken,

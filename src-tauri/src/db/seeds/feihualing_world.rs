@@ -115,12 +115,12 @@ pub(crate) fn poetry_world_opening_messages_json() -> String {
     serde_json::json!([
         {
             "role": "system",
-            "content": "夜色笼住水面，诗会刚刚开始。",
+            "content": "夜色笼住水面，临水赏月亭中酒过三巡，座中有人提议行飞花令助兴。",
             "speaker": Value::Null
         },
         {
             "role": "agent",
-            "content": "座上已有人提笔，等你接句。",
+            "content": "今夜月色正好，不如行个飞花令？便以「月」字为令，诗中须带月字，接不上者罚酒一杯。请客人先来。",
             "speaker": SEED_CHARACTER_LIQINGZHAO_NAME
         }
     ])
@@ -161,18 +161,4 @@ pub(crate) fn liqingzhao_attributes_json() -> String {
 
 pub(crate) fn sushi_attributes_json() -> String {
     serde_json::json!(["旷达", "会转圜", "能接场"]).to_string()
-}
-
-pub(crate) fn seed_rule_effects_json() -> String {
-    serde_json::json!([
-        {
-            "type": "message",
-            "text": "规则：场上气氛进一步升温。"
-        },
-        {
-            "type": "add_tag",
-            "tag": "heated-atmosphere"
-        }
-    ])
-    .to_string()
 }

@@ -1,3 +1,4 @@
+use crate::models::character::CharacterDefinition;
 use crate::models::session::ChatMessage;
 use serde::{Deserialize, Serialize};
 
@@ -45,6 +46,19 @@ pub struct WorldCreateRequest {
     pub opening_messages: Vec<WorldOpeningMessage>,
     pub opening_character_ids: Vec<String>,
     pub player_character_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiWorldCreateRequest {
+    pub mode: String,
+    pub concept: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiWorldCreateResponse {
+    pub world: WorldDefinition,
+    pub characters: Vec<CharacterDefinition>,
+    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

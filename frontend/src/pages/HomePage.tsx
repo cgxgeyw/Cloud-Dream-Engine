@@ -1,12 +1,13 @@
 import { useNavigate } from "react-router-dom";
 import { useIsMobile } from "../components/ResponsiveLayout";
 import { MenuButton, ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
+import { useT } from "../data/i18n/context";
 import { Play, Save, Globe, Settings, Wrench } from "lucide-react";
 import type { ReactNode } from "react";
 
 type MenuItem = {
-  title: string;
-  description: string;
+  titleKey: string;
+  descKey: string;
   to: string;
   icon: ReactNode;
   primary?: boolean;
@@ -14,33 +15,33 @@ type MenuItem = {
 
 const desktopMenuItems: MenuItem[] = [
   {
-    title: "开始冒险",
-    description: "选择一个世界，设定你的角色，开启全新的故事旅程。",
+    titleKey: "home.menuStartTitle",
+    descKey: "home.menuStartDesc",
     to: "/new-game",
     icon: <Play size={18} />,
     primary: true,
   },
   {
-    title: "继续旅途",
-    description: "从存档中恢复进度，延续未完的故事或创建新的分支。",
+    titleKey: "home.menuContinueTitle",
+    descKey: "home.menuContinueDesc",
     to: "/saves",
     icon: <Save size={18} />,
   },
   {
-    title: "世界工坊",
-    description: "创建和编辑世界配置，管理每个世界的角色与设定。",
+    titleKey: "home.menuWorldsTitle",
+    descKey: "home.menuWorldsDesc",
     to: "/worlds",
     icon: <Globe size={18} />,
   },
   {
-    title: "偏好设置",
-    description: "自定义模型、背景外观、数据导入导出等选项。",
+    titleKey: "home.menuSettingsTitle",
+    descKey: "home.menuSettingsDesc",
     to: "/settings",
     icon: <Settings size={18} />,
   },
   {
-    title: "工具箱",
-    description: "管理和配置 MCP 工具，按需扩展世界主控的能力。",
+    titleKey: "home.menuToolsTitle",
+    descKey: "home.menuToolsDesc",
     to: "/mcp-tools",
     icon: <Wrench size={18} />,
   },
@@ -49,12 +50,13 @@ const desktopMenuItems: MenuItem[] = [
 export function HomePage() {
   const isMobile = useIsMobile();
   const navigate = useNavigate();
+  const t = useT();
 
   // ===== Desktop Layout (菜单网格+描述) =====
   const desktopLayout = (
     <ScreenLayout
-      title="首页"
-      subtitle="选择你的下一步行动，一切故事从这里开始。"
+      title={t("home.title")}
+      subtitle={t("home.subtitle")}
       maxWidth={860}
     >
       <div
@@ -70,9 +72,9 @@ export function HomePage() {
           <div className="grid grid--gap-sm">
             {desktopMenuItems.map((item) => (
               <MenuButton
-                key={item.title}
-                title={item.title}
-                description={item.description}
+                key={item.titleKey}
+                title={t(item.titleKey)}
+                description={t(item.descKey)}
                 primary={item.primary}
                 icon={item.icon}
                 onClick={() => navigate(item.to)}
@@ -82,7 +84,7 @@ export function HomePage() {
         </SurfacePanel>
       </div>
       <div style={{ textAlign: "center", marginTop: 32 }}>
-        <p style={{ fontSize: 12, color: "var(--color-muted)", margin: 0 }}>本软件下载、安装及使用过程完全免费</p>
+        <p style={{ fontSize: 12, color: "var(--color-muted)", margin: 0 }}>{t("home.freeNote")}</p>
       </div>
     </ScreenLayout>
   );
@@ -90,7 +92,7 @@ export function HomePage() {
   // ===== Mobile Layout (品牌着陆页+2个大按钮) =====
   const mobileLayout = (
     <div className="home-mobile-center">
-      <div className="home-mobile-brand">云朵梦境引擎</div>
+      <div className="home-mobile-brand">{t("home.brand")}</div>
       <div className="home-mobile-actions">
         <button
           type="button"
@@ -98,7 +100,7 @@ export function HomePage() {
           onClick={() => navigate("/new-game")}
         >
           <span className="home-mobile-btn-icon"><Play size={22} /></span>
-          <span className="home-mobile-btn-text">新的游戏</span>
+          <span className="home-mobile-btn-text">{t("home.mobileNewGame")}</span>
         </button>
         <button
           type="button"
@@ -106,12 +108,12 @@ export function HomePage() {
           onClick={() => navigate("/saves")}
         >
           <span className="home-mobile-btn-icon"><Save size={22} /></span>
-          <span className="home-mobile-btn-text">继续游戏</span>
+          <span className="home-mobile-btn-text">{t("home.mobileContinue")}</span>
         </button>
       </div>
-      <div className="home-mobile-hint">点击左上角菜单展开导航</div>
+      <div className="home-mobile-hint">{t("home.mobileNavHint")}</div>
       <div style={{ marginTop: 32 }}>
-        <p style={{ fontSize: 12, color: "var(--color-muted)", margin: 0 }}>本软件下载、安装及使用过程完全免费</p>
+        <p style={{ fontSize: 12, color: "var(--color-muted)", margin: 0 }}>{t("home.freeNote")}</p>
       </div>
     </div>
   );

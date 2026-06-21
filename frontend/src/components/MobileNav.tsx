@@ -124,6 +124,22 @@ export function MobileNav({ children }: MobileNavProps) {
   };
 
   const handleBack = () => {
+    if (
+      location.pathname === "/settings" &&
+      document.documentElement.dataset.settingsDetailOpen === "true"
+    ) {
+      window.dispatchEvent(new Event("settings:navigate-back"));
+      setIsOpen(false);
+      return;
+    }
+    if (
+      /^\/worlds\/[^/]+\/edit$/.test(location.pathname) &&
+      document.documentElement.dataset.worldEditorDetailOpen === "true"
+    ) {
+      window.dispatchEvent(new Event("world-editor:navigate-back"));
+      setIsOpen(false);
+      return;
+    }
     navigate(resolveParentPath(location.pathname, location.search));
     setIsOpen(false);
   };

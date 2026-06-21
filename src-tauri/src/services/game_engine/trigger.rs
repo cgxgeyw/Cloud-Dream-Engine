@@ -49,15 +49,7 @@ impl TriggerEngineService {
         director_decision: &DirectorDecision,
         session_attributes: &[RuntimeAttributeItem],
     ) -> TriggerEvaluation {
-        let attr_map = session_attributes
-            .iter()
-            .map(|item| (item.key.as_str(), item.value.clone()))
-            .collect::<std::collections::HashMap<_, _>>();
-        let world_tension = as_number(attr_map.get("world_tension"), 0.0);
-        let weather_state = attr_map
-            .get("weather_state")
-            .and_then(|value| value.as_str())
-            .unwrap_or("clear");
+        let _ = session_attributes;
 
         let mut evaluation = TriggerEvaluation::default();
         let next_location = director_decision
@@ -97,38 +89,6 @@ impl TriggerEngineService {
             }
         }
 
-        if world_tension >= 50.0 && weather_state == "storm" {
-            let message = "触发器：封锁等级提升，场景压力继续上升。".to_string();
-            evaluation.system_messages.push(message.clone());
-            evaluation.attribute_updates.push(TriggerAttributeUpdate {
-                owner_type: "session".to_string(),
-                owner_id: session.id.clone(),
-                schema_key: "active_objective".to_string(),
-                value: serde_json::Value::String("尽快找到可通行的安全路线".to_string()),
-                source: "trigger".to_string(),
-            });
-            evaluation.memory_events.push(TriggerMemoryEvent {
-                event_id: "trigger:storm_tension_threshold".to_string(),
-                content: message,
-                source: "trigger_engine".to_string(),
-                importance: 0.58,
-                memory_type: "event".to_string(),
-                speaker: None,
-                role: Some("system".to_string()),
-                location: Some(
-                    next_location
-                        .unwrap_or(session.location.as_str())
-                        .to_string(),
-                ),
-                scene_id: Some(session.scene.scene_id.clone()),
-                item_id: None,
-                participants: build_participants(session),
-                character_names: build_participants(session),
-            });
-            evaluation.debug_lines.push(
-                "TriggerEngine threshold -> world_tension >= 50 and weather=storm".to_string(),
-            );
-        }
 
         if player_input.contains("观察")
             && next_location
@@ -164,9 +124,6 @@ impl TriggerEngineService {
     }
 }
 
-fn as_number(value: Option<&serde_json::Value>, fallback: f64) -> f64 {
-    value.and_then(|item| item.as_f64()).unwrap_or(fallback)
-}
 
 fn build_participants(session: &SessionSnapshot) -> Vec<String> {
     let mut names = session.visible_characters.clone();

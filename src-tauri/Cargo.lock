@@ -1059,6 +1059,7 @@ dependencies = [
  "candle-transformers",
  "chrono",
  "futures",
+ "jni",
  "json5",
  "notify-rust",
  "regex",

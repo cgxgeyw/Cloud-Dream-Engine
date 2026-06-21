@@ -4,10 +4,12 @@ import { branchSave, deleteAllSaves, deleteSave, fetchSaves, type SaveResponse }
 import { ConfirmDialog } from "../components/ModalDialog";
 import { useIsMobile } from "../components/ResponsiveLayout";
 import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
+import { useT } from "../data/i18n/context";
 
 export function SavesPage() {
   const isMobile = useIsMobile();
   const navigate = useNavigate();
+  const t = useT();
 
   function formatTime(iso: string): string {
     try {
@@ -41,7 +43,7 @@ export function SavesPage() {
         }
       } catch (loadError) {
         if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : "加载存档失败");
+          setError(loadError instanceof Error ? loadError.message : t("saves.loadFailed"));
         }
       } finally {
         if (!cancelled) {
@@ -65,7 +67,7 @@ export function SavesPage() {
       setSaves((prev) => prev.filter((s) => s.id !== saveId));
       setPendingDelete((current) => (current?.id === saveId ? null : current));
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : "删除存档失败");
+      setError(deleteError instanceof Error ? deleteError.message : t("saves.deleteFailed"));
     } finally {
       setDeleting(null);
     }
@@ -80,7 +82,7 @@ export function SavesPage() {
       setPendingDelete(null);
       setShowDeleteAllDialog(false);
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : "删除全部存档失败");
+      setError(deleteError instanceof Error ? deleteError.message : t("saves.deleteAllFailed"));
     } finally {
       setDeletingAll(false);
     }
@@ -93,7 +95,7 @@ export function SavesPage() {
       const branched = await branchSave(save.id);
       setSaves((prev) => [branched, ...prev]);
     } catch (branchError) {
-      setError(branchError instanceof Error ? branchError.message : "创建分支失败");
+      setError(branchError instanceof Error ? branchError.message : t("saves.branchFailed"));
     } finally {
       setBranching(null);
     }
@@ -101,14 +103,14 @@ export function SavesPage() {
 
   return (
     <ScreenLayout
-      title="载入游戏"
-      subtitle="选择一个存档继续游戏，或从现有存档创建分支。"
+      title={t("saves.title")}
+      subtitle={t("saves.subtitle")}
       compactHeader={isMobile}
       toolbar={
         <>
           {!isMobile ? (
             <button type="button" onClick={() => navigate("/")} className="action-btn">
-              返回首页
+              {t("saves.backHome")}
             </button>
           ) : null}
           {saves.length > 0 ? (
@@ -118,7 +120,7 @@ export function SavesPage() {
               disabled={deletingAll || Boolean(deleting)}
               className="action-btn action-btn--danger"
             >
-              {deletingAll ? "删除全部中..." : "删除全部存档"}
+              {deletingAll ? t("saves.deletingAll") : t("saves.deleteAll")}
             </button>
           ) : null}
         </>
@@ -128,23 +130,23 @@ export function SavesPage() {
       <div className="grid grid--gap-md">
         {isMobile ? (
           <div className="saves-mobile-header">
-            <h1 className="saves-mobile-title">{"\u5b58\u6863\u5217\u8868"}</h1>
+            <h1 className="saves-mobile-title">{t("saves.mobileTitle")}</h1>
             <button
               type="button"
               onClick={() => setShowDeleteAllDialog(true)}
               disabled={saves.length === 0 || deletingAll || Boolean(deleting)}
               className="action-btn action-btn--danger"
             >
-              {deletingAll ? "\u5220\u9664\u4e2d..." : "\u5220\u9664\u5168\u90e8\u5b58\u6863"}
+              {deletingAll ? t("saves.deleting") : t("saves.deleteAll")}
             </button>
           </div>
         ) : null}
 
-        {loading ? <SurfacePanel className="surface-panel--pad-lg">正在加载存档列表...</SurfacePanel> : null}
-        {error ? <SurfacePanel className="surface-panel--pad-lg error-text">加载失败：{error}</SurfacePanel> : null}
+        {loading ? <SurfacePanel className="surface-panel--pad-lg">{t("saves.loading")}</SurfacePanel> : null}
+        {error ? <SurfacePanel className="surface-panel--pad-lg error-text">{t("saves.loadError").replace("{error}", error)}</SurfacePanel> : null}
 
         {!loading && !error && saves.length === 0 ? (
-          <SurfacePanel className="surface-panel--pad-lg empty-text">暂无存档。</SurfacePanel>
+          <SurfacePanel className="surface-panel--pad-lg empty-text">{t("saves.empty")}</SurfacePanel>
         ) : null}
 
         {!loading && !error
@@ -153,12 +155,12 @@ export function SavesPage() {
                   <div className="save-info">
                     <strong className="save-title">{save.title}</strong>
                     <div className="save-meta">
-                      {save.world_name} / {save.progress} / 最后保存 {formatTime(save.updated_at)}
+                      {save.world_name} / {save.progress} / {t("saves.lastSaved")} {formatTime(save.updated_at)}
                     </div>
                     {save.player_character_name ? (
-                      <div className="save-meta">玩家角色：{save.player_character_name}</div>
+                      <div className="save-meta">{t("saves.playerCharacter").replace("{name}", save.player_character_name)}</div>
                     ) : null}
-                    <div className="save-meta">第 {save.turn_index} 回合</div>
+                    <div className="save-meta">{t("saves.turnIndex").replace("{n}", String(save.turn_index))}</div>
                     <div className="save-summary">{save.summary}</div>
                   </div>
 
@@ -168,7 +170,7 @@ export function SavesPage() {
                       onClick={() => navigate(`/game/${save.session_id}`)}
                       className="action-btn action-btn--accent"
                     >
-                      继续游戏
+                      {t("saves.continue")}
                     </button>
                     <button
                       type="button"
@@ -176,7 +178,7 @@ export function SavesPage() {
                       onClick={() => void handleBranch(save)}
                       className="action-btn"
                     >
-                      {branching === save.id ? "分支中..." : "分支"}
+                      {branching === save.id ? t("saves.branching") : t("saves.branch")}
                     </button>
                     <button
                       type="button"
@@ -185,7 +187,7 @@ export function SavesPage() {
                       className="action-btn action-btn--danger"
                       style={{ opacity: deleting === save.id || deletingAll ? 0.5 : 1 }}
                     >
-                      {deleting === save.id ? "删除中..." : "删除"}
+                      {deleting === save.id ? t("saves.deleting") : t("saves.delete")}
                     </button>
                   </div>
               </SurfacePanel>
@@ -195,9 +197,9 @@ export function SavesPage() {
 
       <ConfirmDialog
         open={Boolean(pendingDelete)}
-        title="删除存档"
-        description={pendingDelete ? `确定要删除存档「${pendingDelete.title}」吗？此操作不可撤销。` : ""}
-        confirmLabel={deleting ? "删除中..." : "删除存档"}
+        title={t("saves.deleteTitle")}
+        description={pendingDelete ? t("saves.deleteConfirm").replace("{title}", pendingDelete.title) : ""}
+        confirmLabel={deleting ? t("saves.deleting") : t("saves.deleteAction")}
         confirmVariant="danger"
         confirmDisabled={!pendingDelete || Boolean(deleting) || deletingAll}
         onClose={() => {
@@ -215,9 +217,9 @@ export function SavesPage() {
 
       <ConfirmDialog
         open={showDeleteAllDialog}
-        title="删除全部存档"
-        description="确定要删除当前所有存档吗？此操作会清空全部会话与对应记忆，且不可撤销。"
-        confirmLabel={deletingAll ? "删除全部中..." : "删除全部存档"}
+        title={t("saves.deleteAllTitle")}
+        description={t("saves.deleteAllConfirm")}
+        confirmLabel={deletingAll ? t("saves.deletingAll") : t("saves.deleteAll")}
         confirmVariant="danger"
         confirmDisabled={deletingAll || Boolean(deleting)}
         onClose={() => {

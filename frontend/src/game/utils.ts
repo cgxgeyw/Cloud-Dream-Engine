@@ -473,6 +473,15 @@ export function isMessageReasoningExpanded(message: ChatMessageResponse): boolea
   return Boolean((message.metadata ?? {}).reasoning_expanded);
 }
 
+export function parseAgentNarration(message: ChatMessageResponse): string | null {
+  if (message.role !== "agent") {
+    return null;
+  }
+  const metadata = (message.metadata ?? {}) as Record<string, unknown>;
+  const narration = String(metadata.narration ?? "").trim();
+  return narration ? narration : null;
+}
+
 export async function copyTextToClipboard(text: string): Promise<void> {
   if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);

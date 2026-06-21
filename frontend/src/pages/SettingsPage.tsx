@@ -29,16 +29,17 @@ import { showToast } from "../components/Toast";
 import { useSettings } from "../data/SettingsContext";
 import { ArrowLeft, ChevronRight } from "lucide-react";
 import { ThemePicker } from "../components/ThemePicker";
+import { useT } from "../data/i18n/context";
 
 const BUILTIN_EMBEDDING_MODEL_ID = "BAAI/bge-small-zh-v1.5";
 
 const tabIds = [
-  { id: "text-model", label: "LLM 模型" },
-  { id: "image-model", label: "绘图模型" },
-  { id: "embedding-model", label: "Embedding 模型" },
-  { id: "background", label: "背景设置" },
-  { id: "theme", label: "主题设置" },
-  { id: "export", label: "导出设置" },
+  { id: "text-model", labelKey: "settings.tabTextModel" },
+  { id: "image-model", labelKey: "settings.tabImageModel" },
+  { id: "embedding-model", labelKey: "settings.tabEmbeddingModel" },
+  { id: "background", labelKey: "settings.tabBackground" },
+  { id: "theme", labelKey: "settings.tabTheme" },
+  { id: "export", labelKey: "settings.tabExport" },
 ] as const;
 
 const commonProviderOptions = [
@@ -76,7 +77,7 @@ const providerBaseUrlPresets: Record<string, string> = {
   "builtin-local": "",
 };
 
-const providerDiscoverySupport = new Set(["OpenAI", "Ollama", "LM Studio"]);
+
 
 type TabId = (typeof tabIds)[number]["id"];
 type ModelTabId = Extract<TabId, "text-model" | "image-model" | "embedding-model">;
@@ -112,6 +113,7 @@ function resolveUploadedAssetPath(result: { url?: string; asset_path?: string; r
 export function SettingsPage() {
   const isMobile = useIsMobile();
   const navigate = useNavigate();
+  const t = useT();
   const { refresh: refreshGlobalSettings } = useSettings();
 
   // Desktop: activeTab, Mobile: activeSection + section-list navigation
@@ -162,10 +164,6 @@ export function SettingsPage() {
   const isBuiltinLocalProvider = modelForm.provider === "builtin-local";
   const embeddingDefaultMissing = !!settings?.embedding_enabled && !settings.default_embedding_model.trim();
   const supportsDirectoryPicker = isTauriEnvironment() && !isAndroidRuntime();
-  const supportsModelDiscovery =
-    activeModelTab !== "image-model" &&
-    !isBuiltinLocalProvider &&
-    providerDiscoverySupport.has(modelForm.provider.trim());
 
   useEffect(() => {
     let cancelled = false;
@@ -182,7 +180,7 @@ export function SettingsPage() {
         setEmbeddingModels(allModels.filter((model) => model.model_type === "embedding"));
       } catch (loadError) {
         if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : "加载设置失败");
+          setError(loadError instanceof Error ? loadError.message : t("settings.loadSettingsFailed"));
         }
       } finally {
         if (!cancelled) {
@@ -211,6 +209,33 @@ export function SettingsPage() {
     closeModelEditor();
   }
 
+  function closeMobileSection() {
+    setActiveSection(null);
+    closeModelEditor();
+    setError(null);
+  }
+
+  useEffect(() => {
+    if (!isMobile) {
+      delete document.documentElement.dataset.settingsDetailOpen;
+      return;
+    }
+    if (activeSection) {
+      document.documentElement.dataset.settingsDetailOpen = "true";
+    } else {
+      delete document.documentElement.dataset.settingsDetailOpen;
+    }
+
+    const handleSettingsBack = () => {
+      closeMobileSection();
+    };
+    window.addEventListener("settings:navigate-back", handleSettingsBack);
+    return () => {
+      window.removeEventListener("settings:navigate-back", handleSettingsBack);
+      delete document.documentElement.dataset.settingsDetailOpen;
+    };
+  }, [activeSection, isMobile]);
+
 
   function openNewModel() {
     if (!activeModelTab) return;
@@ -221,7 +246,7 @@ export function SettingsPage() {
             ...defaultModelForm,
             provider: "builtin-local",
             model_id: BUILTIN_EMBEDDING_MODEL_ID,
-            name: "内置 Embedding",
+            name: t("settings.builtinEmbeddingName"),
             streaming_enabled: false,
           }
         : {
@@ -301,9 +326,9 @@ export function SettingsPage() {
       const saved = await updateSettings(settings);
       setSettings(saved);
       await refreshGlobalSettings();
-      showToast("设置已保存");
+      showToast(t("settings.settingsSaved"));
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "保存设置失败");
+      setError(saveError instanceof Error ? saveError.message : t("settings.saveSettingsFailed"));
     } finally {
       setSaving(false);
     }
@@ -313,8 +338,8 @@ export function SettingsPage() {
     if (!settings) return;
 
     if (nextEnabled && !settings.default_embedding_model.trim()) {
-      setError("请先设置默认 Embedding 模型");
-      showToast("请先设置默认 Embedding 模型", "error");
+      setError(t("settings.needDefaultEmbedding"));
+      showToast(t("settings.needDefaultEmbedding"), "error");
       return;
     }
 
@@ -329,7 +354,7 @@ export function SettingsPage() {
       await refreshGlobalSettings();
     } catch (saveError) {
       setSettings(settings);
-      const message = saveError instanceof Error ? saveError.message : "保存 Embedding 设置失败";
+      const message = saveError instanceof Error ? saveError.message : t("settings.saveEmbeddingFailed");
       setError(message);
       showToast(message, "error");
     } finally {
@@ -385,9 +410,9 @@ export function SettingsPage() {
       }
 
       closeModelEditor();
-      showToast("模型已保存");
+      showToast(t("settings.modelSaved"));
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "保存模型失败");
+      setError(saveError instanceof Error ? saveError.message : t("settings.saveModelFailed"));
     } finally {
       setSaving(false);
     }
@@ -401,9 +426,9 @@ export function SettingsPage() {
       setImageModels((prev) => prev.filter((item) => item.id !== model.id));
       setEmbeddingModels((prev) => prev.filter((item) => item.id !== model.id));
       setPendingDeleteModel(null);
-      showToast("模型已删除");
+      showToast(t("settings.modelDeleted"));
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : "删除模型失败");
+      setError(deleteError instanceof Error ? deleteError.message : t("settings.deleteModelFailed"));
     }
   }
 
@@ -438,20 +463,20 @@ export function SettingsPage() {
         await refreshGlobalSettings();
       }
 
-      showToast("默认模型已更新");
+      showToast(t("settings.defaultModelUpdated"));
     } catch (setError_) {
-      setError(setError_ instanceof Error ? setError_.message : "设置默认模型失败");
+      setError(setError_ instanceof Error ? setError_.message : t("settings.setDefaultModelFailed"));
     }
   }
 
   async function handleTestModel(model: ModelConfigResponse) {
     try {
       setTestingModelId(model.id);
-      showToast("模型测试中...");
+      showToast(t("settings.modelTesting"));
       const result = await testModel(model.id);
       showToast(result.detail, result.ok ? "success" : "error");
     } catch (testError_) {
-      showToast(testError_ instanceof Error ? testError_.message : "模型测试失败", "error");
+      showToast(testError_ instanceof Error ? testError_.message : t("settings.modelTestFailed"), "error");
     } finally {
       setTestingModelId((current) => (current === model.id ? null : current));
     }
@@ -464,7 +489,7 @@ export function SettingsPage() {
   async function handleTestImageModel(model: ModelConfigResponse) {
     const prompt = imageTestPrompts[model.id]?.trim() ?? "";
     if (!prompt) {
-      showToast(isMobile ? "Please enter a prompt first." : "请先输入测试提示词", "error");
+      showToast(isMobile ? "Please enter a prompt first." : t("settings.enterPromptFirst"), "error");
       return;
     }
 
@@ -490,13 +515,6 @@ export function SettingsPage() {
   }
 
   async function handleDiscoverModels() {
-    if (!supportsModelDiscovery) {
-      const message = "当前提供商不支持拉取模型列表。";
-      setModelDiscovery({ ok: false, detail: message, modelIds: [] });
-      showToast(message, "error");
-      return;
-    }
-
     try {
       setDiscoveringModels(true);
       const result = await discoverModels({
@@ -507,11 +525,7 @@ export function SettingsPage() {
       setModelDiscovery({ ok: result.ok, detail: result.detail, modelIds: result.model_ids });
       showToast(result.detail, result.ok ? "success" : "error");
     } catch (discoverError) {
-      const rawMessage = discoverError instanceof Error ? discoverError.message : "读取模型列表失败";
-      const message =
-        rawMessage.includes("Model discovery not supported for provider")
-          ? "当前提供商不支持拉取模型列表。"
-          : rawMessage;
+      const message = discoverError instanceof Error ? discoverError.message : t("settings.discoverFailed");
       setModelDiscovery({ ok: false, detail: message, modelIds: [] });
       showToast(message, "error");
     } finally {
@@ -530,15 +544,15 @@ export function SettingsPage() {
       const result = await uploadFile(file);
       const assetPath = resolveUploadedAssetPath(result);
       if (!assetPath) {
-        throw new Error("上传成功，但没有返回可用的资源地址");
+        throw new Error(t("settings.uploadNoUrl"));
       }
       const nextSettings = { ...settings, home_background_strategy: assetPath };
       const saved = await updateSettings(nextSettings);
       setSettings(saved);
       await refreshGlobalSettings();
-      showToast("背景已更新");
+      showToast(t("settings.bgUpdated"));
     } catch (uploadError) {
-      setError(uploadError instanceof Error ? uploadError.message : "上传背景失败");
+      setError(uploadError instanceof Error ? uploadError.message : t("settings.bgUploadFailed"));
     } finally {
       setUploading(false);
     }
@@ -553,9 +567,9 @@ export function SettingsPage() {
       const saved = await updateSettings({ ...settings, home_background_strategy: "" });
       setSettings(saved);
       await refreshGlobalSettings();
-      showToast("背景已清除");
+      showToast(t("settings.bgCleared"));
     } catch (clearError) {
-      setError(clearError instanceof Error ? clearError.message : "清除背景失败");
+      setError(clearError instanceof Error ? clearError.message : t("settings.bgClearFailed"));
     } finally {
       setSaving(false);
     }
@@ -570,16 +584,16 @@ export function SettingsPage() {
         const selected = await getExportDirectorySuggestion();
         if (typeof selected === "string" && selected.trim()) {
           updateDraft({ export_directory: selected.trim() });
-          showToast(isMobile ? "已选择应用导出目录" : "已选择应用导出目录");
+          showToast(t("settings.exportDirPicked"));
         }
       } catch (pickError) {
-        setError(pickError instanceof Error ? pickError.message : "选择导出目录失败");
+        setError(pickError instanceof Error ? pickError.message : t("settings.pickExportDirFailed"));
       }
       return;
     }
 
     if (!supportsDirectoryPicker) {
-      showToast("当前环境不支持目录选择，请直接填写导出目录", "error");
+      showToast(t("settings.noDirPicker"), "error");
       return;
     }
 
@@ -594,7 +608,7 @@ export function SettingsPage() {
         updateDraft({ export_directory: selected.trim() });
       }
     } catch (pickError) {
-      setError(pickError instanceof Error ? pickError.message : "选择导出目录失败");
+      setError(pickError instanceof Error ? pickError.message : t("settings.pickExportDirFailed"));
     }
   }
 
@@ -603,9 +617,9 @@ export function SettingsPage() {
     return (
       <div className="settings-page-shell">
         <div className="settings-mobile-overview-head">
-          <div className="settings-mobile-kicker">设置</div>
-          <h1 className="settings-mobile-title">{"\u8bbe\u7f6e\u4e2d\u5fc3"}</h1>
-          <p className="settings-mobile-summary">{"\u7ba1\u7406\u6a21\u578b\u3001\u4e3b\u9898\u3001\u80cc\u666f\u548c\u5bfc\u51fa\u504f\u597d\u3002"}</p>
+          <div className="settings-mobile-kicker">{t("settings.title")}</div>
+          <h1 className="settings-mobile-title">{t("settings.mobileTitle")}</h1>
+          <p className="settings-mobile-summary">{t("settings.mobileSummary")}</p>
         </div>
         <SurfacePanel className="surface-panel--pad-lg">
           <div className="settings-nav-list">
@@ -617,7 +631,7 @@ export function SettingsPage() {
                 onClick={() => openSection(item.id)}
               >
                 <div className="settings-nav-item-copy">
-                  <strong>{item.label}</strong>
+                  <strong>{t(item.labelKey)}</strong>
                 </div>
                 <span className="settings-nav-item-arrow"><ChevronRight size={14} /></span>
               </button>
@@ -632,21 +646,21 @@ export function SettingsPage() {
     return (
       <SurfacePanel className="surface-panel--pad-lg">
         <div className="settings-section">
-          <h3 className="settings-section-title">{isNewModel ? "新增模型" : `编辑模型：${editingModel?.name ?? ""}`}</h3>
+          <h3 className="settings-section-title">{isNewModel ? t("settings.newModel") : t("settings.editModel").replace("{name}", editingModel?.name ?? "")}</h3>
 
           <div className="settings-form-grid settings-form-grid--model-editor">
             <label className="field-label">
-              <span className="field-label-text">模型名称</span>
+              <span className="field-label-text">{t("settings.modelName")}</span>
               <input
                 value={modelForm.name}
                 onChange={(event) => patchModelForm({ name: event.target.value })}
                 className="field-input"
-                placeholder="例如：主对话模型"
+                placeholder={t("settings.phMainModel")}
               />
             </label>
 
             <label className="field-label">
-              <span className="field-label-text">提供商</span>
+              <span className="field-label-text">{t("settings.provider")}</span>
               <select
                 value={providerSelectValue}
                 onChange={(event) => {
@@ -667,13 +681,13 @@ export function SettingsPage() {
                 }}
                 className="field-input editor-field-select"
               >
-                <option value="">请选择</option>
+                <option value="">{t("settings.selectPlaceholder")}</option>
                 {providerOptions.map((option) => (
                   <option key={option.value} value={option.value}>
-                    {option.label}
+                    {option.value === "builtin-local" ? t("settings.builtinLocal") : option.label}
                   </option>
                 ))}
-                <option value="custom">自定义</option>
+                <option value="custom">{t("settings.custom")}</option>
               </select>
               {showsCustomProviderInput ? (
                 <input
@@ -684,18 +698,18 @@ export function SettingsPage() {
                   }}
                   className="field-input"
                   style={{ marginTop: 8 }}
-                  placeholder="填写 provider 名称"
+                  placeholder={t("settings.phProviderName")}
                 />
               ) : null}
             </label>
 
             <label className="field-label">
-              <span className="field-label-text">模型 ID</span>
+              <span className="field-label-text">{t("settings.modelId")}</span>
               <input
                 value={modelForm.model_id}
                 onChange={(event) => patchModelForm({ model_id: event.target.value })}
                 className="field-input"
-                placeholder="例如：gpt-4.1"
+                placeholder={t("settings.phExampleGpt")}
                 readOnly={isBuiltinLocalProvider}
               />
             </label>
@@ -706,7 +720,7 @@ export function SettingsPage() {
                 value={modelForm.base_url}
                 onChange={(event) => patchModelForm({ base_url: event.target.value }, { resetDiscovery: true })}
                 className="field-input"
-                placeholder={isBuiltinLocalProvider ? "内置本地模型无需填写" : "例如：http://127.0.0.1:1234/v1"}
+                placeholder={isBuiltinLocalProvider ? t("settings.builtinNoFill") : t("settings.phBaseUrlExample")}
                 readOnly={isBuiltinLocalProvider}
               />
             </label>
@@ -722,14 +736,14 @@ export function SettingsPage() {
                 autoComplete="off"
                 autoCapitalize="none"
                 spellCheck={false}
-                placeholder={isBuiltinLocalProvider ? "内置本地模型无需填写" : "留空则不设置"}
+                placeholder={isBuiltinLocalProvider ? t("settings.builtinNoFill") : t("settings.leaveEmptyNoSet")}
                 readOnly={isBuiltinLocalProvider}
               />
             </label>
 
             {activeModelTab === "text-model" ? (
               <label className="field-label field-label--inline">
-                <span className="field-label-text">最大输出 Tokens</span>
+                <span className="field-label-text">{t("settings.maxOutputTokens")}</span>
                 <input
                   value={modelForm.max_tokens}
                   onChange={(event) => patchModelForm({ max_tokens: event.target.value })}
@@ -742,7 +756,7 @@ export function SettingsPage() {
 
             {activeModelTab === "text-model" ? (
               <label className="field-label field-label--inline">
-                <span className="field-label-text">流式输出</span>
+                <span className="field-label-text">{t("settings.streamingOutput")}</span>
                 <div className="settings-inline-toggle">
                   <input
                     type="checkbox"
@@ -758,27 +772,19 @@ export function SettingsPage() {
             <div className="settings-model-discovery">
               <div className="settings-model-discovery-header">
                 <div className="settings-model-discovery-copy">
-                  <div className="field-label-text">模型列表</div>
-                  {supportsModelDiscovery ? (
-                    <div className="text-muted">从当前接口读取可用模型 ID，点选后会自动填入模型 ID。</div>
-                  ) : null}
+                  <div className="field-label-text">{t("settings.modelListLabel")}</div>
+                  <div className="text-muted">{t("settings.modelListHint")}</div>
                 </div>
               </div>
 
-              {supportsModelDiscovery ? (
-                <button
-                  type="button"
-                  onClick={() => void handleDiscoverModels()}
-                  disabled={discoveringModels || !modelForm.base_url.trim()}
-                  className="action-btn action-btn--accent settings-model-discovery-btn"
-                >
-                  {discoveringModels ? "读取中..." : "获取模型列表"}
-                </button>
-              ) : null}
-
-              {!supportsModelDiscovery ? (
-                <div className="text-muted">当前 provider 不支持拉取模型列表，请手动填写模型 ID</div>
-              ) : null}
+              <button
+                type="button"
+                onClick={() => void handleDiscoverModels()}
+                disabled={discoveringModels || !modelForm.base_url.trim()}
+                className="action-btn action-btn--accent settings-model-discovery-btn"
+              >
+                {discoveringModels ? t("settings.discovering") : t("settings.fetchModelList")}
+              </button>
 
               {modelDiscovery ? (
                 <div className={modelDiscovery.ok ? "text-muted" : "text-error"}>{modelDiscovery.detail}</div>
@@ -808,13 +814,13 @@ export function SettingsPage() {
               disabled={saving || !modelForm.name.trim() || !modelForm.provider.trim() || !modelForm.model_id.trim()}
               className="action-btn action-btn--accent"
             >
-              {saving ? "保存中..." : "保存"}
+              {saving ? t("settings.saving") : t("settings.save")}
             </button>
             <button type="button" onClick={closeModelEditor} className="action-btn">
-              取消
+              {t("common.cancel")}
             </button>
           </div>
-          {!supportsDirectoryPicker ? <div className="text-muted">当前环境不支持目录选择器。</div> : null}
+          {!supportsDirectoryPicker ? <div className="text-muted">{t("settings.noDirPickerShort")}</div> : null}
         </div>
       </SurfacePanel>
     );
@@ -825,19 +831,19 @@ export function SettingsPage() {
 
     const sectionTitle =
       activeModelTab === "text-model"
-        ? "LLM 模型"
+        ? t("settings.tabTextModel")
         : activeModelTab === "image-model"
-          ? "绘图模型"
-          : "Embedding 模型";
+          ? t("settings.tabImageModel")
+          : t("settings.tabEmbeddingModel");
 
     return (
       <SurfacePanel className="surface-panel--pad-lg">
         <div className="settings-section">
           {activeModelTab === "embedding-model" ? (
             <div className="settings-section">
-              <h3 className="settings-section-title">嵌入模型</h3>
+              <h3 className="settings-section-title">{t("settings.embeddingModelTitle")}</h3>
               <label className="field-label field-label--inline">
-                <span className="field-label-text">启用嵌入模型</span>
+                <span className="field-label-text">{t("settings.enableEmbedding")}</span>
                 <div className="settings-inline-toggle">
                   <input
                     type="checkbox"
@@ -847,19 +853,19 @@ export function SettingsPage() {
                   />
                 </div>
               </label>
-              {embeddingDefaultMissing ? <div className="text-error">请先设置默认 Embedding 模型</div> : null}
+              {embeddingDefaultMissing ? <div className="text-error">{t("settings.needDefaultEmbedding")}</div> : null}
             </div>
           ) : null}
 
           <div className="settings-list-header">
             <h3 className="settings-section-title">{sectionTitle}</h3>
             <button type="button" onClick={openNewModel} className="action-btn action-btn--accent">
-              + 新增
+              {t("settings.add")}
             </button>
           </div>
 
           {currentModels.length === 0 ? (
-            <div className="empty-text">暂无模型</div>
+            <div className="empty-text">{t("settings.noModels")}</div>
           ) : (
             <div className="settings-model-list">
               {currentModels.map((model) => (
@@ -867,14 +873,14 @@ export function SettingsPage() {
                   <div className="settings-model-info">
                     <div className="settings-model-name">
                       <span className="settings-model-name-text">{model.name}</span>
-                      {model.is_default ? <span className="settings-model-badge">默认</span> : null}
+                      {model.is_default ? <span className="settings-model-badge">{t("settings.defaultBadge")}</span> : null}
                       {!model.is_default ? (
                         <button
                           type="button"
                           onClick={() => void handleSetDefault(model)}
                           className="action-btn settings-model-default-btn"
                         >
-                          设为默认
+                          {t("settings.setAsDefault")}
                         </button>
                       ) : null}
                     </div>
@@ -897,18 +903,18 @@ export function SettingsPage() {
                         className="action-btn"
                         disabled={testingModelId === model.id}
                       >
-                        {testingModelId === model.id ? "测试中..." : "测试"}
+                        {testingModelId === model.id ? t("settings.testing") : t("settings.test")}
                       </button>
                     ) : null}
                     <button type="button" onClick={() => openEditModel(model)} className="action-btn">
-                      编辑
+                      {t("settings.edit")}
                     </button>
                     <button
                       type="button"
                       onClick={() => setPendingDeleteModel(model)}
                       className="action-btn action-btn--danger"
                     >
-                      删除
+                      {t("common.delete")}
                     </button>
                   </div>
                   {activeModelTab === "image-model" ? (
@@ -940,7 +946,7 @@ export function SettingsPage() {
     return (
       <SurfacePanel className="surface-panel--pad-lg">
         <div className="settings-section">
-          <h3 className="settings-section-title">页面背景</h3>
+          <h3 className="settings-section-title">{t("settings.pageBackground")}</h3>
 
           {settings.home_background_strategy.trim() ? (
             <div className="settings-bg-preview">
@@ -952,19 +958,19 @@ export function SettingsPage() {
                   className="action-btn action-btn--danger"
                   disabled={saving}
                 >
-                  清除背景
+                  {t("settings.clearBg")}
                 </button>
               </div>
             </div>
           ) : (
             <div className="settings-upload-zone">
-              <div className="empty-text">尚未配置背景。</div>
+              <div className="empty-text">{t("settings.noBgConfigured")}</div>
             </div>
           )}
 
           <div className="settings-upload-row">
             <label className="action-btn action-btn--accent" style={{ cursor: uploading ? "wait" : "pointer" }}>
-              {uploading ? "上传中..." : "选择文件"}
+              {uploading ? t("settings.uploading") : t("settings.selectFile")}
               <input
                 type="file"
                 accept="image/*,video/*"
@@ -983,7 +989,7 @@ export function SettingsPage() {
     return (
       <SurfacePanel className="surface-panel--pad-lg">
         <div className="settings-section">
-          <h3 className="settings-section-title">主题设置</h3>
+          <h3 className="settings-section-title">{t("settings.tabTheme")}</h3>
           <ThemePicker />
         </div>
       </SurfacePanel>
@@ -996,20 +1002,20 @@ export function SettingsPage() {
     return (
       <SurfacePanel className="surface-panel--pad-lg">
         <div className="settings-section">
-          <h3 className="settings-section-title">导出设置</h3>
+          <h3 className="settings-section-title">{t("settings.tabExport")}</h3>
           <label className="field-label">
-            <span className="field-label-text">导出目录</span>
+            <span className="field-label-text">{t("settings.exportDir")}</span>
             <input
               value={settings.export_directory}
               readOnly={!isAndroidRuntime()}
               className="field-input"
               onChange={(event) => updateDraft({ export_directory: event.target.value })}
-              placeholder="输入导出目录"
+              placeholder={t("settings.phEnterExportDir")}
             />
             <span className="text-muted">
               {isAndroidRuntime()
-                ? "安卓端默认使用应用导出目录，也可以手动修改路径。"
-                : "桌面端通过系统目录选择器设置导出目录。"}
+                ? t("settings.androidExportHint")
+                : t("settings.desktopExportHint")}
             </span>
           </label>
 
@@ -1018,9 +1024,9 @@ export function SettingsPage() {
               type="button"
               onClick={() => void handlePickExportDirectory()}
               className="action-btn"
-              aria-label={isAndroidRuntime() ? "使用应用目录" : "选择文件夹"}
+              aria-label={isAndroidRuntime() ? t("settings.useAppDir") : t("settings.selectFolder")}
             >
-              {isAndroidRuntime() ? "使用应用目录" : "选择文件夹"}
+              {isAndroidRuntime() ? t("settings.useAppDir") : t("settings.selectFolder")}
             </button>
             <button
               type="button"
@@ -1028,7 +1034,7 @@ export function SettingsPage() {
               disabled={saving}
               className="action-btn action-btn--accent"
             >
-              {saving ? "保存中..." : "保存"}
+              {saving ? t("settings.saving") : t("settings.save")}
             </button>
           </div>
         </div>
@@ -1043,9 +1049,12 @@ export function SettingsPage() {
     return (
       <div className="settings-page-shell">
         <div className="settings-detail-head">
+          <button type="button" onClick={closeMobileSection} className="settings-detail-back action-btn">
+            <ArrowLeft size={14} /> {t("common.back")}
+          </button>
           <div className="settings-detail-head-copy">
-            <span>{"\u5f53\u524d\u5206\u7ec4"}</span>
-            <strong>{currentSectionMeta?.label}</strong>
+            <span>{t("settings.currentGroup")}</span>
+            <strong>{currentSectionMeta ? t(currentSectionMeta.labelKey) : ""}</strong>
           </div>
         </div>
 
@@ -1072,7 +1081,7 @@ export function SettingsPage() {
               }}
               className={`settings-tab${activeTab === tab.id ? " settings-tab--active" : ""}`}
             >
-              {tab.label}
+              {t(tab.labelKey)}
             </button>
           ))}
         </div>
@@ -1081,9 +1090,9 @@ export function SettingsPage() {
           <SurfacePanel className="surface-panel--pad-lg">
             {activeTab === "embedding-model" ? (
               <div className="settings-section">
-                <h3 className="settings-section-title">嵌入模型</h3>
+                <h3 className="settings-section-title">{t("settings.embeddingModelTitle")}</h3>
                 <label className="field-label field-label--inline">
-                  <span className="field-label-text">启用嵌入模型</span>
+                  <span className="field-label-text">{t("settings.enableEmbedding")}</span>
                   <div className="settings-inline-toggle">
                     <input
                       type="checkbox"
@@ -1093,27 +1102,27 @@ export function SettingsPage() {
                     />
                   </div>
                 </label>
-                {embeddingDefaultMissing ? <div className="text-error">请先设置默认 Embedding 模型</div> : null}
+                {embeddingDefaultMissing ? <div className="text-error">{t("settings.needDefaultEmbedding")}</div> : null}
               </div>
             ) : null}
 
             {editingModel || isNewModel ? (
               <div className="settings-section">
                 <h3 className="settings-section-title">
-                  {isNewModel ? "新建模型" : `编辑：${editingModel?.name}`}
+                  {isNewModel ? t("settings.newModelMobile") : t("settings.editModelShort").replace("{name}", editingModel?.name ?? "")}
                 </h3>
                 <div className="settings-form-grid settings-form-grid--model-editor">
                   <label className="field-label">
-                    <span className="field-label-text">模型名称</span>
+                    <span className="field-label-text">{t("settings.modelName")}</span>
                     <input
                       value={modelForm.name}
                       onChange={(event) => patchModelForm({ name: event.target.value })}
                       className="field-input"
-                      placeholder="例如：GPT-4.1 叙事增强"
+                      placeholder={t("settings.phNarrativeName")}
                     />
                   </label>
                   <label className="field-label">
-                    <span className="field-label-text">提供商</span>
+                    <span className="field-label-text">{t("settings.provider")}</span>
                     <select
                       value={providerSelectValue}
                       onChange={(event) => {
@@ -1134,13 +1143,13 @@ export function SettingsPage() {
                       }}
                       className="field-input editor-field-select"
                     >
-                      <option value="">请选择 provider</option>
+                      <option value="">{t("settings.selectProvider")}</option>
                       {providerOptions.map((option) => (
                         <option key={option.value} value={option.value}>
-                          {option.label}
+                          {option.value === "builtin-local" ? t("settings.builtinLocal") : option.label}
                         </option>
                       ))}
-                      <option value="custom">自定义</option>
+                      <option value="custom">{t("settings.custom")}</option>
                     </select>
                     {showsCustomProviderInput ? (
                       <input
@@ -1151,17 +1160,17 @@ export function SettingsPage() {
                         }}
                         className="field-input"
                         style={{ marginTop: 8 }}
-                        placeholder="输入自定义 provider 名称"
+                        placeholder={t("settings.phCustomProvider")}
                       />
                     ) : null}
                   </label>
                   <label className="field-label">
-                    <span className="field-label-text">模型 ID</span>
+                    <span className="field-label-text">{t("settings.modelId")}</span>
                     <input
                       value={modelForm.model_id}
                       onChange={(event) => patchModelForm({ model_id: event.target.value })}
                       className="field-input"
-                      placeholder="例如：gpt-4.1-narrative-local"
+                      placeholder={t("settings.phExampleGptLocal")}
                       readOnly={isBuiltinLocalProvider}
                     />
                   </label>
@@ -1171,24 +1180,24 @@ export function SettingsPage() {
                       value={modelForm.base_url}
                       onChange={(event) => patchModelForm({ base_url: event.target.value }, { resetDiscovery: true })}
                       className="field-input"
-                      placeholder={isBuiltinLocalProvider ? "内置本地模型无需填写" : "例如：http://127.0.0.1:1234/v1"}
+                      placeholder={isBuiltinLocalProvider ? t("settings.builtinNoFill") : t("settings.phBaseUrlExample")}
                       readOnly={isBuiltinLocalProvider}
                     />
                   </label>
                   <label className="field-label">
-                    <span className="field-label-text">API Key（可选）</span>
+                    <span className="field-label-text">{t("settings.apiKeyOptional")}</span>
                     <input
                       value={modelForm.api_key}
                       onChange={(event) => patchModelForm({ api_key: event.target.value }, { resetDiscovery: true })}
                       className="field-input"
                       type="password"
-                      placeholder={isBuiltinLocalProvider ? "内置本地模型无需填写" : "留空则不设置"}
+                      placeholder={isBuiltinLocalProvider ? t("settings.builtinNoFill") : t("settings.leaveEmptyNoSet")}
                       readOnly={isBuiltinLocalProvider}
                     />
                   </label>
                   {activeTab === "text-model" ? (
                     <label className="field-label">
-                      <span className="field-label-text">最大输出 Tokens</span>
+                      <span className="field-label-text">{t("settings.maxOutputTokens")}</span>
                       <input
                         value={modelForm.max_tokens}
                         onChange={(event) => patchModelForm({ max_tokens: event.target.value })}
@@ -1200,7 +1209,7 @@ export function SettingsPage() {
                   ) : null}
                   {activeTab === "text-model" ? (
                     <label className="field-label">
-                      <span className="field-label-text">流式输出</span>
+                      <span className="field-label-text">{t("settings.streamingOutput")}</span>
                       <div className="settings-inline-toggle">
                         <input
                           type="checkbox"
@@ -1216,25 +1225,19 @@ export function SettingsPage() {
                   <div className="settings-model-discovery">
                     <div className="settings-model-discovery-header">
                       <div className="settings-model-discovery-copy">
-                        <div className="field-label-text">端点模型列表</div>
-                        {supportsModelDiscovery ? (
-                          <div className="text-muted">
-                            读取当前 Base URL 返回的可用模型。支持 OpenAI 兼容 `/models`，Ollama 会额外尝试 `/api/tags`。
-                          </div>
-                        ) : (
-                          <div className="text-muted">当前 provider 不支持拉取模型列表，请手动填写模型 ID</div>
-                        )}
+                        <div className="field-label-text">{t("settings.endpointModelList")}</div>
+                        <div className="text-muted">
+                          {t("settings.endpointHint")}
+                        </div>
                       </div>
-                      {supportsModelDiscovery ? (
-                        <button
-                          type="button"
-                          onClick={() => void handleDiscoverModels()}
-                          disabled={discoveringModels || !modelForm.base_url.trim()}
-                          className="action-btn"
-                        >
-                          {discoveringModels ? "读取中..." : "从端点拉取"}
-                        </button>
-                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => void handleDiscoverModels()}
+                        disabled={discoveringModels || !modelForm.base_url.trim()}
+                        className="action-btn"
+                      >
+                        {discoveringModels ? t("settings.discovering") : t("settings.fetchFromEndpoint")}
+                      </button>
                     </div>
                     {modelDiscovery ? (
                       <div className={modelDiscovery.ok ? "text-muted" : "text-error"}>{modelDiscovery.detail}</div>
@@ -1263,10 +1266,10 @@ export function SettingsPage() {
                     disabled={saving || !modelForm.name.trim() || !modelForm.provider.trim() || !modelForm.model_id.trim()}
                     className="action-btn action-btn--accent"
                   >
-                    {saving ? "保存中..." : "保存"}
+                    {saving ? t("settings.saving") : t("settings.save")}
                   </button>
                   <button type="button" onClick={closeModelEditor} className="action-btn">
-                    取消
+                    {t("common.cancel")}
                   </button>
                 </div>
               </div>
@@ -1275,17 +1278,17 @@ export function SettingsPage() {
                 <div className="settings-list-header">
                   <h3 className="settings-section-title">
                     {activeModelTab === "text-model"
-                      ? "LLM 模型列表"
+                      ? t("settings.textModelList")
                       : activeModelTab === "image-model"
-                        ? "文生图模型列表"
-                        : "Embedding 模型列表"}
+                        ? t("settings.imageModelList")
+                        : t("settings.embeddingModelList")}
                   </h3>
                   <button type="button" onClick={openNewModel} className="action-btn action-btn--accent">
-                    + 新增
+                    {t("settings.add")}
                   </button>
                 </div>
                 {currentModels.length === 0 ? (
-                  <div className="empty-text">暂无模型，点击“新增”开始添加。</div>
+                  <div className="empty-text">{t("settings.noModelsAdd")}</div>
                 ) : (
                   <div className="settings-model-list">
                     {currentModels.map((model) => (
@@ -1293,7 +1296,7 @@ export function SettingsPage() {
                         <div className="settings-model-info">
                           <div className="settings-model-name">
                             {model.name}
-                            {model.is_default ? <span className="settings-model-badge">默认</span> : null}
+                            {model.is_default ? <span className="settings-model-badge">{t("settings.defaultBadge")}</span> : null}
                           </div>
                           <div className="settings-model-detail">
                             {model.provider} / {model.model_id}
@@ -1301,7 +1304,7 @@ export function SettingsPage() {
                           {model.base_url ? <div className="settings-model-detail">{model.base_url}</div> : null}
                           {model.model_type === "text" ? (
                             <div className="settings-model-detail">
-                              {model.max_tokens} Tokens / {model.streaming_enabled ? "流式" : "非流式"}
+                              {model.max_tokens} Tokens / {model.streaming_enabled ? t("settings.streaming") : t("settings.nonStreaming")}
                             </div>
                           ) : null}
                         </div>
@@ -1313,23 +1316,23 @@ export function SettingsPage() {
                               className="action-btn"
                               disabled={testingModelId === model.id}
                             >
-                              {testingModelId === model.id ? "测试中..." : "测试"}
+                              {testingModelId === model.id ? t("settings.testing") : t("settings.test")}
                             </button>
                           ) : null}
                           {!model.is_default ? (
                             <button type="button" onClick={() => void handleSetDefault(model)} className="action-btn">
-                              设为默认
+                              {t("settings.setAsDefault")}
                             </button>
                           ) : null}
                           <button type="button" onClick={() => openEditModel(model)} className="action-btn">
-                            编辑
+                            {t("settings.edit")}
                           </button>
                           <button
                             type="button"
                             onClick={() => setPendingDeleteModel(model)}
                             className="action-btn action-btn--danger"
                           >
-                            删除
+                            {t("common.delete")}
                           </button>
                         </div>
                         {activeModelTab === "image-model" ? (
@@ -1358,9 +1361,9 @@ export function SettingsPage() {
         {activeTab === "background" && settings ? (
           <SurfacePanel className="surface-panel--pad-lg">
             <div className="settings-section">
-              <h3 className="settings-section-title">页面背景图 / 视频</h3>
+              <h3 className="settings-section-title">{t("settings.pageBackgroundImgVideo")}</h3>
               <p className="text-muted" style={{ marginTop: 4, marginBottom: 16 }}>
-                上传后立即生效，作为所有非游戏页面的背景。
+                {t("settings.bgUploadHint")}
               </p>
 
               {settings.home_background_strategy ? (
@@ -1377,7 +1380,7 @@ export function SettingsPage() {
                   ) : (
                     <img
                       src={assetUrl(settings.home_background_strategy)}
-                      alt="当前背景"
+                      alt={t("settings.altCurrentBg")}
                       className="settings-bg-image"
                     />
                   )}
@@ -1388,19 +1391,19 @@ export function SettingsPage() {
                       className="action-btn action-btn--danger"
                       disabled={saving}
                     >
-                      清除背景
+                      {t("settings.clearBg")}
                     </button>
                   </div>
                 </div>
               ) : (
                 <div className="settings-upload-zone">
-                  <p className="text-muted">当前还没有背景，使用下方按钮上传即可。</p>
+                  <p className="text-muted">{t("settings.noBgYet")}</p>
                 </div>
               )}
 
               <div className="settings-upload-row" style={{ marginTop: 12 }}>
                 <label className="action-btn action-btn--accent" style={{ cursor: uploading ? "wait" : "pointer" }}>
-                  {uploading ? "上传中..." : "选择文件并上传"}
+                  {uploading ? t("settings.uploading") : t("settings.selectFileUpload")}
                   <input
                     type="file"
                     accept="image/*,video/*"
@@ -1417,9 +1420,9 @@ export function SettingsPage() {
         {activeTab === "theme" ? (
           <SurfacePanel className="surface-panel--pad-lg">
             <div className="settings-section">
-              <h3 className="settings-section-title">主题设置</h3>
+              <h3 className="settings-section-title">{t("settings.tabTheme")}</h3>
               <p className="text-muted" style={{ marginTop: 4, marginBottom: 16 }}>
-                选择你喜欢的界面外观风格，即时预览并切换。
+                {t("settings.themeHint")}
               </p>
               <ThemePicker />
             </div>
@@ -1429,9 +1432,9 @@ export function SettingsPage() {
         {activeTab === "export" && settings ? (
           <SurfacePanel className="surface-panel--pad-lg">
             <div className="settings-section">
-              <h3 className="settings-section-title">导出设置</h3>
+              <h3 className="settings-section-title">{t("settings.tabExport")}</h3>
               <label className="field-label">
-                <span className="field-label-text">导出目录</span>
+                <span className="field-label-text">{t("settings.exportDir")}</span>
                 <input
                   value={settings.export_directory}
                   onChange={(event) => updateDraft({ export_directory: event.target.value })}
@@ -1441,7 +1444,7 @@ export function SettingsPage() {
               <div className="settings-form-actions">
                 {supportsDirectoryPicker ? (
                   <button type="button" onClick={() => void handlePickExportDirectory()} className="action-btn">
-                    选择文件夹
+                    {t("settings.selectFolder")}
                   </button>
                 ) : null}
                 <button
@@ -1450,7 +1453,7 @@ export function SettingsPage() {
                   disabled={saving}
                   className="action-btn action-btn--primary"
                 >
-                  {saving ? "保存中..." : "保存导出设置"}
+                  {saving ? t("settings.saving") : t("settings.saveExportSettings")}
                 </button>
               </div>
             </div>
@@ -1463,29 +1466,29 @@ export function SettingsPage() {
   // ==================== Main render ====================
   return (
     <ScreenLayout
-      title="设置"
-      subtitle={isMobile ? undefined : "配置文本模型、图片模型、背景与导出选项。"}
+      title={t("settings.title")}
+      subtitle={isMobile ? undefined : t("settings.subtitle")}
       compactHeader
       toolbar={
         isMobile ? null : (
           <button type="button" onClick={() => navigate(-1)} className="action-btn">
-            <ArrowLeft size={14} /> 返回
+            <ArrowLeft size={14} /> {t("common.back")}
           </button>
         )
       }
       maxWidth={980}
     >
-      {loading ? <SurfacePanel className="surface-panel--pad-lg">正在加载设置...</SurfacePanel> : null}
-      {error ? <SurfacePanel className="surface-panel--pad-lg text-error">错误：{error}</SurfacePanel> : null}
+      {loading ? <SurfacePanel className="surface-panel--pad-lg">{t("settings.loadingSettings")}</SurfacePanel> : null}
+      {error ? <SurfacePanel className="surface-panel--pad-lg text-error">{t("settings.errorPrefix").replace("{error}", error)}</SurfacePanel> : null}
 
       {!loading && !error && isMobile ? renderMobileSectionContent() : null}
       {!loading && !error && !isMobile ? renderDesktopContent() : null}
 
       <ConfirmDialog
         open={Boolean(pendingDeleteModel)}
-        title="删除模型"
-        description={pendingDeleteModel ? `确定删除模型“${pendingDeleteModel.name}”吗？` : ""}
-        confirmLabel="删除模型"
+        title={t("settings.deleteModelTitle")}
+        description={pendingDeleteModel ? t("settings.deleteModelConfirm").replace("{name}", pendingDeleteModel.name) : ""}
+        confirmLabel={t("settings.deleteModelTitle")}
         confirmVariant="danger"
         onClose={() => setPendingDeleteModel(null)}
         onConfirm={() => {

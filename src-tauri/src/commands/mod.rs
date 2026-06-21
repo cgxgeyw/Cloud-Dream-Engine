@@ -5,6 +5,7 @@ pub mod game_ui;
 pub mod mcp_tools;
 pub mod memories;
 pub mod models;
+pub mod permissions;
 pub mod plugins;
 pub mod rules;
 pub mod saves;

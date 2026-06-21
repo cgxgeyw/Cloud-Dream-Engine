@@ -6,6 +6,9 @@ let initPromise: Promise<void> | null = null;
 
 import type {
   AppSettings,
+  AiWorldCreateRequest,
+  AiWorldCreateResponse,
+  AiWorldCreateMode,
   AttributeSchemaUpsertRequest,
   AttributeValueType,
   AttributeValueUpsertRequest,
@@ -28,6 +31,7 @@ import type {
   WorldUiCompatibilityReport,
   WorldUiDocumentRequest,
   WorldUiDocumentValidationResult,
+  WorldPermissionStatus,
   WorldUpsertRequest,
 } from "./types";
 
@@ -107,6 +111,9 @@ function getHttpSync() {
 // 类型：统一从 types.ts 复用，避免双份定义漂移
 export type {
   WorldResponse,
+  AiWorldCreateRequest,
+  AiWorldCreateResponse,
+  AiWorldCreateMode,
   WorldMapTopology,
   WorldOpeningMessage,
   WorldCreateRequest,
@@ -180,6 +187,18 @@ export async function fetchWorld(worldId: string) {
 
 export async function createWorld(payload: WorldUpsertRequest) {
   return isTauri ? (await getTauri()).createWorld(payload) : (await getHttp()).createWorld(payload);
+}
+
+export async function createWorldWithAi(payload: AiWorldCreateRequest): Promise<AiWorldCreateResponse> {
+  return isTauri ? (await getTauri()).createWorldWithAi(payload) : (await getHttp()).createWorldWithAi(payload);
+}
+
+export async function onAiWorldCreateProgress(callback: (receivedChars: number) => void): Promise<() => void> {
+  if (isTauri) {
+    return (await getTauri()).onAiWorldCreateProgress(callback);
+  }
+  // HTTP mode has no streaming progress channel; return a no-op unsubscribe.
+  return () => {};
 }
 
 export async function updateWorld(worldId: string, payload: WorldUpsertRequest) {
@@ -450,6 +469,18 @@ export async function fetchAttributeValues(params: { ownerType?: string; ownerId
 
 export async function upsertAttributeValue(payload: AttributeValueUpsertRequest) {
   return isTauri ? (await getTauri()).upsertAttributeValue(payload) : (await getHttp()).upsertAttributeValue(payload);
+}
+
+export async function requestWorldPermissions(permissions: string[]): Promise<WorldPermissionStatus[]> {
+  if (!isTauri) {
+    return permissions.map((permission) => ({
+      permission,
+      requested: false,
+      granted: null,
+      error: null,
+    }));
+  }
+  return (await getTauri()).requestWorldPermissions(permissions);
 }
 
 export async function fetchMemories(worldId?: string, sessionId?: string, characterId?: string, layer?: string, limit?: number) {

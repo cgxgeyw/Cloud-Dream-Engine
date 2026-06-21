@@ -1,0 +1,412 @@
+let isTauri = false;
+let api: typeof import("./api") | null = null;
+let tauriApi: typeof import("./tauriApi") | null = null;
+let runtimePlatform: "web" | "desktop" | "android" = "web";
+
+async function detectTauri(): Promise<boolean> {
+  try {
+    const mod = await import("@tauri-apps/api/core");
+    return typeof mod.invoke === "function" && !!(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+  } catch {
+    return false;
+  }
+}
+
+export async function initApiAdapter() {
+  isTauri = await detectTauri();
+  runtimePlatform = isTauri
+    ? (/android/i.test(navigator.userAgent || "") ? "android" : "desktop")
+    : "web";
+  if (isTauri) {
+    tauriApi = await import("./tauriApi");
+    await tauriApi.initTauriRuntime();
+  } else {
+    api = await import("./api");
+  }
+  console.log(`API 适配层已初始化：${isTauri ? "Tauri IPC" : "HTTP"}`);
+}
+
+export function isTauriEnvironment(): boolean {
+  return isTauri;
+}
+
+export function getRuntimePlatform(): "web" | "desktop" | "android" {
+  return runtimePlatform;
+}
+
+export function isAndroidRuntime(): boolean {
+  return runtimePlatform === "android";
+}
+
+export function isDesktopRuntime(): boolean {
+  return runtimePlatform === "desktop" || runtimePlatform === "web";
+}
+
+function getTauri() {
+  if (!tauriApi) throw new Error("Tauri API 尚未初始化，请先调用 initApiAdapter().");
+  return tauriApi;
+}
+
+function getHttp() {
+  if (!api) throw new Error("HTTP API 尚未初始化，请先调用 initApiAdapter().");
+  return api;
+}
+
+// 类型：统一从 tauriApi 侧复用，避免双份定义漂移
+export type {
+  WorldResponse,
+  WorldOpeningMessage,
+  WorldCreateRequest,
+  WorldUpsertRequest,
+  CharacterResponse,
+  CharacterCreateRequest,
+  CharacterUpsertRequest,
+  CharacterTemplateResponse,
+  CharacterCreateFromTemplateRequest,
+  SessionSnapshot,
+  ChatMessage,
+  ChatMessageResponse,
+  SessionSnapshotResponse,
+  SessionMapNode,
+  SessionMapEdge,
+  InventoryItem,
+  SceneRuntime,
+  AssetSelection,
+  CharacterVisualState,
+  SessionState,
+  SessionCreateRequest,
+  PlayerActionMode,
+  PlayerActionRequest,
+  RetryFailedLlmStepRequest,
+  SwitchCharacterProposalRequest,
+  SwitchPlayerCharacterRequest,
+  SaveResponse,
+  ModelConfig,
+  ModelConfigResponse,
+  ConnectionTestResult,
+  ImageModelTestRequest,
+  ImageModelTestResult,
+  ModelDiscoverResponse,
+  EmbeddingModelFileStatus,
+  EmbeddingModelStatus,
+  AppSettings,
+  SettingsResponse,
+  SettingsUpdateRequest,
+  PluginResponse,
+  McpToolResponse,
+  McpToolCreateRequest,
+  McpToolUpsertRequest,
+  AttributeSchemaResponse,
+  AttributeSchemaUpsertRequest,
+  AttributeValueResponse,
+  AttributeValueUpsertRequest,
+  MemoryEntry,
+  RuntimeAttributeItem,
+  RuntimeAttributeGroup,
+  SessionRuntimeAttributesResponse,
+  SessionDebugResponse,
+  WorldOpeningPromptPreviewResponse,
+  UploadResponse,
+} from "./tauriApi";
+
+// API 适配函数
+export async function fetchWorlds() {
+  return isTauri ? getTauri().fetchWorlds() : getHttp().fetchWorlds();
+}
+
+export async function fetchWorld(worldId: string) {
+  return isTauri ? getTauri().fetchWorld(worldId) : getHttp().fetchWorld(worldId);
+}
+
+export async function createWorld(payload: import("./tauriApi").WorldCreateRequest) {
+  return isTauri ? getTauri().createWorld(payload) : getHttp().createWorld(payload);
+}
+
+export async function updateWorld(worldId: string, payload: import("./tauriApi").WorldCreateRequest) {
+  return isTauri ? getTauri().updateWorld(worldId, payload) : getHttp().updateWorld(worldId, payload);
+}
+
+export async function deleteWorld(worldId: string) {
+  return isTauri ? getTauri().deleteWorld(worldId) : getHttp().deleteWorld(worldId);
+}
+
+export async function deleteAllWorlds() {
+  return isTauri ? getTauri().deleteAllWorlds() : getHttp().deleteAllWorlds();
+}
+
+export async function duplicateWorld(worldId: string) {
+  return isTauri ? getTauri().duplicateWorld(worldId) : getHttp().duplicateWorld(worldId);
+}
+
+export async function fetchWorldCharacters(worldId: string) {
+  return isTauri ? getTauri().fetchWorldCharacters(worldId) : getHttp().fetchWorldCharacters(worldId);
+}
+
+export async function fetchAllCharacters() {
+  return isTauri ? getTauri().fetchAllCharacters() : getHttp().fetchAllCharacters();
+}
+
+export async function fetchCharacter(characterId: string) {
+  return isTauri ? getTauri().fetchCharacter(characterId) : getHttp().fetchCharacter(characterId);
+}
+
+export async function createWorldCharacter(worldId: string, payload: import("./tauriApi").CharacterCreateRequest) {
+  return isTauri ? getTauri().createWorldCharacter(worldId, payload) : getHttp().createWorldCharacter(worldId, payload as any);
+}
+
+export async function updateWorldCharacter(worldId: string, characterId: string, payload: import("./tauriApi").CharacterCreateRequest) {
+  return isTauri ? getTauri().updateWorldCharacter(worldId, characterId, payload) : getHttp().updateWorldCharacter(worldId, characterId, payload as any);
+}
+
+export async function deleteWorldCharacter(worldId: string, characterId: string) {
+  return isTauri ? getTauri().deleteWorldCharacter(worldId, characterId) : getHttp().deleteWorldCharacter(worldId, characterId);
+}
+
+export async function exportWorldCharacterTemplate(worldId: string, characterId: string) {
+  return isTauri ? getTauri().exportWorldCharacterTemplate(worldId, characterId) : getHttp().exportWorldCharacterTemplate(worldId, characterId);
+}
+
+export async function createCharacterInWorldFromCharacter(worldId: string, characterId: string, payload: import("./tauriApi").CharacterCreateFromTemplateRequest) {
+  return isTauri ? getTauri().createCharacterInWorldFromCharacter(worldId, characterId, payload) : getHttp().createCharacterInWorldFromCharacter(worldId, characterId, payload);
+}
+
+export async function fetchWorldOpeningPromptPreview(worldId: string, params?: { playerCharacterId?: string | null; playerInput?: string }) {
+  return isTauri ? getTauri().fetchWorldOpeningPromptPreview(worldId, params) : getHttp().fetchWorldOpeningPromptPreview(worldId, params);
+}
+
+export async function downloadWorldPackage(worldId: string) {
+  return isTauri ? getTauri().downloadWorldPackage(worldId) : getHttp().downloadWorldPackage(worldId);
+}
+
+export async function importWorldPackage(file: File) {
+  return isTauri ? getTauri().importWorldPackage(file) : getHttp().importWorldPackage(file);
+}
+
+export async function importWorldPackageFromPath(path: string) {
+  if (!isTauri) {
+    throw new Error("Importing a world package from a local path requires the Tauri runtime.");
+  }
+  return getTauri().importWorldPackageFromPath(path);
+}
+
+export async function uploadFile(file: File) {
+  return isTauri ? getTauri().uploadFile(file) : getHttp().uploadFile(file);
+}
+
+export async function fetchSession(sessionId: string) {
+  return isTauri ? getTauri().fetchSession(sessionId) : getHttp().fetchSession(sessionId);
+}
+
+export async function createSession(payload: import("./tauriApi").SessionCreateRequest) {
+  return isTauri ? getTauri().createSession(payload) : getHttp().createSession(payload);
+}
+
+export async function submitPlayerAction(sessionId: string, payload: import("./tauriApi").PlayerActionRequest) {
+  return isTauri ? getTauri().submitPlayerAction(sessionId, payload) : getHttp().submitPlayerAction(sessionId, payload);
+}
+
+export async function streamPlayerAction(
+  sessionId: string,
+  payload: import("./tauriApi").PlayerActionRequest,
+  handlers: { onSnapshot?: (snapshot: import("./tauriApi").SessionSnapshot) => void; onError?: (detail: string) => void } = {},
+) {
+  return isTauri
+    ? getTauri().streamPlayerAction(sessionId, payload, handlers)
+    : getHttp().streamPlayerAction(sessionId, payload, handlers as any);
+}
+
+export async function retryFailedLlmStep(
+  sessionId: string,
+  payload: import("./tauriApi").RetryFailedLlmStepRequest,
+) {
+  return isTauri
+    ? getTauri().retryFailedLlmStep(sessionId, payload)
+    : getHttp().retryFailedLlmStep(sessionId, payload);
+}
+
+export async function switchPlayerCharacter(sessionId: string, payload: import("./tauriApi").SwitchPlayerCharacterRequest) {
+  return isTauri ? getTauri().switchPlayerCharacter(sessionId, payload) : getHttp().switchPlayerCharacter(sessionId, payload);
+}
+
+export async function fetchSaves() {
+  return isTauri ? getTauri().fetchSaves() : getHttp().fetchSaves();
+}
+
+export async function branchSave(saveId: string) {
+  return isTauri ? getTauri().branchSave(saveId) : getHttp().branchSave(saveId);
+}
+
+export async function deleteSave(saveId: string) {
+  return isTauri ? getTauri().deleteSave(saveId) : getHttp().deleteSave(saveId);
+}
+
+export async function deleteAllSaves() {
+  return isTauri ? getTauri().deleteAllSaves() : getHttp().deleteAllSaves();
+}
+
+export async function fetchModels(modelType?: string) {
+  return isTauri ? getTauri().fetchModels(modelType) : getHttp().fetchModels(modelType);
+}
+
+export async function fetchModel(modelId: string) {
+  return isTauri ? getTauri().fetchModel(modelId) : getHttp().fetchModel(modelId);
+}
+
+export async function createModel(payload: Omit<import("./tauriApi").ModelConfig, "id">) {
+  return isTauri ? getTauri().createModel(payload) : getHttp().createModel(payload);
+}
+
+export async function updateModel(modelId: string, payload: Partial<Omit<import("./tauriApi").ModelConfig, "id">>) {
+  return isTauri ? getTauri().updateModel(modelId, payload) : getHttp().updateModel(modelId, payload as any);
+}
+
+export async function deleteModel(modelId: string) {
+  return isTauri ? getTauri().deleteModel(modelId) : getHttp().deleteModel(modelId);
+}
+
+export async function setDefaultModel(modelId: string) {
+  return isTauri ? getTauri().setDefaultModel(modelId) : getHttp().setDefaultModel(modelId);
+}
+
+export async function testModel(modelId: string) {
+  return isTauri ? getTauri().testModel(modelId) : getHttp().testModel(modelId);
+}
+
+export async function testImageModel(modelId: string, payload: import("./tauriApi").ImageModelTestRequest) {
+  return isTauri ? getTauri().testImageModel(modelId, payload) : getHttp().testImageModel(modelId, payload);
+}
+
+type DiscoverModelsParams = {
+  provider: string;
+  base_url: string;
+  api_key: string;
+};
+
+export async function discoverModels(
+  providerOrParams: string | DiscoverModelsParams,
+  baseUrl?: string,
+  apiKey?: string,
+) {
+  const params =
+    typeof providerOrParams === "string"
+      ? {
+          provider: providerOrParams,
+          base_url: baseUrl ?? "",
+          api_key: apiKey ?? "",
+        }
+      : providerOrParams;
+  if (isTauri) {
+    return getTauri().discoverModels(
+      params.provider,
+      params.base_url,
+      params.api_key,
+    );
+  }
+  return getHttp().discoverModels(params);
+}
+
+export async function fetchSettings() {
+  return isTauri ? getTauri().fetchSettings() : getHttp().fetchSettings();
+}
+
+export async function fetchBuiltinEmbeddingModelStatus(modelId?: string) {
+  return isTauri
+    ? getTauri().fetchBuiltinEmbeddingModelStatus(modelId)
+    : getHttp().fetchBuiltinEmbeddingModelStatus(modelId);
+}
+
+export async function downloadBuiltinEmbeddingModel(modelId?: string) {
+  return isTauri
+    ? getTauri().downloadBuiltinEmbeddingModel(modelId)
+    : getHttp().downloadBuiltinEmbeddingModel(modelId);
+}
+
+export async function updateSettings(payload: import("./tauriApi").AppSettings) {
+  return isTauri ? getTauri().updateSettings(payload) : getHttp().updateSettings(payload);
+}
+
+export async function getExportDirectorySuggestion() {
+  if (!isTauri) {
+    throw new Error("?????????????");
+  }
+  return getTauri().getExportDirectorySuggestion();
+}
+
+export async function fetchPlugins() {
+  return isTauri ? getTauri().fetchPlugins() : getHttp().fetchPlugins();
+}
+
+export async function fetchMcpTools() {
+  return isTauri ? getTauri().fetchMcpTools() : getHttp().fetchMcpTools();
+}
+
+export async function createMcpTool(payload: import("./tauriApi").McpToolCreateRequest) {
+  return isTauri ? getTauri().createMcpTool(payload) : getHttp().createMcpTool(payload as any);
+}
+
+export async function updateMcpTool(toolId: string, payload: import("./tauriApi").McpToolCreateRequest) {
+  return isTauri ? getTauri().updateMcpTool(toolId, payload) : getHttp().updateMcpTool(toolId, payload as any);
+}
+
+export async function deleteMcpTool(toolId: string) {
+  return isTauri ? getTauri().deleteMcpTool(toolId) : getHttp().deleteMcpTool(toolId);
+}
+
+export async function fetchAttributeSchemas(scope?: string) {
+  return isTauri ? getTauri().fetchAttributeSchemas(scope) : getHttp().fetchAttributeSchemas(scope);
+}
+
+export async function createAttributeSchema(payload: import("./tauriApi").AttributeSchemaUpsertRequest) {
+  return isTauri ? getTauri().createAttributeSchema(payload) : getHttp().createAttributeSchema(payload);
+}
+
+export async function updateAttributeSchema(schemaId: string, payload: import("./tauriApi").AttributeSchemaUpsertRequest) {
+  return isTauri ? getTauri().updateAttributeSchema(schemaId, payload) : getHttp().updateAttributeSchema(schemaId, payload);
+}
+
+export async function fetchAttributeValues(params: { ownerType?: string; ownerId?: string; schemaId?: string }) {
+  return isTauri ? getTauri().fetchAttributeValues(params) : getHttp().fetchAttributeValues(params);
+}
+
+export async function upsertAttributeValue(payload: import("./tauriApi").AttributeValueUpsertRequest) {
+  return isTauri ? getTauri().upsertAttributeValue(payload) : getHttp().upsertAttributeValue(payload);
+}
+
+export async function fetchMemories(worldId?: string, sessionId?: string, characterId?: string, layer?: string, limit?: number) {
+  return isTauri ? getTauri().fetchMemories(worldId, sessionId, characterId, layer, limit) : getHttp().fetchMemories(worldId, sessionId, characterId, layer, limit);
+}
+
+export async function fetchSessionDebug(sessionId: string) {
+  return isTauri ? getTauri().fetchSessionDebug(sessionId) : getHttp().fetchSessionDebug(sessionId);
+}
+
+export function onSessionSnapshot(sessionId: string, callback: (snapshot: import("./tauriApi").SessionSnapshot) => void): () => void {
+  if (isTauri) {
+    return getTauri().onSessionSnapshot(sessionId, callback);
+  }
+  // HTTP 模式下使用 WebSocket 接收实时更新
+  const wsUrl = getHttp().toSessionWebSocketUrl(sessionId);
+  const ws = new WebSocket(wsUrl);
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      if (data.type === "snapshot" && data.payload) {
+        callback(data.payload);
+      }
+    } catch {
+      // 忽略单条消息解析失败，继续保持连接
+    }
+  };
+  return () => ws.close();
+}
+
+export function toSessionWebSocketUrl(sessionId: string): string {
+  if (isTauri) {
+    throw new Error("WebSocket URL is unavailable in Tauri mode; use Tauri events instead.");
+  }
+  return getHttp().toSessionWebSocketUrl(sessionId);
+}
+
+export function assetUrl(path: string | null | undefined): string {
+  return isTauri ? getTauri().assetUrl(path) : getHttp().assetUrl(path ?? "");
+}

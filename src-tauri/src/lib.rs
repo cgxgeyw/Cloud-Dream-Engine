@@ -7,6 +7,7 @@ mod events;
 mod models;
 mod services;
 mod state;
+mod workmanager_plugin;
 
 use db::Database;
 use services::backend::BackendServices;
@@ -48,6 +49,7 @@ pub fn run() {
             commands::worlds::list_worlds,
             commands::worlds::get_world,
             commands::worlds::create_world,
+            commands::worlds::create_world_with_ai,
             commands::worlds::update_world,
             commands::worlds::delete_world,
             commands::worlds::delete_all_worlds,
@@ -130,6 +132,7 @@ pub fn run() {
             commands::uploads::upload_file,
             commands::uploads::get_asset_base_dir,
             commands::uploads::delete_asset,
+            commands::permissions::request_world_permissions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Dream Narrative Engine");

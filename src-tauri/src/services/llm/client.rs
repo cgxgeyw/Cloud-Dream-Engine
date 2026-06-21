@@ -152,19 +152,9 @@ impl LlmClient {
     where
         F: FnMut(ChatStreamChunk) + Send,
     {
-        if request.native_tool_calling.unwrap_or(false)
-            && request
-                .tools
-                .as_ref()
-                .map(|tools| !tools.is_empty())
-                .unwrap_or(false)
-        {
-            return self
-                .chat_completion(provider, base_url, api_key, request)
-                .await;
-        }
         match normalize_provider(provider).as_str() {
             "openai" | "ollama" | "lmstudio" => {
+                // openai 流式路径已支持原生工具调用增量累积，工具世界也走流式。
                 openai::chat_completion_stream(
                     &self.http_client,
                     base_url,

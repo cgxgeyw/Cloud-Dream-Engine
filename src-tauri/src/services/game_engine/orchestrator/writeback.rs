@@ -519,8 +519,6 @@ pub(crate) fn materialize_completed_speaker_messages(
                 "turn_index": turn_index,
                 "message_kind": "agent_response",
                 "recovered": true,
-                "intent": llm_output.get("intent").cloned().unwrap_or(serde_json::Value::Null),
-                "emotion": llm_output.get("emotion").cloned().unwrap_or(serde_json::Value::Null),
                 "narration": llm_output.get("narration").cloned().unwrap_or(serde_json::Value::Null),
                 "raw_response": llm_output.get("raw_content").cloned().unwrap_or(serde_json::Value::Null),
             })),

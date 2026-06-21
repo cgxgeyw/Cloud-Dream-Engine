@@ -7,8 +7,6 @@ pub struct DialoguePipeline;
 pub struct ParsedCharacterResponse {
     pub speaker: String,
     pub content: String,
-    pub intent: String,
-    pub emotion: String,
     pub narration: String,
     pub raw_payload: Option<serde_json::Value>,
 }
@@ -54,7 +52,6 @@ impl DialoguePipeline {
         if let Some(payload) =
             parse_embedded_json(raw_response_content).filter(|value| value.is_object())
         {
-            let fallback_content = strip_dialogue_field_artifacts(raw_response_content);
             let speaker = payload
                 .get("speaker")
                 .map(clean_dialogue_text_value)
@@ -68,17 +65,10 @@ impl DialoguePipeline {
                 .map(clean_dialogue_text_value)
                 .filter(|value| !value.trim().is_empty())
                 .or_else(|| structured_payload_content_fallback(&payload))
-                .unwrap_or(fallback_content);
-            let intent = payload
-                .get("intent")
-                .map(clean_dialogue_text_value)
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(|| "advance_objective".to_string());
-            let emotion = payload
-                .get("emotion")
-                .map(clean_dialogue_text_value)
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(|| "focused".to_string());
+                // 标准字段都取不到时，先尽力从原始文本里按字段名打捞，
+                // 实在打捞不到才用安全兜底文案，避免结构外泄。
+                .or_else(|| salvage_dialogue_content(raw_response_content))
+                .unwrap_or_else(|| SAFE_EMPTY_DIALOGUE.to_string());
             let narration = payload
                 .get("narration")
                 .or_else(|| payload.get("scene_narration"))
@@ -87,8 +77,6 @@ impl DialoguePipeline {
             return ParsedCharacterResponse {
                 speaker,
                 content,
-                intent,
-                emotion,
                 narration,
                 raw_payload: Some(payload),
             };
@@ -99,11 +87,12 @@ impl DialoguePipeline {
             return recovered;
         }
 
+        // JSON 损坏到无法解析对象：按字段名打捞正文，再不行才占位。
+        let content = salvage_dialogue_content(raw_response_content)
+            .unwrap_or_else(|| sanitize_dialogue_content_or_placeholder(raw_response_content));
         ParsedCharacterResponse {
             speaker: default_speaker.to_string(),
-            content: strip_dialogue_field_artifacts(raw_response_content),
-            intent: "advance_objective".to_string(),
-            emotion: "focused".to_string(),
+            content,
             narration: String::new(),
             raw_payload: None,
         }
@@ -123,20 +112,12 @@ impl DialoguePipeline {
             .or_else(|| extract_partial_json_string_field(raw_response_content, "text"))
             .map(|value| strip_dialogue_field_artifacts(&value))
             .filter(|value| !value.trim().is_empty())?;
-        let intent = extract_partial_json_string_field(raw_response_content, "intent")
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| "advance_objective".to_string());
-        let emotion = extract_partial_json_string_field(raw_response_content, "emotion")
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| "focused".to_string());
         let narration = extract_partial_json_string_field(raw_response_content, "narration")
             .or_else(|| extract_partial_json_string_field(raw_response_content, "scene_narration"))
             .unwrap_or_default();
         Some(ParsedCharacterResponse {
             speaker,
             content,
-            intent,
-            emotion,
             narration,
             raw_payload: None,
         })
@@ -207,6 +188,121 @@ fn strip_dialogue_field_artifacts(text: &str) -> String {
         .trim_matches('"')
         .trim()
         .to_string()
+}
+
+/// 安全兜底台词：当无法从模型输出里提取到任何可显示文本时使用，
+/// 避免把原始 JSON 结构当作正文泄露给玩家。
+const SAFE_EMPTY_DIALOGUE: &str = "（本回合没有可显示的台词）";
+
+/// 判断一段文本是否疑似 JSON / 结构化负载（而非自然语言台词）。
+/// 用于在解析回退时拦截原始结构外泄。
+fn looks_like_structured_payload(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.len() < 2 {
+        return false;
+    }
+    let starts_structured = trimmed.starts_with('{') || trimmed.starts_with('[');
+    let ends_structured = trimmed.ends_with('}') || trimmed.ends_with(']');
+    if starts_structured && ends_structured {
+        return true;
+    }
+    // 含有典型 JSON 字段引导，且带花括号，也视为结构化。
+    (trimmed.contains("\":") || trimmed.contains("\" :"))
+        && (trimmed.contains('{') || trimmed.contains('['))
+}
+
+/// 将候选正文净化：若疑似结构化负载则替换为安全兜底文案。
+fn sanitize_dialogue_content_or_placeholder(candidate: &str) -> String {
+    let cleaned = strip_dialogue_field_artifacts(candidate);
+    if cleaned.trim().is_empty() || looks_like_structured_payload(&cleaned) {
+        SAFE_EMPTY_DIALOGUE.to_string()
+    } else {
+        cleaned
+    }
+}
+
+/// 尽力从（可能损坏的）模型输出里按字段名打捞角色正文。
+///
+/// 设计依据：模型几乎不会拼错正文字段名（content / response / message / text /
+/// say / dialogue / line / reply），但可能写坏 JSON 结构（引号、转义、闭合）。
+/// 因此锁定字段名后，抓取其后的字符串，直到遇到下一个已知字段名为止。
+/// 这比"猜哪段最像台词"更稳，也避免把结构碎片当正文。
+fn salvage_dialogue_content(raw: &str) -> Option<String> {
+    const CONTENT_FIELDS: &[&str] = &[
+        "content", "response", "message", "text", "say", "dialogue", "line", "reply",
+    ];
+    // 所有可能出现在正文之后、用于界定正文结尾的字段名。
+    const BOUNDARY_FIELDS: &[&str] = &[
+        "content",
+        "response",
+        "message",
+        "text",
+        "say",
+        "dialogue",
+        "line",
+        "reply",
+        "speaker",
+        "intent",
+        "emotion",
+        "narration",
+        "scene_narration",
+        "session_attribute_updates",
+        "character_attribute_updates",
+    ];
+
+    for field in CONTENT_FIELDS {
+        // 优先按 JSON 字符串语义读取：定位字段后第一个引号，读到下一个未转义引号。
+        // 这能正确处理"结构正常但兄弟字段名未知"的情况（如 mood/status 等）。
+        if let Some(value) = extract_quoted_string_value(raw, field) {
+            let cleaned = strip_dialogue_field_artifacts(&value);
+            if !cleaned.trim().is_empty() && !looks_like_structured_payload(&cleaned) {
+                return Some(cleaned);
+            }
+        }
+        // 退化：引号被写坏时，按已知字段名边界打捞。
+        let boundaries: Vec<&str> = BOUNDARY_FIELDS
+            .iter()
+            .copied()
+            .filter(|candidate| candidate != field)
+            .collect();
+        if let Some(value) = extract_json_string_field_with_boundaries(raw, field, &boundaries) {
+            let cleaned = strip_dialogue_field_artifacts(&value);
+            if !cleaned.trim().is_empty() && !looks_like_structured_payload(&cleaned) {
+                return Some(cleaned);
+            }
+        }
+    }
+    None
+}
+
+/// 按 JSON 字符串语义提取 `"field": "..."` 的值：定位字段名后的冒号、
+/// 开引号，读到下一个**未转义**的引号为止。结构正常时最精确，能正确
+/// 处理后面跟着未知字段名的情况。引号缺失/未闭合时返回 None。
+fn extract_quoted_string_value(raw: &str, field: &str) -> Option<String> {
+    let key = format!("\"{field}\"");
+    let key_index = raw.find(&key)?;
+    let after_key = &raw[key_index + key.len()..];
+    let colon_index = after_key.find(':')?;
+    let value_slice = &after_key[colon_index + 1..];
+    let start_quote = value_slice.find('"')?;
+    let body = &value_slice[start_quote + 1..];
+
+    let bytes = body.as_bytes();
+    let mut idx = 0usize;
+    while idx < bytes.len() {
+        match bytes[idx] {
+            b'\\' => {
+                // 跳过转义字符（含 \" \\ 等）。
+                idx += 2;
+                continue;
+            }
+            b'"' => {
+                return Some(body[..idx].to_string());
+            }
+            _ => idx += 1,
+        }
+    }
+    None
 }
 
 fn clean_dialogue_text_value(value: &serde_json::Value) -> String {
@@ -359,28 +455,12 @@ fn extract_recoverable_character_response(
     })
     .map(|value| strip_dialogue_field_artifacts(&value))
     .filter(|value| !value.trim().is_empty())?;
-    let intent = extract_json_string_field_with_boundaries(
-        raw,
-        "intent",
-        &["emotion", "narration", "scene_narration"],
-    )
-    .filter(|value| !value.trim().is_empty())
-    .unwrap_or_else(|| "advance_objective".to_string());
-    let emotion = extract_json_string_field_with_boundaries(
-        raw,
-        "emotion",
-        &["narration", "scene_narration"],
-    )
-    .filter(|value| !value.trim().is_empty())
-    .unwrap_or_else(|| "focused".to_string());
     let narration = extract_json_string_field_with_boundaries(raw, "narration", &[])
         .or_else(|| extract_json_string_field_with_boundaries(raw, "scene_narration", &[]))
         .unwrap_or_default();
     Some(ParsedCharacterResponse {
         speaker,
         content,
-        intent,
-        emotion,
         narration,
         raw_payload: None,
     })
@@ -474,5 +554,60 @@ mod tests {
         );
         assert_eq!(parsed.content, "好的，已加入待办事项。");
         assert!(parsed.raw_payload.is_some());
+    }
+
+    #[test]
+    fn does_not_leak_raw_json_when_no_text_field() {
+        let pipeline = DialoguePipeline::new();
+        let parsed = pipeline.parse_character_response(
+            "{\"intent\":\"advance_objective\",\"emotion\":\"focused\"}",
+            "林黛玉",
+        );
+        // 无任何文本字段：不得把原始 JSON 当正文。
+        assert!(!parsed.content.contains('{'));
+        assert!(!parsed.content.contains("intent"));
+        assert_eq!(parsed.content, super::SAFE_EMPTY_DIALOGUE);
+    }
+
+    #[test]
+    fn does_not_leak_unparseable_json_like_text() {
+        let pipeline = DialoguePipeline::new();
+        // 损坏 / 不可解析但明显是结构化负载的输出。
+        let parsed = pipeline.parse_character_response(
+            "{\"content\": \"未闭合的台词",
+            "袭人",
+        );
+        // 流式未闭合时 partial 分支会返回 content；这里确保最终不泄露花括号结构。
+        assert!(!parsed.content.trim_start().starts_with('{'));
+    }
+
+    #[test]
+    fn salvages_content_when_only_nonstandard_fields_present() {
+        let pipeline = DialoguePipeline::new();
+        // 模型用了非标准正文字段名 say，且额外字段排在后面。
+        let parsed = pipeline.parse_character_response(
+            "{\"say\":\"你来得正好。\",\"mood\":\"平静\"}",
+            "林黛玉",
+        );
+        assert_eq!(parsed.content, "你来得正好。");
+    }
+
+    #[test]
+    fn salvages_content_from_broken_json_structure() {
+        let pipeline = DialoguePipeline::new();
+        // JSON 结构损坏（缺逗号/闭合），但 content 字段名正确。
+        let parsed = pipeline.parse_character_response(
+            "{ \"content\" : \"我自是为你而来\" \"narration\": \"灯影摇曳\" ",
+            "贾宝玉",
+        );
+        assert_eq!(parsed.content, "我自是为你而来");
+    }
+
+    #[test]
+    fn plain_text_reply_is_kept_as_is() {
+        let pipeline = DialoguePipeline::new();
+        // 模型直接回纯文本，不是 JSON。
+        let parsed = pipeline.parse_character_response("我在这里等你很久了。", "袭人");
+        assert_eq!(parsed.content, "我在这里等你很久了。");
     }
 }

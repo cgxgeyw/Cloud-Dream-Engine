@@ -1804,7 +1804,7 @@ export function WorldEditorPage() {
       setError(null);
       await deleteWorld(world.id);
       setShowDeleteDialog(false);
-      navigate("/worlds");
+      navigate(-1);
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "删除世界失败");
     } finally {
@@ -1850,9 +1850,33 @@ export function WorldEditorPage() {
     if (activeSection) {
       setActiveSection(null);
     } else {
-      navigate("/worlds");
+      navigate(-1);
     }
   }
+
+  // 移动端：打开某项设置时标记 detail 状态，并接管侧边栏返回按钮，
+  // 使其先退回各项编辑列表，而不是直接退回世界列表。
+  useEffect(() => {
+    if (!isMobile) {
+      delete document.documentElement.dataset.worldEditorDetailOpen;
+      return;
+    }
+    if (activeSection) {
+      document.documentElement.dataset.worldEditorDetailOpen = "true";
+    } else {
+      delete document.documentElement.dataset.worldEditorDetailOpen;
+    }
+
+    const handleWorldEditorBack = () => {
+      setActiveSection(null);
+      setError(null);
+    };
+    window.addEventListener("world-editor:navigate-back", handleWorldEditorBack);
+    return () => {
+      window.removeEventListener("world-editor:navigate-back", handleWorldEditorBack);
+      delete document.documentElement.dataset.worldEditorDetailOpen;
+    };
+  }, [activeSection, isMobile]);
 
   // ==================== Mobile-specific rendering ====================
   function renderMobileSectionList() {
@@ -1904,14 +1928,13 @@ export function WorldEditorPage() {
     ) : null;
     return (
       <div className="editor-content">
-        {!embedded ? <div className="settings-detail-head">
-          <button type="button" onClick={handleDetailBack} className="action-btn settings-detail-back">
-            <ArrowLeft size={14} /> 返回
-          </button>
-          <div className="settings-detail-head-copy">
-            <strong>{currentSectionMeta?.label}</strong>
+        {!embedded ? (
+          <div className="settings-detail-head">
+            <div className="settings-detail-head-copy">
+              <strong>{currentSectionMeta?.label}</strong>
+            </div>
           </div>
-        </div> : null}
+        ) : null}
 
         {sectionId === "basic" ? (
           <SurfacePanel className="surface-panel--pad-lg">

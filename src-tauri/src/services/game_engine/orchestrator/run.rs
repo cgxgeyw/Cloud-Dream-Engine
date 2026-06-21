@@ -676,7 +676,6 @@ mod tests {
             &[],
             &[],
             &[],
-            &[],
         );
         let parsed: serde_json::Value =
             serde_json::from_str(&payload).expect("payload should be valid json");
@@ -699,13 +698,9 @@ mod tests {
                 .map(|items| items.len()),
             Some(2)
         );
-        assert_eq!(
-            memory_context
-                .get("dialogue_focus")
-                .and_then(|value| value.as_array())
-                .map(|items| items.len()),
-            Some(6)
-        );
+        // dialogue_focus 的窗口(命中轮 4 ±1 = 轮 3-5)与本测试的 recent_dialogue 完全重合，
+        // 去重后整体省略，避免同一批对话发两遍。
+        assert!(memory_context.get("dialogue_focus").is_none());
     }
 
     #[test]

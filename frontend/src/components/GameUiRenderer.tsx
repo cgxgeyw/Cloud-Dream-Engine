@@ -729,7 +729,7 @@ function stringifyTemplateValue(value: unknown): string {
     return String(value);
   }
   if (Array.isArray(value)) {
-    return value.map((item) => stringifyTemplateValue(item)).filter(Boolean).join("、");
+    return value.map((item) => stringifyTemplateValue(item)).filter(Boolean).join("\u3001");
   }
   try {
     return JSON.stringify(value);

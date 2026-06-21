@@ -152,6 +152,7 @@ export interface GameSessionStateBag {
   setChatAutoScrollEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   clearActionError: () => void;
   submitting: boolean;
+  streamingResponseActive: boolean;
   branching: boolean;
   actionError: string | null;
 
@@ -244,6 +245,7 @@ export function useGameSession(
   const [inputAudios, setInputAudios] = useState<File[]>([]);
   const [chatAutoScrollEnabled, setChatAutoScrollEnabled] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [streamingResponseActive, setStreamingResponseActive] = useState(false);
   const [branching, setBranching] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [editingTurn, setEditingTurn] = useState<EditingTurnState | null>(null);
@@ -1071,6 +1073,7 @@ export function useGameSession(
 
       try {
         setSubmitting(true);
+        setStreamingResponseActive(true);
         setActionError(null);
 
         if (isReplay) {
@@ -1142,6 +1145,7 @@ export function useGameSession(
           setEditingTurn(null);
         }
       } finally {
+        setStreamingResponseActive(false);
         setSubmitting(false);
         scheduleRuntimeAttributeRefresh();
       }
@@ -1332,6 +1336,7 @@ export function useGameSession(
     setChatAutoScrollEnabled,
     clearActionError,
     submitting,
+    streamingResponseActive,
     branching,
     actionError,
     editingTurn,

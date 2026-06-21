@@ -1,9 +1,10 @@
 pub mod assets;
 pub mod backend;
 pub mod catalog;
-pub mod game_ui;
 pub mod game_engine;
+pub mod game_ui;
 pub mod llm;
 pub mod map_topology;
 pub mod notifications;
+pub mod world_builder;
 pub mod world_package;

@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import { configureDesktopRuntime } from "./data/desktopRuntime";
 import { applyMode, applyStyle, resolveInitialMode, resolveInitialStyle } from "./data/theme";
+import { applyLanguage, resolveInitialLanguage } from "./data/language";
 import "./index.css";
 
 const rootElement = document.getElementById("root");
@@ -13,6 +14,7 @@ if (!rootElement) {
 
 applyMode(resolveInitialMode());
 applyStyle(resolveInitialStyle());
+applyLanguage(resolveInitialLanguage());
 
 configureDesktopRuntime()
   .catch((err) => {

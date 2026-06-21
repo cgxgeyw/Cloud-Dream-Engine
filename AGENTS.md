@@ -93,9 +93,19 @@ components under `frontend/src/gameUiRuntime/components/`.
   panel is the status drawer; do not render custom tabs as inline content above
   or inside the chat column.
 - Mobile chat should stay focused on narrative content: narration/system
-  messages, character/agent speech, and player speech. Hide director traces,
-  retry/debug cards, reasoning blocks, and other management UI from the normal
-  mobile chat flow unless the user explicitly asks for them.
+  messages, character/agent speech, player speech, plus the world-director and
+  NPC chains-of-thought. Hide retry/debug cards, character creation/switch
+  cards, and other management UI from the normal mobile chat flow unless the
+  user explicitly asks for them.
+- Chains-of-thought (world director + NPC) stream into the chat flow on both
+  desktop and mobile, collapsed: the CoT always shows only the first 200
+  characters with an expand/collapse toggle for the rest; NPC answer body is
+  never folded. CoT uses dedicated classes (`game-cot*`); do not reuse the
+  legacy `.game-agent-reasoning` (mobile seeds still hide it via `display:none`).
+- Narration renders as its own message right after the corresponding NPC
+  message, produced by the frontend `MessageList` from the agent message's
+  `metadata.narration`. Frontend-only; no backend change, not persisted as an
+  extra message.
 - Do not put the global copy button in the mobile title/header. Message actions
   belong under each message.
 - Under character/agent messages, show small copy and branch buttons.

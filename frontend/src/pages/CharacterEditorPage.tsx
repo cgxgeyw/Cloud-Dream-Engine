@@ -320,6 +320,30 @@ export function CharacterEditorPage() {
         </>
       )}
     >
+      <div className="character-editor-mobile-actions show-mobile">
+        <button type="button" onClick={() => navigate(-1)} className="action-btn">
+          返回
+        </button>
+        {!isNew ? (
+          <button
+            type="button"
+            onClick={() => setShowDeleteDialog(true)}
+            disabled={deleting || saving}
+            className="action-btn action-btn--danger"
+          >
+            删除
+          </button>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => void handleSave()}
+          disabled={saving || deleting}
+          className="action-btn action-btn--accent"
+        >
+          {saving ? "保存中..." : "保存角色"}
+        </button>
+      </div>
+
       {loading ? <SurfacePanel className="surface-panel--pad-lg">正在加载角色详情...</SurfacePanel> : null}
       {error ? <SurfacePanel className="surface-panel--pad-lg text-error">{error}</SurfacePanel> : null}
 

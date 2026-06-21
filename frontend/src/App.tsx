@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { BrowserRouter, HashRouter, Route, Routes } from "react-router-dom";
 import { ResponsiveLayout } from "./components/ResponsiveLayout";
 import { SettingsProvider } from "./data/SettingsContext";
+import { LanguageProvider } from "./data/i18n/context";
 import { isTauriEnvironment } from "./data/apiAdapter";
 import { ToastContainer } from "./components/Toast";
 
@@ -47,12 +48,14 @@ export default function App() {
 
   return (
     <Router>
-      <SettingsProvider>
-        <ResponsiveLayout>
-          <AppRoutes />
-        </ResponsiveLayout>
-        <ToastContainer />
-      </SettingsProvider>
+      <LanguageProvider>
+        <SettingsProvider>
+          <ResponsiveLayout>
+            <AppRoutes />
+          </ResponsiveLayout>
+          <ToastContainer />
+        </SettingsProvider>
+      </LanguageProvider>
     </Router>
   );
 }

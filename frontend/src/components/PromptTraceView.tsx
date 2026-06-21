@@ -232,6 +232,13 @@ export function PromptSendPreviewCard({
   );
   const stage = String(call.stage ?? wrapper.step ?? "预览");
 
+  // schema / 采样参数是请求旁路字段，可能在 call 顶层、raw_debug，或 raw_debug.request 里。
+  const rawDebug = (call.raw_debug ?? {}) as Record<string, unknown>;
+  const rawRequest = (rawDebug.request ?? {}) as Record<string, unknown>;
+  const responseSchema =
+    call.response_schema ?? rawDebug.response_schema ?? rawRequest.response_schema;
+  const requestParams = rawDebug.request_params ?? call.request_params;
+
   return (
     <details open={defaultOpen} style={{ ...blockStyle, display: "grid" }}>
       <summary style={{ cursor: "pointer", listStyle: "none" }}>
@@ -257,6 +264,17 @@ export function PromptSendPreviewCard({
       >
         {String(call.final_sent_content ?? "")}
       </pre>
+      <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+        <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 12, lineHeight: 1.5 }}>
+          以下为随请求下发、但不在上方对话文本里的旁路约束（通过 API 参数下发，决定模型输出结构）：
+        </div>
+        {responseSchema !== undefined ? (
+          <TraceBlock title="结构化输出 schema（response_schema）" value={responseSchema} />
+        ) : null}
+        {requestParams !== undefined ? (
+          <TraceBlock title="采样/模式参数" value={requestParams} />
+        ) : null}
+      </div>
     </details>
   );
 }
@@ -290,14 +308,22 @@ export function PromptCallCard({
         {purpose ? <div style={{ marginTop: 6, color: "rgba(255,255,255,0.62)", fontSize: 13 }}>{purpose}</div> : null}
       </summary>
       <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
+        <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: 700, letterSpacing: 0.4 }}>
+          ① 实际发送（全文 + 同内容的分段标注视图，非重复发送）
+        </div>
         <TraceBlock title={`最终发送内容（发给 ${recipientName}）`} value={call.final_sent_content ?? ""} defaultOpen />
+        <TraceBlock title="提示词模块（同内容·按来源分段，带可编辑标注）" value={call.modules ?? []} />
+        <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: 700, letterSpacing: 0.4, marginTop: 4 }}>
+          ② 模型返回 → 处理 → 写入（流水线各阶段，逐步变换，非重复）
+        </div>
         <TraceBlock title="模型原始返回" value={call.raw_model_return ?? "尚未记录返回"} defaultOpen={call.raw_model_return !== undefined && call.raw_model_return !== null} />
         <TraceBlock title="正则处理" value={call.return_processing ?? "没有返回处理记录"} />
         <TraceBlock title="正则处理后返回" value={call.processed_model_return ?? "尚未记录处理后返回"} defaultOpen={call.processed_model_return !== undefined && call.processed_model_return !== null} />
         {directorCall ? <DirectorFieldGuide writtenResult={call.written_result} /> : null}
         <TraceBlock title="写入游戏的结果（原始 JSON）" value={call.written_result ?? "尚未记录写入结果"} defaultOpen={!directorCall && call.written_result !== undefined && call.written_result !== null} />
-        <TraceBlock title="提示词模块" value={call.modules ?? []} />
-        <TraceBlock title="实际 messages" value={call.messages ?? []} />
+        <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: 700, letterSpacing: 0.4, marginTop: 4 }}>
+          ③ 兜底调试（含原始 payload 等，可能与上面部分重叠）
+        </div>
         <TraceBlock title="原始调试数据" value={call.raw_debug ?? call} />
       </div>
     </details>

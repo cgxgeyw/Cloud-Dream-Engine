@@ -705,6 +705,7 @@ fn merge_agent_chat_runtime_payloads(payloads: &[serde_json::Value]) -> serde_js
         "character_attribute_updates",
         "pending_notifications",
         "memory_entries",
+        "memory_events",
         "tool_calls",
     ];
     const VALUE_KEYS: &[&str] = &[
@@ -739,6 +740,18 @@ fn merge_agent_chat_runtime_payloads(payloads: &[serde_json::Value]) -> serde_js
                 if !value.is_null() {
                     merged.insert((*key).to_string(), value.clone());
                 }
+            }
+        }
+    }
+    // NPC 回复契约用的字段名是 memory_entries，但 runtime 解析读的是 memory_events。
+    // 把 memory_entries 的条目并入 memory_events，确保 NPC 写入的记忆能落库。
+    if let Some(entries) = merged.get("memory_entries").and_then(|value| value.as_array()).cloned() {
+        if !entries.is_empty() {
+            let events = merged
+                .entry("memory_events".to_string())
+                .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+            if let Some(target) = events.as_array_mut() {
+                target.extend(entries);
             }
         }
     }
@@ -1141,5 +1154,41 @@ fn slugify_progress_scene_id(value: &str) -> String {
         "scene-switch".to_string()
     } else {
         normalized
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merge_agent_chat_runtime_payloads;
+
+    #[test]
+    fn agent_memory_entries_are_aliased_into_memory_events() {
+        let payloads = vec![serde_json::json!({
+            "memory_entries": [
+                { "content": "记住了玩家的名字", "character_names": ["林黛玉"] }
+            ]
+        })];
+        let merged = merge_agent_chat_runtime_payloads(&payloads);
+        // runtime 解析读的是 memory_events，NPC 契约用的是 memory_entries：必须被并入。
+        let events = merged
+            .get("memory_events")
+            .and_then(|value| value.as_array())
+            .expect("memory_events present");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["content"], "记住了玩家的名字");
+    }
+
+    #[test]
+    fn agent_memory_events_and_entries_both_merge() {
+        let payloads = vec![
+            serde_json::json!({ "memory_events": [{ "content": "A", "character_names": ["甲"] }] }),
+            serde_json::json!({ "memory_entries": [{ "content": "B", "character_names": ["乙"] }] }),
+        ];
+        let merged = merge_agent_chat_runtime_payloads(&payloads);
+        let events = merged
+            .get("memory_events")
+            .and_then(|value| value.as_array())
+            .expect("memory_events present");
+        assert_eq!(events.len(), 2);
     }
 }

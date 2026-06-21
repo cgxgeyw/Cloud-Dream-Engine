@@ -3,7 +3,6 @@ use crate::services::game_engine::orchestrator::DirectorDecision;
 use crate::services::game_engine::rule::RuleEvaluation;
 use crate::services::game_engine::trigger::TriggerEvaluation;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StateTransitionResult {
@@ -30,24 +29,12 @@ impl StateEngineService {
     ) -> StateTransitionResult {
         let mut metrics = session.state.metrics.clone();
         let mut tags = session.state.tags.clone();
-        let attr_map = session_attributes
-            .iter()
-            .map(|item| (item.key.as_str(), item.value.clone()))
-            .collect::<HashMap<_, _>>();
-        let world_tension = attr_map
-            .get("world_tension")
-            .and_then(|value| value.as_f64())
-            .unwrap_or(0.0);
+        let _ = session_attributes;
 
-        metrics
-            .entry("pressure".to_string())
-            .or_insert(world_tension);
+        metrics.entry("pressure".to_string()).or_insert(0.0);
         metrics.entry("focus".to_string()).or_insert(50.0);
         metrics.entry("stability".to_string()).or_insert(100.0);
 
-        if let Some(value) = metrics.get_mut("pressure") {
-            *value = value.max(world_tension);
-        }
         if let Some(value) = metrics.get_mut("stability") {
             *value = (*value - 3.0).max(0.0);
         }

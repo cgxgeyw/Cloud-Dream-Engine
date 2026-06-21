@@ -16,7 +16,9 @@ use crate::models::world::{
 };
 use crate::services::game_engine::dialogue::DialoguePipeline;
 use crate::services::game_engine::director::WorldDirectorService;
-use crate::services::game_engine::orchestrator::build_character_prompt_artifacts;
+use crate::services::game_engine::orchestrator::{
+    build_character_prompt_artifacts, build_character_response_schema,
+};
 use crate::services::game_engine::prompting::{build_prompt_call, llm_chat_messages_to_values};
 use crate::services::map_topology::compile_map_topology;
 use crate::services::world_package::{ImportedWorldPackage, WorldPackageService};
@@ -83,12 +85,18 @@ impl WorldService {
 
     pub fn delete_world(&self, conn: &Connection, id: &str) -> Result<(), String> {
         let repo = WorldRepository::new(conn);
-        repo.delete(id)
+        repo.delete(id)?;
+        // 记一笔墓碑：若删除的是内置世界，避免下次启动播种时被重建。
+        crate::db::seeds::mark_seed_world_tombstoned(conn, id)
+            .map_err(|err| format!("记录世界删除标记失败: {err}"))?;
+        Ok(())
     }
 
     pub fn delete_all_worlds(&self, conn: &Connection) -> Result<serde_json::Value, String> {
         let repo = WorldRepository::new(conn);
         let count = repo.delete_all()?;
+        crate::db::seeds::mark_all_seed_worlds_tombstoned(conn)
+            .map_err(|err| format!("记录世界删除标记失败: {err}"))?;
         Ok(serde_json::json!({ "ok": true, "deleted_count": count }))
     }
 
@@ -855,7 +863,6 @@ impl WorldService {
             &[],
             &[],
             &[],
-            &[],
             &session.scene.name,
             &session.location,
             &session.visible_characters,
@@ -885,6 +892,13 @@ impl WorldService {
                     "turn_payload": artifacts.turn_payload,
                     "scene_state": artifacts.scene_state,
                     "visibility_context": artifacts.visibility_context,
+                    // 真正随请求下发、但不在对话文本里的旁路字段，补进预览以便和实际发送一致。
+                    "response_schema": build_character_response_schema(),
+                    "request_params": {
+                        "json_mode": true,
+                        "temperature": 0.8,
+                        "note": "通知工具(tools)仅在世界 director 配置允许时随请求下发；本预览不含具体工具定义。"
+                    },
                 }),
             ),
         }

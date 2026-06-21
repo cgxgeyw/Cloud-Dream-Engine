@@ -1,8 +1,9 @@
-import { useEffect } from "react";
+import React, { useEffect } from "react";
 import { Copy, GitBranch } from "lucide-react";
 import type { ContentPart } from "../../data/types";
 import type { GameUiComponentNode } from "../../data/gameUi";
 import {
+  CotBlock,
   RenderCharacterCreation,
   RenderDirectorRetryCard,
   RenderDirectorTrace,
@@ -10,7 +11,7 @@ import {
   RenderSwitchProposal,
 } from "../../game/MessageCards";
 import {
-  isMessageReasoningExpanded,
+  parseAgentNarration,
   parseAgentReasoning,
   parseCharacterCreationMessage,
   parseDirectorRetryCard,
@@ -22,6 +23,42 @@ import {
 } from "../../game/utils";
 import type { GameUiRuntimeActions } from "../actions";
 import type { GameUiRuntimeContext } from "../runtimeContext";
+
+function MobileErrorNotice({
+  speakerName,
+  summary,
+  retryToken,
+  retrying,
+  onRetry,
+}: {
+  speakerName: string;
+  summary: string;
+  retryToken?: string;
+  retrying: boolean;
+  onRetry?: (token: string) => void;
+}) {
+  return (
+    <div className="game-message-row game-message-row--system game-message-row--mobile-error">
+      <div className="game-mobile-error-notice">
+        <div className="game-mobile-error-title">
+          {speakerName ? `${speakerName}：本次发言失败` : "本次发言失败"}
+        </div>
+        <div className="game-mobile-error-summary">{summary || "模型返回内容无法解析，请重发。"}</div>
+        {retryToken && onRetry ? (
+          <button
+            type="button"
+            className="game-mobile-error-retry game-ui-button"
+            data-variant="primary"
+            disabled={retrying}
+            onClick={() => onRetry(retryToken)}
+          >
+            {retrying ? "重发中..." : "重发"}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 function TypingIndicator({ speakerName }: { speakerName: string }) {
   return (
@@ -76,6 +113,26 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
     runtime.message_preferences.set_auto_scroll_enabled(autoScroll);
   }, [autoScroll, runtime.message_preferences.set_auto_scroll_enabled]);
 
+  const hasActiveAgentStream = runtime.messages.some((message) => {
+    if (message.role !== "agent") {
+      return false;
+    }
+    const metadata = (message.metadata ?? {}) as Record<string, unknown>;
+    if (metadata.streaming === true) {
+      return true;
+    }
+    if (!runtime.ui_state.submitting) {
+      return false;
+    }
+    return (
+      metadata.message_kind === "agent_response"
+      && (
+        String(metadata.reasoning ?? "").trim().length > 0
+        || getMessageText(message.content).trim().length > 0
+      )
+    );
+  });
+
   return (
     <div className="game-chat-messages" ref={runtime.chat_messages_ref}>
       {runtime.messages.map((message, index) => {
@@ -93,17 +150,7 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
 
         const directorTrace = parseDirectorTrace(message);
         if (directorTrace) {
-          if (mobileSimple) {
-            return null;
-          }
-          return (
-            <RenderDirectorTrace
-              key={directorTrace.key}
-              trace={directorTrace}
-              expandedKeys={runtime.message_state.expanded_director_trace_keys}
-              setExpandedKeys={runtime.message_state.set_expanded_director_trace_keys}
-            />
-          );
+          return <RenderDirectorTrace key={directorTrace.key} trace={directorTrace} />;
         }
 
         const characterCreation = parseCharacterCreationMessage(message);
@@ -139,7 +186,19 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
         const retryCard = parseDirectorRetryCard(message);
         if (retryCard) {
           if (mobileSimple) {
-            return null;
+            if (runtime.message_state.dismissed_retry_card_keys.has(retryCard.key)) {
+              return null;
+            }
+            return (
+              <MobileErrorNotice
+                key={retryCard.key}
+                speakerName={runtime.session?.player_character_name ?? ""}
+                summary={retryCard.summary || retryCard.title}
+                retryToken={retryCard.retryToken}
+                retrying={runtime.ui_state.retrying_token === retryCard.retryToken}
+                onRetry={(token) => void actions.retryTurn(token)}
+              />
+            );
           }
           if (runtime.message_state.dismissed_retry_card_keys.has(retryCard.key)) {
             return null;
@@ -162,7 +221,16 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
         const structuredError = parseStructuredError(message);
         if (structuredError) {
           if (mobileSimple) {
-            return null;
+            return (
+              <MobileErrorNotice
+                key={structuredError.key}
+                speakerName={structuredError.speakerName}
+                summary={structuredError.summary || structuredError.title}
+                retryToken={structuredError.retryToken}
+                retrying={runtime.ui_state.retrying_token === structuredError.retryToken}
+                onRetry={(token) => void actions.retryTurn(token)}
+              />
+            );
           }
           return (
             <RenderStructuredError
@@ -179,7 +247,8 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
           );
         }
 
-        const agentReasoning = showAgentReasoning && !mobileSimple ? parseAgentReasoning(message) : null;
+        const agentReasoning = showAgentReasoning ? parseAgentReasoning(message) : null;
+        const agentNarration = message.role === "agent" ? parseAgentNarration(message) : null;
         const messageTurnIndex = Number(message.metadata?.turn_index ?? 0);
         const canResendPlayerTurn = message.role === "player" && Number.isInteger(messageTurnIndex) && messageTurnIndex > 0;
         const isEditingThisTurn = runtime.editing?.turnIndex === messageTurnIndex;
@@ -191,8 +260,10 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
         const isMobile = runtime.capabilities.platform === "mobile";
 
         return (
-          <div
+          <React.Fragment
             key={`${message.role}-${index}-${message.speaker ?? "none"}-${message.pending ? "pending" : "committed"}`}
+          >
+          <div
             className={`game-message-row game-message-row--${message.role}${message.pending ? " game-message-row--pending" : ""}`}
           >
             <div className={`game-message game-message--${message.role}${message.pending ? " game-message--pending" : ""} game-ui-message-bubble`} data-variant={message.role}>
@@ -203,21 +274,7 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
               ) : null}
               {message.role === "agent" && agentReasoning ? (
                 <div className="game-agent-blocks">
-                  <details className="game-agent-reasoning" open={isMessageReasoningExpanded(message)}>
-                    <summary className="game-agent-reasoning-summary">
-                      <span>推理</span>
-                      <span className="game-agent-reasoning-summary-meta">
-                        {isMessageReasoningExpanded(message) ? "生成中" : "展开"}
-                      </span>
-                    </summary>
-                    <div className="game-agent-reasoning-content">
-                      {agentReasoning.reasoningLines.map((line, reasoningIndex) => (
-                        <div key={`${message.speaker ?? "agent"}-reasoning-${reasoningIndex}`} className="game-agent-reasoning-line">
-                          {line}
-                        </div>
-                      ))}
-                    </div>
-                  </details>
+                  <CotBlock text={agentReasoning.reasoning} />
                   <div className="game-agent-answer">
                     <div className="game-agent-answer-label">回复</div>
                     <div className="game-message-content game-message-content--default">{getMessageText(message.content)}</div>
@@ -348,9 +405,15 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
               </div>
             ) : null}
           </div>
+          {agentNarration ? (
+            <div className="game-message-row game-message-row--narration">
+              <div className="game-narration">{agentNarration}</div>
+            </div>
+          ) : null}
+          </React.Fragment>
         );
       })}
-      {showTypingIndicator && runtime.ui_state.submitting && (() => {
+      {showTypingIndicator && runtime.ui_state.submitting && !runtime.ui_state.streaming_response_active && !hasActiveAgentStream && (() => {
         const lastAgent = [...runtime.messages].reverse().find((m) => m.role === "agent");
         const speakerName = lastAgent?.speaker || runtime.session?.player_character_name || "";
         return <TypingIndicator speakerName={speakerName} />;

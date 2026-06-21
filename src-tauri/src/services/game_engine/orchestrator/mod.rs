@@ -6,4 +6,4 @@ pub mod writeback;
 
 pub(crate) use agent_chat::*;
 pub use run::*;
-pub(crate) use turn_context::build_character_prompt_artifacts;
+pub(crate) use turn_context::{build_character_prompt_artifacts, build_character_response_schema};

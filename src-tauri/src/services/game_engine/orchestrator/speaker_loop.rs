@@ -86,7 +86,6 @@ impl SessionOrchestrator {
                 speaker_model,
                 visible_attribute_lines,
                 visible_inventory_items,
-                visible_inventory_lines,
                 public_scene_state_lines,
                 memory_pool,
                 recalled_memories,
@@ -108,10 +107,6 @@ impl SessionOrchestrator {
                     load_character_visible_attribute_lines(conn, session, speaker_character_id)?;
                 let visible_inventory_items =
                     filter_inventory_for_character(session, speaker_character_id, speaker_name);
-                let visible_inventory_lines = summarize_visible_inventory_lines(
-                    &visible_inventory_items,
-                    speaker_character_id,
-                );
                 let public_scene_state_lines = build_public_scene_state_lines(
                     session,
                     &visible_attribute_lines,
@@ -159,7 +154,6 @@ impl SessionOrchestrator {
                     &memory_pool,
                     &visible_attribute_lines,
                     &visible_inventory_items,
-                    &visible_inventory_lines,
                     &public_scene_state_lines,
                 );
                 speaker_request.stream = Some(
@@ -177,7 +171,6 @@ impl SessionOrchestrator {
                     speaker_model,
                     visible_attribute_lines,
                     visible_inventory_items,
-                    visible_inventory_lines,
                     public_scene_state_lines,
                     memory_pool,
                     recalled_memories,
@@ -255,11 +248,9 @@ impl SessionOrchestrator {
                                         ),
                                         metadata: Some(serde_json::json!({
                                             "turn_index": turn_index,
-                                            "intent": partial.as_ref().map(|value| value.intent.clone()).unwrap_or_default(),
-                                            "emotion": partial.as_ref().map(|value| value.emotion.clone()).unwrap_or_default(),
                                             "message_kind": "agent_response",
                                             "reasoning": streamed_reasoning,
-                                            "reasoning_expanded": true,
+                                            "reasoning_expanded": false,
                                         })),
                                     });
                                     callback(SpeakerTurnProgress {
@@ -400,7 +391,6 @@ impl SessionOrchestrator {
                         &memory_pool,
                         &visible_attribute_lines,
                         &visible_inventory_items,
-                        &visible_inventory_lines,
                         &public_scene_state_lines,
                         next_scene_name,
                         next_location,
@@ -417,15 +407,11 @@ impl SessionOrchestrator {
                         serde_json::json!({
                             "speaker": parsed_response.speaker.clone(),
                             "content": parsed_response.content.clone(),
-                            "intent": parsed_response.intent.clone(),
-                            "emotion": parsed_response.emotion.clone(),
                             "narration": parsed_response.narration.clone(),
                         }),
                         serde_json::json!({
                             "speaker": parsed_response.speaker.clone(),
                             "content": parsed_response.content.clone(),
-                            "intent": parsed_response.intent.clone(),
-                            "emotion": parsed_response.emotion.clone(),
                             "narration": parsed_response.narration.clone(),
                         }),
                     );
@@ -487,8 +473,6 @@ impl SessionOrchestrator {
                         speaker: Some(parsed_response.speaker.clone()),
                         metadata: Some(serde_json::json!({
                             "turn_index": turn_index,
-                            "intent": parsed_response.intent.clone(),
-                            "emotion": parsed_response.emotion.clone(),
                             "narration": parsed_response.narration.clone(),
                             "message_kind": "agent_response",
                             "reasoning": reasoning_text,
@@ -534,8 +518,6 @@ impl SessionOrchestrator {
                             "llm_output": {
                                 "speaker": parsed_response.speaker.clone(),
                                 "content": parsed_response.content.clone(),
-                                "intent": parsed_response.intent.clone(),
-                                "emotion": parsed_response.emotion.clone(),
                                 "narration": parsed_response.narration.clone(),
                                 "raw_content": response.content.clone(),
                                 "pending_notifications": speaker_pending_notifications,
@@ -571,7 +553,6 @@ impl SessionOrchestrator {
                         &memory_pool,
                         &visible_attribute_lines,
                         &visible_inventory_items,
-                        &visible_inventory_lines,
                         &public_scene_state_lines,
                         next_scene_name,
                         next_location,

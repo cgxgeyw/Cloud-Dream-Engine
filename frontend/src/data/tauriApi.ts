@@ -3,6 +3,8 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AppSettings,
   AssetSelection,
+  AiWorldCreateRequest,
+  AiWorldCreateResponse,
   AttributeSchemaResponse,
   AttributeSchemaUpsertRequest,
   AttributeValueResponse,
@@ -62,11 +64,12 @@ import type {
   WorldUiDocumentRequest,
   WorldUiDocumentValidationResult,
   WorldUpsertRequest,
+  WorldPermissionStatus,
 } from "./types";
 
 // 类型定义
 export type {
-  WorldResponse, WorldOpeningMessage, WorldCreateRequest, WorldUpsertRequest,
+  WorldResponse, WorldOpeningMessage, WorldCreateRequest, WorldUpsertRequest, AiWorldCreateRequest, AiWorldCreateResponse,
   CharacterResponse, CharacterCreateRequest, CharacterUpsertRequest, CharacterTemplateResponse, CharacterCreateFromTemplateRequest,
   ChatMessage, ChatMessageResponse, SessionSnapshot, SessionSnapshotResponse,
   SessionMapNode, SessionMapEdge, InventoryItem, SceneRuntime, AssetSelection, CharacterVisualState, SessionState,
@@ -81,7 +84,7 @@ export type {
   WorldUiDocumentRequest, WorldUiDocumentValidationResult,
   WorldUiBundleValidationRequest, WorldUiBundleValidationResult,
   WorldUiCompileRequest, WorldUiCompileResult,
-  VerifyWorldPackageUiCompatibilityRequest, WorldUiCompatibilityReport,
+  VerifyWorldPackageUiCompatibilityRequest, WorldUiCompatibilityReport, WorldPermissionStatus,
 } from "./types";
 
 
@@ -231,6 +234,28 @@ export function fetchWorld(worldId: string): Promise<WorldResponse> {
 
 export function createWorld(payload: WorldCreateRequest): Promise<WorldResponse> {
   return tauriCommand("create_world", { request: payload });
+}
+
+export function createWorldWithAi(payload: AiWorldCreateRequest): Promise<AiWorldCreateResponse> {
+  return tauriCommand("create_world_with_ai", { request: payload });
+}
+
+export function onAiWorldCreateProgress(callback: (receivedChars: number) => void): () => void {
+  const unlistenPromise = listen<{ received_chars: number }>("ai_world_create:progress", (event) => {
+    callback(event.payload?.received_chars ?? 0);
+  });
+  let resolvedUnlisten: (() => void) | null = null;
+  unlistenPromise.then((fn) => { resolvedUnlisten = fn; });
+  let cancelled = false;
+  return () => {
+    if (cancelled) return;
+    cancelled = true;
+    if (resolvedUnlisten) {
+      resolvedUnlisten();
+    } else {
+      unlistenPromise.then((fn) => fn());
+    }
+  };
 }
 
 export function updateWorld(worldId: string, payload: WorldCreateRequest): Promise<WorldResponse> {
@@ -484,6 +509,10 @@ export function fetchAttributeValues(params: { ownerType?: string; ownerId?: str
 
 export function upsertAttributeValue(payload: AttributeValueUpsertRequest): Promise<AttributeValueResponse> {
   return tauriCommand("upsert_attribute_value", { request: payload });
+}
+
+export function requestWorldPermissions(permissions: string[]): Promise<WorldPermissionStatus[]> {
+  return tauriCommand("request_world_permissions", { request: { permissions } });
 }
 
 export function fetchMemories(worldId?: string, sessionId?: string, characterId?: string, layer?: string, limit?: number): Promise<MemoryEntry[]> {

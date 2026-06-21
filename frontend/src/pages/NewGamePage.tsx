@@ -9,6 +9,7 @@ import {
   type WorldResponse,
 } from "../data/apiAdapter";
 import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
+import { useT } from "../data/i18n/context";
 import { ArrowLeft } from "lucide-react";
 
 function countMapNodes(value: WorldResponse["map_nodes"]): number {
@@ -34,6 +35,7 @@ function countMapNodes(value: WorldResponse["map_nodes"]): number {
 }
 
 function useWorldList(preferredWorldId?: string | null) {
+  const t = useT();
   const [worlds, setWorlds] = useState<WorldResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -58,7 +60,7 @@ function useWorldList(preferredWorldId?: string | null) {
         }
       } catch (loadError) {
         if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : "加载世界列表失败");
+          setError(loadError instanceof Error ? loadError.message : t("newGame.loadWorldsFailed"));
         }
       } finally {
         if (!cancelled) {
@@ -78,27 +80,28 @@ function useWorldList(preferredWorldId?: string | null) {
 
 export function NewGamePage() {
   const navigate = useNavigate();
+  const t = useT();
   const [searchParams] = useSearchParams();
   const preferredWorldId = searchParams.get("worldId");
   const { worlds, loading, error } = useWorldList(preferredWorldId);
 
   return (
     <ScreenLayout
-      title="新游戏"
-      subtitle="选择一个世界，进入开局设定。"
+      title={t("newGame.title")}
+      subtitle={t("newGame.subtitle")}
       compactHeader
       maxWidth={980}
       toolbar={
         <button type="button" onClick={() => navigate(-1)} className="action-btn">
-          <ArrowLeft size={14} /> 首页
+          <ArrowLeft size={14} /> {t("newGame.home")}
         </button>
       }
     >
-      {loading ? <div className="empty-text">正在加载世界列表...</div> : null}
-      {error ? <div className="error-text">加载失败：{error}</div> : null}
+      {loading ? <div className="empty-text">{t("newGame.loadingWorlds")}</div> : null}
+      {error ? <div className="error-text">{t("newGame.loadError").replace("{error}", error)}</div> : null}
 
       {!loading && !error && worlds.length === 0 ? (
-        <div className="empty-text">暂无世界，请先创建一个世界。</div>
+        <div className="empty-text">{t("newGame.noWorlds")}</div>
       ) : null}
 
       {!loading && !error && worlds.length > 0 ? (
@@ -106,10 +109,10 @@ export function NewGamePage() {
           <SurfacePanel className="surface-panel--pad-lg newgame-list-panel">
             <div className="newgame-list-head">
               <div>
-                <strong className="newgame-section-title">选择世界</strong>
+                <strong className="newgame-section-title">{t("newGame.selectWorld")}</strong>
               </div>
               <button type="button" className="action-btn" onClick={() => navigate("/worlds")}>
-                管理世界
+                {t("newGame.manageWorlds")}
               </button>
             </div>
 
@@ -123,12 +126,12 @@ export function NewGamePage() {
                 >
                   <div className="newgame-world-card-top">
                     <strong>{world.name}</strong>
-                    <span>{world.genre || "未分类"}</span>
+                    <span>{world.genre || t("newGame.uncategorized")}</span>
                   </div>
-                  <p>{world.summary || "这个世界还没有简介。"}</p>
+                  <p>{world.summary || t("newGame.noSummary")}</p>
                   <div className="newgame-world-card-meta">
-                    <span>开场：{world.opening_scene || "未设置"}</span>
-                    <span>地图 {countMapNodes(world.map_nodes)}</span>
+                    <span>{t("newGame.openingPrefix").replace("{scene}", world.opening_scene || t("newGame.notSet"))}</span>
+                    <span>{t("newGame.mapCount")} {countMapNodes(world.map_nodes)}</span>
                   </div>
                 </button>
               ))}
@@ -142,6 +145,7 @@ export function NewGamePage() {
 
 export function NewGameSetupPage() {
   const navigate = useNavigate();
+  const t = useT();
   const { worldId = "" } = useParams();
   const [world, setWorld] = useState<WorldResponse | null>(null);
   const [characters, setCharacters] = useState<CharacterResponse[]>([]);
@@ -168,7 +172,7 @@ export function NewGameSetupPage() {
         }
       } catch (loadError) {
         if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : "加载开局设定失败");
+          setError(loadError instanceof Error ? loadError.message : t("newGame.loadSetupFailed"));
         }
       } finally {
         if (!cancelled) {
@@ -181,7 +185,7 @@ export function NewGameSetupPage() {
       void loadSetupData();
     } else {
       setLoading(false);
-      setError("缺少世界 ID");
+      setError(t("newGame.missingWorldId"));
     }
 
     return () => {
@@ -194,7 +198,7 @@ export function NewGameSetupPage() {
       return;
     }
     if (!selectedPlayerCharacterId) {
-      setError("请先选择玩家角色");
+      setError(t("newGame.selectPlayerFirst"));
       return;
     }
 
@@ -207,7 +211,7 @@ export function NewGameSetupPage() {
       });
       navigate(`/game/${session.id}`);
     } catch (createError) {
-      setError(createError instanceof Error ? createError.message : "启动会话失败");
+      setError(createError instanceof Error ? createError.message : t("newGame.startSessionFailed"));
     } finally {
       setCreating(false);
     }
@@ -215,18 +219,18 @@ export function NewGameSetupPage() {
 
   return (
     <ScreenLayout
-      title="开局设定"
-      subtitle="确认开场信息，并选择这次由你操控的角色。"
+      title={t("newGame.setupTitle")}
+      subtitle={t("newGame.setupSubtitle")}
       compactHeader
       maxWidth={860}
       toolbar={
         <button type="button" onClick={() => navigate(-1)} className="action-btn">
-          <ArrowLeft size={14} /> 返回
+          <ArrowLeft size={14} /> {t("newGame.back")}
         </button>
       }
     >
-      {loading ? <div className="empty-text">正在加载开局数据...</div> : null}
-      {error ? <div className="error-text">加载失败：{error}</div> : null}
+      {loading ? <div className="empty-text">{t("newGame.loadingSetup")}</div> : null}
+      {error ? <div className="error-text">{t("newGame.loadError").replace("{error}", error)}</div> : null}
 
       {!loading && !error && world ? (
         <div className="newgame-screen newgame-setup-screen">
@@ -234,30 +238,30 @@ export function NewGameSetupPage() {
 
 
             <div className="newgame-preview-hero">
-              <div className="newgame-label">即将开始</div>
+              <div className="newgame-label">{t("newGame.aboutToStart")}</div>
               <h2 className="newgame-world-name">{world.name}</h2>
-              <div className="newgame-world-meta">{world.genre || "未分类世界"}</div>
-              <p className="newgame-preview-summary">{world.summary || "这个世界还没有简介。"}</p>
+              <div className="newgame-world-meta">{world.genre || t("newGame.uncategorizedWorld")}</div>
+              <p className="newgame-preview-summary">{world.summary || t("newGame.noSummary")}</p>
             </div>
 
             <div className="newgame-info-grid">
               <div className="newgame-info-row">
-                <strong>开场地点</strong>
-                <span>{world.opening_scene || "未设置"}</span>
+                <strong>{t("newGame.openingLocation")}</strong>
+                <span>{world.opening_scene || t("newGame.notSet")}</span>
               </div>
               <div className="newgame-info-row">
-                <strong>时间系统</strong>
-                <span>{world.time_system || "未设置"}</span>
+                <strong>{t("newGame.timeSystem")}</strong>
+                <span>{world.time_system || t("newGame.notSet")}</span>
               </div>
               <div className="newgame-info-row newgame-info-row--wide">
-                <strong>在场角色</strong>
-                <span>{characters.length > 0 ? characters.map((item) => item.name).join(" / ") : "暂无角色"}</span>
+                <strong>{t("newGame.presentCharacters")}</strong>
+                <span>{characters.length > 0 ? characters.map((item) => item.name).join(" / ") : t("newGame.noCharacters")}</span>
               </div>
             </div>
 
             <div className="newgame-player-card">
               <label className="editor-field">
-                <span className="editor-field-label">选择你的角色</span>
+                <span className="editor-field-label">{t("newGame.selectYourCharacter")}</span>
                 <select
                   value={selectedPlayerCharacterId}
                   onChange={(event) => setSelectedPlayerCharacterId(event.target.value)}
@@ -266,7 +270,7 @@ export function NewGameSetupPage() {
                   {characters.map((character) => (
                     <option key={character.id} value={character.id}>
                       {character.name}
-                      {world.player_character_id === character.id ? "（默认）" : ""}
+                      {world.player_character_id === character.id ? t("newGame.defaultSuffix") : ""}
                     </option>
                   ))}
                 </select>
@@ -276,14 +280,14 @@ export function NewGameSetupPage() {
             <div className="newgame-action-stack">
               <div className="newgame-secondary-actions">
                 <button type="button" className="action-btn" onClick={() => navigate(`/worlds/${world.id}/edit`)}>
-                  编辑世界
+                  {t("newGame.editWorld")}
                 </button>
                 <button
                   type="button"
                   onClick={() => navigate(`/worlds/${world.id}/characters`)}
                   className="action-btn"
                 >
-                  角色池
+                  {t("newGame.characterPool")}
                 </button>
               </div>
               <button
@@ -292,7 +296,7 @@ export function NewGameSetupPage() {
                 disabled={creating || !selectedPlayerCharacterId}
                 className="action-btn action-btn--primary newgame-start-btn"
               >
-                {creating ? "启动中..." : "进入世界"}
+                {creating ? t("newGame.starting") : t("newGame.enterWorld")}
               </button>
             </div>
           </div>

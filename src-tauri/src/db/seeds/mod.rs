@@ -30,16 +30,50 @@ fn default_seed_world_director_config_json() -> String {
     .to_string()
 }
 
-const SEED_WORLD_TENSION_LABEL: &str = "世界紧张度";
-const SEED_WORLD_TENSION_DESCRIPTION: &str = "用于描述当前世界叙事压力的数值属性。";
+const POETRY_LING_WORD_SCHEMA_ID: &str = "attr-seed-poetry-ling-word";
 const SEED_CHARACTER_TRUST_LABEL: &str = "信任度";
 const SEED_CHARACTER_TRUST_DESCRIPTION: &str = "角色对玩家或当前局势的信任数值。";
 const SCHEDULE_TODO_SCHEMA_ID: &str = "attr-schedule-assistant-todo-items";
 const SCHEDULE_COMPLETED_SCHEMA_ID: &str = "attr-schedule-assistant-completed-items";
-const SEED_RULE_NAME: &str = "气氛升温规则";
-const SEED_RULE_DESCRIPTION: &str = "当世界紧张度较高时，进一步提升压力并追加阶段标签。";
 fn sample_world_seeding_enabled() -> bool {
     true
+}
+
+/// 内置（播种）世界的 id 列表，用于墓碑判定，避免误伤用户自建世界。
+fn seed_world_ids() -> [&'static str; 2] {
+    [SEED_WORLD_POETRY_ID, SEED_WORLD_SCHEDULE_ASSISTANT_ID]
+}
+
+/// 内置世界被用户删除后记一笔墓碑，避免每次启动重新播种把它"复活"。
+fn seed_world_is_tombstoned(conn: &Connection, world_id: &str) -> Result<bool, rusqlite::Error> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM seed_world_tombstones WHERE world_id = ?1",
+        params![world_id],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
+}
+
+pub(crate) fn mark_seed_world_tombstoned(
+    conn: &Connection,
+    world_id: &str,
+) -> Result<(), rusqlite::Error> {
+    // 只为内置世界记墓碑；用户自建世界不会被播种，无需标记。
+    if !seed_world_ids().contains(&world_id) {
+        return Ok(());
+    }
+    conn.execute(
+        "INSERT OR IGNORE INTO seed_world_tombstones (world_id, created_at) VALUES (?1, datetime('now'))",
+        params![world_id],
+    )?;
+    Ok(())
+}
+
+pub(crate) fn mark_all_seed_worlds_tombstoned(conn: &Connection) -> Result<(), rusqlite::Error> {
+    for world_id in seed_world_ids() {
+        mark_seed_world_tombstoned(conn, world_id)?;
+    }
+    Ok(())
 }
 
 fn seed_character_ids() -> [&'static str; 7] {
@@ -72,6 +106,10 @@ fn insert_seed_world(
     opening_character_ids_json: String,
     player_character_id: Option<&str>,
 ) -> Result<(), rusqlite::Error> {
+    // 用户删除过的内置世界不再自动重建，尊重删除意图。
+    if seed_world_is_tombstoned(conn, id)? {
+        return Ok(());
+    }
     conn.execute(
         "
         INSERT INTO worlds (
@@ -119,6 +157,10 @@ fn update_seed_world(
     opening_character_ids_json: String,
     player_character_id: Option<&str>,
 ) -> Result<(), rusqlite::Error> {
+    // 用户删除过的内置世界不再自动重建，尊重删除意图。
+    if seed_world_is_tombstoned(conn, id)? {
+        return Ok(());
+    }
     let updated = conn.execute(
         "UPDATE worlds SET name = ?1, genre = ?2, background_prompt = ?3, opening_scene = ?4, summary = ?5, time_system = ?6, map_nodes_json = ?7, triggers_json = ?8, time_config_json = ?9, director_config_json = ?10, ui_theme_config_json = ?11, opening_messages_json = ?12, opening_character_ids_json = ?13, player_character_id = ?14 WHERE id = ?15",
         params![
@@ -172,6 +214,10 @@ fn insert_seed_character(
     memory_strategy: &str,
     attributes_json: String,
 ) -> Result<(), rusqlite::Error> {
+    // 所属内置世界已被删除（墓碑）时，不再重建其角色，避免出现孤立角色。
+    if seed_world_is_tombstoned(conn, world_id)? {
+        return Ok(());
+    }
     conn.execute(
         "
         INSERT OR IGNORE INTO characters (
@@ -604,24 +650,6 @@ fn ensure_core_seed_data(conn: &Connection) -> Result<(), rusqlite::Error> {
             INSERT INTO attribute_schemas (
                 id, scope, key, label, value_type, description, default_value_json, enum_options_json,
                 display_policy_json, access_policy_json, mutation_policy_json, influence_policy_json, projection_policy_json
-            ) VALUES (?1, 'world', 'world_tension', ?2, 'number', ?3, '0', '[]', ?4, ?5, ?6, ?7, ?8)
-            ",
-            params![
-                "attr-seed-world-tension",
-                SEED_WORLD_TENSION_LABEL,
-                SEED_WORLD_TENSION_DESCRIPTION,
-                r#"{"editor_visible":true,"game_visible":true,"debug_visible":true}"#,
-                r#"{"creator_read":true,"player_read":true,"director_read":true,"plugin_read":true}"#,
-                r#"{"creator_write":true,"rule_write":true,"trigger_write":true,"player_action_write":true,"allowed_ops":["set","increment"]}"#,
-                r#"{"speaker_selector":{"enabled":true,"mode":"weighted_factor","weight":0.6},"trigger_engine":{"enabled":true,"mode":"threshold"}}"#,
-                r#"{"inherit_to_session":true,"session_owner_type":"session","mutable_in_session":true}"#,
-            ],
-        )?;
-        conn.execute(
-            "
-            INSERT INTO attribute_schemas (
-                id, scope, key, label, value_type, description, default_value_json, enum_options_json,
-                display_policy_json, access_policy_json, mutation_policy_json, influence_policy_json, projection_policy_json
             ) VALUES (?1, 'character', 'trust_level', ?2, 'number', ?3, '0', '[]', ?4, ?5, ?6, ?7, ?8)
             ",
             params![
@@ -636,48 +664,17 @@ fn ensure_core_seed_data(conn: &Connection) -> Result<(), rusqlite::Error> {
             ],
         )?;
     }
-    let rule_count: i64 = conn.query_row("SELECT COUNT(*) FROM rules", [], |row| row.get(0))?;
-    if rule_count == 0 {
-        conn.execute(
-            "
-            INSERT INTO rules (id, scope, name, enabled, priority, description, condition_json, effects_json)
-            VALUES (?1, 'session', ?2, 1, 90, ?3, ?4, ?5)
-            ",
-            params![
-                "rule-seed-lockdown-escalation",
-                SEED_RULE_NAME,
-                SEED_RULE_DESCRIPTION,
-                r#"{"type":"attribute_threshold","attribute_key":"world_tension","operator":">=","value":40}"#,
-                seed_rule_effects_json(),
-            ],
-        )?;
-    }
     Ok(())
 }
 fn ensure_localized_builtin_content(conn: &Connection) -> Result<(), rusqlite::Error> {
-    conn.execute(
-        "UPDATE attribute_schemas SET label = ?1, description = ?2 WHERE id = ?3",
-        params![
-            SEED_WORLD_TENSION_LABEL,
-            SEED_WORLD_TENSION_DESCRIPTION,
-            "attr-seed-world-tension"
-        ],
-    )?;
+    remove_retired_world_tension_seed(conn)?;
+    ensure_poetry_ling_word_attribute_schema(conn)?;
     conn.execute(
         "UPDATE attribute_schemas SET label = ?1, description = ?2 WHERE id = ?3",
         params![
             SEED_CHARACTER_TRUST_LABEL,
             SEED_CHARACTER_TRUST_DESCRIPTION,
             "attr-seed-character-trust"
-        ],
-    )?;
-    conn.execute(
-        "UPDATE rules SET name = ?1, description = ?2, effects_json = ?3 WHERE id = ?4",
-        params![
-            SEED_RULE_NAME,
-            SEED_RULE_DESCRIPTION,
-            seed_rule_effects_json(),
-            "rule-seed-lockdown-escalation"
         ],
     )?;
     ensure_schedule_assistant_task_attribute_schemas(conn)?;
@@ -842,6 +839,73 @@ fn ensure_schedule_assistant_task_attribute_schemas(conn: &Connection) -> Result
     Ok(())
 }
 
+fn remove_retired_world_tension_seed(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "DELETE FROM attribute_values WHERE schema_id = ?1",
+        params!["attr-seed-world-tension"],
+    )?;
+    conn.execute(
+        "DELETE FROM attribute_schemas WHERE id = ?1 OR key = ?2",
+        params!["attr-seed-world-tension", "world_tension"],
+    )?;
+    conn.execute(
+        "DELETE FROM rules WHERE id = ?1",
+        params!["rule-seed-lockdown-escalation"],
+    )?;
+    Ok(())
+}
+
+fn ensure_poetry_ling_word_attribute_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "INSERT INTO attribute_schemas (
+            id, scope, key, label, value_type, description, default_value_json, enum_options_json,
+            display_policy_json, access_policy_json, mutation_policy_json, influence_policy_json, projection_policy_json
+        )
+        VALUES (?1, 'world', 'ling_word', ?2, 'text', ?3, ?4, '[]', ?5, ?6, ?7, ?8, ?9)
+        ON CONFLICT(id) DO UPDATE SET
+            scope = 'world',
+            key = 'ling_word',
+            label = excluded.label,
+            value_type = 'text',
+            description = excluded.description,
+            default_value_json = excluded.default_value_json,
+            enum_options_json = excluded.enum_options_json,
+            display_policy_json = excluded.display_policy_json,
+            access_policy_json = excluded.access_policy_json,
+            mutation_policy_json = excluded.mutation_policy_json,
+            influence_policy_json = excluded.influence_policy_json,
+            projection_policy_json = excluded.projection_policy_json",
+        params![
+            POETRY_LING_WORD_SCHEMA_ID,
+            "\u{4ee4}\u{5b57}",
+            "\u{98de}\u{82b1}\u{4ee4}\u{4e16}\u{754c}\u{5f53}\u{524d}\u{4f7f}\u{7528}\u{7684}\u{4ee4}\u{5b57}\u{3002}",
+            serde_json::json!("\u{6708}").to_string(),
+            format!(
+                r#"{{"editor_visible":true,"game_visible":true,"debug_visible":true,"applicable_world_ids":["{}"]}}"#,
+                SEED_WORLD_POETRY_ID
+            ),
+            r#"{"creator_read":true,"player_read":true,"director_read":true,"plugin_read":true}"#,
+            r#"{"creator_write":true,"rule_write":true,"trigger_write":true,"player_action_write":true,"allowed_ops":["set"]}"#,
+            r#"{"prompt.director":{"enabled":true,"mode":"raw"},"ui.status_panel":{"enabled":true,"mode":"text"}}"#,
+            r#"{"inherit_to_session":true,"session_owner_type":"session","mutable_in_session":true}"#,
+        ],
+    )?;
+    conn.execute(
+        "INSERT INTO attribute_values (id, schema_id, owner_type, owner_id, value_json, source)
+         VALUES (?1, ?2, 'world', ?3, ?4, 'seed')
+         ON CONFLICT(schema_id, owner_type, owner_id) DO UPDATE SET
+            value_json = excluded.value_json,
+            source = excluded.source",
+        params![
+            "attr-value-seed-poetry-ling-word",
+            POETRY_LING_WORD_SCHEMA_ID,
+            SEED_WORLD_POETRY_ID,
+            serde_json::json!("\u{6708}").to_string(),
+        ],
+    )?;
+    Ok(())
+}
+
 pub(crate) fn ensure_all(conn: &Connection) -> Result<(), rusqlite::Error> {
     ensure_default_plugins(conn)?;
     ensure_builtin_mcp_tools(conn)?;
@@ -861,6 +925,44 @@ mod tests {
     use serde_json::Value;
 
     #[test]
+    fn tombstoned_seed_world_is_not_reseeded() {
+        use super::SEED_WORLD_POETRY_ID;
+        use rusqlite::params;
+
+        let conn = rusqlite::Connection::open_in_memory().expect("open db");
+        crate::db::schema::create_tables(&conn).expect("create schema + seed");
+
+        let poetry_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM worlds WHERE id = ?1",
+                params![SEED_WORLD_POETRY_ID],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(poetry_count, 1, "poetry world should be seeded initially");
+
+        // 模拟用户在世界列表里删除飞花令（poetry）世界。
+        conn.execute("DELETE FROM worlds WHERE id = ?1", params![SEED_WORLD_POETRY_ID])
+            .unwrap();
+        super::mark_seed_world_tombstoned(&conn, SEED_WORLD_POETRY_ID).unwrap();
+
+        // 再次触发播种（等价于下次启动）。
+        super::ensure_all(&conn).expect("reseed");
+
+        let poetry_count_after: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM worlds WHERE id = ?1",
+                params![SEED_WORLD_POETRY_ID],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            poetry_count_after, 0,
+            "deleted seed world must stay deleted after reseed"
+        );
+    }
+
+    #[test]
     fn poetry_seed_ui_config_keeps_world_owned_ui_files() {
         let config =
             serde_json::from_str::<Value>(&feihualing_world::poetry_world_ui_theme_config_json())
@@ -878,11 +980,11 @@ mod tests {
 
         assert_eq!(
             desktop_file.pointer("/meta/name").and_then(Value::as_str),
-            Some("Poetry Desktop UI")
+            Some("诗词世界桌面界面")
         );
         assert_eq!(
             mobile_file.pointer("/meta/name").and_then(Value::as_str),
-            Some("Default Mobile Narrative UI")
+            Some("诗词世界移动界面")
         );
     }
 

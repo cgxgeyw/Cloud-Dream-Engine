@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Image, Mic, Send, Square } from "lucide-react";
+import { isTauriEnvironment, requestWorldPermissions } from "../../data/apiAdapter";
 import type { GameUiComponentNode } from "../../data/gameUi";
 import type { GameUiRuntimeActions } from "../actions";
 import type { GameUiRuntimeContext } from "../runtimeContext";
@@ -41,10 +42,18 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
 
   const checkMicPermission = async (): Promise<boolean> => {
     try {
+      if (isTauriEnvironment()) {
+        try {
+          await requestWorldPermissions(["microphone"]);
+        } catch (nativePermissionError) {
+          console.warn("[audio] failed to request native microphone permission:", nativePermissionError);
+        }
+      }
+
       if (navigator.permissions?.query) {
         const status = await navigator.permissions.query({ name: "microphone" as PermissionName });
         if (status.state === "denied") {
-          setMicError("麦克风权限被拒绝。");
+          setMicError("\u9ea6\u514b\u98ce\u6743\u9650\u88ab\u62d2\u7edd\u3002");
           return false;
         }
       }
@@ -56,11 +65,11 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
     } catch (errorLike) {
       const errorState = errorLike as { name?: string };
       if (errorState.name === "NotAllowedError") {
-        setMicError("麦克风权限被拒绝。");
+        setMicError("\u9ea6\u514b\u98ce\u6743\u9650\u88ab\u62d2\u7edd\u3002");
       } else if (errorState.name === "NotFoundError") {
-        setMicError("未找到可用麦克风。");
+        setMicError("\u672a\u627e\u5230\u53ef\u7528\u9ea6\u514b\u98ce\u3002");
       } else {
-        setMicError(`麦克风不可用：${errorState.name || "未知错误"}`);
+        setMicError(`\u9ea6\u514b\u98ce\u4e0d\u53ef\u7528\uff1a${errorState.name || "\u672a\u77e5\u9519\u8bef"}`);
       }
       return false;
     }
@@ -101,7 +110,7 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
       mediaRecorder.start();
       setIsRecording(true);
     } catch {
-      setMicError("启动录音失败。");
+      setMicError("\u542f\u52a8\u5f55\u97f3\u5931\u8d25\u3002");
     }
   };
 

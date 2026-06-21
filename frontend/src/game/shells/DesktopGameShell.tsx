@@ -123,7 +123,7 @@ function renderActionText(template: string, context: GameUiRenderContext): strin
   return template.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, expression: string) => {
     const value = resolveTemplatePath(context, expression.trim());
     if (Array.isArray(value)) {
-      return value.map((item) => String(item)).filter(Boolean).join("、");
+      return value.map((item) => String(item)).filter(Boolean).join("\u3001");
     }
     return value == null ? "" : String(value);
   });

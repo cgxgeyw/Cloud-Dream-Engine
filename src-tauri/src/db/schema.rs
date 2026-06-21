@@ -323,6 +323,11 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             ON scheduled_notifications(session_id, source);
 
         INSERT OR IGNORE INTO settings (id) VALUES (1);
+
+        CREATE TABLE IF NOT EXISTS seed_world_tombstones (
+            world_id TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL DEFAULT ''
+        );
     ",
     )?;
 

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   type RenderChatMessage,
   type CharacterCreationView,
@@ -19,50 +19,60 @@ import {
 } from "../game/utils";
 
 /* ============================================================
+   CotBlock — 思维链：始终只展示前 200 字，剩余折叠
+   ============================================================ */
+export const COT_PREVIEW_LIMIT = 200;
+
+export const CotBlock: React.FC<{
+  text: string;
+  label?: string;
+}> = ({ text, label = "思维链" }) => {
+  const [expanded, setExpanded] = useState(false);
+  const normalized = text.trim();
+  if (!normalized) {
+    return null;
+  }
+  const overflow = normalized.length > COT_PREVIEW_LIMIT;
+  const shown = expanded || !overflow ? normalized : normalized.slice(0, COT_PREVIEW_LIMIT);
+
+  return (
+    <div className="game-cot">
+      <div className="game-cot-header">
+        <span className="game-cot-label">{label}</span>
+        {overflow ? (
+          <button
+            type="button"
+            className="game-cot-toggle"
+            onClick={() => setExpanded((value) => !value)}
+          >
+            {expanded ? "收起" : "展开"}
+          </button>
+        ) : null}
+      </div>
+      <div className="game-cot-content">
+        {shown}
+        {overflow && !expanded ? <span className="game-cot-ellipsis">…</span> : null}
+      </div>
+    </div>
+  );
+};
+
+/* ============================================================
    RenderDirectorTrace
    ============================================================ */
 export const RenderDirectorTrace: React.FC<{
   trace: DirectorTraceView;
-  expandedKeys: Set<string>;
-  setExpandedKeys: React.Dispatch<React.SetStateAction<Set<string>>>;
-}> = ({ trace, expandedKeys, setExpandedKeys }) => {
-  const isExpanded = trace.reasoningExpanded || expandedKeys.has(trace.key);
+}> = ({ trace }) => {
   const visibleTraceLines = trace.traceLines.length
     ? trace.traceLines
     : trace.traceText.split("\n").map((line) => line.trim()).filter(Boolean);
 
   return (
-    <details
-      className="game-director-trace"
-      open={isExpanded}
-      data-streaming={trace.reasoningExpanded ? "true" : "false"}
-      onToggle={(event) => {
-        if (trace.reasoningExpanded) return;
-        const nextOpen = event.currentTarget.open;
-        setExpandedKeys((current) => {
-          const next = new Set(current);
-          if (nextOpen) next.add(trace.key);
-          else next.delete(trace.key);
-          return next;
-        });
-      }}
-    >
-      <summary className="game-director-trace-summary-row">
-        <span className="game-director-trace-title">世界主控思维链</span>
-        <span className="game-director-trace-meta">
-          {isExpanded ? "收起" : `展开 ${visibleTraceLines.length || 1} 行`}
-        </span>
-      </summary>
-      {trace.reasoningLines.length ? (
-        <div className="game-director-trace-block">
-          <div className="game-director-trace-label">思维链</div>
-          <div className="game-director-trace-lines">
-            {trace.reasoningLines.map((line, i) => (
-              <div key={`${trace.key}-reasoning-${i}`} className="game-director-trace-line">{line}</div>
-            ))}
-          </div>
-        </div>
-      ) : null}
+    <div className="game-director-trace" data-streaming={trace.reasoningExpanded ? "true" : "false"}>
+      <div className="game-director-trace-title">
+        {trace.reasoningExpanded ? "世界主控正在思考…" : "世界主控思维链"}
+      </div>
+      {trace.reasoning ? <CotBlock text={trace.reasoning} /> : null}
       <div className="game-director-trace-block">
         <div className="game-director-trace-label">正文</div>
         <div className="game-director-trace-lines">
@@ -75,7 +85,7 @@ export const RenderDirectorTrace: React.FC<{
           )}
         </div>
       </div>
-    </details>
+    </div>
   );
 };
 

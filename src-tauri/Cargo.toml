@@ -57,3 +57,6 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]
 notify-rust = "4.17.0"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21.1"

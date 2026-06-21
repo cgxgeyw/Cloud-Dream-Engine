@@ -1,4 +1,6 @@
 import type {
+  AiWorldCreateRequest,
+  AiWorldCreateResponse,
   // Shared types from types.ts
   WorldResponse, WorldOpeningMessage, WorldUpsertRequest,
   CharacterResponse, CharacterTemplateResponse, CharacterCreateFromTemplateRequest,
@@ -236,6 +238,10 @@ export function verifyWorldPackageUiCompatibility(
 
 export function createWorld(payload: WorldUpsertRequest) {
   return requestJson<WorldResponse, WorldUpsertRequest>("POST", "/api/worlds", payload);
+}
+
+export function createWorldWithAi(_payload: AiWorldCreateRequest): Promise<AiWorldCreateResponse> {
+  unsupportedInHttpMode("createWorldWithAi");
 }
 
 export function updateWorld(worldId: string, payload: WorldUpsertRequest) {

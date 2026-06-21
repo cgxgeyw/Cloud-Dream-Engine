@@ -10,8 +10,8 @@ use crate::models::world::WorldDefinition;
 use crate::services::game_engine::dialogue::DialoguePipeline;
 use crate::services::game_engine::memory::MemoryService;
 use crate::services::game_engine::prompting::{
-    build_prompt_call, llm_chat_messages_to_values, render_prompt_variables,
-    resolve_runtime_context_prompt,
+    build_prompt_call, collect_prompt_preset_contents, llm_chat_messages_to_values,
+    render_prompt_variables, resolve_runtime_context_prompt,
 };
 use crate::services::game_engine::structured_output::StructuredOutputFailure;
 use crate::services::notifications::notification_tool_definition;
@@ -108,7 +108,6 @@ pub(crate) fn build_character_prompt_artifacts(
     memory_pool: &[MemoryEntry],
     visible_attribute_lines: &[String],
     visible_inventory_items: &[InventoryItem],
-    visible_inventory_lines: &[String],
     public_scene_state_lines: &[String],
     next_scene_name: &str,
     next_location: &str,
@@ -118,7 +117,6 @@ pub(crate) fn build_character_prompt_artifacts(
     let visibility_context = build_character_visibility_context_payload(
         visible_attribute_lines,
         visible_inventory_items,
-        visible_inventory_lines,
         public_scene_state_lines,
         speaker_character_id,
         speaker_name,
@@ -138,6 +136,23 @@ pub(crate) fn build_character_prompt_artifacts(
         .unwrap_or_default()
         .trim()
         .to_string();
+    let preset_variables = {
+        let mut vars = std::collections::HashMap::new();
+        vars.insert("user".to_string(), player_character_name.trim().to_string());
+        vars.insert("char".to_string(), speaker_name.to_string());
+        vars.insert("world".to_string(), world.name.clone());
+        vars.insert(
+            "scene".to_string(),
+            if scene_name.trim().is_empty() {
+                location.to_string()
+            } else {
+                scene_name.to_string()
+            },
+        );
+        vars.insert("time".to_string(), session.time_label.clone());
+        vars
+    };
+    let preset_contents = collect_prompt_preset_contents(world, "character", &preset_variables);
     let init_payload = build_character_init_payload(world, speaker_name, speaker_profile, session);
     let turn_payload = build_character_turn_payload(
         world,
@@ -153,12 +168,11 @@ pub(crate) fn build_character_prompt_artifacts(
         memory_pool,
         visible_attribute_lines,
         visible_inventory_items,
-        visible_inventory_lines,
         public_scene_state_lines,
     );
     let response_contract = serde_json::json!({
         "format": "json_object",
-        "fields": ["speaker", "content", "intent", "emotion", "narration", "session_attribute_updates", "character_attribute_updates", "memory_entries"],
+        "fields": ["speaker", "content", "narration", "session_attribute_updates", "character_attribute_updates", "memory_entries"],
         "runtime_update_format": {
             "session_attribute_updates": [
                 { "key": "attribute_key", "value": "new_value" }
@@ -253,6 +267,18 @@ pub(crate) fn build_character_prompt_artifacts(
             }),
         );
     }
+    for (offset, content) in preset_contents.iter().enumerate() {
+        modules.insert(
+            1 + offset,
+            serde_json::json!({
+                "name": format!("Prompt preset #{}", offset + 1),
+                "source": "World design / prompt preset (scope: character)",
+                "content": content,
+                "editable": true,
+                "sent": true
+            }),
+        );
+    }
     let mut messages = vec![
         crate::services::llm::client::ChatMessage {
             role: "system".to_string(),
@@ -264,6 +290,17 @@ pub(crate) fn build_character_prompt_artifacts(
             metadata: None,
         },
     ];
+    for content in &preset_contents {
+        messages.push(crate::services::llm::client::ChatMessage {
+            role: "system".to_string(),
+            content: serde_json::Value::String(content.clone()),
+            reasoning_content: None,
+            speaker: None,
+            tool_call_id: None,
+            tool_calls: None,
+            metadata: None,
+        });
+    }
     if !character_runtime_context_prompt.trim().is_empty() {
         messages.push(crate::services::llm::client::ChatMessage {
             role: "system".to_string(),
@@ -345,7 +382,6 @@ pub(crate) fn build_character_prompt_trace(
     memory_pool: &[MemoryEntry],
     visible_attribute_lines: &[String],
     visible_inventory_items: &[InventoryItem],
-    visible_inventory_lines: &[String],
     public_scene_state_lines: &[String],
     next_scene_name: &str,
     next_location: &str,
@@ -373,7 +409,6 @@ pub(crate) fn build_character_prompt_trace(
         memory_pool,
         visible_attribute_lines,
         visible_inventory_items,
-        visible_inventory_lines,
         public_scene_state_lines,
         next_scene_name,
         next_location,
@@ -435,7 +470,6 @@ pub(crate) fn build_character_chat_request(
     memory_pool: &[MemoryEntry],
     visible_attribute_lines: &[String],
     visible_inventory_items: &[InventoryItem],
-    visible_inventory_lines: &[String],
     public_scene_state_lines: &[String],
 ) -> crate::services::llm::client::ChatRequest {
     let artifacts = build_character_prompt_artifacts(
@@ -453,7 +487,6 @@ pub(crate) fn build_character_chat_request(
         memory_pool,
         visible_attribute_lines,
         visible_inventory_items,
-        visible_inventory_lines,
         public_scene_state_lines,
         scene_name,
         location,
@@ -505,13 +538,11 @@ fn build_notification_chat_tool_definition() -> crate::services::llm::client::Ch
 pub(crate) fn build_character_response_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
-        "required": ["speaker", "content", "intent", "emotion", "narration"],
+        "required": ["speaker", "content", "narration"],
         "additionalProperties": true,
         "properties": {
             "speaker": { "type": "string" },
             "content": { "type": "string" },
-            "intent": { "type": "string" },
-            "emotion": { "type": "string" },
             "narration": { "type": "string" }
         }
     })
@@ -553,14 +584,32 @@ pub(crate) fn build_character_init_payload(
     let character_background_prompt = speaker_profile
         .map(|profile| render_prompt_variables(&profile.background_prompt))
         .unwrap_or_default();
+
+    // 角色字段空值不发(对齐 scene_state 标准)。
+    let mut character = serde_json::Map::new();
+    character.insert("name".to_string(), serde_json::json!(speaker_name));
+    if let Some(role) = speaker_profile
+        .map(|profile| profile.role.trim())
+        .filter(|value| !value.is_empty())
+    {
+        character.insert("role".to_string(), serde_json::json!(role));
+    }
+    if !character_background_prompt.trim().is_empty() {
+        character.insert(
+            "background_prompt".to_string(),
+            serde_json::json!(character_background_prompt),
+        );
+    }
+    if let Some(attributes) = speaker_profile
+        .map(|profile| &profile.attributes)
+        .filter(|attributes| !attributes.is_empty())
+    {
+        character.insert("attributes".to_string(), serde_json::json!(attributes));
+    }
+
     serde_json::to_string_pretty(&serde_json::json!({
         "basic_setting": {
-            "character": {
-                "name": speaker_name,
-                "role": speaker_profile.map(|profile| profile.role.clone()).unwrap_or_default(),
-                "background_prompt": character_background_prompt,
-                "attributes": speaker_profile.map(|profile| profile.attributes.clone()).unwrap_or_default(),
-            },
+            "character": character,
             "world": {
                 "world_name": session.world_name,
                 "background_prompt": world.background_prompt,
@@ -584,14 +633,12 @@ pub(crate) fn build_character_turn_payload(
     memory_pool: &[MemoryEntry],
     visible_attribute_lines: &[String],
     visible_inventory_items: &[InventoryItem],
-    visible_inventory_lines: &[String],
     public_scene_state_lines: &[String],
 ) -> String {
     let speaker_character_id = speaker_profile.map(|profile| profile.id.as_str());
     let visibility_context = build_character_visibility_context_payload(
         visible_attribute_lines,
         visible_inventory_items,
-        visible_inventory_lines,
         public_scene_state_lines,
         speaker_character_id,
         speaker_name,
@@ -601,7 +648,7 @@ pub(crate) fn build_character_turn_payload(
     serde_json::to_string_pretty(&serde_json::json!({
         "dialogue_history": {
             "recent_dialogue": build_recent_dialogue_payload(recent_messages, player_name),
-            "memory_context": build_memory_context_payload(&memory_context, player_name),
+            "memory_context": build_memory_context_payload(&memory_context, recent_messages, player_name),
         },
         "current_state": {
             "requested_speaker": speaker_name,
@@ -611,10 +658,6 @@ pub(crate) fn build_character_turn_payload(
                 session,
                 location,
                 scene_name,
-                visible_attribute_lines,
-                visible_inventory_items,
-                speaker_character_id,
-                speaker_name,
             ),
         },
         "visibility_context": visibility_context
@@ -642,42 +685,97 @@ pub(crate) fn build_memory_entry_payload(memories: &[MemoryEntry]) -> Vec<serde_
     memories
         .iter()
         .map(|memory| {
-            serde_json::json!({
-                "id": memory.id,
-                "layer": memory.layer,
-                "memory_type": memory.memory_type,
-                "source": memory.source,
-                "importance": memory.importance,
-                "created_at": memory.created_at,
-                "conversation_id": memory.conversation_id,
-                "event_id": memory.event_id,
-                "item_id": memory.item_id,
-                "speaker": memory.speaker,
-                "role": memory.role,
-                "content": memory.content,
-                "turn_index": memory.turn_index,
-                "location": memory.location,
-                "scene_id": memory.scene_id,
-                "participants": memory.participants,
-                "keywords": memory.keywords,
-            })
+            // 只发对"生成台词"有语义的字段：内容、谁说的、地点、在场者、相对轮次。
+            // 删除内部标识符(id/conversation_id/event_id/item_id/scene_id)与
+            // 内部追踪/排序字段(importance/created_at/layer/memory_type/source/keywords)。
+            let mut entry = serde_json::Map::new();
+            entry.insert("content".to_string(), serde_json::json!(memory.content));
+            entry.insert("turn_index".to_string(), serde_json::json!(memory.turn_index));
+            if let Some(speaker) = memory
+                .speaker
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                entry.insert("speaker".to_string(), serde_json::json!(speaker));
+            }
+            if let Some(location) = memory
+                .location
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                entry.insert("location".to_string(), serde_json::json!(location));
+            }
+            if !memory.participants.is_empty() {
+                entry.insert(
+                    "participants".to_string(),
+                    serde_json::json!(memory.participants),
+                );
+            }
+            serde_json::Value::Object(entry)
         })
         .collect()
 }
 
 pub(crate) fn build_memory_context_payload(
     memory_context: &CharacterMemoryContext,
+    recent_messages: &[ChatMessage],
     player_character_name: &str,
 ) -> serde_json::Value {
-    serde_json::json!({
-        "hit_turns": memory_context.hit_turns,
-        "matched_memories": build_memory_entry_payload(&memory_context.matched_memories),
-        "event_timeline": build_memory_entry_payload(&memory_context.event_timeline),
-        "dialogue_focus": build_recent_dialogue_payload(
-            &memory_context.dialogue_focus,
-            player_character_name,
-        ),
-    })
+    // 去重：event_timeline 与 matched_memories 可能命中同一条记忆(按 id 去重)；
+    // dialogue_focus 与顶层 recent_dialogue 在轮次重叠时是同一批消息(按内容去重)。
+    let matched_ids: std::collections::HashSet<&str> = memory_context
+        .matched_memories
+        .iter()
+        .map(|memory| memory.id.as_str())
+        .collect();
+    let event_timeline: Vec<MemoryEntry> = memory_context
+        .event_timeline
+        .iter()
+        .filter(|memory| !matched_ids.contains(memory.id.as_str()))
+        .cloned()
+        .collect();
+    let recent_contents: std::collections::HashSet<String> = recent_messages
+        .iter()
+        .map(|message| message.content.trim())
+        .collect();
+    let dialogue_focus: Vec<ChatMessage> = memory_context
+        .dialogue_focus
+        .iter()
+        .filter(|message| !recent_contents.contains(&message.content.trim()))
+        .cloned()
+        .collect();
+
+    let mut context = serde_json::Map::new();
+    if !memory_context.hit_turns.is_empty() {
+        context.insert(
+            "hit_turns".to_string(),
+            serde_json::json!(memory_context.hit_turns),
+        );
+    }
+    if !memory_context.matched_memories.is_empty() {
+        context.insert(
+            "matched_memories".to_string(),
+            serde_json::json!(build_memory_entry_payload(&memory_context.matched_memories)),
+        );
+    }
+    if !event_timeline.is_empty() {
+        context.insert(
+            "event_timeline".to_string(),
+            serde_json::json!(build_memory_entry_payload(&event_timeline)),
+        );
+    }
+    if !dialogue_focus.is_empty() {
+        context.insert(
+            "dialogue_focus".to_string(),
+            serde_json::json!(build_recent_dialogue_payload(
+                &dialogue_focus,
+                player_character_name
+            )),
+        );
+    }
+    serde_json::Value::Object(context)
 }
 
 pub(crate) fn build_character_memory_context(
@@ -807,69 +905,96 @@ pub(crate) fn extract_message_turn_index(message: &ChatMessage) -> Option<i32> {
 pub(crate) fn build_character_visibility_context_payload(
     visible_attribute_lines: &[String],
     visible_inventory_items: &[InventoryItem],
-    visible_inventory_lines: &[String],
     public_scene_state_lines: &[String],
     character_id: Option<&str>,
     character_name: &str,
 ) -> serde_json::Value {
-    serde_json::json!({
-        "public_scene_state_lines": public_scene_state_lines,
-        "visible_attribute_lines": visible_attribute_lines,
-        "visible_inventory_lines": visible_inventory_lines,
-        "visible_attribute_records": build_visible_attribute_records(visible_attribute_lines),
-        "visible_inventory_records": build_visible_inventory_records(
-            visible_inventory_items,
-            character_id,
-            character_name,
-        ),
-    })
+    // 同一批可见数据原来存了三套(records 结构化 + lines 行文本，且 scene_state 还有一份)。
+    // 这里把 visibility_context 定为唯一来源，只保留结构化 records，删除行文本副本；
+    // scene_state 里的 visible_*/public_* 拷贝已移除。空值不发。
+    let mut context = serde_json::Map::new();
+    if !public_scene_state_lines.is_empty() {
+        context.insert(
+            "public_scene_state_lines".to_string(),
+            serde_json::json!(public_scene_state_lines),
+        );
+    }
+    let attribute_records = build_visible_attribute_records(visible_attribute_lines);
+    if !attribute_records.is_empty() {
+        context.insert(
+            "visible_attribute_records".to_string(),
+            serde_json::json!(attribute_records),
+        );
+    }
+    let inventory_records =
+        build_visible_inventory_records(visible_inventory_items, character_id, character_name);
+    if !inventory_records.is_empty() {
+        context.insert(
+            "visible_inventory_records".to_string(),
+            serde_json::json!(inventory_records),
+        );
+    }
+    serde_json::Value::Object(context)
 }
 
 pub(crate) fn build_character_scene_state_payload(
     session: &SessionSnapshot,
     location: &str,
     scene_name: &str,
-    visible_attribute_lines: &[String],
-    visible_inventory_items: &[InventoryItem],
-    character_id: Option<&str>,
-    character_name: &str,
 ) -> serde_json::Value {
-    serde_json::json!({
-        "world_name": session.world_name,
-        "location": location,
-        "time_label": session.time_label,
-        "scene_name": scene_name,
-        "scene_id": session.scene.scene_id,
-        "scene_tags": session.scene.temporary_tags,
-        "state_phase": session.state.phase,
-        "state_tags": session.state.tags,
-        "state_metrics": session.state.metrics,
-        "present_characters": collect_memory_participants(session),
-        "discovered_locations": session
-            .map_graph_nodes
-            .iter()
-            .filter(|node| node.discovered && !node.label.trim().is_empty())
-            .map(|node| node.label.clone())
-            .collect::<Vec<_>>(),
-        "visible_attributes": build_visible_attribute_records(visible_attribute_lines),
-        "visible_inventory": build_visible_inventory_records(
-            visible_inventory_items,
-            character_id,
-            character_name,
-        ),
-        "public_attributes": build_visible_attribute_records(visible_attribute_lines)
-            .into_iter()
-            .filter(|item| item.get("owner_relation").and_then(|value| value.as_str()) == Some("public"))
-            .collect::<Vec<_>>(),
-        "public_items": build_visible_inventory_records(
-            visible_inventory_items,
-            character_id,
-            character_name,
-        )
-        .into_iter()
-        .filter(|item| item.get("knowledge_scope").and_then(|value| value.as_str()) == Some("public"))
-        .collect::<Vec<_>>(),
-    })
+    // 只放入对模型有意义且非空的字段：
+    // - 删除 scene_id（内部 UUID，模型零语义）
+    // - 删除 world_name（已在 init_payload.basic_setting.world 提供，避免重复）
+    // - 数组/映射/标签为空时不放入，减少噪声与 token
+    let mut state = serde_json::Map::new();
+    state.insert("location".to_string(), serde_json::json!(location));
+    state.insert("scene_name".to_string(), serde_json::json!(scene_name));
+
+    let time_label = session.time_label.trim();
+    if !time_label.is_empty() {
+        state.insert("time_label".to_string(), serde_json::json!(time_label));
+    }
+    if !session.scene.temporary_tags.is_empty() {
+        state.insert(
+            "scene_tags".to_string(),
+            serde_json::json!(session.scene.temporary_tags),
+        );
+    }
+    let state_phase = session.state.phase.trim();
+    if !state_phase.is_empty() {
+        state.insert("state_phase".to_string(), serde_json::json!(state_phase));
+    }
+    if !session.state.tags.is_empty() {
+        state.insert("state_tags".to_string(), serde_json::json!(session.state.tags));
+    }
+    if !session.state.metrics.is_empty() {
+        state.insert(
+            "state_metrics".to_string(),
+            serde_json::json!(session.state.metrics),
+        );
+    }
+    let present_characters = collect_memory_participants(session);
+    if !present_characters.is_empty() {
+        state.insert(
+            "present_characters".to_string(),
+            serde_json::json!(present_characters),
+        );
+    }
+    let discovered_locations = session
+        .map_graph_nodes
+        .iter()
+        .filter(|node| node.discovered && !node.label.trim().is_empty())
+        .map(|node| node.label.clone())
+        .collect::<Vec<_>>();
+    if !discovered_locations.is_empty() {
+        state.insert(
+            "discovered_locations".to_string(),
+            serde_json::json!(discovered_locations),
+        );
+    }
+
+    // 可见属性/物品(及其 public 子集)由 visibility_context 统一承载，这里不再重复。
+    serde_json::Value::Object(state)
 }
 
 pub(crate) fn build_visible_attribute_records(
@@ -911,19 +1036,24 @@ pub(crate) fn build_visible_inventory_records(
             } else {
                 "public"
             };
-            serde_json::json!({
-                "item_id": item.item_id,
-                "name": item.name,
-                "category": item.category,
-                "quantity": item.quantity,
-                "description": item.description,
-                "tags": item.tags,
-                "owner_type": item.owner_type,
-                "owner_id": item.owner_id,
-                "visibility": item.visibility,
-                "knowledge_scope": knowledge_scope,
-                "disclosed_to": item.disclosed_to,
-            })
+            // 删除内部 UUID(item_id/owner_id)；visibility 与派生的 knowledge_scope
+            // 信息重叠，只留 knowledge_scope；description/tags/disclosed_to 空值不发。
+            let mut record = serde_json::Map::new();
+            record.insert("name".to_string(), serde_json::json!(item.name));
+            record.insert("category".to_string(), serde_json::json!(item.category));
+            record.insert("quantity".to_string(), serde_json::json!(item.quantity));
+            record.insert("owner_type".to_string(), serde_json::json!(item.owner_type));
+            record.insert("knowledge_scope".to_string(), serde_json::json!(knowledge_scope));
+            if !item.description.trim().is_empty() {
+                record.insert("description".to_string(), serde_json::json!(item.description));
+            }
+            if !item.tags.is_empty() {
+                record.insert("tags".to_string(), serde_json::json!(item.tags));
+            }
+            if !item.disclosed_to.is_empty() {
+                record.insert("disclosed_to".to_string(), serde_json::json!(item.disclosed_to));
+            }
+            serde_json::Value::Object(record)
         })
         .collect()
 }
@@ -1133,42 +1263,6 @@ pub(crate) fn filter_inventory_for_character(
                     .unwrap_or(false)
         })
         .cloned()
-        .collect()
-}
-
-pub(crate) fn summarize_visible_inventory_lines(
-    items: &[InventoryItem],
-    character_id: Option<&str>,
-) -> Vec<String> {
-    items
-        .iter()
-        .map(|item| {
-            let knowledge_scope = if item.visibility == "public" {
-                "public"
-            } else if character_id
-                .map(|value| item.owner_type == "character" && item.owner_id == value)
-                .unwrap_or(false)
-            {
-                "owned"
-            } else {
-                "shared"
-            };
-            let detail = if item.quantity > 1 {
-                format!("{} x{}", item.name, item.quantity)
-            } else {
-                item.name.clone()
-            };
-            if item.description.trim().is_empty() {
-                format!("[{}] {}", knowledge_scope, detail)
-            } else {
-                format!(
-                    "[{}] {} ({})",
-                    knowledge_scope,
-                    detail,
-                    item.description.trim()
-                )
-            }
-        })
         .collect()
 }
 

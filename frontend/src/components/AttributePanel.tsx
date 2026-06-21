@@ -114,6 +114,14 @@ function buildProjectionPolicy(scope: Scope) {
   };
 }
 
+function schemaAppliesToOwner(schema: AttributeSchemaResponse, scope: Scope, ownerId?: string) {
+  const applicableWorldIds = schema.display_policy?.applicable_world_ids;
+  if (scope !== "world" || !ownerId || !Array.isArray(applicableWorldIds) || applicableWorldIds.length === 0) {
+    return true;
+  }
+  return applicableWorldIds.map(String).includes(ownerId);
+}
+
 export function AttributePanel({ scope, ownerType, ownerId }: AttributePanelProps) {
   const [schemas, setSchemas] = useState<AttributeSchemaResponse[]>([]);
   const [valueMap, setValueMap] = useState<Map<string, string>>(new Map());
@@ -133,7 +141,7 @@ export function AttributePanel({ scope, ownerType, ownerId }: AttributePanelProp
         ownerId ? fetchAttributeValues({ ownerType, ownerId }) : Promise.resolve([]),
       ]);
 
-      setSchemas(schemaData);
+      setSchemas(schemaData.filter((schema) => schemaAppliesToOwner(schema, scope, ownerId)));
       setValueMap(new Map(valueData.map((item) => [item.schema_id, stringifyValue(item.value)])));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "属性加载失败");
