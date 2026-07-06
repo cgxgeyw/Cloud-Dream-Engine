@@ -21,6 +21,7 @@ import {
   isAndroidRuntime,
   isTauriEnvironment,
   onSessionSnapshot,
+  requestWorldPermissions,
   retryFailedLlmStep,
   streamPlayerAction,
   switchPlayerCharacter,
@@ -275,6 +276,9 @@ export function useGameSession(
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
   const seenCharacterCreationsRef = useRef<Set<string>>(new Set());
+  // 记录已为“某组缺失角色名”触发过的刷新签名，避免角色名始终匹配不上时
+  // 反复 fetchWorldCharacters 形成请求风暴。
+  const attemptedMissingCharacterFetchRef = useRef<string>("");
   const runtimeAttributeRefreshTimersRef = useRef<number[]>([]);
   const runtimeAttributeSessionIdRef = useRef("");
 
@@ -405,11 +409,19 @@ export function useGameSession(
             return;
           }
 
-          const payload = JSON.parse(event.data) as {
+          let payload: {
             type: string;
             payload?: SessionSnapshotResponse;
             detail?: string;
           };
+          try {
+            payload = JSON.parse(event.data);
+          } catch {
+            // 服务端推送非 JSON 或半截/畸形帧时跳过该帧，避免未捕获异常导致
+            // onmessage 中断、后续帧无法处理。
+            console.warn("[session] 忽略无法解析的会话流帧");
+            return;
+          }
 
           if (payload.type === "session.snapshot" && payload.payload) {
             hasLoadedSession = true;
@@ -579,17 +591,23 @@ export function useGameSession(
     const knownCharacterNames = new Set(
       worldCharacters.map((character) => character.name.trim()).filter(Boolean),
     );
-    const missingCreatedCharacter = session.messages.some((message) => {
-      const creation = parseCharacterCreationMessage(message);
-      if (!creation) {
-        return false;
-      }
-      return !knownCharacterNames.has(creation.characterName.trim());
-    });
+    const missingNames = session.messages
+      .map((message) => parseCharacterCreationMessage(message))
+      .filter((creation): creation is NonNullable<typeof creation> => !!creation)
+      .map((creation) => creation.characterName.trim())
+      .filter((name) => name && !knownCharacterNames.has(name));
 
-    if (!missingCreatedCharacter) {
+    if (missingNames.length === 0) {
       return;
     }
+
+    // 同一组缺失角色名只刷新一次：若后端始终返回不含这些名字的列表，
+    // 不再因 setWorldCharacters 产生新引用而反复触发本 effect 形成请求风暴。
+    const signature = Array.from(new Set(missingNames)).sort().join("|");
+    if (attemptedMissingCharacterFetchRef.current === signature) {
+      return;
+    }
+    attemptedMissingCharacterFetchRef.current = signature;
 
     let cancelled = false;
 
@@ -977,18 +995,15 @@ export function useGameSession(
         return true;
       }
 
+      // \u884c\u7a0b\u63d0\u9192\u6539\u4e3a\u5199\u5165\u7cfb\u7edf\u65e5\u5386,\u53d1\u9001\u524d\u8bf7\u6c42\u65e5\u5386\u6743\u9650\u3002\u5b89\u5353\u6743\u9650\u5f39\u7a97\u662f\u5f02\u6b65\u7684,
+      // requestWorldPermissions \u89e6\u53d1\u5f39\u7a97\u540e\u5373\u8fd4\u56de(granted \u53ef\u80fd\u4e3a null),\u56e0\u6b64\u8fd9\u91cc
+      // \u4e0d\u963b\u585e\u53d1\u9001:\u82e5\u7528\u6237\u5c1a\u672a\u6388\u6743,\u65e5\u5386\u5199\u5165\u4f1a\u5931\u8d25\u5e76\u7531 Rust \u5de5\u5177\u7ed3\u679c\u56de\u6d41\u9519\u8bef\u63d0\u793a\u3002
       try {
-        const { isPermissionGranted } = await import("@tauri-apps/plugin-notification");
-        if (await isPermissionGranted()) {
-          return true;
-        }
-        setActionError("\u901a\u77e5\u6743\u9650\u672a\u6388\u6743\uff0c\u65e0\u6cd5\u521b\u5efa\u7cfb\u7edf\u63d0\u9192\u3002\u8bf7\u5728\u7cfb\u7edf\u5f39\u7a97\u6216\u5e94\u7528\u8bbe\u7f6e\u4e2d\u5141\u8bb8\u901a\u77e5\u6743\u9650\u540e\u91cd\u8bd5\u3002");
-        return false;
+        await requestWorldPermissions(["calendar"]);
       } catch (permissionError) {
-        console.warn("[notification] failed to check Android notification permission:", permissionError);
-        setActionError("\u901a\u77e5\u6743\u9650\u68c0\u67e5\u5931\u8d25\uff0c\u65e0\u6cd5\u521b\u5efa\u7cfb\u7edf\u63d0\u9192\u3002\u8bf7\u5728\u7cfb\u7edf\u8bbe\u7f6e\u4e2d\u786e\u8ba4\u6743\u9650\u540e\u91cd\u8bd5\u3002");
-        return false;
+        console.warn("[notification] failed to request Android calendar permission:", permissionError);
       }
+      return true;
     },
     [themeWorld],
   );

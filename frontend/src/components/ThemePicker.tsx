@@ -10,7 +10,7 @@ import {
   type ThemeStyle,
 } from "../data/theme";
 import { useLanguage } from "../data/i18n/context";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 /**
  * ThemePicker — shared component for selecting theme style, light/dark mode,
@@ -20,6 +20,21 @@ export function ThemePicker() {
   const { language, setLanguage, t } = useLanguage();
   const [currentStyle, setCurrentStyle] = useState<ThemeStyle>(() => resolveInitialStyle());
   const [currentMode, setCurrentMode] = useState<ThemeMode>(() => resolveInitialMode());
+
+  // L9: 本地 state 仅在 mount 时初始化,别处改主题后高亮项不会更新。监听 storage(跨标签页)
+  // 与 focus(同标签页回到本组件)事件,重新读取已持久化的主题以保持高亮同步。
+  useEffect(() => {
+    const sync = () => {
+      setCurrentStyle(resolveInitialStyle());
+      setCurrentMode(resolveInitialMode());
+    };
+    window.addEventListener("storage", sync);
+    window.addEventListener("focus", sync);
+    return () => {
+      window.removeEventListener("storage", sync);
+      window.removeEventListener("focus", sync);
+    };
+  }, []);
 
   function handleStyleChange(style: ThemeStyle) {
     if (style === "kawaii" && currentMode === "dark") {

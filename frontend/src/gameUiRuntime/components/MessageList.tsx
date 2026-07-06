@@ -249,6 +249,14 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
 
         const agentReasoning = showAgentReasoning ? parseAgentReasoning(message) : null;
         const agentNarration = message.role === "agent" ? parseAgentNarration(message) : null;
+        const messageMetadata = (message.metadata ?? {}) as Record<string, unknown>;
+        const isAgentStreaming =
+          message.role === "agent"
+          && (messageMetadata.streaming === true
+            || (runtime.ui_state.submitting
+              && messageMetadata.message_kind === "agent_response"
+              && !message.metadata?.recovered
+              && index === runtime.messages.length - 1));
         const messageTurnIndex = Number(message.metadata?.turn_index ?? 0);
         const canResendPlayerTurn = message.role === "player" && Number.isInteger(messageTurnIndex) && messageTurnIndex > 0;
         const isEditingThisTurn = runtime.editing?.turnIndex === messageTurnIndex;
@@ -274,7 +282,7 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
               ) : null}
               {message.role === "agent" && agentReasoning ? (
                 <div className="game-agent-blocks">
-                  <CotBlock text={agentReasoning.reasoning} />
+                  <CotBlock text={agentReasoning.reasoning} streaming={isAgentStreaming} />
                   <div className="game-agent-answer">
                     <div className="game-agent-answer-label">回复</div>
                     <div className="game-message-content game-message-content--default">{getMessageText(message.content)}</div>

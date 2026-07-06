@@ -695,7 +695,7 @@ cargo check
 
 `scene_header` 支持 `show_copy_button` 布尔属性控制标题区复制对话按钮，默认保持显示；行程助手 desktop/mobile UI 将其设为 `false`，避免标题下出现复制按钮。
 
-安卓通知权限由原生 Android 入口请求：`src-tauri/gen/android/app/src/main/AndroidManifest.xml` 声明 `POST_NOTIFICATIONS`，`MainActivity` 在 Android 13+ 启动时通过 `ActivityResultContracts.RequestPermission()` 请求通知权限；这两个文件在 `.gitignore` 中被显式 unignore，必须随 Android 通知逻辑一起提交。`useGameSession()` 在发送可能创建提醒/定时事项的消息前只检查通知权限，不再通过 JS 插件调用 `requestPermission()`。麦克风权限保持在语音按钮点击后通过 `getUserMedia({ audio: true })` 按需触发。后端 `ensure_notification_permission()` 在移动端只检查权限状态，不再从 Rust 工具调用路径直接触发 `request_permission()`，避免 Tauri 通知插件的 `requestPermissionsLauncher` 未初始化错误污染行程助手回复。
+安卓通知权限由原生 Android 入口请求：`src-tauri/gen/android/app/src/main/AndroidManifest.xml` 声明 `POST_NOTIFICATIONS`，`MainActivity` 在 Android 13+ 启动时通过 `ActivityResultContracts.RequestPermission()` 请求通知权限；这两个文件在 `.gitignore` 中被显式 unignore，必须随 Android 通知逻辑一起提交。行程提醒改用系统日历后，Manifest 还声明 `READ_CALENDAR` / `WRITE_CALENDAR`，`useGameSession()` 在发送可能创建提醒/定时事项的消息前通过 `requestWorldPermissions(["calendar"])` 触发日历权限弹窗（异步、不阻塞发送）；日历写入若因权限未授权失败，会经 `schedule_notification` 工具结果 `ok:false` 回流错误。麦克风权限保持在语音按钮点击后通过 `getUserMedia({ audio: true })` 按需触发。后端 `ensure_notification_permission()` 在移动端只检查权限状态，不再从 Rust 工具调用路径直接触发 `request_permission()`，避免 Tauri 通知插件的 `requestPermissionsLauncher` 未初始化错误污染行程助手回复。
 
 `schedule_notification` 工具的 `time` 参数描述会传给模型，但工具端不能假设模型一定严格输出首选格式。解析器接受带时区 RFC3339、相对时间，以及本地时间 `YYYY-MM-DD HH:MM[:SS]` / `YYYY-MM-DDTHH:MM[:SS]`；无时区格式按本机本地时间解释后转 UTC 存储。
 
@@ -703,7 +703,7 @@ cargo check
 
 Windows 桌面通知优先走 Tauri notification 插件，失败时才回退到 `notify-rust`，避免开发环境下备用 toast 不触发或身份不稳定。通知触发后补写的智能体消息按触发时当前会话最新 `turn_index` 和 `created_at` 排序；创建提醒时的 turn 保留为 `metadata.notification_created_turn_index`，不要用它决定消息显示位置，否则未来提醒会被插回旧对话附近。
 
-Android 行程提醒必须走系统原生定时，不使用 Rust 进程内 timer 作为短延迟兜底；否则应用被关闭后提醒会丢失。移动端创建提醒时使用高优先级通知 channel `schedule_reminders_high_v1`，并在 Android manifest 声明 `SCHEDULE_EXACT_ALARM` 以提高定时可靠性。打开会话前会从 `scheduled_notifications` 重新同步行程提醒属性，避免重新进入行程助手时待办列表丢失。
+Android 行程提醒直接写入系统日历事件，由系统在应用未运行时也能可靠触发，不使用 Tauri notification 插件的进程内 `Schedule::At`，也不用 Rust 进程内 timer 作为短延迟兜底；否则应用被关闭后提醒会丢失。链路：Rust `schedule_native_notification`（`#[cfg(target_os = "android")]`）算出 `delay_ms` 后经 `workmanager_plugin::schedule_notification_with_result()` JNI 桥调用 Kotlin `ScheduledNotificationReceiver.scheduleNotificationFromRust()`，后者写入 `CalendarContract.Events` + `Reminders`，并用 SharedPreferences 保存 `notification_id -> event_id` 映射；取消经 `cancel_notification()` 按 notification id 删事件。设备无可写日历（例如未登录任何 Google/同步账户）时，Kotlin 侧 `ensureLocalCalendar()` 自动创建应用自有的本地日历（`ACCOUNT_TYPE_LOCAL`），只要授予日历权限即可用，不依赖在线账户。`MainActivity.onCreate` 必须调用 `ScheduledNotificationReceiver.initialize(applicationContext)`，否则 `appContext` 为 null、日历写入必失败。`schedule_native_notification` 成功后仍 spawn 一个进程内任务，仅用于应用运行中到点时把提醒实时补写进聊天流；应用未运行时到点的日历提醒，会在下次打开应用 `restore_pending` 时（`is_native_delivery && is_due`）补写为 `notification_fired` 消息。`scheduled_notifications.metadata.delivery = "native"` 标记走系统日历投递，`calendar_event_id` 保存日历事件 id 供调试。打开会话前会从 `scheduled_notifications` 重新同步行程提醒属性，避免重新进入行程助手时待办列表丢失。
 
 MCP 工具定义包含可编辑的 `input_schema` JSON Schema。工具管理页保存 `input_schema`，后端持久化到 `mcp_tools.input_schema_json`；世界主控构建 `available_tools` 时，会把世界已授权、已启用、暴露策略不是 `disabled` 的自定义工具连同 `arguments_schema` 发给模型。当前通用 MCP 执行器尚未实现，模型调用非内置工具时后端会返回明确的未实现工具错误，避免静默吞掉调用。
 

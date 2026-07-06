@@ -82,6 +82,9 @@ impl CharacterService {
             .ok_or_else(|| "World not found".to_string())?;
 
         repo.delete(id)?;
+        // H1: 清理该角色的属性(角色级 + 各会话内角色级)与记忆,避免孤儿数据
+        // 及 UNIQUE(schema_id,owner_type,owner_id) 让新建同 id 角色读到旧残留值。
+        crate::db::cleanup::purge_character_data(conn, id)?;
 
         let remaining_characters = repo.list_by_world(&character.world_id)?;
         let fallback_player = remaining_characters.first().cloned();

@@ -1,0 +1,401 @@
+/*
+  Game UI structure editor — visual redesign.
+  Scoped with the gst- prefix so nothing here collides with global app styles.
+  Reuses the host app's UrbanLoft tokens (charcoal / blue accent / amber warning),
+  and adds a three-family colour code so node roles read at a glance:
+    · content component  → blue   (the real page content)
+    · layout container    → charcoal hairline (the structural skeleton)
+    · logic node          → amber  (conditional / loop / slot — the dynamic parts)
+*/
+
+.gst-root {
+  --gst-content: var(--color-accent, #2563EB);
+  --gst-content-soft: rgba(37, 99, 235, 0.1);
+  --gst-logic: var(--color-warning, #D97706);
+  --gst-logic-soft: rgba(217, 119, 6, 0.1);
+  --gst-layout: var(--color-faint, #44403C);
+  --gst-layout-soft: rgba(68, 64, 60, 0.07);
+
+  display: grid;
+  gap: var(--sp-md, 16px);
+  margin-top: 12px;
+  border: 1px solid var(--color-border, #E7E5E4);
+  border-radius: 16px;
+  background: var(--color-surface, #fff);
+  overflow: hidden;
+}
+
+/* ── Header ── */
+.gst-head {
+  display: grid;
+  gap: 6px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--color-border, #E7E5E4);
+  background: var(--color-subtle-bg, #F5F5F4);
+}
+
+.gst-head-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-display, sans-serif);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-charcoal, #1C1917);
+}
+
+.gst-head-sub {
+  font-size: 12px;
+  color: var(--color-muted, #57534E);
+}
+
+.gst-head-help {
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--color-muted, #57534E);
+  max-width: 76ch;
+}
+
+/* Three-family legend — teaches the colour code up front. */
+.gst-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 2px;
+}
+
+.gst-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-faint, #44403C);
+}
+
+.gst-legend-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  flex: none;
+}
+
+.gst-legend-dot[data-family="content"] { background: var(--gst-content); }
+.gst-legend-dot[data-family="layout"] { background: var(--gst-layout); }
+.gst-legend-dot[data-family="logic"] { background: var(--gst-logic); }
+
+/* ── Two-column body: tree canvas + inspector ── */
+.gst-body {
+  display: grid;
+  gap: 14px;
+  padding: 14px 18px 18px;
+  grid-template-columns: minmax(260px, 0.9fr) minmax(320px, 1.2fr);
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .gst-body {
+    grid-template-columns: 1fr;
+  }
+}
+
+.gst-pane {
+  border: 1px solid var(--color-border, #E7E5E4);
+  border-radius: 14px;
+  background: var(--color-surface, #fff);
+  display: grid;
+  align-content: start;
+  min-width: 0;
+}
+
+.gst-pane-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--color-border, #E7E5E4);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-muted, #57534E);
+  text-transform: none;
+}
+
+/* ── Tree ── */
+.gst-tree {
+  padding: 8px;
+  display: grid;
+  gap: 2px;
+  overflow-x: auto;
+}
+
+.gst-tree-children {
+  display: grid;
+  gap: 2px;
+  margin-left: 9px;
+  padding-left: 10px;
+  border-left: 1px solid var(--color-border, #E7E5E4);
+}
+
+.gst-branch-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 4px 0 1px;
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  color: var(--color-concrete, #9CA3AF);
+}
+
+/* A node row in the tree. Left border carries the family colour. */
+.gst-node {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-left: 3px solid var(--gst-row-accent, transparent);
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  color: var(--color-charcoal, #1C1917);
+  font-family: var(--font-body, sans-serif);
+  font-size: 13px;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.gst-node[data-family="content"] { --gst-row-accent: var(--gst-content); }
+.gst-node[data-family="layout"] { --gst-row-accent: var(--gst-layout); }
+.gst-node[data-family="logic"] { --gst-row-accent: var(--gst-logic); }
+
+.gst-node:hover {
+  background: var(--color-hover-bg, #F4F4F5);
+}
+
+.gst-node:focus-visible {
+  outline: 2px solid var(--color-accent, #2563EB);
+  outline-offset: 1px;
+}
+
+.gst-node[data-selected="true"] {
+  border-color: var(--gst-row-accent, var(--color-accent));
+  background: var(--gst-row-soft, var(--color-hover-bg));
+}
+
+.gst-node[data-family="content"][data-selected="true"] { --gst-row-soft: var(--gst-content-soft); }
+.gst-node[data-family="layout"][data-selected="true"] { --gst-row-soft: var(--gst-layout-soft); }
+.gst-node[data-family="logic"][data-selected="true"] { --gst-row-soft: var(--gst-logic-soft); }
+
+.gst-node-icon {
+  flex: none;
+  display: inline-flex;
+  color: var(--gst-row-accent, var(--color-muted));
+}
+
+.gst-node-name {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.gst-node-id {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--color-concrete, #9CA3AF);
+  margin-left: auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 45%;
+}
+
+/* ── Add-node bar (lives under the tree — it adds TO the tree) ── */
+.gst-add {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--color-border, #E7E5E4);
+  background: var(--color-subtle-bg, #F5F5F4);
+}
+
+.gst-add-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-muted, #57534E);
+}
+
+.gst-add-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.gst-add-hint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-concrete, #9CA3AF);
+}
+
+/* ── Inspector ── */
+.gst-inspector {
+  padding: 14px;
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+
+.gst-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--gst-id-accent, var(--color-border));
+  background: var(--gst-id-soft, var(--color-subtle-bg));
+}
+
+.gst-identity[data-family="content"] { --gst-id-accent: var(--gst-content); --gst-id-soft: var(--gst-content-soft); }
+.gst-identity[data-family="layout"] { --gst-id-accent: var(--color-border); --gst-id-soft: var(--gst-layout-soft); }
+.gst-identity[data-family="logic"] { --gst-id-accent: var(--gst-logic); --gst-id-soft: var(--gst-logic-soft); }
+
+.gst-identity-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  background: var(--color-surface, #fff);
+  color: var(--gst-id-accent, var(--color-muted));
+  border: 1px solid var(--gst-id-accent, var(--color-border));
+}
+
+.gst-identity[data-family="layout"] .gst-identity-icon { color: var(--color-faint); }
+
+.gst-identity-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.gst-identity-name {
+  font-family: var(--font-display, sans-serif);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-charcoal, #1C1917);
+}
+
+.gst-identity-path {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--color-muted, #57534E);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gst-identity-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+
+/* Compact icon button for move/delete */
+.gst-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border, #E7E5E4);
+  background: var(--color-surface, #fff);
+  color: var(--color-faint, #44403C);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.gst-icon-btn:hover:not(:disabled) {
+  background: var(--color-hover-bg, #F4F4F5);
+  border-color: var(--color-border-hover, #1C1917);
+}
+
+.gst-icon-btn:focus-visible {
+  outline: 2px solid var(--color-accent, #2563EB);
+  outline-offset: 1px;
+}
+
+.gst-icon-btn[data-tone="danger"]:hover:not(:disabled) {
+  background: rgba(220, 38, 38, 0.08);
+  border-color: var(--color-error, #DC2626);
+  color: var(--color-error, #DC2626);
+}
+
+.gst-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* Inspector field groups */
+.gst-group {
+  display: grid;
+  gap: 10px;
+}
+
+.gst-group-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-concrete, #9CA3AF);
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--color-border, #E7E5E4);
+}
+
+.gst-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.gst-field-hint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-concrete, #9CA3AF);
+}
+
+/* Props hint chips */
+.gst-prop-hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.gst-chip {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-subtle-bg, #F5F5F4);
+  border: 1px solid var(--color-border, #E7E5E4);
+  color: var(--color-faint, #44403C);
+}
+
+.gst-desc {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--color-muted, #57534E);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gst-node,
+  .gst-icon-btn {
+    transition: none;
+  }
+}

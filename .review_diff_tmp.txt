@@ -1,0 +1,2576 @@
+diff --git a/frontend/src/components/AttributePanel.tsx b/frontend/src/components/AttributePanel.tsx
+index 9b7d452..a71b0ea 100644
+--- a/frontend/src/components/AttributePanel.tsx
++++ b/frontend/src/components/AttributePanel.tsx
+@@ -1,6 +1,7 @@
+ import { useEffect, useMemo, useState } from "react";
+ import {
+   createAttributeSchema,
++  deleteAttributeSchema,
+   fetchAttributeSchemas,
+   fetchAttributeValues,
+   upsertAttributeValue,
+@@ -130,6 +131,7 @@ export function AttributePanel({ scope, ownerType, ownerId }: AttributePanelProp
+   const [error, setError] = useState<string | null>(null);
+   const [savingSchema, setSavingSchema] = useState(false);
+   const [savingValueId, setSavingValueId] = useState<string | null>(null);
++  const [deletingSchemaId, setDeletingSchemaId] = useState<string | null>(null);
+ 
+   async function loadData() {
+     try {
+@@ -228,6 +230,26 @@ export function AttributePanel({ scope, ownerType, ownerId }: AttributePanelProp
+     }
+   }
+ 
++  async function handleDeleteSchema(schema: AttributeSchemaResponse) {
++    const confirmed = window.confirm(
++      `删除属性「${schema.label}」将同时清除其在所有角色 / 世界 / 会话上的已存值，且不可恢复。确定删除？`,
++    );
++    if (!confirmed) {
++      return;
++    }
++
++    try {
++      setDeletingSchemaId(schema.id);
++      setError(null);
++      await deleteAttributeSchema(schema.id);
++      await loadData();
++    } catch (deleteError) {
++      setError(deleteError instanceof Error ? deleteError.message : "属性删除失败");
++    } finally {
++      setDeletingSchemaId(null);
++    }
++  }
++
+   return (
+     <div className="editor-content">
+       {/* 新建属性定义 */}
+@@ -338,7 +360,9 @@ export function AttributePanel({ scope, ownerType, ownerId }: AttributePanelProp
+                   initialValue={currentValue}
+                   disabled={!canEditValues}
+                   saving={savingValueId === schema.id}
++                  deleting={deletingSchemaId === schema.id}
+                   onSave={handleSaveValue}
++                  onDelete={handleDeleteSchema}
+                 />
+               );
+             })
+@@ -353,13 +377,17 @@ function AttributeValueCard({
+   initialValue,
+   disabled,
+   saving,
++  deleting,
+   onSave,
++  onDelete,
+ }: {
+   schema: AttributeSchemaResponse;
+   initialValue: string;
+   disabled: boolean;
+   saving: boolean;
++  deleting: boolean;
+   onSave: (schema: AttributeSchemaResponse, rawValue: string) => Promise<void>;
++  onDelete: (schema: AttributeSchemaResponse) => Promise<void>;
+ }) {
+   const [value, setValue] = useState(initialValue);
+ 
+@@ -391,11 +419,19 @@ function AttributeValueCard({
+           <button
+             type="button"
+             onClick={() => void onSave(schema, value)}
+-            disabled={disabled || saving}
++            disabled={disabled || saving || deleting}
+             className="action-btn action-btn--accent"
+           >
+             {saving ? "保存中..." : "保存属性值"}
+           </button>
++          <button
++            type="button"
++            onClick={() => void onDelete(schema)}
++            disabled={saving || deleting}
++            className="action-btn"
++          >
++            {deleting ? "删除中..." : "删除属性"}
++          </button>
+         </div>
+       </div>
+     </div>
+diff --git a/frontend/src/components/GameUiRenderer.tsx b/frontend/src/components/GameUiRenderer.tsx
+index e7e2c76..7d12a9a 100644
+--- a/frontend/src/components/GameUiRenderer.tsx
++++ b/frontend/src/components/GameUiRenderer.tsx
+@@ -7,16 +7,12 @@ import {
+   type GameUiComponentNode,
+   type GameUiAnchor,
+   type GameUiDocument,
+-  type GameUiDocumentV1,
+   type GameUiDocumentV2,
+   type GameUiForEachNode,
+   type GameUiImageNode,
+   type GameUiLayoutNode,
+-  type GameUiLayoutNodeV1,
+   type GameUiLayoutNodeV2,
+   type GameUiMountId,
+-  type GameUiMountNode,
+-  type GameUiMountOptions,
+   type GameUiTextNode,
+   styleRecordToInlineStyle,
+ } from "../data/gameUi";
+@@ -61,7 +57,7 @@ export function GameUiRenderer({
+   onAction,
+ }: GameUiRendererProps) {
+   const [uiState, setUiState] = useState<Record<string, unknown>>(() =>
+-    document.schema_version === 2 ? normalizeInitialState(document.state) : {},
++    normalizeInitialState(document.state),
+   );
+   const context: GameUiRenderContext = {
+     state: uiState,
+@@ -75,9 +71,7 @@ export function GameUiRenderer({
+ 
+   return (
+     <div className="game-ui-layout">
+-      {document.schema_version === 1
+-        ? renderV1Layout(document, mounts)
+-        : renderV2Layout(document, componentRenderers, evaluateCondition, resolveLoopSource, context, rendererActions)}
++      {renderV2Layout(document, componentRenderers, evaluateCondition, resolveLoopSource, context, rendererActions)}
+     </div>
+   );
+ }
+@@ -87,68 +81,6 @@ type GameUiElementActions = {
+   onAction?: (action: GameUiActionReference, context: GameUiRenderContext) => void | Promise<void>;
+ };
+ 
+-function renderV1Layout(
+-  document: GameUiDocumentV1,
+-  mounts: Partial<Record<GameUiMountId, ReactNode>>,
+-): ReactNode {
+-  return renderV1Node(document.layout.root, document, mounts, "root");
+-}
+-
+-function renderV1Node(
+-  node: GameUiLayoutNodeV1,
+-  document: GameUiDocumentV1,
+-  mounts: Partial<Record<GameUiMountId, ReactNode>>,
+-  key: string,
+-): ReactNode {
+-  if (node.visible === false) {
+-    return null;
+-  }
+-
+-  if (node.type === "mount") {
+-    return renderMountNode(node, document.mounts?.[node.mount], mounts[node.mount], key);
+-  }
+-
+-  if (node.type === "absolute") {
+-    const children = (node.children ?? [])
+-      .map((child, index) => renderV1Node(child, document, mounts, `${key}-${index}`))
+-      .filter((child) => child !== null);
+-    if (children.length === 0) {
+-      return null;
+-    }
+-    return (
+-      <div
+-        key={key}
+-        className={["game-ui-node", "game-ui-node--absolute", node.class_name].filter(Boolean).join(" ")}
+-        style={buildNodeStyle(node)}
+-      >
+-        {children}
+-      </div>
+-    );
+-  }
+-
+-  if (node.type === "stack") {
+-    return (
+-      <div
+-        key={key}
+-        className={["game-ui-node", "game-ui-node--stack", node.class_name].filter(Boolean).join(" ")}
+-        style={buildNodeStyle(node)}
+-      >
+-        {(node.children ?? []).map((child, index) => renderV1Node(child, document, mounts, `${key}-${index}`))}
+-      </div>
+-    );
+-  }
+-
+-  return (
+-    <div
+-      key={key}
+-      className={["game-ui-node", "game-ui-node--grid", node.class_name].filter(Boolean).join(" ")}
+-      style={buildNodeStyle(node)}
+-    >
+-      {(node.children ?? []).map((child, index) => renderV1Node(child, document, mounts, `${key}-${index}`))}
+-    </div>
+-  );
+-}
+-
+ function renderV2Layout(
+   document: GameUiDocumentV2,
+   componentRenderers: Partial<Record<string, GameUiComponentRenderer>> | undefined,
+@@ -330,38 +262,6 @@ function renderV2Node(
+   );
+ }
+ 
+-function renderMountNode(
+-  node: GameUiMountNode,
+-  mountOptions: GameUiMountOptions | undefined,
+-  content: ReactNode,
+-  key: string,
+-): ReactNode {
+-  if (mountOptions?.visible === false || !content) {
+-    return null;
+-  }
+-
+-  return (
+-    <div
+-      key={key}
+-      className={[
+-        "game-ui-node",
+-        "game-ui-node--mount",
+-        "game-ui-mount",
+-        `game-ui-mount--${node.mount}`,
+-        toMountClassSuffix(node.mount) === node.mount ? undefined : `game-ui-mount--${toMountClassSuffix(node.mount)}`,
+-        node.class_name,
+-        mountOptions?.class_name,
+-      ].filter(Boolean).join(" ")}
+-      data-mount={node.mount}
+-      data-variant={mountOptions?.variant}
+-      data-chrome={mountOptions?.chrome}
+-      style={buildNodeStyle(node, mountOptions)}
+-    >
+-      {content}
+-    </div>
+-  );
+-}
+-
+ function renderComponentNode(
+   node: GameUiComponentNode,
+   document: GameUiDocumentV2,
+@@ -738,27 +638,21 @@ function stringifyTemplateValue(value: unknown): string {
+   }
+ }
+ 
+-function toMountClassSuffix(mountId: GameUiMountId): string {
+-  return mountId.replace(/_/g, "-");
+-}
+-
+ function buildNodeStyle(
+   node: GameUiLayoutNode,
+-  mountOptions?: GameUiMountOptions,
+ ): CSSProperties {
+   const style: CSSProperties = {
+     width: node.width,
+     height: node.height,
+     minWidth: node.min_width,
+-    minHeight: mountOptions?.min_height ?? node.min_height,
+-    maxWidth: mountOptions?.max_width ?? node.max_width,
++    minHeight: node.min_height,
++    maxWidth: node.max_width,
+     maxHeight: node.max_height,
+     padding: node.padding,
+     margin: node.margin,
+     alignItems: node.align,
+     justifyContent: node.justify,
+     ...styleRecordToInlineStyle(node.style),
+-    ...styleRecordToInlineStyle(mountOptions?.style),
+   };
+ 
+   if (node.type === "grid") {
+@@ -791,15 +685,6 @@ function buildNodeStyle(
+     style.zIndex = 30;
+   }
+ 
+-  if (node.type === "mount") {
+-    applyAnchorStyle(style, node.anchor);
+-    if (mountOptions?.sticky === "bottom") {
+-      style.position = "sticky";
+-      style.bottom = 0;
+-      style.zIndex = 10;
+-    }
+-  }
+-
+   if (node.type === "component") {
+     applyAnchorStyle(style, node.anchor);
+   }
+diff --git a/frontend/src/components/MobileNav.tsx b/frontend/src/components/MobileNav.tsx
+index eeded59..812f76b 100644
+--- a/frontend/src/components/MobileNav.tsx
++++ b/frontend/src/components/MobileNav.tsx
+@@ -124,23 +124,18 @@ export function MobileNav({ children }: MobileNavProps) {
+   };
+ 
+   const handleBack = () => {
+-    if (
+-      location.pathname === "/settings" &&
+-      document.documentElement.dataset.settingsDetailOpen === "true"
+-    ) {
+-      window.dispatchEvent(new Event("settings:navigate-back"));
+-      setIsOpen(false);
+-      return;
+-    }
+-    if (
+-      /^\/worlds\/[^/]+\/edit$/.test(location.pathname) &&
+-      document.documentElement.dataset.worldEditorDetailOpen === "true"
+-    ) {
+-      window.dispatchEvent(new Event("world-editor:navigate-back"));
+-      setIsOpen(false);
+-      return;
++    // 优先与侧滑/系统返回保持一致：有应用内历史时走历史回退（navigate(-1)）。
++    // 仅当处于首屏/深链（history idx 为 0 或缺失，没有可回退的上一页）时，
++    // 才回退到逻辑父级，避免「返回」无效或离开应用。
++    const historyIdx =
++      typeof window !== "undefined" && window.history.state && typeof window.history.state.idx === "number"
++        ? (window.history.state.idx as number)
++        : 0;
++    if (historyIdx > 0) {
++      navigate(-1);
++    } else {
++      navigate(resolveParentPath(location.pathname, location.search));
+     }
+-    navigate(resolveParentPath(location.pathname, location.search));
+     setIsOpen(false);
+   };
+ 
+diff --git a/frontend/src/components/SessionMapGraph.tsx b/frontend/src/components/SessionMapGraph.tsx
+index f9cc4a0..10ba36e 100644
+--- a/frontend/src/components/SessionMapGraph.tsx
++++ b/frontend/src/components/SessionMapGraph.tsx
+@@ -28,7 +28,10 @@ const NODE_WIDTH = 150;
+ const NODE_HEIGHT = 48;
+ 
+ export function SessionMapGraph({ nodes, edges, compact = false }: SessionMapGraphProps) {
+-  const [flowNodes, setFlowNodes] = useState<Node<MapNodeData>[]>([]);
++  // Cached ELK positions keyed by node_id. Recomputed only when the topology
++  // (set of node/edge ids) changes — not on every session snapshot, since the
++  // map structure is stable while only node state (current/discovered) updates.
++  const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
+   const currentNode = useMemo(() => nodes.find((node) => node.current) ?? null, [nodes]);
+ 
+   const flowEdges = useMemo<Edge[]>(() => {
+@@ -49,6 +52,15 @@ export function SessionMapGraph({ nodes, edges, compact = false }: SessionMapGra
+       });
+   }, [edges, nodes]);
+ 
++  // Stable signature of the graph topology. Streaming snapshots produce new
++  // array references with identical structure, so we key the layout effect on
++  // this signature to avoid cancelling in-flight layouts on every snapshot.
++  const topologySignature = useMemo(() => {
++    const nodeIds = nodes.map((node) => node.node_id).sort();
++    const edgeIds = flowEdges.map((edge) => edge.id).sort();
++    return JSON.stringify({ nodeIds, edgeIds });
++  }, [nodes, flowEdges]);
++
+   useEffect(() => {
+     let cancelled = false;
+     const layoutNodes = nodes.map((node) => ({
+@@ -79,57 +91,54 @@ export function SessionMapGraph({ nodes, edges, compact = false }: SessionMapGra
+         if (cancelled) {
+           return;
+         }
+-        const positionedNodes = nodes.map<Node<MapNodeData>>((node) => {
+-          const layoutNode = graph.children?.find((item) => item.id === node.node_id);
+-          return {
+-            id: node.node_id,
+-            type: "default",
+-            position: {
+-              x: layoutNode?.x ?? 0,
+-              y: layoutNode?.y ?? 0,
+-            },
+-            data: {
+-              label: node.label,
+-              current: node.current,
+-              discovered: node.discovered,
+-            },
+-            className: [
+-              "game-map-flow-node",
+-              node.current ? "game-map-flow-node--current" : "",
+-              node.discovered ? "" : "game-map-flow-node--undiscovered",
+-            ].filter(Boolean).join(" "),
+-            sourcePosition: Position.Bottom,
+-            targetPosition: Position.Top,
+-          };
++        const nextPositions: Record<string, { x: number; y: number }> = {};
++        graph.children?.forEach((item) => {
++          nextPositions[item.id] = { x: item.x ?? 0, y: item.y ?? 0 };
+         });
+-        setFlowNodes(positionedNodes);
++        setPositions(nextPositions);
+       })
+       .catch(() => {
+         if (cancelled) {
+           return;
+         }
+-        setFlowNodes(
+-          nodes.map((node, index) => ({
+-            id: node.node_id,
+-            position: { x: 0, y: index * 76 },
+-            data: {
+-              label: node.label,
+-              current: node.current,
+-              discovered: node.discovered,
+-            },
+-            className: [
+-              "game-map-flow-node",
+-              node.current ? "game-map-flow-node--current" : "",
+-              node.discovered ? "" : "game-map-flow-node--undiscovered",
+-            ].filter(Boolean).join(" "),
+-          })),
+-        );
++        // Fallback to a simple vertical stack if ELK layout fails.
++        const fallbackPositions: Record<string, { x: number; y: number }> = {};
++        nodes.forEach((node, index) => {
++          fallbackPositions[node.node_id] = { x: 0, y: index * 76 };
++        });
++        setPositions(fallbackPositions);
+       });
+ 
+     return () => {
+       cancelled = true;
+     };
+-  }, [flowEdges, nodes]);
++    // Only re-run layout when the topology changes, not on every snapshot.
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [topologySignature]);
++
++  // Render nodes from the latest node state merged with cached positions. This
++  // updates current/discovered/label immediately without waiting for layout.
++  const flowNodes = useMemo<Node<MapNodeData>[]>(
++    () =>
++      nodes.map((node, index) => ({
++        id: node.node_id,
++        type: "default",
++        position: positions[node.node_id] ?? { x: 0, y: index * 76 },
++        data: {
++          label: node.label,
++          current: node.current,
++          discovered: node.discovered,
++        },
++        className: [
++          "game-map-flow-node",
++          node.current ? "game-map-flow-node--current" : "",
++          node.discovered ? "" : "game-map-flow-node--undiscovered",
++        ].filter(Boolean).join(" "),
++        sourcePosition: Position.Bottom,
++        targetPosition: Position.Top,
++      })),
++    [nodes, positions],
++  );
+ 
+   if (!nodes.length) {
+     return <div className="game-card">当前地图暂无节点。</div>;
+diff --git a/frontend/src/components/game-ui-editor/GameUiStructureEditor.tsx b/frontend/src/components/game-ui-editor/GameUiStructureEditor.tsx
+index 658c7ff..4171fa7 100644
+--- a/frontend/src/components/game-ui-editor/GameUiStructureEditor.tsx
++++ b/frontend/src/components/game-ui-editor/GameUiStructureEditor.tsx
+@@ -1,4 +1,20 @@
+ import { useEffect, useMemo, useState } from "react";
++import {
++  ArrowDown,
++  ArrowUp,
++  Box,
++  Columns3,
++  CornerDownRight,
++  GitBranch,
++  LayoutGrid,
++  Layers,
++  Plus,
++  Repeat,
++  Rows3,
++  SquareStack,
++  Trash2,
++  type LucideIcon,
++} from "lucide-react";
+ import type {
+   GameUiAbsoluteNodeV2,
+   GameUiComponentNode,
+@@ -12,10 +28,15 @@ import type {
+   GameUiStyleRecord,
+   GameUiWhenNode,
+ } from "../../data/gameUi";
++import "./GameUiStructureEditor.css";
++
++type NodeFamily = "content" | "layout" | "logic";
+ 
+ const COMPONENT_LIBRARY = [
+   {
+     id: "scene_header",
++    label: "顶栏 scene_header",
++    description: "页面顶部信息条：世界名、地点、时间、当前玩家等。",
+     propsSchema: {
+       show_world_name: "boolean",
+       show_location: "boolean",
+@@ -28,6 +49,8 @@ const COMPONENT_LIBRARY = [
+   },
+   {
+     id: "scene_focus",
++    label: "立绘焦点 scene_focus",
++    description: "当前发言者的立绘与台词展示区。",
+     propsSchema: {
+       show_avatar: "boolean",
+       show_line: "boolean",
+@@ -36,6 +59,8 @@ const COMPONENT_LIBRARY = [
+   },
+   {
+     id: "character_bar",
++    label: "在场角色 character_bar",
++    description: "显示当前场景在场角色的列表。",
+     propsSchema: {
+       empty_text: "string",
+       max_items: "number",
+@@ -43,6 +68,8 @@ const COMPONENT_LIBRARY = [
+   },
+   {
+     id: "narration_card",
++    label: "旁白卡 narration_card",
++    description: "展示旁白 / 场景描述文本。",
+     propsSchema: {
+       title: "string",
+       show_copy_button: "boolean",
+@@ -51,6 +78,8 @@ const COMPONENT_LIBRARY = [
+   },
+   {
+     id: "message_list",
++    label: "对话列表 message_list",
++    description: "滚动显示对话消息流。",
+     propsSchema: {
+       auto_scroll: "boolean",
+       show_pending_state: "boolean",
+@@ -59,6 +88,8 @@ const COMPONENT_LIBRARY = [
+   },
+   {
+     id: "input_composer",
++    label: "输入框 input_composer",
++    description: "玩家发言输入区与发送按钮。",
+     propsSchema: {
+       placeholder: "string",
+       submit_label: "string",
+@@ -71,6 +102,8 @@ const COMPONENT_LIBRARY = [
+   },
+   {
+     id: "side_panel_tabs",
++    label: "侧边栏 side_panel_tabs",
++    description: "侧边状态面板，含地图 / 属性等标签页。",
+     propsSchema: {
+       show_map_tab: "boolean",
+       show_attribute_tabs: "boolean",
+@@ -79,6 +112,8 @@ const COMPONENT_LIBRARY = [
+   },
+   {
+     id: "floating_actions",
++    label: "悬浮按钮 floating_actions",
++    description: "返回 / 调试 / 设置等悬浮操作按钮。",
+     propsSchema: {
+       show_back: "boolean",
+       show_debug: "boolean",
+@@ -88,6 +123,46 @@ const COMPONENT_LIBRARY = [
+   },
+ ] as const;
+ 
++// 节点类型的中文名、说明、配色族与图标，供树、下拉框与检查器复用。
++// 仅覆盖编辑器可创建的类型；其余类型（text/image/badge 等）回退到原始类型名。
++const NODE_TYPE_META: Partial<
++  Record<SupportedNodeType, { label: string; hint: string; family: NodeFamily; icon: LucideIcon }>
++> = {
++  component: { label: "组件 component", hint: "内置功能块（顶栏、立绘、对话列表等）", family: "content", icon: Box },
++  stack: { label: "堆叠 stack", hint: "纵向或横向依次排列子节点", family: "layout", icon: SquareStack },
++  grid: { label: "网格 grid", hint: "用列 / 行 / 区域定义网格布局", family: "layout", icon: LayoutGrid },
++  absolute: { label: "浮层 absolute", hint: "绝对定位的覆盖层容器", family: "layout", icon: Layers },
++  slot: { label: "插槽 slot", hint: "组件内具名的插入位", family: "logic", icon: CornerDownRight },
++  when: { label: "条件 when", hint: "按表达式决定是否渲染子节点", family: "logic", icon: GitBranch },
++  for_each: { label: "循环 for_each", hint: "按数据源数组重复渲染子节点", family: "logic", icon: Repeat },
++};
++
++function nodeTypeLabel(type: SupportedNodeType): string {
++  return NODE_TYPE_META[type]?.label ?? type;
++}
++
++function nodeTypeHint(type: SupportedNodeType): string {
++  return NODE_TYPE_META[type]?.hint ?? "";
++}
++
++function nodeFamily(type: SupportedNodeType): NodeFamily {
++  return NODE_TYPE_META[type]?.family ?? "content";
++}
++
++function nodeIcon(type: SupportedNodeType): LucideIcon {
++  return NODE_TYPE_META[type]?.icon ?? Box;
++}
++
++const NODE_TYPE_ORDER: SupportedNodeType[] = [
++  "component",
++  "stack",
++  "grid",
++  "absolute",
++  "slot",
++  "when",
++  "for_each",
++];
++
+ type SupportedComponentId = (typeof COMPONENT_LIBRARY)[number]["id"];
+ type SupportedNodeType = GameUiLayoutNodeV2["type"];
+ type GameUiEditorPath = string[];
+@@ -163,7 +238,7 @@ export function GameUiStructureEditor({
+ }: GameUiStructureEditorProps) {
+   const [selectedPath, setSelectedPath] = useState<GameUiEditorPath>([]);
+   const [newChildType, setNewChildType] = useState<SupportedNodeType>("component");
+-  const [newSlotName, setNewSlotName] = useState("content");
++  const [newSlotName, setNewSlotName] = useState("");
+   const selectedNode = useMemo(
+     () => getNodeAtPath(document.layout.root, selectedPath) ?? document.layout.root,
+     [document.layout.root, selectedPath],
+@@ -250,143 +325,222 @@ export function GameUiStructureEditor({
+   const canMoveUp = canMovePath(document.layout.root, selectedPath, -1);
+   const canMoveDown = canMovePath(document.layout.root, selectedPath, 1);
+   const supportsChildren = nodeSupportsChildren(selectedNode);
++  const selectedFamily = nodeFamily(selectedNode.type);
++  const SelectedIcon = nodeIcon(selectedNode.type);
+ 
+   return (
+-    <div
+-      className="editor-content"
+-      style={{
+-        marginTop: 12,
+-        border: "1px solid var(--color-border)",
+-        borderRadius: 16,
+-        padding: 12,
+-        display: "grid",
+-        gap: 12,
+-      }}
+-    >
+-      <div className="flex flex--items-center flex--justify-between world-editor-section-head" style={{ gap: 12 }}>
+-        <div style={{ display: "grid", gap: 6 }}>
+-          <div className="editor-field-label">结构化树编辑器</div>
+-          <div className="text-muted" style={{ fontSize: 12 }}>
+-            {platform === "desktop" ? "桌面端" : "移动端"} schema v2 组件树
+-          </div>
++    <div className="gst-root">
++      <div className="gst-head">
++        <div className="gst-head-title">
++          <Layers size={17} />
++          界面结构
+         </div>
+-        <div className="flex flex--gap-sm" style={{ flexWrap: "wrap" }}>
+-          <select
+-            value={newChildType}
+-            onChange={(event) => setNewChildType(event.target.value as SupportedNodeType)}
+-            className="editor-field-input editor-field-select"
+-            style={{ minWidth: 140 }}
+-          >
+-            <option value="component">component</option>
+-            <option value="stack">stack</option>
+-            <option value="grid">grid</option>
+-            <option value="absolute">absolute</option>
+-            <option value="slot">slot</option>
+-            <option value="when">when</option>
+-            <option value="for_each">for_each</option>
+-          </select>
+-          {supportsChildren ? (
+-            <button type="button" className="action-btn" onClick={addChildNode}>
+-              添加子节点
+-            </button>
+-          ) : null}
+-          {selectedNode.type === "component" ? (
+-            <>
+-              <input
+-                value={newSlotName}
+-                onChange={(event) => setNewSlotName(event.target.value)}
+-                className="editor-field-input"
+-                placeholder="slot name"
+-                style={{ minWidth: 140 }}
+-              />
+-              <button type="button" className="action-btn" onClick={addSlotNode}>
+-                Add Slot Node
+-              </button>
+-            </>
+-          ) : null}
++        <div className="gst-head-sub">
++          {platform === "desktop" ? "桌面端" : "移动端"}界面 · schema v2 组件树
+         </div>
+-      </div>
+-
+-      <div
+-        style={{
+-          display: "grid",
+-          gap: 12,
+-          gridTemplateColumns: "minmax(280px, 0.95fr) minmax(320px, 1.25fr)",
+-        }}
+-      >
+-        <div
+-          style={{
+-            border: "1px solid var(--color-border-light)",
+-            borderRadius: 14,
+-            padding: 12,
+-            background: "var(--color-surface-2)",
+-            display: "grid",
+-            gap: 8,
+-            alignContent: "start",
+-          }}
+-        >
+-          {renderTreeNode(document.layout.root, [], selectedPath, setSelectedPath)}
++        <div className="gst-head-help">
++          可视化搭建游戏页面：左侧是页面的结构树，点任意节点即可在右侧改它的属性，不必手写下方 JSON。
++          节点按职能分三类，颜色对应——
+         </div>
++        <div className="gst-legend">
++          <span className="gst-legend-item">
++            <span className="gst-legend-dot" data-family="content" />
++            内容块（顶栏、立绘、对话列表等真正显示的内容）
++          </span>
++          <span className="gst-legend-item">
++            <span className="gst-legend-dot" data-family="layout" />
++            布局容器（堆叠 / 网格 / 浮层，负责排版）
++          </span>
++          <span className="gst-legend-item">
++            <span className="gst-legend-dot" data-family="logic" />
++            逻辑节点（条件 / 循环 / 插槽，负责动态显示）
++          </span>
++        </div>
++      </div>
+ 
+-        <div
+-          style={{
+-            border: "1px solid var(--color-border-light)",
+-            borderRadius: 14,
+-            padding: 12,
+-            display: "grid",
+-            gap: 12,
+-            alignContent: "start",
+-          }}
+-        >
+-          <div className="flex flex--items-center flex--justify-between" style={{ gap: 12 }}>
+-            <div>
+-              <div className="editor-field-label">{describeNode(selectedNode)}</div>
+-              <div className="text-muted" style={{ fontSize: 12 }}>{selectionKey === "__root" ? "layout.root" : selectionKey}</div>
+-            </div>
+-            <div className="flex flex--gap-sm" style={{ flexWrap: "wrap" }}>
+-              <button type="button" className="action-btn" onClick={() => moveSelectedNode(-1)} disabled={!canMoveUp}>
+-                上移
+-              </button>
+-              <button type="button" className="action-btn" onClick={() => moveSelectedNode(1)} disabled={!canMoveDown}>
+-                下移
+-              </button>
+-              <button type="button" className="action-btn action-btn--danger" onClick={removeSelectedNode} disabled={!canRemove}>
+-                删除节点
+-              </button>
+-            </div>
++      <div className="gst-body">
++        {/* 左：结构树 + 底部「新增节点」工具条 */}
++        <div className="gst-pane">
++          <div className="gst-pane-head">
++            <Layers size={13} />
++            结构树
++          </div>
++          <div className="gst-tree">
++            {renderTreeNode(document.layout.root, [], selectedPath, setSelectedPath)}
+           </div>
+ 
+-          <div className="settings-form-grid" style={{ gap: 12 }}>
+-            <label className="editor-field">
+-              <span className="editor-field-label">节点类型</span>
++          <div className="gst-add">
++            <div className="gst-add-title">新增节点</div>
++            <div className="gst-add-row">
+               <select
+-                value={selectedNode.type}
+-                onChange={(event) => replaceSelectedNodeType(event.target.value as SupportedNodeType)}
++                value={newChildType}
++                onChange={(event) => setNewChildType(event.target.value as SupportedNodeType)}
+                 className="editor-field-input editor-field-select"
++                style={{ minWidth: 150, flex: "1 1 auto" }}
++                aria-label="选择要新增的节点类型"
+               >
+-                <option value="component">component</option>
+-                <option value="stack">stack</option>
+-                <option value="grid">grid</option>
+-                <option value="absolute">absolute</option>
+-                <option value="slot">slot</option>
+-                <option value="when">when</option>
+-                <option value="for_each">for_each</option>
++                {NODE_TYPE_ORDER.map((type) => (
++                  <option key={type} value={type}>
++                    {nodeTypeLabel(type)}
++                  </option>
++                ))}
+               </select>
+-            </label>
+-            <label className="editor-field" style={{ justifyContent: "center" }}>
+-              <span className="editor-field-label">Visible</span>
+-              <input
+-                type="checkbox"
+-                checked={selectedNode.visible !== false}
+-                onChange={(event) => updateSelectedNode((node) => ({ ...node, visible: event.target.checked }))}
+-              />
+-            </label>
++              {supportsChildren ? (
++                <button type="button" className="action-btn" onClick={addChildNode}>
++                  <Plus size={15} style={{ marginRight: 4 }} />
++                  添加到子节点
++                </button>
++              ) : null}
++            </div>
++            {selectedNode.type === "component" ? (
++              <div className="gst-add-row">
++                <input
++                  value={newSlotName}
++                  onChange={(event) => setNewSlotName(event.target.value)}
++                  className="editor-field-input"
++                  placeholder="插槽名称，如 content"
++                  style={{ minWidth: 150, flex: "1 1 auto" }}
++                  aria-label="插槽名称"
++                />
++                <button type="button" className="action-btn" onClick={addSlotNode}>
++                  <Plus size={15} style={{ marginRight: 4 }} />
++                  添加到插槽
++                </button>
++              </div>
++            ) : null}
++            <div className="gst-add-hint">
++              {supportsChildren
++                ? "新节点会加到当前选中节点的下一层。"
++                : selectedNode.type === "component"
++                  ? "组件不放子节点，但可以往它的插槽里添加。"
++                  : `当前选中的是「${nodeTypeLabel(selectedNode.type)}」，它不能直接放子节点。先在上方选中一个堆叠 / 网格 / 浮层容器再添加。`}
++            </div>
+           </div>
++        </div>
+ 
+-          <div className="settings-form-grid" style={{ gap: 12 }}>
+-            {[
+-                { key: "id", label: "节点 ID" },
+-                { key: "class_name", label: "类名" },
++        {/* 右：检查器 */}
++        <div className="gst-pane">
++          <div className="gst-pane-head">
++            <SquareStack size={13} />
++            节点属性
++          </div>
++          <div className="gst-inspector">
++            <div className="gst-identity" data-family={selectedFamily}>
++              <span className="gst-identity-icon">
++                <SelectedIcon size={18} />
++              </span>
++              <div className="gst-identity-text">
++                <div className="gst-identity-name">{describeNode(selectedNode)}</div>
++                <div className="gst-identity-path">{selectionKey === "__root" ? "layout.root（根节点）" : selectionKey}</div>
++              </div>
++              <div className="gst-identity-actions">
++                <button
++                  type="button"
++                  className="gst-icon-btn"
++                  onClick={() => moveSelectedNode(-1)}
++                  disabled={!canMoveUp}
++                  title="上移"
++                  aria-label="上移"
++                >
++                  <ArrowUp size={16} />
++                </button>
++                <button
++                  type="button"
++                  className="gst-icon-btn"
++                  onClick={() => moveSelectedNode(1)}
++                  disabled={!canMoveDown}
++                  title="下移"
++                  aria-label="下移"
++                >
++                  <ArrowDown size={16} />
++                </button>
++                <button
++                  type="button"
++                  className="gst-icon-btn"
++                  data-tone="danger"
++                  onClick={removeSelectedNode}
++                  disabled={!canRemove}
++                  title="删除节点"
++                  aria-label="删除节点"
++                >
++                  <Trash2 size={16} />
++                </button>
++              </div>
++            </div>
++
++            <div className="gst-group">
++              <div className="gst-group-title">基本</div>
++              <div className="gst-grid-2">
++                <label className="editor-field">
++                  <span className="editor-field-label">节点类型（替换当前节点）</span>
++                  <select
++                    value={selectedNode.type}
++                    onChange={(event) => replaceSelectedNodeType(event.target.value as SupportedNodeType)}
++                    className="editor-field-input editor-field-select"
++                  >
++                    {NODE_TYPE_ORDER.map((type) => (
++                      <option key={type} value={type}>
++                        {nodeTypeLabel(type)}
++                      </option>
++                    ))}
++                  </select>
++                </label>
++                <label className="editor-field">
++                  <span className="editor-field-label">是否显示</span>
++                  <select
++                    value={selectedNode.visible === false ? "hidden" : "shown"}
++                    onChange={(event) =>
++                      updateSelectedNode((node) => ({ ...node, visible: event.target.value === "shown" }))
++                    }
++                    className="editor-field-input editor-field-select"
++                  >
++                    <option value="shown">显示</option>
++                    <option value="hidden">隐藏</option>
++                  </select>
++                </label>
++              </div>
++              <div className="gst-field-hint">
++                {nodeTypeHint(selectedNode.type)}。切换类型会把当前节点替换为新类型并重置其内容。
++              </div>
++            </div>
++
++            <div className="gst-group">
++              <div className="gst-group-title">外观（接样式表）</div>
++              <label className="editor-field">
++                <span className="editor-field-label">类名 class_name</span>
++                <input
++                  value={String((selectedNode as Record<string, unknown>).class_name ?? "")}
++                  onChange={(event) =>
++                    updateSelectedNode((node) =>
++                      setOptionalField(node, "class_name", event.target.value.trim() ? event.target.value : undefined),
++                    )
++                  }
++                  className="editor-field-input"
++                  placeholder="例如 poetry-topbar"
++                />
++              </label>
++              <div className="gst-field-hint">
++                给节点起一个类名，再到上方 Raw JSONC 的 custom_css 里写 <code>.类名 {"{…}"}</code> 即可美化它——
++                飞花令等精致界面主要靠这一步，而不是逐个填下面的尺寸。
++              </div>
++              <label className="editor-field">
++                <span className="editor-field-label">节点 ID（可选，用于定位）</span>
++                <input
++                  value={String((selectedNode as Record<string, unknown>).id ?? "")}
++                  onChange={(event) =>
++                    updateSelectedNode((node) =>
++                      setOptionalField(node, "id", event.target.value.trim() ? event.target.value : undefined),
++                    )
++                  }
++                  className="editor-field-input"
++                />
++              </label>
++            </div>
++
++            <div className="gst-group">
++              <div className="gst-group-title">布局与尺寸（一般留空，由样式表控制）</div>
++              <div className="settings-form-grid" style={{ gap: 12 }}>
++                {[
+                 { key: "area", label: "网格区域" },
+                 { key: "width", label: "宽度" },
+                 { key: "height", label: "高度" },
+@@ -397,7 +551,7 @@ export function GameUiStructureEditor({
+                 { key: "padding", label: "内边距" },
+                 { key: "margin", label: "外边距" },
+                 { key: "align", label: "对齐" },
+-              { key: "justify", label: "Justify" },
++              { key: "justify", label: "主轴对齐" },
+             ].map((field) => (
+               <label key={field.key} className="editor-field">
+                 <span className="editor-field-label">{field.label}</span>
+@@ -412,7 +566,8 @@ export function GameUiStructureEditor({
+                 />
+               </label>
+             ))}
+-          </div>
++              </div>
++            </div>
+ 
+           {selectedNode.type === "component" ? (
+             <>
+@@ -431,13 +586,13 @@ export function GameUiStructureEditor({
+                   >
+                     {COMPONENT_LIBRARY.map((entry) => (
+                       <option key={entry.id} value={entry.id}>
+-                        {entry.id}
++                        {entry.label}
+                       </option>
+                     ))}
+                   </select>
+                 </label>
+                 <label className="editor-field">
+-                  <span className="editor-field-label">Variant</span>
++                  <span className="editor-field-label">变体 variant</span>
+                   <input
+                     value={selectedNode.variant ?? ""}
+                     onChange={(event) =>
+@@ -448,22 +603,26 @@ export function GameUiStructureEditor({
+                 </label>
+               </div>
+               {componentHints ? (
+-                <div className="text-muted" style={{ fontSize: 12 }}>
+-                  {Object.entries(componentHints.propsSchema)
+-                    .map(([key, value]) => `${key}: ${value}`)
+-                    .join(" | ")}
++                <div className="text-muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
++                  <div>{componentHints.description}</div>
++                  <div>
++                    可用属性：
++                    {Object.entries(componentHints.propsSchema)
++                      .map(([key, value]) => `${key}: ${value}`)
++                      .join(" | ")}
++                  </div>
+                 </div>
+               ) : null}
+               <JsonEditorField
+-                label="Props"
++                label="属性 Props（JSON）"
+                 value={selectedNode.props}
+-                placeholder='{"placeholder":"Type here","show_audio_button":true}'
++                placeholder='{"placeholder":"请输入","show_audio_button":true}'
+                 onCommit={(value) =>
+                   updateSelectedNode((node) => setOptionalField(node, "props", value as Record<string, unknown> | undefined))
+                 }
+               />
+               <JsonEditorField
+-                label="Anchor"
++                label="锚点 Anchor（JSON）"
+                 value={selectedNode.anchor}
+                 placeholder='{"top":"16px","right":"16px"}'
+                 onCommit={(value) =>
+@@ -523,7 +682,7 @@ export function GameUiStructureEditor({
+                 </select>
+               </label>
+               <label className="editor-field">
+-                <span className="editor-field-label">Gap</span>
++                <span className="editor-field-label">间距 gap</span>
+                 <input
+                   value={selectedNode.gap ?? ""}
+                   onChange={(event) => updateSelectedNode((node) => setOptionalField(node, "gap", event.target.value.trim() ? event.target.value : undefined))}
+@@ -543,7 +702,7 @@ export function GameUiStructureEditor({
+ 
+           {selectedNode.type === "slot" ? (
+             <label className="editor-field">
+-              <span className="editor-field-label">Slot Name</span>
++              <span className="editor-field-label">插槽名称</span>
+               <input
+                 value={selectedNode.name}
+                 onChange={(event) =>
+@@ -559,7 +718,7 @@ export function GameUiStructureEditor({
+ 
+           {selectedNode.type === "when" ? (
+             <label className="editor-field">
+-              <span className="editor-field-label">Expression</span>
++              <span className="editor-field-label">条件表达式</span>
+               <input
+                 value={selectedNode.expr}
+                 onChange={(event) =>
+@@ -590,7 +749,7 @@ export function GameUiStructureEditor({
+                   />
+                 </label>
+                 <label className="editor-field">
+-                  <span className="editor-field-label">Item Alias</span>
++                  <span className="editor-field-label">元素别名</span>
+                   <input
+                     value={selectedNode.item_as}
+                     onChange={(event) =>
+@@ -615,23 +774,24 @@ export function GameUiStructureEditor({
+               </div>
+               <div className="flex flex--gap-sm" style={{ flexWrap: "wrap" }}>
+                 <button type="button" className="action-btn" onClick={ensureEmptyBranch} disabled={!!selectedNode.empty}>
+-                  Add Empty Branch
++                  添加空数据分支
+                 </button>
+                 <button type="button" className="action-btn" onClick={clearEmptyBranch} disabled={!selectedNode.empty}>
+-                  Clear Empty Branch
++                  移除空数据分支
+                 </button>
+               </div>
+             </>
+           ) : null}
+ 
+           <JsonEditorField
+-            label="Style"
++            label="样式 Style（JSON）"
+             value={selectedNode.style as GameUiStyleRecord | undefined}
+             placeholder='{"background":"rgba(0,0,0,0.4)","border_radius":"16px"}'
+             onCommit={(value) =>
+               updateSelectedNode((node) => setOptionalField(node, "style", value as GameUiStyleRecord | undefined))
+             }
+           />
++          </div>
+         </div>
+       </div>
+     </div>
+@@ -695,23 +855,31 @@ function renderTreeNode(
+   }
+ 
+   return (
+-    <div key={pathToKey(path)} style={{ display: "grid", gap: 8 }}>
++    <div key={pathToKey(path)} style={{ display: "grid", gap: 2 }}>
+       <button
+         type="button"
+-        className={`action-btn${isSelected ? " action-btn--accent" : ""}`}
++        className="gst-node"
++        data-family={nodeFamily(node.type)}
++        data-selected={isSelected}
+         onClick={() => onSelect(path)}
+-        style={{ justifyContent: "space-between", textAlign: "left" }}
+       >
+-        <span>{describeNode(node)}</span>
+-        <span className="text-muted" style={{ fontSize: 11 }}>
+-          {path.length === 0 ? "root" : path[path.length - 1]}
++        <span className="gst-node-icon">
++          {(() => {
++            const Icon = nodeIcon(node.type);
++            return <Icon size={15} />;
++          })()}
+         </span>
++        <span className="gst-node-name">{nodeDisplayName(node)}</span>
++        {nodeDetailText(node) ? <span className="gst-node-id">{nodeDetailText(node)}</span> : null}
+       </button>
+       {branches.length > 0 ? (
+-        <div style={{ borderLeft: "1px solid var(--color-border)", marginLeft: 8, paddingLeft: 12, display: "grid", gap: 8 }}>
++        <div className="gst-tree-children">
+           {branches.map((branch) => (
+-            <div key={pathToKey(branch.path)} style={{ display: "grid", gap: 6 }}>
+-              <div className="text-muted" style={{ fontSize: 11 }}>{branch.label}</div>
++            <div key={pathToKey(branch.path)} style={{ display: "grid", gap: 2 }}>
++              <div className="gst-branch-label">
++                <CornerDownRight size={11} />
++                {branch.label}
++              </div>
+               {renderTreeNode(branch.node, branch.path, selectedPath, onSelect)}
+             </div>
+           ))}
+@@ -1065,37 +1233,71 @@ function nodeSupportsChildren(
+   return node.type === "grid" || node.type === "stack" || node.type === "absolute";
+ }
+ 
+-function describeNode(node: GameUiLayoutNodeV2): string {
++// 组件的中文名（取自 COMPONENT_LIBRARY 的 label），未知组件回退到原 id。
++function componentLabel(componentId: string): string {
++  return COMPONENT_LIBRARY.find((entry) => entry.id === componentId)?.label ?? componentId;
++}
++
++// 树与检查器标题用的人类可读名称（中文优先）。
++function nodeDisplayName(node: GameUiLayoutNodeV2): string {
+   switch (node.type) {
+     case "component":
+-      return `component:${node.component}`;
++      return componentLabel(node.component);
+     case "slot":
+-      return `slot:${node.name}`;
++      return `插槽 ${node.name}`;
+     case "when":
+-      return `when:${node.expr || "condition"}`;
++      return "条件 when";
+     case "for_each":
+-      return `for_each:${node.source || "items"}`;
++      return "循环 for_each";
+     case "text":
+-      return `text:${node.text || "text"}`;
++      return "文本 text";
+     case "image":
+-      return `image:${node.src || "image"}`;
++      return "图片 image";
+     case "badge":
+-      return `badge:${node.text || "badge"}`;
++      return "徽标 badge";
+     case "button":
+-      return `button:${node.label || "button"}`;
++      return "按钮 button";
+     case "checkbox":
+-      return `checkbox:${node.label || "checkbox"}`;
++      return "复选 checkbox";
+     case "grid":
++      return "网格 grid";
+     case "stack":
++      return "堆叠 stack";
+     case "absolute":
+-      return node.type;
+-    default: {
+-      const exhaustive: never = node;
+-      return exhaustive;
+-    }
++      return "浮层 absolute";
++    default:
++      return (node as { type: string }).type;
++  }
++}
++
++// 节点的次要细节（等宽字体显示），帮助区分同类节点。
++function nodeDetailText(node: GameUiLayoutNodeV2): string {
++  switch (node.type) {
++    case "component":
++      return node.component;
++    case "when":
++      return node.expr || "";
++    case "for_each":
++      return node.source || "";
++    case "text":
++      return node.text || "";
++    case "button":
++      return node.label || "";
++    case "badge":
++      return node.text || "";
++    case "checkbox":
++      return node.label || "";
++    case "image":
++      return node.src || "";
++    default:
++      return "";
+   }
+ }
+ 
++function describeNode(node: GameUiLayoutNodeV2): string {
++  return nodeDisplayName(node);
++}
++
+ function stringifyJsonValue(value: unknown): string {
+   if (value === undefined) {
+     return "";
+diff --git a/frontend/src/data/api.ts b/frontend/src/data/api.ts
+index cbd06c9..e969dbd 100644
+--- a/frontend/src/data/api.ts
++++ b/frontend/src/data/api.ts
+@@ -181,6 +181,12 @@ export function updateAttributeSchema(schemaId: string, payload: AttributeSchema
+   return requestJson<AttributeSchemaResponse, AttributeSchemaUpsertRequest>("PUT", `/api/attributes/schemas/${schemaId}`, payload);
+ }
+ 
++export function deleteAttributeSchema(schemaId: string) {
++  return fetch(toApiUrl(`/api/attributes/schemas/${schemaId}`), { method: "DELETE" }).then((response) => {
++    if (!response.ok) throw new Error(`Request failed: ${response.status}`);
++  });
++}
++
+ export function fetchAttributeValues(params: {
+   ownerType?: string;
+   ownerId?: string;
+diff --git a/frontend/src/data/apiAdapter.ts b/frontend/src/data/apiAdapter.ts
+index b272b9f..47d8eb7 100644
+--- a/frontend/src/data/apiAdapter.ts
++++ b/frontend/src/data/apiAdapter.ts
+@@ -463,6 +463,10 @@ export async function updateAttributeSchema(schemaId: string, payload: Attribute
+   return isTauri ? (await getTauri()).updateAttributeSchema(schemaId, payload) : (await getHttp()).updateAttributeSchema(schemaId, payload);
+ }
+ 
++export async function deleteAttributeSchema(schemaId: string) {
++  return isTauri ? (await getTauri()).deleteAttributeSchema(schemaId) : (await getHttp()).deleteAttributeSchema(schemaId);
++}
++
+ export async function fetchAttributeValues(params: { ownerType?: string; ownerId?: string; schemaId?: string }) {
+   return isTauri ? (await getTauri()).fetchAttributeValues(params) : (await getHttp()).fetchAttributeValues(params);
+ }
+diff --git a/frontend/src/data/gameUi.ts b/frontend/src/data/gameUi.ts
+index a667180..fd925f1 100644
+--- a/frontend/src/data/gameUi.ts
++++ b/frontend/src/data/gameUi.ts
+@@ -20,11 +20,6 @@ export type {
+   GameUiBindingValue,
+   GameUiActionReference,
+   GameUiPropValue,
+-  GameUiGridNodeV1,
+-  GameUiStackNodeV1,
+-  GameUiAbsoluteNodeV1,
+-  GameUiMountNode,
+-  GameUiLayoutNodeV1,
+   GameUiGridNodeV2,
+   GameUiStackNodeV2,
+   GameUiAbsoluteNodeV2,
+@@ -39,7 +34,6 @@ export type {
+   GameUiCheckboxNode,
+   GameUiLayoutNodeV2,
+   GameUiDocumentBase,
+-  GameUiDocumentV1,
+   GameUiDocumentV2,
+   GameUiLayoutNode,
+   GameUiDocument,
+diff --git a/frontend/src/data/gameUi/index.ts b/frontend/src/data/gameUi/index.ts
+index 2b3f7e3..53e7da9 100644
+--- a/frontend/src/data/gameUi/index.ts
++++ b/frontend/src/data/gameUi/index.ts
+@@ -18,11 +18,6 @@ export type {
+   GameUiBindingValue,
+   GameUiActionReference,
+   GameUiPropValue,
+-  GameUiGridNodeV1,
+-  GameUiStackNodeV1,
+-  GameUiAbsoluteNodeV1,
+-  GameUiMountNode,
+-  GameUiLayoutNodeV1,
+   GameUiGridNodeV2,
+   GameUiStackNodeV2,
+   GameUiAbsoluteNodeV2,
+@@ -37,7 +32,6 @@ export type {
+   GameUiCheckboxNode,
+   GameUiLayoutNodeV2,
+   GameUiDocumentBase,
+-  GameUiDocumentV1,
+   GameUiDocumentV2,
+   GameUiLayoutNode,
+   GameUiDocument,
+diff --git a/frontend/src/data/gameUi/parser.ts b/frontend/src/data/gameUi/parser.ts
+index 3a26e4d..214b8a3 100644
+--- a/frontend/src/data/gameUi/parser.ts
++++ b/frontend/src/data/gameUi/parser.ts
+@@ -4,13 +4,10 @@ import type {
+   GameUiAnchor,
+   GameUiComponentStyleDefinition,
+   GameUiDocument,
+-  GameUiDocumentV1,
+   GameUiDocumentV2,
+   GameUiLayoutNode,
+-  GameUiLayoutNodeV1,
+   GameUiLayoutNodeV2,
+   GameUiMountId,
+-  GameUiMountNode,
+   GameUiMountOptions,
+   GameUiNodeBase,
+   GameUiPlatform,
+@@ -33,49 +30,11 @@ import {
+   DEFAULT_MOBILE_UI_SOURCE,
+ } from "./defaults";
+ 
+-const EMPTY_V1_NODE: GameUiLayoutNodeV1 = {
+-  type: "stack",
+-  children: [],
+-};
+-
+ const EMPTY_V2_NODE: GameUiLayoutNodeV2 = {
+   type: "stack",
+   children: [],
+ };
+ 
+-const DEFAULT_V1_DOCUMENTS: Record<GameUiPlatform, GameUiDocumentV1> = {
+-  desktop: {
+-    schema_version: 1,
+-    meta: {
+-      name: "Desktop Gameplay UI (Legacy)",
+-      platform: "desktop",
+-    },
+-    layout: {
+-      root: structuredClone(EMPTY_V1_NODE),
+-    },
+-    mounts: {},
+-    components: {},
+-    tokens: {},
+-    effects: {},
+-    custom_css: "",
+-  },
+-  mobile: {
+-    schema_version: 1,
+-    meta: {
+-      name: "Mobile Gameplay UI (Legacy)",
+-      platform: "mobile",
+-    },
+-    layout: {
+-      root: structuredClone(EMPTY_V1_NODE),
+-    },
+-    mounts: {},
+-    components: {},
+-    tokens: {},
+-    effects: {},
+-    custom_css: "",
+-  },
+-};
+-
+ export const DEFAULT_DESKTOP_UI_FILE = DEFAULT_DESKTOP_UI_SOURCE;
+ export const DEFAULT_MOBILE_UI_FILE = DEFAULT_MOBILE_UI_SOURCE;
+ 
+@@ -176,9 +135,7 @@ export function parseGameUiDocument(
+       };
+     }
+ 
+-    const validationError = schemaVersion === 1
+-      ? validateGameUiDocumentV1(parsed)
+-      : validateGameUiDocumentV2(parsed);
++    const validationError = validateGameUiDocumentV2(parsed);
+ 
+     if (validationError) {
+       return {
+@@ -189,9 +146,7 @@ export function parseGameUiDocument(
+       };
+     }
+ 
+-    const document = schemaVersion === 1
+-      ? normalizeGameUiDocumentV1(parsed, platform)
+-      : normalizeGameUiDocumentV2(parsed);
++    const document = normalizeGameUiDocumentV2(parsed);
+ 
+     return {
+       document,
+@@ -209,25 +164,6 @@ export function parseGameUiDocument(
+   }
+ }
+ 
+-function normalizeGameUiDocumentV1(raw: unknown, platform: GameUiPlatform): GameUiDocumentV1 {
+-  const fallbackV1 = DEFAULT_V1_DOCUMENTS[platform];
+-  const value = isPlainObject(raw) ? raw : {};
+-  const layoutValue = isPlainObject(value.layout) ? value.layout : {};
+-
+-  return {
+-    schema_version: 1,
+-    meta: normalizeMeta(value.meta, fallbackV1.meta),
+-    layout: {
+-      root: normalizeLayoutNodeV1(layoutValue.root, fallbackV1.layout.root),
+-    },
+-    mounts: normalizeMountOptions(value.mounts),
+-    components: normalizeComponents(value.components, fallbackV1.components),
+-    tokens: normalizeTokens(value.tokens, fallbackV1.tokens ?? {}),
+-    effects: normalizeMeta(value.effects, fallbackV1.effects),
+-    custom_css: typeof value.custom_css === "string" ? value.custom_css : fallbackV1.custom_css ?? "",
+-  };
+-}
+-
+ function normalizeGameUiDocumentV2(raw: unknown): GameUiDocumentV2 {
+   const value = isPlainObject(raw) ? raw : {};
+   const layoutValue = isPlainObject(value.layout) ? value.layout : {};
+@@ -257,50 +193,6 @@ function normalizeMeta(
+   return raw;
+ }
+ 
+-function normalizeLayoutNodeV1(raw: unknown, fallback: GameUiLayoutNodeV1): GameUiLayoutNodeV1 {
+-  const value = isPlainObject(raw) ? raw : {};
+-  const type = readOptionalString(value.type) ?? fallback.type;
+-
+-  if (type === "mount") {
+-    return {
+-      ...normalizeNodeBase(value),
+-      type: "mount",
+-      mount: isMountId(value.mount) ? value.mount : fallback.type === "mount" ? fallback.mount : GAME_UI_MOUNT_IDS[0],
+-      area: readOptionalString(value.area),
+-      anchor: normalizeAnchor(value.anchor),
+-    };
+-  }
+-
+-  if (type === "absolute") {
+-    return {
+-      ...normalizeNodeBase(value),
+-      type: "absolute",
+-      children: normalizeChildrenV1(value.children),
+-    };
+-  }
+-
+-  if (type === "stack") {
+-    return {
+-      ...normalizeNodeBase(value),
+-      type: "stack",
+-      direction: value.direction === "horizontal" ? "horizontal" : "vertical",
+-      wrap: typeof value.wrap === "boolean" ? value.wrap : false,
+-      gap: readOptionalString(value.gap),
+-      children: normalizeChildrenV1(value.children),
+-    };
+-  }
+-
+-  return {
+-    ...normalizeNodeBase(value),
+-    type: "grid",
+-    columns: normalizeStringList(value.columns),
+-    rows: normalizeStringList(value.rows),
+-    areas: normalizeStringMatrix(value.areas),
+-    gap: readOptionalString(value.gap),
+-    children: normalizeChildrenV1(value.children),
+-  };
+-}
+-
+ function normalizeLayoutNodeV2(raw: unknown, fallback: GameUiLayoutNodeV2): GameUiLayoutNodeV2 {
+   const value = isPlainObject(raw) ? raw : {};
+   const type = readOptionalString(value.type) ?? fallback.type;
+@@ -453,13 +345,6 @@ function normalizeLayoutNodeV2(raw: unknown, fallback: GameUiLayoutNodeV2): Game
+   };
+ }
+ 
+-function normalizeChildrenV1(raw: unknown): GameUiLayoutNodeV1[] {
+-  if (!Array.isArray(raw)) {
+-    return [];
+-  }
+-  return raw.map((item) => normalizeLayoutNodeV1(item, EMPTY_V1_NODE));
+-}
+-
+ function normalizeChildrenV2(raw: unknown): GameUiLayoutNodeV2[] {
+   if (!Array.isArray(raw)) {
+     return [];
+@@ -685,29 +570,6 @@ function isSupportedSchemaVersion(value: number): value is GameUiDocument["schem
+   );
+ }
+ 
+-function validateGameUiDocumentV1(raw: unknown): string | null {
+-  if (!isPlainObject(raw)) {
+-    return "UI document root must be an object.";
+-  }
+-
+-  if (raw.schema_version !== undefined && raw.schema_version !== 1) {
+-    return "schema_version must be 1 for a v1 UI document.";
+-  }
+-
+-  const layout = validateLayoutRoot(raw.layout);
+-  if (layout.error) {
+-    return layout.error;
+-  }
+-
+-  const duplicateMountGuard = new Set<GameUiMountId>();
+-  const layoutError = validateLayoutNodeV1(layout.root, "layout.root", duplicateMountGuard);
+-  if (layoutError) {
+-    return layoutError;
+-  }
+-
+-  return validateCommonDocumentFields(raw);
+-}
+-
+ function validateGameUiDocumentV2(raw: unknown): string | null {
+   if (!isPlainObject(raw)) {
+     return "UI document root must be an object.";
+@@ -791,78 +653,6 @@ function validateCommonDocumentFields(value: Record<string, unknown>): string |
+   return null;
+ }
+ 
+-function validateLayoutNodeV1(
+-  raw: unknown,
+-  path: string,
+-  duplicateMountGuard: Set<GameUiMountId>,
+-): string | null {
+-  if (!isPlainObject(raw)) {
+-    return `${path} must be an object.`;
+-  }
+-
+-  const type = raw.type;
+-  if (type !== "grid" && type !== "stack" && type !== "absolute" && type !== "mount") {
+-    return `${path}.type must be one of grid / stack / absolute / mount.`;
+-  }
+-
+-  const sharedFieldError = validateSharedNodeFields(raw, path);
+-  if (sharedFieldError) {
+-    return sharedFieldError;
+-  }
+-
+-  if (type === "mount") {
+-    if (!isMountId(raw.mount)) {
+-      return `${path}.mount must be a supported mount id.`;
+-    }
+-    if (duplicateMountGuard.has(raw.mount)) {
+-      return `Duplicate mount "${raw.mount}" found in the same UI document.`;
+-    }
+-    duplicateMountGuard.add(raw.mount);
+-
+-    const anchorError = validateAnchor(raw.anchor, `${path}.anchor`);
+-    if (anchorError) {
+-      return anchorError;
+-    }
+-    return null;
+-  }
+-
+-  if (raw.children !== undefined && !Array.isArray(raw.children)) {
+-    return `${path}.children must be an array.`;
+-  }
+-
+-  if (type === "grid") {
+-    if (raw.columns !== undefined && !isStringLikeArray(raw.columns)) {
+-      return `${path}.columns must be an array of strings or numbers.`;
+-    }
+-    if (raw.rows !== undefined && !isStringLikeArray(raw.rows)) {
+-      return `${path}.rows must be an array of strings or numbers.`;
+-    }
+-    if (raw.areas !== undefined) {
+-      if (!Array.isArray(raw.areas) || !raw.areas.every((row) => isStringLikeArray(row))) {
+-        return `${path}.areas must be a two-dimensional string array.`;
+-      }
+-      const rowLengths = raw.areas.map((row) => row.length);
+-      if (rowLengths.length > 1 && rowLengths.some((length) => length !== rowLengths[0])) {
+-        return `${path}.areas rows must all have the same length.`;
+-      }
+-    }
+-  }
+-
+-  if (type === "stack" && raw.direction !== undefined && raw.direction !== "vertical" && raw.direction !== "horizontal") {
+-    return `${path}.direction must be vertical or horizontal.`;
+-  }
+-
+-  const children = raw.children ?? [];
+-  for (let index = 0; index < children.length; index += 1) {
+-    const childError = validateLayoutNodeV1(children[index], `${path}.children[${index}]`, duplicateMountGuard);
+-    if (childError) {
+-      return childError;
+-    }
+-  }
+-
+-  return null;
+-}
+-
+ function validateLayoutNodeV2(raw: unknown, path: string): string | null {
+   if (!isPlainObject(raw)) {
+     return `${path} must be an object.`;
+@@ -1371,6 +1161,17 @@ export function buildGameUiStylesheet(
+     `${scopeSelector} .game-typing-bubble {\nmax-width: 80px;\npadding: 12px 16px;\n}\n${scopeSelector} .game-typing-dots {\ndisplay: flex;\ngap: 4px;\nalign-items: center;\njustify-content: center;\nheight: 20px;\n}\n${scopeSelector} .game-typing-dot {\nwidth: 6px;\nheight: 6px;\nborder-radius: 50%;\nbackground: var(--game-ui-token-color-text-muted, var(--game-text-muted, rgba(255,255,255,0.4)));\nanimation: game-typing-bounce 1.4s ease-in-out infinite;\n}\n${scopeSelector} .game-typing-dot:nth-child(2) {\nanimation-delay: 0.2s;\n}\n${scopeSelector} .game-typing-dot:nth-child(3) {\nanimation-delay: 0.4s;\n}\n${scopeSelector} .game-message-row--typing {\nanimation: game-ui-typing-enter 200ms ease-out;\n}\n@keyframes game-typing-bounce {\n0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }\n30% { transform: translateY(-4px); opacity: 1; }\n}\n@keyframes game-ui-typing-enter {\nfrom { opacity: 0; transform: translateY(6px); }\nto { opacity: 1; transform: translateY(0); }\n}`,
+     `${scopeSelector} .game-mobile-error-notice {\ndisplay: flex;\nflex-direction: column;\ngap: 6px;\nwidth: 100%;\npadding: 12px 14px;\nborder-radius: var(--game-ui-token-radius-md, 14px);\nborder: 1px solid color-mix(in srgb, #dc2626 38%, transparent);\nbackground: color-mix(in srgb, #dc2626 12%, var(--game-ui-token-color-panel, rgba(255,255,255,0.06)));\ncolor: var(--game-ui-token-color-text, currentColor);\n}\n${scopeSelector} .game-mobile-error-title {\nfont-size: 13px;\nfont-weight: 700;\ncolor: color-mix(in srgb, #dc2626 72%, var(--game-ui-token-color-text, currentColor));\n}\n${scopeSelector} .game-mobile-error-summary {\nfont-size: 13px;\nline-height: 1.5;\ncolor: var(--game-ui-token-color-text-dim, var(--game-text-muted, inherit));\nwhite-space: pre-wrap;\n}\n${scopeSelector} .game-mobile-error-retry {\nalign-self: flex-start;\nmin-height: 34px;\nmargin-top: 2px;\npadding: 0 16px;\nborder-radius: 999px;\nborder: 0;\nbackground: #dc2626;\ncolor: #ffffff;\nfont-size: 13px;\nfont-weight: 600;\n}\n${scopeSelector} .game-mobile-error-retry:disabled {\nopacity: 0.6;\n}`,
+     `${scopeSelector} .game-map-graph {\ndisplay: flex;\nmin-height: 0;\nheight: 100%;\nflex-direction: column;\ngap: 12px;\n}\n${scopeSelector} .game-map-flow-canvas {\nposition: relative;\nmin-height: 260px;\nheight: 100%;\noverflow: hidden;\nborder: 1px solid var(--game-border, rgba(255,255,255,0.16));\nborder-radius: var(--game-ui-token-radius-lg, 16px);\nbackground: color-mix(in srgb, var(--game-ui-token-color-panel, rgba(255,255,255,0.08)) 48%, transparent);\n}\n${scopeSelector} .game-map-flow-canvas .react-flow {\nfont-family: var(--game-ui-token-font-body, inherit);\n}\n${scopeSelector} .game-map-flow-background {\nopacity: 0.45;\n}\n${scopeSelector} .game-map-flow-node {\nwidth: 150px;\npadding: 8px 10px;\nborder: 1px solid var(--game-border, rgba(255,255,255,0.16));\nborder-radius: var(--game-ui-token-radius-md, 12px);\nbackground: var(--game-ui-token-color-panel, rgba(255,255,255,0.10));\ncolor: var(--game-ui-token-color-text, currentColor);\nfont-size: 12px;\nfont-weight: 700;\nline-height: 1.25;\ntext-align: center;\nbox-shadow: 0 10px 24px rgba(0,0,0,0.14);\n}\n${scopeSelector} .game-map-flow-node--current {\nborder-color: var(--game-ui-token-color-primary, var(--game-accent, currentColor));\nbackground: color-mix(in srgb, var(--game-ui-token-color-primary, var(--game-accent, currentColor)) 22%, var(--game-ui-token-color-panel, rgba(255,255,255,0.12)));\n}\n${scopeSelector} .game-map-flow-node--undiscovered {\nopacity: 0.58;\nfilter: saturate(0.74);\n}\n${scopeSelector} .game-map-flow-edge path {\nstroke: var(--game-border, rgba(255,255,255,0.22));\nstroke-width: 1.6;\n}\n${scopeSelector} .game-map-flow-edge--current path {\nstroke: var(--game-ui-token-color-primary, var(--game-accent, #dbeafe));\nstroke-width: 2.2;\n}\n${scopeSelector} .react-flow__controls {\nbox-shadow: 0 10px 24px rgba(0,0,0,0.18);\n}\n${scopeSelector} .react-flow__controls-button {\nbackground: var(--game-ui-token-color-panel, rgba(255,255,255,0.12));\nborder-color: var(--game-border, rgba(255,255,255,0.14));\ncolor: var(--game-ui-token-color-text, currentColor);\n}`,
++    // Base sizing for scene-focus character portraits. Theme custom_css can
++    // override these via more specific selectors; without this baseline a theme
++    // that only restyles (e.g. sets a filter on) .game-avatar-image leaves the
++    // <img> unsized, so the portrait never shows.
++    `${scopeSelector} .game-avatar {\ndisplay: flex;\nalign-items: center;\njustify-content: center;\nwidth: 256px;\nheight: 320px;\nmax-width: 100%;\noverflow: hidden;\n}\n${scopeSelector} .game-avatar-image {\nwidth: 100%;\nheight: 100%;\nobject-fit: cover;\n}`,
++    // Base styling for director-trace / chain-of-thought labels and lines.
++    // These read as quiet grey captions on every platform and world. Desktop
++    // seed UIs spell this out in their custom_css, but mobile seeds don't — so
++    // without a baseline the labels fall back to default black body text on
++    // mobile. Worlds can still override via more specific custom_css selectors.
++    `${scopeSelector} .game-director-trace-title,\n${scopeSelector} .game-director-trace-label,\n${scopeSelector} .game-director-trace-line,\n${scopeSelector} .game-agent-answer-label {\nfont-size: 12px;\nfont-weight: 400;\nline-height: 1.55;\ncolor: var(--game-ui-token-color-text-muted, var(--game-text-muted, rgba(120,130,140,0.85)));\nopacity: 0.7;\n}\n${scopeSelector} .game-cot-label {\nfont-size: 12px;\nfont-weight: 600;\ncolor: var(--game-ui-token-color-text-muted, var(--game-text-muted, rgba(120,130,140,0.85)));\nopacity: 0.7;\n}\n${scopeSelector} .game-cot-content {\nfont-size: 12px;\nline-height: 1.55;\ncolor: var(--game-ui-token-color-text-muted, var(--game-text-muted, rgba(120,130,140,0.85)));\nopacity: 0.85;\nwhite-space: pre-wrap;\nword-break: break-word;\n}`,
+   ];
+ 
+   const background = (document.effects?.background ?? {}) as Record<string, unknown>;
+diff --git a/frontend/src/data/gameUi/types.ts b/frontend/src/data/gameUi/types.ts
+index 40ce495..4d54dfa 100644
+--- a/frontend/src/data/gameUi/types.ts
++++ b/frontend/src/data/gameUi/types.ts
+@@ -1,8 +1,7 @@
+ export type GameUiPlatform = "desktop" | "mobile";
+-export const DEFAULT_GAME_UI_SCHEMA_VERSION = 1;
+ export const LATEST_SUPPORTED_GAME_UI_SCHEMA_VERSION = 2;
++export const DEFAULT_GAME_UI_SCHEMA_VERSION = LATEST_SUPPORTED_GAME_UI_SCHEMA_VERSION;
+ export const SUPPORTED_GAME_UI_SCHEMA_VERSIONS = [
+-  DEFAULT_GAME_UI_SCHEMA_VERSION,
+   LATEST_SUPPORTED_GAME_UI_SCHEMA_VERSION,
+ ] as const;
+ export const SUPPORTED_GAME_UI_SCHEMA_VERSION = LATEST_SUPPORTED_GAME_UI_SCHEMA_VERSION;
+@@ -105,41 +104,6 @@ export type GameUiPropValue =
+   | GameUiPropValue[]
+   | { [key: string]: GameUiPropValue };
+ 
+-export type GameUiGridNodeV1 = GameUiNodeBase & {
+-  type: "grid";
+-  columns?: string[];
+-  rows?: string[];
+-  areas?: string[][];
+-  gap?: string;
+-  children?: GameUiLayoutNodeV1[];
+-};
+-
+-export type GameUiStackNodeV1 = GameUiNodeBase & {
+-  type: "stack";
+-  direction?: "vertical" | "horizontal";
+-  wrap?: boolean;
+-  gap?: string;
+-  children?: GameUiLayoutNodeV1[];
+-};
+-
+-export type GameUiAbsoluteNodeV1 = GameUiNodeBase & {
+-  type: "absolute";
+-  children?: GameUiLayoutNodeV1[];
+-};
+-
+-export type GameUiMountNode = GameUiNodeBase & {
+-  type: "mount";
+-  mount: GameUiMountId;
+-  area?: string;
+-  anchor?: GameUiAnchor;
+-};
+-
+-export type GameUiLayoutNodeV1 =
+-  | GameUiGridNodeV1
+-  | GameUiStackNodeV1
+-  | GameUiAbsoluteNodeV1
+-  | GameUiMountNode;
+-
+ export type GameUiGridNodeV2 = GameUiNodeBase & {
+   type: "grid";
+   columns?: string[];
+@@ -242,9 +206,9 @@ export type GameUiLayoutNodeV2 =
+   | GameUiButtonNode
+   | GameUiCheckboxNode;
+ 
+-export type GameUiGridNode = GameUiGridNodeV1 | GameUiGridNodeV2;
+-export type GameUiStackNode = GameUiStackNodeV1 | GameUiStackNodeV2;
+-export type GameUiAbsoluteNode = GameUiAbsoluteNodeV1 | GameUiAbsoluteNodeV2;
++export type GameUiGridNode = GameUiGridNodeV2;
++export type GameUiStackNode = GameUiStackNodeV2;
++export type GameUiAbsoluteNode = GameUiAbsoluteNodeV2;
+ 
+ export type GameUiDocumentBase = {
+   meta?: Record<string, unknown>;
+@@ -254,14 +218,6 @@ export type GameUiDocumentBase = {
+   custom_css?: string;
+ };
+ 
+-export type GameUiDocumentV1 = GameUiDocumentBase & {
+-  schema_version: 1;
+-  layout: {
+-    root: GameUiLayoutNodeV1;
+-  };
+-  mounts?: Partial<Record<GameUiMountId, GameUiMountOptions>>;
+-};
+-
+ export type GameUiDocumentV2 = GameUiDocumentBase & {
+   schema_version: 2;
+   state?: Record<string, GameUiPropValue>;
+@@ -271,8 +227,8 @@ export type GameUiDocumentV2 = GameUiDocumentBase & {
+   mounts?: Partial<Record<GameUiMountId, GameUiMountOptions>>;
+ };
+ 
+-export type GameUiDocument = GameUiDocumentV1 | GameUiDocumentV2;
+-export type GameUiLayoutNode = GameUiLayoutNodeV1 | GameUiLayoutNodeV2;
++export type GameUiDocument = GameUiDocumentV2;
++export type GameUiLayoutNode = GameUiLayoutNodeV2;
+ 
+ export type ParsedGameUiDocument = {
+   document: GameUiDocument;
+diff --git a/frontend/src/data/i18n/dict.ts b/frontend/src/data/i18n/dict.ts
+index 7046e20..f81e332 100644
+--- a/frontend/src/data/i18n/dict.ts
++++ b/frontend/src/data/i18n/dict.ts
+@@ -199,7 +199,7 @@ const zh: Dict = {
+   "home.title": "首页",
+   "home.subtitle": "选择你的下一步行动，一切故事从这里开始。",
+   "home.freeNote": "本软件下载、安装及使用过程完全免费",
+-  "home.brand": "云朵梦境引擎",
++  "home.brand": "云朵梦境",
+   "home.mobileNewGame": "新的游戏",
+   "home.mobileContinue": "继续游戏",
+   "home.mobileNavHint": "点击左上角菜单展开导航",
+diff --git a/frontend/src/data/tauriApi.ts b/frontend/src/data/tauriApi.ts
+index d796083..5e3dfe5 100644
+--- a/frontend/src/data/tauriApi.ts
++++ b/frontend/src/data/tauriApi.ts
+@@ -503,6 +503,10 @@ export function updateAttributeSchema(schemaId: string, payload: AttributeSchema
+   return tauriCommand("update_attribute_schema", { id: schemaId, request: payload });
+ }
+ 
++export function deleteAttributeSchema(schemaId: string): Promise<void> {
++  return tauriCommand("delete_attribute_schema", { id: schemaId });
++}
++
+ export function fetchAttributeValues(params: { ownerType?: string; ownerId?: string; schemaId?: string }): Promise<AttributeValueResponse[]> {
+   return tauriCommand("list_attribute_values", params);
+ }
+diff --git a/frontend/src/game/MessageCards.tsx b/frontend/src/game/MessageCards.tsx
+index a59c5da..06343f1 100644
+--- a/frontend/src/game/MessageCards.tsx
++++ b/frontend/src/game/MessageCards.tsx
+@@ -26,17 +26,19 @@ export const COT_PREVIEW_LIMIT = 200;
+ export const CotBlock: React.FC<{
+   text: string;
+   label?: string;
+-}> = ({ text, label = "思维链" }) => {
++  streaming?: boolean;
++}> = ({ text, label = "思维链", streaming = false }) => {
+   const [expanded, setExpanded] = useState(false);
+   const normalized = text.trim();
+   if (!normalized) {
+     return null;
+   }
+-  const overflow = normalized.length > COT_PREVIEW_LIMIT;
+-  const shown = expanded || !overflow ? normalized : normalized.slice(0, COT_PREVIEW_LIMIT);
++  // 流式进行中时全量显示，让思维链逐字增长可见；流式结束后恢复 200 字折叠。
++  const overflow = !streaming && normalized.length > COT_PREVIEW_LIMIT;
++  const shown = streaming || expanded || !overflow ? normalized : normalized.slice(0, COT_PREVIEW_LIMIT);
+ 
+   return (
+-    <div className="game-cot">
++    <div className="game-cot" data-streaming={streaming ? "true" : "false"}>
+       <div className="game-cot-header">
+         <span className="game-cot-label">{label}</span>
+         {overflow ? (
+@@ -72,7 +74,7 @@ export const RenderDirectorTrace: React.FC<{
+       <div className="game-director-trace-title">
+         {trace.reasoningExpanded ? "世界主控正在思考…" : "世界主控思维链"}
+       </div>
+-      {trace.reasoning ? <CotBlock text={trace.reasoning} /> : null}
++      {trace.reasoning ? <CotBlock text={trace.reasoning} streaming={trace.reasoningExpanded} /> : null}
+       <div className="game-director-trace-block">
+         <div className="game-director-trace-label">正文</div>
+         <div className="game-director-trace-lines">
+diff --git a/frontend/src/gameUiRuntime/components/MessageList.tsx b/frontend/src/gameUiRuntime/components/MessageList.tsx
+index 381a648..4f1225c 100644
+--- a/frontend/src/gameUiRuntime/components/MessageList.tsx
++++ b/frontend/src/gameUiRuntime/components/MessageList.tsx
+@@ -249,6 +249,14 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
+ 
+         const agentReasoning = showAgentReasoning ? parseAgentReasoning(message) : null;
+         const agentNarration = message.role === "agent" ? parseAgentNarration(message) : null;
++        const messageMetadata = (message.metadata ?? {}) as Record<string, unknown>;
++        const isAgentStreaming =
++          message.role === "agent"
++          && (messageMetadata.streaming === true
++            || (runtime.ui_state.submitting
++              && messageMetadata.message_kind === "agent_response"
++              && !message.metadata?.recovered
++              && index === runtime.messages.length - 1));
+         const messageTurnIndex = Number(message.metadata?.turn_index ?? 0);
+         const canResendPlayerTurn = message.role === "player" && Number.isInteger(messageTurnIndex) && messageTurnIndex > 0;
+         const isEditingThisTurn = runtime.editing?.turnIndex === messageTurnIndex;
+@@ -274,7 +282,7 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
+               ) : null}
+               {message.role === "agent" && agentReasoning ? (
+                 <div className="game-agent-blocks">
+-                  <CotBlock text={agentReasoning.reasoning} />
++                  <CotBlock text={agentReasoning.reasoning} streaming={isAgentStreaming} />
+                   <div className="game-agent-answer">
+                     <div className="game-agent-answer-label">回复</div>
+                     <div className="game-message-content game-message-content--default">{getMessageText(message.content)}</div>
+diff --git a/frontend/src/pages/SettingsPage.tsx b/frontend/src/pages/SettingsPage.tsx
+index 8989996..5add91e 100644
+--- a/frontend/src/pages/SettingsPage.tsx
++++ b/frontend/src/pages/SettingsPage.tsx
+@@ -1,5 +1,5 @@
+ import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+-import { useNavigate } from "react-router-dom";
++import { useNavigate, useSearchParams } from "react-router-dom";
+ import { useIsMobile } from "../components/ResponsiveLayout";
+ import { open } from "@tauri-apps/plugin-dialog";
+ import {
+@@ -118,7 +118,26 @@ export function SettingsPage() {
+ 
+   // Desktop: activeTab, Mobile: activeSection + section-list navigation
+   const [activeTab, setActiveTab] = useState<TabId>("text-model");
+-  const [activeSection, setActiveSection] = useState<TabId | null>(null);
++  // 移动端「打开某项设置」由 URL 的 ?section= 驱动，使其成为一条真实历史记录：
++  // 点返回按钮与侧滑/系统返回都只是历史回退，落点一致（都回到设置列表）。
++  const [searchParams, setSearchParams] = useSearchParams();
++  const rawSection = searchParams.get("section");
++  const activeSection: TabId | null =
++    rawSection && tabIds.some((tab) => tab.id === rawSection) ? (rawSection as TabId) : null;
++  const setActiveSection = (next: TabId | null) => {
++    setSearchParams(
++      (prev) => {
++        const params = new URLSearchParams(prev);
++        if (next) {
++          params.set("section", next);
++        } else {
++          params.delete("section");
++        }
++        return params;
++      },
++      { replace: false },
++    );
++  };
+ 
+   const [settings, setSettings] = useState<SettingsResponse | null>(null);
+   const [textModels, setTextModels] = useState<ModelConfigResponse[]>([]);
+@@ -210,32 +229,12 @@ export function SettingsPage() {
+   }
+ 
+   function closeMobileSection() {
+-    setActiveSection(null);
+     closeModelEditor();
+     setError(null);
++    // activeSection 由 ?section= 驱动，关闭子面板走历史回退，与侧滑/系统返回一致。
++    navigate(-1);
+   }
+ 
+-  useEffect(() => {
+-    if (!isMobile) {
+-      delete document.documentElement.dataset.settingsDetailOpen;
+-      return;
+-    }
+-    if (activeSection) {
+-      document.documentElement.dataset.settingsDetailOpen = "true";
+-    } else {
+-      delete document.documentElement.dataset.settingsDetailOpen;
+-    }
+-
+-    const handleSettingsBack = () => {
+-      closeMobileSection();
+-    };
+-    window.addEventListener("settings:navigate-back", handleSettingsBack);
+-    return () => {
+-      window.removeEventListener("settings:navigate-back", handleSettingsBack);
+-      delete document.documentElement.dataset.settingsDetailOpen;
+-    };
+-  }, [activeSection, isMobile]);
+-
+ 
+   function openNewModel() {
+     if (!activeModelTab) return;
+@@ -1049,9 +1048,6 @@ export function SettingsPage() {
+     return (
+       <div className="settings-page-shell">
+         <div className="settings-detail-head">
+-          <button type="button" onClick={closeMobileSection} className="settings-detail-back action-btn">
+-            <ArrowLeft size={14} /> {t("common.back")}
+-          </button>
+           <div className="settings-detail-head-copy">
+             <span>{t("settings.currentGroup")}</span>
+             <strong>{currentSectionMeta ? t(currentSectionMeta.labelKey) : ""}</strong>
+diff --git a/frontend/src/pages/WorldEditorPage.tsx b/frontend/src/pages/WorldEditorPage.tsx
+index 94a4460..e10f772 100644
+--- a/frontend/src/pages/WorldEditorPage.tsx
++++ b/frontend/src/pages/WorldEditorPage.tsx
+@@ -1,5 +1,5 @@
+ import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+-import { useNavigate, useParams } from "react-router-dom";
++import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+ import { useId } from "react";
+ import { useLayoutEffect, useRef } from "react";
+ import {
+@@ -67,146 +67,6 @@ const fixedTabs = [
+   { id: "configPreview", label: "配置预览" },
+ ] as const;
+ 
+-function createLegacyGameUiFile(platform: GameUiPlatform): string {
+-  const legacyDocument = platform === "desktop"
+-    ? {
+-        schema_version: 1 as const,
+-        meta: {
+-          name: "Desktop Gameplay UI (Legacy)",
+-          platform: "desktop",
+-        },
+-        layout: {
+-          root: {
+-            type: "grid",
+-            columns: ["minmax(280px, 1fr)", "minmax(360px, 1.24fr)", "minmax(240px, 0.82fr)"],
+-            rows: ["auto", "minmax(0, 1fr)"],
+-            areas: [
+-              ["header", "header", "header"],
+-              ["scene", "chat", "side"],
+-            ],
+-            gap: "16px",
+-            padding: "18px",
+-            style: {
+-              height: "100%",
+-              min_height: "0",
+-            },
+-            children: [
+-              { type: "mount", mount: "header", area: "header" },
+-              {
+-                type: "stack",
+-                area: "scene",
+-                gap: "12px",
+-                style: {
+-                  height: "100%",
+-                  min_height: "0",
+-                },
+-                children: [
+-                  { type: "mount", mount: "scene_focus" },
+-                  { type: "mount", mount: "character_bar" },
+-                ],
+-              },
+-              {
+-                type: "stack",
+-                area: "chat",
+-                gap: "12px",
+-                style: {
+-                  height: "100%",
+-                  min_height: "0",
+-                },
+-                children: [
+-                  { type: "mount", mount: "narration" },
+-                  { type: "mount", mount: "message_list" },
+-                  { type: "mount", mount: "input_area" },
+-                ],
+-              },
+-              { type: "mount", mount: "side_panel", area: "side" },
+-              {
+-                type: "absolute",
+-                children: [
+-                  {
+-                    type: "mount",
+-                    mount: "floating_actions",
+-                    anchor: {
+-                      top: "18px",
+-                      right: "20px",
+-                    },
+-                  },
+-                ],
+-              },
+-            ],
+-          },
+-        },
+-        mounts: {
+-          side_panel: {
+-            tab_order: ["map"],
+-          },
+-        },
+-        tokens: {},
+-        components: {},
+-        effects: {},
+-        custom_css: "",
+-      }
+-    : {
+-        schema_version: 1 as const,
+-        meta: {
+-          name: "Mobile Gameplay UI (Legacy)",
+-          platform: "mobile",
+-        },
+-        layout: {
+-          root: {
+-            type: "stack",
+-            direction: "vertical",
+-            gap: "10px",
+-            padding: "12px",
+-            style: {
+-              height: "100%",
+-              min_height: "0",
+-            },
+-            children: [
+-              { type: "mount", mount: "header" },
+-              { type: "mount", mount: "scene_focus" },
+-              { type: "mount", mount: "character_bar" },
+-              { type: "mount", mount: "narration" },
+-              {
+-                type: "mount",
+-                mount: "message_list",
+-                style: {
+-                  flex: "1 1 0",
+-                  min_height: "0",
+-                },
+-              },
+-              { type: "mount", mount: "side_panel" },
+-              { type: "mount", mount: "input_area" },
+-              {
+-                type: "absolute",
+-                children: [
+-                  {
+-                    type: "mount",
+-                    mount: "floating_actions",
+-                    anchor: {
+-                      top: "12px",
+-                      right: "12px",
+-                    },
+-                  },
+-                ],
+-              },
+-            ],
+-          },
+-        },
+-        mounts: {
+-          side_panel: {
+-            tab_order: ["map"],
+-          },
+-        },
+-        tokens: {},
+-        components: {},
+-        effects: {},
+-        custom_css: "",
+-      };
+-
+-  return `${JSON.stringify(legacyDocument, null, 2)}\n`;
+-}
+-
+ type FixedTabId = (typeof fixedTabs)[number]["id"];
+ type OpeningComposerRole = "system" | "agent";
+ 
+@@ -295,8 +155,6 @@ type UiThemeConfig = {
+   mobile_file: string;
+ };
+ 
+-type GameUiSchemaVersion = 1 | 2;
+-
+ const defaultWorldDirectorPrompt = "";
+ 
+ const defaultDirectorConfig: DirectorConfig = {
+@@ -816,8 +674,28 @@ export function WorldEditorPage() {
+   const { id } = useParams();
+   const isNew = id === "new" || !id;
+   const [activeTab, setActiveTab] = useState<FixedTabId>("basic");
+-  const [activeSection, setActiveSection] = useState<FixedTabId | null>(null);
+-  const [previewPlatform, setPreviewPlatform] = useState<GameUiPlatform>(isMobile ? "mobile" : "desktop");
++  // 移动端「打开某项设置」由 URL 的 ?section= 驱动，使其成为一条真实历史记录：
++  // 这样点返回按钮与侧滑/系统返回都只是历史回退，落点一致（都回到编辑页、关闭子面板）。
++  const [searchParams, setSearchParams] = useSearchParams();
++  const rawSection = searchParams.get("section");
++  const activeSection: FixedTabId | null =
++    rawSection && fixedTabs.some((tab) => tab.id === rawSection) ? (rawSection as FixedTabId) : null;
++  const setActiveSection = (next: FixedTabId | null) => {
++    setSearchParams(
++      (prev) => {
++        const params = new URLSearchParams(prev);
++        if (next) {
++          params.set("section", next);
++        } else {
++          params.delete("section");
++        }
++        return params;
++      },
++      { replace: false },
++    );
++  };
++  // 预览始终跟随当前设备平台：电脑端只预览桌面界面，手机端只预览移动界面。
++  const previewPlatform: GameUiPlatform = isMobile ? "mobile" : "desktop";
+   const [world, setWorld] = useState<WorldResponse | null>(isNew ? createNewWorldDraft() : null);
+   const [characters, setCharacters] = useState<CharacterResponse[]>([]);
+   const [textModels, setTextModels] = useState<ModelConfigResponse[]>([]);
+@@ -848,10 +726,6 @@ export function WorldEditorPage() {
+   const pendingTimeSlotFocusRef = useRef(false);
+   const timeSlotsContainerRef = useRef<HTMLDivElement | null>(null);
+ 
+-  useEffect(() => {
+-    setPreviewPlatform(isMobile ? "mobile" : "desktop");
+-  }, [isMobile]);
+-
+   useEffect(() => {
+     let cancelled = false;
+     async function loadData() {
+@@ -1286,12 +1160,8 @@ export function WorldEditorPage() {
+     updateGameUiFile(platform, stringifyGameUiDocument(nextDocument));
+   }
+ 
+-  function replaceGameUiSchema(platform: GameUiPlatform, schemaVersion: GameUiSchemaVersion) {
+-    updateGameUiFile(
+-      platform,
+-      schemaVersion === 2 ? defaultGameUiFile(platform) : createLegacyGameUiFile(platform),
+-    );
+-    setPreviewPlatform(platform);
++  function loadDefaultGameUiTemplate(platform: GameUiPlatform) {
++    updateGameUiFile(platform, defaultGameUiFile(platform));
+     setError(null);
+   }
+ 
+@@ -1301,8 +1171,6 @@ export function WorldEditorPage() {
+   ) {
+     const label = platform === "desktop" ? "桌面界面" : "移动界面";
+     const source = platform === "desktop" ? uiThemeConfig.desktop_file : uiThemeConfig.mobile_file;
+-    const isActivePreview = previewPlatform === platform;
+-    const isLegacy = !parsed.error && parsed.document.schema_version === 1;
+     const compileResult = platform === "desktop" ? uiGovernance.desktopCompile : uiGovernance.mobileCompile;
+     const compatibilityDocument = uiGovernance.compatibility?.documents.find((entry) => entry.platform === platform) ?? null;
+ 
+@@ -1317,40 +1185,21 @@ export function WorldEditorPage() {
+             <div className="text-muted" style={{ fontSize: 12 }}>
+               {parsed.error
+                 ? "Current source is invalid. Preview is using fallback."
+-                : `schema_version: ${parsed.document.schema_version}${isLegacy ? " (legacy compatibility)" : " (component tree)"}`}
++                : `schema_version: ${parsed.document.schema_version} (component tree)`}
+             </div>
+           </div>
+           <div className="flex flex--gap-sm" style={{ flexWrap: "wrap" }}>
+-            <button
+-              type="button"
+-              className={`action-btn${isActivePreview ? " action-btn--accent" : ""}`}
+-              onClick={() => setPreviewPlatform(platform)}
+-            >
+-              {isActivePreview ? "Previewing" : "Use for Preview"}
+-            </button>
+-            <button
+-              type="button"
+-              className="action-btn"
+-              onClick={() => replaceGameUiSchema(platform, 1)}
+-            >
+-              Load v1 Template
+-            </button>
+             <button
+               type="button"
+               className="action-btn"
+-              onClick={() => replaceGameUiSchema(platform, 2)}
++              onClick={() => loadDefaultGameUiTemplate(platform)}
+             >
+-              载入 v2 模板
++              载入默认模板
+             </button>
+           </div>
+         </div>
+ 
+         {parsed.error ? <div className="game-input-bubble">{parsed.error}</div> : null}
+-        {isLegacy ? (
+-          <div className="text-muted" style={{ fontSize: 12 }}>
+-            v1 仅为兼容保留，新的界面能力请使用 v2 编写。
+-          </div>
+-        ) : null}
+ 
+         <label className="editor-field">
+           <span className="editor-field-label">Raw JSONC</span>
+@@ -1440,24 +1289,6 @@ export function WorldEditorPage() {
+       <FoldableEditorSection title="界面预览">
+         <div className="flex flex--items-center flex--justify-between world-editor-section-head" style={{ gap: 12 }}>
+           <div className="editor-field-label">{previewLabel}</div>
+-          <div className="world-editor-section-head-action" style={{ display: "flex", gap: 8 }}>
+-            <button
+-              type="button"
+-              className="action-btn"
+-              onClick={() => setPreviewPlatform("desktop")}
+-              disabled={previewPlatform === "desktop"}
+-            >
+-              桌面端
+-            </button>
+-            <button
+-              type="button"
+-              className="action-btn"
+-              onClick={() => setPreviewPlatform("mobile")}
+-              disabled={previewPlatform === "mobile"}
+-            >
+-              移动端
+-            </button>
+-          </div>
+         </div>
+         <div className={`world-style-preview-shell world-style-preview-shell--${previewPlatform}`}>
+           <div className={`world-style-preview-frame world-style-preview-frame--${previewPlatform}`}>
+@@ -1847,37 +1678,11 @@ export function WorldEditorPage() {
+   }
+ 
+   function handleDetailBack() {
+-    if (activeSection) {
+-      setActiveSection(null);
+-    } else {
+-      navigate(-1);
+-    }
++    // activeSection 由 ?section= 驱动，无论开不开子面板，返回都走历史回退，
++    // 与侧滑/系统返回一致。
++    navigate(-1);
+   }
+ 
+-  // 移动端：打开某项设置时标记 detail 状态，并接管侧边栏返回按钮，
+-  // 使其先退回各项编辑列表，而不是直接退回世界列表。
+-  useEffect(() => {
+-    if (!isMobile) {
+-      delete document.documentElement.dataset.worldEditorDetailOpen;
+-      return;
+-    }
+-    if (activeSection) {
+-      document.documentElement.dataset.worldEditorDetailOpen = "true";
+-    } else {
+-      delete document.documentElement.dataset.worldEditorDetailOpen;
+-    }
+-
+-    const handleWorldEditorBack = () => {
+-      setActiveSection(null);
+-      setError(null);
+-    };
+-    window.addEventListener("world-editor:navigate-back", handleWorldEditorBack);
+-    return () => {
+-      window.removeEventListener("world-editor:navigate-back", handleWorldEditorBack);
+-      delete document.documentElement.dataset.worldEditorDetailOpen;
+-    };
+-  }, [activeSection, isMobile]);
+-
+   // ==================== Mobile-specific rendering ====================
+   function renderMobileSectionList() {
+     return (
+diff --git a/frontend/src/pages/WorldsPage.tsx b/frontend/src/pages/WorldsPage.tsx
+index 5c11b36..d442dd5 100644
+--- a/frontend/src/pages/WorldsPage.tsx
++++ b/frontend/src/pages/WorldsPage.tsx
+@@ -300,7 +300,7 @@ export function WorldsPage() {
+             style={{ display: "none" }}
+             onChange={(event) => void handleImport(event)}
+           />
+-          <button type="button" onClick={() => navigate(-1)} className="action-btn">
++          <button type="button" onClick={() => navigate("/")} className="action-btn">
+             {t("common.back")}
+           </button>
+           <button
+diff --git a/frontend/src/styles/theme.css b/frontend/src/styles/theme.css
+index cb6ca81..ecc4141 100644
+--- a/frontend/src/styles/theme.css
++++ b/frontend/src/styles/theme.css
+@@ -3618,12 +3618,12 @@
+     display: grid;
+     gap: 12px;
+     margin-bottom: 14px;
+-    padding-right: 96px;
+   }
+ 
+   .worlds-mobile-title {
+     margin: 0;
+     padding-left: 65px;
++    padding-right: 96px;
+     min-height: 44px;
+     display: flex;
+     align-items: center;
+@@ -3658,12 +3658,12 @@
+     gap: 12px;
+     min-height: 48px;
+     margin-bottom: 14px;
+-    padding-right: 96px;
+   }
+ 
+   .character-pool-mobile-copy {
+     min-width: 0;
+     padding-left: 65px;
++    padding-right: 96px;
+     min-height: 44px;
+     display: flex;
+     align-items: center;
+@@ -3695,16 +3695,17 @@
+   }
+ 
+   .character-editor-mobile-actions {
++    display: grid;
++    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+     align-items: center;
+-    gap: 8px;
++    gap: 10px;
++    margin-top: calc(env(safe-area-inset-top, 0px) + 68px);
+     margin-bottom: 14px;
+-    padding-left: 65px;
+-    padding-right: 96px;
+-    min-height: 48px;
++    min-height: 42px;
+   }
+ 
+   .character-editor-mobile-actions .action-btn {
+-    flex: 1;
++    width: 100%;
+     justify-content: center;
+     min-height: 42px;
+     padding: 8px 10px;
+@@ -4497,6 +4498,22 @@
+   margin-bottom: 6px;
+ }
+ 
++.game-director-trace-label {
++  font-size: 12px;
++  font-weight: 400;
++  color: var(--color-muted, rgba(120, 130, 140, 0.85));
++  opacity: 0.7;
++  margin-bottom: 4px;
++}
++
++.game-director-trace-line {
++  font-size: 12px;
++  font-weight: 400;
++  color: var(--color-muted, rgba(120, 130, 140, 0.85));
++  opacity: 0.7;
++  line-height: 1.55;
++}
++
+ .game-cot-header {
+   display: flex;
+   align-items: center;
+diff --git a/src-tauri/src/commands/attributes.rs b/src-tauri/src/commands/attributes.rs
+index b2601ce..33c2c14 100644
+--- a/src-tauri/src/commands/attributes.rs
++++ b/src-tauri/src/commands/attributes.rs
+@@ -33,6 +33,16 @@ pub async fn update_attribute_schema(
+     repo.update_schema(&id, &request)
+ }
+ 
++#[tauri::command]
++pub async fn delete_attribute_schema(
++    state: State<'_, AppState>,
++    id: String,
++) -> Result<(), String> {
++    let db = state.db.lock().await;
++    let repo = crate::db::repositories::attribute_repo::AttributeRepository::new(db.conn());
++    repo.delete_schema(&id)
++}
++
+ #[tauri::command]
+ pub async fn list_attribute_values(
+     state: State<'_, AppState>,
+diff --git a/src-tauri/src/db/migrations/mod.rs b/src-tauri/src/db/migrations/mod.rs
+index 7e7c72d..0351084 100644
+--- a/src-tauri/src/db/migrations/mod.rs
++++ b/src-tauri/src/db/migrations/mod.rs
+@@ -187,5 +187,20 @@ pub(crate) fn run(conn: &Connection) -> Result<(), rusqlite::Error> {
+     )?;
+     repair_desktop_ui_question_marks(conn)?;
+     repair_schedule_status_attribute_schema(conn)?;
++    repair_garbled_embedding_model_name(conn)?;
++    Ok(())
++}
++
++fn repair_garbled_embedding_model_name(conn: &Connection) -> Result<(), rusqlite::Error> {
++    // The builtin-local embedding model was seeded with a corrupted UTF-8 name.
++    // Match by id and provider to be safe.
++    conn.execute(
++        "UPDATE model_configs
++         SET name = '内置本地 Embedding / bge-small-zh-v1.5'
++         WHERE id = 'model-seed-bge-small-embedding'
++           AND provider = 'builtin-local'
++           AND name != '内置本地 Embedding / bge-small-zh-v1.5'",
++        [],
++    )?;
+     Ok(())
+ }
+diff --git a/src-tauri/src/db/repositories/attribute_repo.rs b/src-tauri/src/db/repositories/attribute_repo.rs
+index 2678af9..87a47ab 100644
+--- a/src-tauri/src/db/repositories/attribute_repo.rs
++++ b/src-tauri/src/db/repositories/attribute_repo.rs
+@@ -194,6 +194,19 @@ impl<'a> AttributeRepository<'a> {
+         }
+     }
+ 
++    pub fn delete_schema(&self, id: &str) -> Result<(), String> {
++        // attribute_values rows referencing this schema are removed automatically
++        // via the schema_id ON DELETE CASCADE foreign key.
++        let affected = self
++            .conn
++            .execute("DELETE FROM attribute_schemas WHERE id = ?1", params![id])
++            .map_err(|e| e.to_string())?;
++        if affected == 0 {
++            return Err("Attribute schema not found".to_string());
++        }
++        Ok(())
++    }
++
+     pub fn list_values(
+         &self,
+         owner_type: Option<&str>,
+diff --git a/src-tauri/src/db/seeds/mod.rs b/src-tauri/src/db/seeds/mod.rs
+index 0f9dd28..bce6788 100644
+--- a/src-tauri/src/db/seeds/mod.rs
++++ b/src-tauri/src/db/seeds/mod.rs
+@@ -633,7 +633,7 @@ fn ensure_core_seed_data(conn: &Connection) -> Result<(), rusqlite::Error> {
+             ",
+             params![
+                 "model-seed-bge-small-embedding",
+-                "闁告劕鎳愰悿?Embedding闁挎稒顑孉AI/bge-small-zh-v1.5",
++                "内置本地 Embedding / bge-small-zh-v1.5",
+                 "builtin-local",
+                 "BAAI/bge-small-zh-v1.5",
+                 "",
+diff --git a/src-tauri/src/lib.rs b/src-tauri/src/lib.rs
+index 5f3eb03..46a9f64 100644
+--- a/src-tauri/src/lib.rs
++++ b/src-tauri/src/lib.rs
+@@ -92,6 +92,7 @@ pub fn run() {
+             commands::attributes::list_attribute_schemas,
+             commands::attributes::create_attribute_schema,
+             commands::attributes::update_attribute_schema,
++            commands::attributes::delete_attribute_schema,
+             commands::attributes::list_attribute_values,
+             commands::attributes::upsert_attribute_value,
+             // 模型
+diff --git a/src-tauri/src/services/game_ui.rs b/src-tauri/src/services/game_ui.rs
+index f7eff46..4f66488 100644
+--- a/src-tauri/src/services/game_ui.rs
++++ b/src-tauri/src/services/game_ui.rs
+@@ -10,20 +10,9 @@ use crate::models::world::{
+     WorldUiDocumentRequest, WorldUiDocumentValidationResult,
+ };
+ 
+-const SUPPORTED_SCHEMA_VERSIONS: [u32; 2] = [1, 2];
++const SUPPORTED_SCHEMA_VERSIONS: [u32; 1] = [2];
+ const SUPPORTED_CAPABILITIES: [&str; 3] =
+     ["supports_file_picker", "supports_hover", "supports_mic"];
+-const LEGACY_MOUNT_IDS: [&str; 9] = [
+-    "header",
+-    "scene",
+-    "scene_focus",
+-    "character_bar",
+-    "narration",
+-    "message_list",
+-    "side_panel",
+-    "input_area",
+-    "floating_actions",
+-];
+ const SUPPORTED_ACTION_IDS: [&str; 18] = [
+     "submit_message",
+     "edit_turn_start",
+@@ -500,10 +489,7 @@ impl GameUiService {
+             };
+         };
+ 
+-        let mut normalized = parsed_value.clone();
+-        let normalized_object = normalized
+-            .as_object_mut()
+-            .expect("normalized UI document should remain an object");
++        let normalized = parsed_value.clone();
+ 
+         let schema_version = match object.get("schema_version") {
+             Some(Value::Number(number)) => number.as_u64().map(|value| value as u32),
+@@ -516,13 +502,12 @@ impl GameUiService {
+                 None
+             }
+             None => {
+-                normalized_object.insert("schema_version".to_string(), Value::from(1));
+-                state.warn(
++                state.error(
+                     "missing_schema_version",
+-                    "schema_version is missing. Compatibility mode defaults this document to schema_version 1.",
++                    "schema_version is missing. UI documents must declare schema_version 2.",
+                     "schema_version",
+                 );
+-                Some(1)
++                None
+             }
+         };
+ 
+@@ -583,7 +568,6 @@ impl GameUiService {
+         };
+ 
+         match schema_version {
+-            Some(1) => self.validate_v1_node(root, "layout.root", &mut state, &mut BTreeSet::new()),
+             Some(2) => self.validate_v2_node(root, "layout.root", &mut state),
+             Some(_) | None => {}
+         }
+@@ -595,65 +579,6 @@ impl GameUiService {
+         build_snapshot(platform, schema_version, normalized, state)
+     }
+ 
+-    fn validate_v1_node(
+-        &self,
+-        node: &Value,
+-        path: &str,
+-        state: &mut CompilationState,
+-        seen_mounts: &mut BTreeSet<String>,
+-    ) {
+-        let Some(object) = node.as_object() else {
+-            state.error("invalid_node", "Layout node must be an object.", path);
+-            return;
+-        };
+-
+-        let node_type = read_required_string(object, "type", path, state);
+-        validate_common_node_fields(object, path, state);
+-
+-        match node_type.as_deref() {
+-            Some("grid") => {
+-                validate_grid_fields(object, path, state);
+-                validate_children_v1(self, object, path, state, seen_mounts);
+-            }
+-            Some("stack") => {
+-                validate_stack_fields(object, path, state);
+-                validate_children_v1(self, object, path, state, seen_mounts);
+-            }
+-            Some("absolute") => {
+-                validate_children_v1(self, object, path, state, seen_mounts);
+-            }
+-            Some("mount") => {
+-                let Some(mount_id) = read_required_string(object, "mount", path, state) else {
+-                    return;
+-                };
+-                if !LEGACY_MOUNT_IDS.contains(&mount_id.as_str()) {
+-                    state.error(
+-                        "unknown_mount",
+-                        format!("Unknown legacy mount `{mount_id}`."),
+-                        format!("{path}.mount"),
+-                    );
+-                } else if !seen_mounts.insert(mount_id.clone()) {
+-                    state.error(
+-                        "duplicate_mount",
+-                        format!("Mount `{mount_id}` is declared more than once."),
+-                        format!("{path}.mount"),
+-                    );
+-                }
+-                if let Some(anchor) = object.get("anchor") {
+-                    validate_anchor(anchor, &format!("{path}.anchor"), state);
+-                }
+-            }
+-            Some(other) => {
+-                state.error(
+-                    "unsupported_v1_node",
+-                    format!("Node type `{other}` is not valid for schema_version 1."),
+-                    path,
+-                );
+-            }
+-            None => {}
+-        }
+-    }
+-
+     fn validate_v2_node(&self, node: &Value, path: &str, state: &mut CompilationState) {
+         let Some(object) = node.as_object() else {
+             state.error("invalid_node", "Layout node must be an object.", path);
+@@ -1110,33 +1035,6 @@ fn validate_stack_fields(object: &Map<String, Value>, path: &str, state: &mut Co
+     }
+ }
+ 
+-fn validate_children_v1(
+-    service: &GameUiService,
+-    object: &Map<String, Value>,
+-    path: &str,
+-    state: &mut CompilationState,
+-    seen_mounts: &mut BTreeSet<String>,
+-) {
+-    if let Some(children) = object.get("children") {
+-        let Some(children) = children.as_array() else {
+-            state.error(
+-                "invalid_children",
+-                "children must be an array.",
+-                format!("{path}.children"),
+-            );
+-            return;
+-        };
+-        for (index, child) in children.iter().enumerate() {
+-            service.validate_v1_node(
+-                child,
+-                &format!("{path}.children[{index}]"),
+-                state,
+-                seen_mounts,
+-            );
+-        }
+-    }
+-}
+-
+ fn validate_children_v2(
+     service: &GameUiService,
+     object: &Map<String, Value>,

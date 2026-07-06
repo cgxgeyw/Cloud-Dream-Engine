@@ -199,7 +199,7 @@ const zh: Dict = {
   "home.title": "首页",
   "home.subtitle": "选择你的下一步行动，一切故事从这里开始。",
   "home.freeNote": "本软件下载、安装及使用过程完全免费",
-  "home.brand": "云朵梦境引擎",
+  "home.brand": "云朵梦境",
   "home.mobileNewGame": "新的游戏",
   "home.mobileContinue": "继续游戏",
   "home.mobileNavHint": "点击左上角菜单展开导航",

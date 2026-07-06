@@ -194,6 +194,19 @@ impl<'a> AttributeRepository<'a> {
         }
     }
 
+    pub fn delete_schema(&self, id: &str) -> Result<(), String> {
+        // attribute_values rows referencing this schema are removed automatically
+        // via the schema_id ON DELETE CASCADE foreign key.
+        let affected = self
+            .conn
+            .execute("DELETE FROM attribute_schemas WHERE id = ?1", params![id])
+            .map_err(|e| e.to_string())?;
+        if affected == 0 {
+            return Err("Attribute schema not found".to_string());
+        }
+        Ok(())
+    }
+
     pub fn list_values(
         &self,
         owner_type: Option<&str>,

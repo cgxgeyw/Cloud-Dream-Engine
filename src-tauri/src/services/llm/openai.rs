@@ -14,6 +14,8 @@ struct OpenAIRequest {
     max_tokens: Option<i32>,
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     response_format: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<serde_json::Value>>,
@@ -123,6 +125,7 @@ fn build_openai_request(
         temperature: request.temperature,
         max_tokens: request.max_tokens,
         stream: false,
+        stream_options: None,
         response_format,
         tools: include_tools.then(|| build_openai_tools(request)),
         tool_choice: include_tools.then(|| build_openai_tool_choice(request)),
@@ -286,6 +289,7 @@ struct OpenAIStreamChoice {
 #[derive(Deserialize)]
 struct OpenAIStreamChunkResponse {
     choices: Option<Vec<OpenAIStreamChoice>>,
+    usage: Option<OpenAIUsage>,
 }
 
 fn apply_stream_data_chunk<F>(
@@ -293,6 +297,7 @@ fn apply_stream_data_chunk<F>(
     content: &mut String,
     reasoning: &mut String,
     tool_calls: &mut Vec<StreamingToolCall>,
+    usage: &mut Option<Usage>,
     on_chunk: &mut F,
 ) -> bool
 where
@@ -304,6 +309,14 @@ where
     let Ok(parsed) = serde_json::from_str::<OpenAIStreamChunkResponse>(data) else {
         return false;
     };
+    // usage 通常出现在流末尾的独立 chunk（choices 为空）中，记录最后一次见到的值。
+    if let Some(u) = parsed.usage {
+        *usage = Some(Usage {
+            prompt_tokens: u.prompt_tokens.unwrap_or(0),
+            completion_tokens: u.completion_tokens.unwrap_or(0),
+            total_tokens: u.total_tokens.unwrap_or(0),
+        });
+    }
     for choice in parsed.choices.unwrap_or_default() {
         let Some(delta) = choice.delta else {
             continue;
@@ -469,20 +482,26 @@ pub async fn chat_completion(
         }
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        if supports_response_format_fallback(status, &body, request) {
-            structured_mode = match structured_mode {
-                StructuredOutputMode::JsonObject => StructuredOutputMode::JsonSchema,
-                StructuredOutputMode::JsonSchema => StructuredOutputMode::Omit,
-                StructuredOutputMode::Omit => StructuredOutputMode::Omit,
-            };
-            response = send_chat_completion(
-                client,
-                &url,
-                api_key,
-                &build_openai_request(request, structured_mode, tool_mode),
-            )
-            .await?;
-            continue;
+        // 仅在还能进一步降级 structured 模式时才重试，否则会无限循环：
+        // 已经降到 Omit 仍失败说明问题不在 response_format，直接返回错误
+        // （与 chat_completion_stream 的处理保持一致）。
+        let next_mode = match structured_mode {
+            StructuredOutputMode::JsonObject => Some(StructuredOutputMode::JsonSchema),
+            StructuredOutputMode::JsonSchema => Some(StructuredOutputMode::Omit),
+            StructuredOutputMode::Omit => None,
+        };
+        if let Some(next_mode) = next_mode {
+            if supports_response_format_fallback(status, &body, request) {
+                structured_mode = next_mode;
+                response = send_chat_completion(
+                    client,
+                    &url,
+                    api_key,
+                    &build_openai_request(request, structured_mode, tool_mode),
+                )
+                .await?;
+                continue;
+            }
         }
         return Err(format!("API error {}: {}", status, body));
     }
@@ -491,6 +510,12 @@ pub async fn chat_completion(
         .json()
         .await
         .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    // 空 choices 说明服务端以 200 包装了异常（内容过滤、配额、上游错误等），
+    // 不能当作“正常的空回复”静默返回，否则调用方无法区分成功与失败。
+    if openai_response.choices.is_empty() {
+        return Err("API returned no choices".to_string());
+    }
 
     let content = openai_response
         .choices
@@ -540,6 +565,8 @@ where
     let response = loop {
         let streaming_request = OpenAIRequest {
             stream: true,
+            // 请求服务端在流末尾回送一个带 usage 的 chunk，否则流式路径拿不到 token 计量。
+            stream_options: Some(serde_json::json!({ "include_usage": true })),
             ..build_openai_request(request, structured_mode, ToolMode::Include)
         };
         let response = client
@@ -578,10 +605,25 @@ where
     let mut stream = response.bytes_stream();
     let mut pending = String::new();
     let mut finished = false;
+    let mut usage: Option<Usage> = None;
 
     use futures::StreamExt;
     while let Some(chunk) = stream.next().await {
-        let bytes = chunk.map_err(|e| format!("Failed to read stream: {}", e))?;
+        let bytes = match chunk {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                // 流读取中途失败时，已累积的 delta 已经通过 on_chunk 推送到 UI。
+                // 若已有内容/推理/工具调用，则按部分完成处理，返回已得内容，
+                // 避免 UI 显示了半截回复却又收到整体失败、显示与落库不一致。
+                if content.trim().is_empty()
+                    && reasoning.trim().is_empty()
+                    && tool_calls.is_empty()
+                {
+                    return Err(format!("Failed to read stream: {}", error));
+                }
+                break;
+            }
+        };
         pending.push_str(&String::from_utf8_lossy(&bytes));
 
         while let Some(split_at) = pending.find('\n') {
@@ -596,6 +638,7 @@ where
                 &mut content,
                 &mut reasoning,
                 &mut tool_calls,
+                &mut usage,
                 &mut on_chunk,
             ) {
                 finished = true;
@@ -615,6 +658,7 @@ where
                 &mut content,
                 &mut reasoning,
                 &mut tool_calls,
+                &mut usage,
                 &mut on_chunk,
             );
         }
@@ -637,7 +681,7 @@ where
             Some(reasoning)
         },
         tool_calls: finalize_streaming_tool_calls(tool_calls),
-        usage: None,
+        usage,
     })
 }
 
@@ -802,6 +846,7 @@ mod tests {
         let mut content = String::new();
         let mut reasoning = String::new();
         let mut tool_calls = Vec::new();
+        let mut usage = None;
         let mut chunks = Vec::new();
 
         let finished = apply_stream_data_chunk(
@@ -809,6 +854,7 @@ mod tests {
             &mut content,
             &mut reasoning,
             &mut tool_calls,
+            &mut usage,
             &mut |chunk| {
                 chunks.push(chunk.delta);
             },
@@ -825,6 +871,7 @@ mod tests {
         let mut content = String::new();
         let mut reasoning = String::new();
         let mut tool_calls = Vec::new();
+        let mut usage = None;
         let mut noop = |_chunk: ChatStreamChunk| {};
 
         // 工具调用分片跨多个 chunk：先 id+name，再 arguments 分两段。
@@ -833,6 +880,7 @@ mod tests {
             &mut content,
             &mut reasoning,
             &mut tool_calls,
+            &mut usage,
             &mut noop,
         );
         apply_stream_data_chunk(
@@ -840,6 +888,7 @@ mod tests {
             &mut content,
             &mut reasoning,
             &mut tool_calls,
+            &mut usage,
             &mut noop,
         );
 

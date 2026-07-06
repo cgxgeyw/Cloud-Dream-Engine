@@ -85,18 +85,31 @@ impl WorldService {
 
     pub fn delete_world(&self, conn: &Connection, id: &str) -> Result<(), String> {
         let repo = WorldRepository::new(conn);
+        // H1: 显式清理世界下所有会话数据与世界级属性。characters 经 FK 级联删除,
+        // 但其会话内残留数据(memories/attribute_values/traces/...)无外键,需手工清。
+        let world_name = repo.get(id)?.map(|world| world.name);
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        if let Some(world_name) = world_name.as_deref() {
+            crate::db::cleanup::purge_world_sessions(conn, world_name)?;
+        }
+        crate::db::cleanup::purge_world_attributes(conn, id)?;
         repo.delete(id)?;
         // 记一笔墓碑：若删除的是内置世界，避免下次启动播种时被重建。
         crate::db::seeds::mark_seed_world_tombstoned(conn, id)
             .map_err(|err| format!("记录世界删除标记失败: {err}"))?;
+        tx.commit().map_err(|e| e.to_string())?;
         Ok(())
     }
 
     pub fn delete_all_worlds(&self, conn: &Connection) -> Result<serde_json::Value, String> {
         let repo = WorldRepository::new(conn);
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        // H1: 清空所有世界时一并清空全部会话衍生数据与非世界绑定的属性。
+        crate::db::cleanup::purge_all_session_scoped_data(conn)?;
         let count = repo.delete_all()?;
         crate::db::seeds::mark_all_seed_worlds_tombstoned(conn)
             .map_err(|err| format!("记录世界删除标记失败: {err}"))?;
+        tx.commit().map_err(|e| e.to_string())?;
         Ok(serde_json::json!({ "ok": true, "deleted_count": count }))
     }
 
@@ -304,13 +317,21 @@ impl WorldService {
         WorldPackageService::build_package(data_dir, &world, &characters)
     }
 
-    pub fn import_world_package_archive(
+    /// H8: 解压 + 资产落盘(无 DB,可在锁外执行),与 DB 持久化分离。
+    pub fn unpack_world_package_archive(
         &self,
-        conn: &Connection,
         data_dir: &Path,
         data: Vec<u8>,
+    ) -> Result<ImportedWorldPackage, String> {
+        WorldPackageService::import_package_archive(data_dir, data)
+    }
+
+    /// H8: 仅做 DB 持久化(持锁),不涉及解压/磁盘 IO。
+    pub fn persist_world_package(
+        &self,
+        conn: &Connection,
+        imported: ImportedWorldPackage,
     ) -> Result<WorldDefinition, String> {
-        let imported = WorldPackageService::import_package_archive(data_dir, data)?;
         self.persist_imported_world_package(conn, imported)
     }
 

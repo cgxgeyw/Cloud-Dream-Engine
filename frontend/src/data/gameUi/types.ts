@@ -1,8 +1,7 @@
 export type GameUiPlatform = "desktop" | "mobile";
-export const DEFAULT_GAME_UI_SCHEMA_VERSION = 1;
 export const LATEST_SUPPORTED_GAME_UI_SCHEMA_VERSION = 2;
+export const DEFAULT_GAME_UI_SCHEMA_VERSION = LATEST_SUPPORTED_GAME_UI_SCHEMA_VERSION;
 export const SUPPORTED_GAME_UI_SCHEMA_VERSIONS = [
-  DEFAULT_GAME_UI_SCHEMA_VERSION,
   LATEST_SUPPORTED_GAME_UI_SCHEMA_VERSION,
 ] as const;
 export const SUPPORTED_GAME_UI_SCHEMA_VERSION = LATEST_SUPPORTED_GAME_UI_SCHEMA_VERSION;
@@ -104,41 +103,6 @@ export type GameUiPropValue =
   | GameUiActionReference
   | GameUiPropValue[]
   | { [key: string]: GameUiPropValue };
-
-export type GameUiGridNodeV1 = GameUiNodeBase & {
-  type: "grid";
-  columns?: string[];
-  rows?: string[];
-  areas?: string[][];
-  gap?: string;
-  children?: GameUiLayoutNodeV1[];
-};
-
-export type GameUiStackNodeV1 = GameUiNodeBase & {
-  type: "stack";
-  direction?: "vertical" | "horizontal";
-  wrap?: boolean;
-  gap?: string;
-  children?: GameUiLayoutNodeV1[];
-};
-
-export type GameUiAbsoluteNodeV1 = GameUiNodeBase & {
-  type: "absolute";
-  children?: GameUiLayoutNodeV1[];
-};
-
-export type GameUiMountNode = GameUiNodeBase & {
-  type: "mount";
-  mount: GameUiMountId;
-  area?: string;
-  anchor?: GameUiAnchor;
-};
-
-export type GameUiLayoutNodeV1 =
-  | GameUiGridNodeV1
-  | GameUiStackNodeV1
-  | GameUiAbsoluteNodeV1
-  | GameUiMountNode;
 
 export type GameUiGridNodeV2 = GameUiNodeBase & {
   type: "grid";
@@ -242,9 +206,9 @@ export type GameUiLayoutNodeV2 =
   | GameUiButtonNode
   | GameUiCheckboxNode;
 
-export type GameUiGridNode = GameUiGridNodeV1 | GameUiGridNodeV2;
-export type GameUiStackNode = GameUiStackNodeV1 | GameUiStackNodeV2;
-export type GameUiAbsoluteNode = GameUiAbsoluteNodeV1 | GameUiAbsoluteNodeV2;
+export type GameUiGridNode = GameUiGridNodeV2;
+export type GameUiStackNode = GameUiStackNodeV2;
+export type GameUiAbsoluteNode = GameUiAbsoluteNodeV2;
 
 export type GameUiDocumentBase = {
   meta?: Record<string, unknown>;
@@ -252,14 +216,6 @@ export type GameUiDocumentBase = {
   tokens?: Record<string, string>;
   effects?: Record<string, unknown>;
   custom_css?: string;
-};
-
-export type GameUiDocumentV1 = GameUiDocumentBase & {
-  schema_version: 1;
-  layout: {
-    root: GameUiLayoutNodeV1;
-  };
-  mounts?: Partial<Record<GameUiMountId, GameUiMountOptions>>;
 };
 
 export type GameUiDocumentV2 = GameUiDocumentBase & {
@@ -271,8 +227,8 @@ export type GameUiDocumentV2 = GameUiDocumentBase & {
   mounts?: Partial<Record<GameUiMountId, GameUiMountOptions>>;
 };
 
-export type GameUiDocument = GameUiDocumentV1 | GameUiDocumentV2;
-export type GameUiLayoutNode = GameUiLayoutNodeV1 | GameUiLayoutNodeV2;
+export type GameUiDocument = GameUiDocumentV2;
+export type GameUiLayoutNode = GameUiLayoutNodeV2;
 
 export type ParsedGameUiDocument = {
   document: GameUiDocument;

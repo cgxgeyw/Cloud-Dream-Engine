@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   createAttributeSchema,
+  deleteAttributeSchema,
   fetchAttributeSchemas,
   fetchAttributeValues,
   upsertAttributeValue,
@@ -130,8 +131,10 @@ export function AttributePanel({ scope, ownerType, ownerId }: AttributePanelProp
   const [error, setError] = useState<string | null>(null);
   const [savingSchema, setSavingSchema] = useState(false);
   const [savingValueId, setSavingValueId] = useState<string | null>(null);
+  const [deletingSchemaId, setDeletingSchemaId] = useState<string | null>(null);
 
-  async function loadData() {
+  async function loadData(options?: { isCancelled?: () => boolean }) {
+    const isCancelled = options?.isCancelled ?? (() => false);
     try {
       setLoading(true);
       setError(null);
@@ -141,17 +144,30 @@ export function AttributePanel({ scope, ownerType, ownerId }: AttributePanelProp
         ownerId ? fetchAttributeValues({ ownerType, ownerId }) : Promise.resolve([]),
       ]);
 
+      // ownerId 快速切换或组件卸载时丢弃过期结果，避免旧请求覆盖新数据 / 卸载后 setState。
+      if (isCancelled()) {
+        return;
+      }
       setSchemas(schemaData.filter((schema) => schemaAppliesToOwner(schema, scope, ownerId)));
       setValueMap(new Map(valueData.map((item) => [item.schema_id, stringifyValue(item.value)])));
     } catch (loadError) {
+      if (isCancelled()) {
+        return;
+      }
       setError(loadError instanceof Error ? loadError.message : "属性加载失败");
     } finally {
-      setLoading(false);
+      if (!isCancelled()) {
+        setLoading(false);
+      }
     }
   }
 
   useEffect(() => {
-    void loadData();
+    let cancelled = false;
+    void loadData({ isCancelled: () => cancelled });
+    return () => {
+      cancelled = true;
+    };
   }, [scope, ownerType, ownerId]);
 
   const canEditValues = useMemo(() => Boolean(ownerId), [ownerId]);
@@ -225,6 +241,26 @@ export function AttributePanel({ scope, ownerType, ownerId }: AttributePanelProp
       setError(saveError instanceof Error ? saveError.message : "属性值保存失败");
     } finally {
       setSavingValueId(null);
+    }
+  }
+
+  async function handleDeleteSchema(schema: AttributeSchemaResponse) {
+    const confirmed = window.confirm(
+      `删除属性「${schema.label}」将同时清除其在所有角色 / 世界 / 会话上的已存值，且不可恢复。确定删除？`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setDeletingSchemaId(schema.id);
+      setError(null);
+      await deleteAttributeSchema(schema.id);
+      await loadData();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "属性删除失败");
+    } finally {
+      setDeletingSchemaId(null);
     }
   }
 
@@ -338,7 +374,9 @@ export function AttributePanel({ scope, ownerType, ownerId }: AttributePanelProp
                   initialValue={currentValue}
                   disabled={!canEditValues}
                   saving={savingValueId === schema.id}
+                  deleting={deletingSchemaId === schema.id}
                   onSave={handleSaveValue}
+                  onDelete={handleDeleteSchema}
                 />
               );
             })
@@ -353,13 +391,17 @@ function AttributeValueCard({
   initialValue,
   disabled,
   saving,
+  deleting,
   onSave,
+  onDelete,
 }: {
   schema: AttributeSchemaResponse;
   initialValue: string;
   disabled: boolean;
   saving: boolean;
+  deleting: boolean;
   onSave: (schema: AttributeSchemaResponse, rawValue: string) => Promise<void>;
+  onDelete: (schema: AttributeSchemaResponse) => Promise<void>;
 }) {
   const [value, setValue] = useState(initialValue);
 
@@ -391,10 +433,18 @@ function AttributeValueCard({
           <button
             type="button"
             onClick={() => void onSave(schema, value)}
-            disabled={disabled || saving}
+            disabled={disabled || saving || deleting}
             className="action-btn action-btn--accent"
           >
             {saving ? "保存中..." : "保存属性值"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void onDelete(schema)}
+            disabled={saving || deleting}
+            className="action-btn"
+          >
+            {deleting ? "删除中..." : "删除属性"}
           </button>
         </div>
       </div>

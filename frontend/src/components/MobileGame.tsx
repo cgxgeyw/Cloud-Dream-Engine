@@ -189,20 +189,23 @@ export function MobileGame({
             const isPlayer = message.role === "player";
             const isSystem = message.role === "system";
             const speaker = message.speaker || (isPlayer ? "玩家" : "角色");
+            // L8: 用 turn_index + role + speaker + 序号组合成更稳定的 key,避免纯 index 在
+            // 消息插入/过滤时按位置复用 DOM 导致内容串行。
+            const messageKey = `${(message.metadata as Record<string, unknown> | undefined)?.turn_index ?? "t"}-${message.role}-${message.speaker ?? ""}-${index}`;
 
             if (isSystem) {
               const metadata = message.metadata as Record<string, string | number | boolean | null | undefined> | undefined;
               const actionType = metadata?.action_type as string;
               if (actionType === "switch_character") {
                 return (
-                  <div key={index} className="ios-message ios-message--system">
+                  <div key={messageKey} className="ios-message ios-message--system">
                     建议切换至：{message.metadata?.target_character_name}
                   </div>
                 );
               }
               if (actionType === "character_created") {
                 return (
-                  <div key={index} className="ios-message ios-message--system">
+                  <div key={messageKey} className="ios-message ios-message--system">
                     新角色加入：{message.metadata?.character_name}
                   </div>
                 );
@@ -212,7 +215,7 @@ export function MobileGame({
 
             return (
               <div
-                key={index}
+                key={messageKey}
                 className={`ios-message ${isPlayer ? "ios-message--player" : "ios-message--agent"}`}
               >
                 <div className="ios-message-speaker">{speaker}</div>

@@ -65,6 +65,18 @@ pub async fn create_world_with_ai(
     .await?;
 
     let db = state.db.lock().await;
+    // M12: 取模型→释放锁→长流式 LLM 调用→重新取锁,期间 model_configs 可能被改/删。
+    // 持久化前用最新值校验该模型仍存在,避免写出指向已删除模型的悬空关联。
+    let model = {
+        let repo = crate::db::repositories::model_repo::ModelRepository::new(db.conn());
+        repo.list(Some("text"))?
+            .into_iter()
+            .find(|item| item.id == model.id)
+            .ok_or_else(|| {
+                "The selected text model was changed or removed during generation. Please retry."
+                    .to_string()
+            })?
+    };
     AiWorldBuilderService::persist_world(db.conn(), &model, &request, draft)
 }
 
@@ -137,9 +149,17 @@ pub async fn import_world_package(
     filename: String,
     data: Vec<u8>,
 ) -> Result<WorldDefinition, String> {
-    let _ = filename;
+    // L1: 记录来源文件名以便排查导入问题(此前被直接丢弃)。
+    #[cfg(debug_assertions)]
+    eprintln!("[worlds] importing world package from upload: {filename}");
+    #[cfg(not(debug_assertions))]
+    let _ = &filename;
+    let service = WorldService::new();
+    // H8: 先在锁外解压并把资产写盘(可能是数 MB 的磁盘 IO),再仅为 DB 持久化短暂持锁,
+    // 避免持全局 DB 锁期间阻塞 tokio 线程做解压/磁盘 IO 而让整个 UI 停顿数秒。
+    let imported = service.unpack_world_package_archive(&state.data_dir, data)?;
     let db = state.db.lock().await;
-    WorldService::new().import_world_package_archive(db.conn(), &state.data_dir, data)
+    service.persist_world_package(db.conn(), imported)
 }
 
 #[tauri::command]
@@ -148,6 +168,9 @@ pub async fn import_world_package_from_path(
     path: String,
 ) -> Result<WorldDefinition, String> {
     let data = WorldPackageService::read_package_from_path(&path)?;
+    let service = WorldService::new();
+    // H8: 同上,解压/落盘在锁外完成。
+    let imported = service.unpack_world_package_archive(&state.data_dir, data)?;
     let db = state.db.lock().await;
-    WorldService::new().import_world_package_archive(db.conn(), &state.data_dir, data)
+    service.persist_world_package(db.conn(), imported)
 }

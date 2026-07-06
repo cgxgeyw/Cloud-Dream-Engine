@@ -20,6 +20,7 @@ class ScheduledNotificationReceiver {
         private const val KEY_EVENT_ID_PREFIX = "event_id:"
         private const val DEFAULT_EVENT_DURATION_MS = 30L * 60L * 1000L
         private const val DEFAULT_REMINDER_MINUTES = 0
+        private const val LOCAL_CALENDAR_NAME = "cloud_dream_reminders"
 
         @Volatile
         private var appContext: Context? = null
@@ -49,6 +50,7 @@ class ScheduledNotificationReceiver {
             return try {
                 ensureCalendarPermission(context)
                 val calendarId = findWritableCalendarId(context)
+                    ?: ensureLocalCalendar(context)
                     ?: return scheduleResult(
                         ok = false,
                         notificationId = notificationId,
@@ -157,6 +159,54 @@ class ScheduledNotificationReceiver {
                 "${CalendarContract.Calendars.IS_PRIMARY} DESC, ${CalendarContract.Calendars.VISIBLE} DESC"
             )?.use { cursor ->
                 while (cursor.moveToNext()) {
+                    val id = cursor.getLong(0)
+                    if (id > 0L) return id
+                }
+            }
+            return null
+        }
+
+        /**
+         * 设备上没有可写日历(例如未登录任何 Google/同步账户)时,创建一个应用自有的本地日历。
+         * 本地日历(ACCOUNT_TYPE_LOCAL)不依赖任何在线账户,只要用户授予日历权限即可写入,
+         * 保证"有权限就能用"。
+         */
+        private fun ensureLocalCalendar(context: Context): Long? {
+            existingLocalCalendarId(context)?.let { return it }
+            val values = android.content.ContentValues().apply {
+                put(CalendarContract.Calendars.ACCOUNT_NAME, APP_NAME)
+                put(CalendarContract.Calendars.ACCOUNT_TYPE, CalendarContract.ACCOUNT_TYPE_LOCAL)
+                put(CalendarContract.Calendars.NAME, LOCAL_CALENDAR_NAME)
+                put(CalendarContract.Calendars.CALENDAR_DISPLAY_NAME, APP_NAME)
+                put(
+                    CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL,
+                    CalendarContract.Calendars.CAL_ACCESS_OWNER
+                )
+                put(CalendarContract.Calendars.OWNER_ACCOUNT, APP_NAME)
+                put(CalendarContract.Calendars.VISIBLE, 1)
+                put(CalendarContract.Calendars.SYNC_EVENTS, 1)
+            }
+            val uri = CalendarContract.Calendars.CONTENT_URI.buildUpon()
+                .appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER, "true")
+                .appendQueryParameter(CalendarContract.Calendars.ACCOUNT_NAME, APP_NAME)
+                .appendQueryParameter(
+                    CalendarContract.Calendars.ACCOUNT_TYPE,
+                    CalendarContract.ACCOUNT_TYPE_LOCAL
+                )
+                .build()
+            val inserted = context.contentResolver.insert(uri, values) ?: return null
+            return ContentUris.parseId(inserted).takeIf { it > 0L }
+        }
+
+        private fun existingLocalCalendarId(context: Context): Long? {
+            context.contentResolver.query(
+                CalendarContract.Calendars.CONTENT_URI,
+                arrayOf(CalendarContract.Calendars._ID),
+                "${CalendarContract.Calendars.ACCOUNT_TYPE} = ? AND ${CalendarContract.Calendars.NAME} = ?",
+                arrayOf(CalendarContract.ACCOUNT_TYPE_LOCAL, LOCAL_CALENDAR_NAME),
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
                     val id = cursor.getLong(0)
                     if (id > 0L) return id
                 }

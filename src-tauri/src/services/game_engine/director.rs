@@ -1,6 +1,5 @@
 ﻿use crate::models::character::CharacterCreateRequest;
 use crate::models::character::CharacterDefinition;
-use crate::db::Database;
 use crate::models::mcp_tool::{McpToolDefinition, MCP_TOOL_SCHEDULE_NOTIFICATION_ID};
 use crate::models::model_config::ModelConfig;
 use crate::models::session::{ChatMessage, InventoryItem, MessageContent, SessionSnapshot};
@@ -155,63 +154,6 @@ impl WorldDirectorService {
                 "tool_loop_messages": tool_loop_messages,
             }),
         );
-        let mut modules = self.build_prompt_presets(world, session, characters);
-        modules.push(serde_json::json!({
-            "name": "???????",
-            "source": "???? / ???????",
-            "content": system_prompt,
-            "editable": true,
-            "sent": true
-        }));
-        modules.push(serde_json::json!({
-            "name": "瀹㈣涓栫晫璧勬枡",
-            "source": "???????",
-            "content": serde_json::to_string_pretty(payload.get("basic_setting").unwrap_or(&serde_json::Value::Null)).unwrap_or_else(|_| "{}".to_string()),
-            "editable": false,
-            "sent": true
-        }));
-        modules.push(serde_json::json!({
-            "name": "Current state",
-            "source": "Runtime state",
-            "content": serde_json::to_string_pretty(payload.get("current_state").unwrap_or(&serde_json::Value::Null)).unwrap_or_else(|_| "{}".to_string()),
-            "editable": false,
-            "sent": true
-        }));
-        modules.push(serde_json::json!({
-            "name": "Chat history",
-            "source": "Session history",
-            "content": serde_json::to_string_pretty(payload.get("chat_history").unwrap_or(&serde_json::Value::Null)).unwrap_or_else(|_| "[]".to_string()),
-            "editable": false,
-            "sent": true
-        }));
-        modules.push(serde_json::json!({
-            "name": "Tool data",
-            "source": "System tool registry",
-            "content": serde_json::to_string_pretty(payload.get("tool_data").unwrap_or(&serde_json::Value::Null)).unwrap_or_else(|_| "{}".to_string()),
-            "editable": false,
-            "sent": true
-        }));
-        serde_json::json!({
-            "schema_version": "prompt_call_v1",
-            "recipient_type": "director",
-            "recipient_name": "world_director",
-            "stage": stage,
-            "purpose": "Decide world state, tool calls and speaker order",
-            "modules": modules,
-            "messages": [
-                { "role": "system", "content": system_prompt },
-                { "role": "user", "content": payload_text }
-            ],
-            "final_sent_content": format!("{}\n\n{}", system_prompt, payload_text),
-            "raw_model_return": serde_json::Value::Null,
-            "return_processing": serde_json::Value::Null,
-            "processed_model_return": serde_json::Value::Null,
-            "written_result": serde_json::Value::Null,
-            "raw_debug": {
-                "payload": payload,
-                "tool_loop_messages": tool_loop_messages
-            }
-        })
     }
 
     pub fn attach_prompt_call_result(
@@ -1009,14 +951,32 @@ impl WorldDirectorService {
                 "latency_ms": started.elapsed().as_millis() as i64,
                 "response": serde_json::to_value(&response).unwrap_or_default(),
             });
+            // H7: schedule_notification 工具需要 DB。统一在此 async 层向主 AppState 加锁取连接,
+            // 传入(同步的)效果处理函数,避免其内部 Database::new() 另开独立连接。
+            use tauri::Manager;
+            let notification_state = notification_runtime
+                .as_ref()
+                .map(|runtime| runtime.app.state::<crate::state::AppState>());
+            let notification_db_guard = match notification_state.as_ref() {
+                Some(state) => Some(state.db.lock().await),
+                None => None,
+            };
+            let runtime_for_iter = notification_runtime.as_ref().map(|runtime| {
+                NotificationToolRuntime {
+                    app: runtime.app,
+                    data_dir: runtime.data_dir,
+                }
+            });
             let tool_enriched = self.apply_tool_call_effects_with_notifications(
                 &parsed,
                 session,
                 world,
                 characters,
-                notification_runtime,
+                runtime_for_iter,
+                notification_db_guard.as_ref().map(|guard| guard.conn()),
                 turn_index,
             );
+            drop(notification_db_guard);
             let iteration = traces.len() + 1;
             traces.push(DirectorLoopIterationTrace {
                 iteration,
@@ -1053,7 +1013,9 @@ impl WorldDirectorService {
         world: &WorldDefinition,
         characters: &[CharacterDefinition],
     ) -> serde_json::Value {
-        self.apply_tool_call_effects_with_notifications(parsed, session, world, characters, None, 0)
+        self.apply_tool_call_effects_with_notifications(
+            parsed, session, world, characters, None, None, 0,
+        )
     }
 
     fn apply_tool_call_effects_with_notifications(
@@ -1063,6 +1025,7 @@ impl WorldDirectorService {
         world: &WorldDefinition,
         characters: &[CharacterDefinition],
         notification_runtime: Option<NotificationToolRuntime<'_>>,
+        notification_conn: Option<&rusqlite::Connection>,
         turn_index: i32,
     ) -> serde_json::Value {
         let tool_calls = self.extract_tool_calls(parsed, Some(self.resolve_tool_call_limit(world)));
@@ -1263,9 +1226,10 @@ impl WorldDirectorService {
                         continue;
                     }
                     if let Some(runtime) = notification_runtime {
-                        let result = match Database::new(&runtime.data_dir.to_path_buf()) {
-                            Ok(db) => NotificationScheduler::execute_tool_call(
-                                db.conn(),
+                        // H7: 使用调用方传入的主连接(在 async 层加锁取得),不再 Database::new()。
+                        let result = match notification_conn {
+                            Some(conn) => NotificationScheduler::execute_tool_call(
+                                conn,
                                 runtime.app,
                                 runtime.data_dir,
                                 NotificationToolContext {
@@ -1279,12 +1243,12 @@ impl WorldDirectorService {
                                 &call_id,
                                 &arguments,
                             ),
-                            Err(error) => serde_json::json!({
+                            None => serde_json::json!({
                                 "id": call_id,
                                 "tool_name": "schedule_notification",
                                 "tool_call_id": call_id,
                                 "ok": false,
-                                "error": error,
+                                "error": "notification database connection is unavailable",
                             }),
                         };
                         tool_results.push(result);
@@ -1296,7 +1260,15 @@ impl WorldDirectorService {
                             let body = pending.body.clone();
                             let title = pending.title.clone();
                             pending_notifications.push(
-                                serde_json::to_value(&pending).unwrap_or_else(|_| {
+                                serde_json::to_value(&pending).unwrap_or_else(|err| {
+                                    // L11: 序列化失败会构造残缺对象,通知可能永不触发;记录日志便于排查。
+                                    #[cfg(debug_assertions)]
+                                    eprintln!(
+                                        "[director] serialize pending notification failed (session={}, call={}): {err}",
+                                        session.id, call_id
+                                    );
+                                    #[cfg(not(debug_assertions))]
+                                    let _ = err;
                                     serde_json::json!({
                                         "tool_call_id": call_id,
                                         "source": format!("tool:schedule_notification:{}:{}", session.id, call_id),

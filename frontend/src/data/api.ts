@@ -164,6 +164,16 @@ async function requestJson<TResponse, TPayload>(
   return (await response.json()) as TResponse;
 }
 
+async function requestVoid(
+  method: "DELETE" | "POST" | "PUT",
+  path: string,
+): Promise<void> {
+  const response = await fetch(toApiUrl(path), { method });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+}
+
 export function fetchWorlds() {
   return fetchJson<WorldResponse[]>("/api/worlds");
 }
@@ -179,6 +189,10 @@ export function createAttributeSchema(payload: AttributeSchemaUpsertRequest) {
 
 export function updateAttributeSchema(schemaId: string, payload: AttributeSchemaUpsertRequest) {
   return requestJson<AttributeSchemaResponse, AttributeSchemaUpsertRequest>("PUT", `/api/attributes/schemas/${schemaId}`, payload);
+}
+
+export function deleteAttributeSchema(schemaId: string) {
+  return requestVoid("DELETE", `/api/attributes/schemas/${schemaId}`);
 }
 
 export function fetchAttributeValues(params: {
@@ -488,7 +502,17 @@ export async function streamPlayerAction(
     }
   }
 
-  if (buffer.trim() || dataLines.length > 0) {
+  // L5: 流结束时 buffer 里可能残留最后一行(无换行符结尾)。此前直接 flushEvent 只消费
+  // dataLines,这条残留的 data:/event: 行从未被解析进 dataLines,导致最终快照可能丢失。
+  // 这里先把残留行按同样规则解析进缓冲,再 flush。
+  const tail = buffer.endsWith("\r") ? buffer.slice(0, -1) : buffer;
+  if (tail.startsWith("event:")) {
+    currentEvent = tail.slice(6).trim() || "message";
+  } else if (tail.startsWith("data:")) {
+    dataLines.push(tail.slice(5).trim());
+  }
+  buffer = "";
+  if (dataLines.length > 0) {
     flushEvent();
   }
 
@@ -607,6 +631,9 @@ export function assetUrl(path: string): string {
   const normalized = normalizeAssetReference(path);
   if (!normalized) return "";
   if (normalized.startsWith("http")) return normalized;
+  // H11: data:/blob: 是自包含 URI,不能拼接 API_BASE_URL,否则头像/背景全部加载失败
+  // (与 Tauri 版处理保持一致)。
+  if (normalized.startsWith("data:") || normalized.startsWith("blob:")) return normalized;
   // 开发环境下补上 API_BASE_URL，直接命中后端静态资源
   if (normalized.startsWith("/")) return `${API_BASE_URL}${normalized}`;
   return `${API_BASE_URL}/${normalized}`;

@@ -11,7 +11,7 @@ pub(crate) async fn get_debug_memories_impl(
     let db = state.db.lock().await;
 
     let session = common::query_session(db.conn(), &session_id)?;
-    let world = common::query_world(db.conn(), &session.world_name)?;
+    let world = common::query_world_for_session(db.conn(), &session)?;
     let characters = common::query_characters(db.conn(), world.as_ref().map(|w| w.id.as_str()))?;
     let memories = common::query_memories(
         db.conn(),

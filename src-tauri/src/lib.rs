@@ -40,7 +40,8 @@ pub fn run() {
                 let _ = crate::services::notifications::NotificationScheduler::restore_pending(
                     &notification_app,
                     &notification_data_dir,
-                );
+                )
+                .await;
             });
             Ok(())
         })
@@ -92,6 +93,7 @@ pub fn run() {
             commands::attributes::list_attribute_schemas,
             commands::attributes::create_attribute_schema,
             commands::attributes::update_attribute_schema,
+            commands::attributes::delete_attribute_schema,
             commands::attributes::list_attribute_values,
             commands::attributes::upsert_attribute_value,
             // 模型

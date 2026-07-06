@@ -22,15 +22,36 @@ pub fn query_session(
         .ok_or_else(|| "Session not found".to_string())
 }
 
-pub fn query_world(
+/// M11: 调试面板应按 id 关联世界,而非按名字(重名/复制世界会加载错误世界的数据)。
+/// 会话表只存 world_name,但该会话的 memories 行存有真实 world_id,优先据此精确定位;
+/// 仅当会话尚无记忆(如刚创建)时才回退到按名字匹配。
+pub fn query_world_for_session(
     db: &rusqlite::Connection,
-    world_name: &str,
+    session: &SessionSnapshot,
 ) -> Result<Option<WorldDefinition>, String> {
     let world_repo = crate::db::repositories::world_repo::WorldRepository::new(db);
+    if let Some(world_id) = query_session_world_id(db, &session.id)? {
+        if let Some(world) = world_repo.get(&world_id)? {
+            return Ok(Some(world));
+        }
+    }
     Ok(world_repo
         .list()?
         .into_iter()
-        .find(|item| item.name == world_name))
+        .find(|item| item.name == session.world_name))
+}
+
+fn query_session_world_id(
+    db: &rusqlite::Connection,
+    session_id: &str,
+) -> Result<Option<String>, String> {
+    let mut stmt = db
+        .prepare("SELECT world_id FROM memories WHERE session_id = ?1 AND world_id <> '' LIMIT 1")
+        .map_err(|e| e.to_string())?;
+    let world_id = stmt
+        .query_row(params![session_id], |row| row.get::<_, String>(0))
+        .ok();
+    Ok(world_id)
 }
 
 pub fn query_characters(

@@ -38,21 +38,21 @@ pub async fn get_session(
         .await;
     {
         let db = state.db.lock().await;
-        state
+        let merged = state
             .services
             .runtime
             .session_orchestrator
-            .persist_session_snapshot(db.conn(), &updated)?;
+            .persist_resolved_session_assets(db.conn(), &id, &updated)?;
         if let Some(overlay) = state
             .services
             .runtime
             .session_orchestrator
-            .build_incomplete_turn_overlay(db.conn(), &updated)?
+            .build_incomplete_turn_overlay(db.conn(), &merged)?
         {
             return Ok(overlay);
         }
+        Ok(merged)
     }
-    Ok(updated)
 }
 
 #[tauri::command]
@@ -158,7 +158,7 @@ pub async fn submit_player_action(
                 );
             let snapshot =
                 build_director_progress_snapshot(&session, &messages, trace_chat_message);
-            let _ = SessionEventEmitter::emit_snapshot(&app, &session_id, &snapshot);
+            SessionEventEmitter::emit_snapshot_logged(&app, &session_id, &snapshot);
         };
     let director_turn = state
         .services
@@ -206,7 +206,7 @@ pub async fn submit_player_action(
                 snapshot.messages.push(failure_message);
                 snapshot
             };
-            let _ = SessionEventEmitter::emit_snapshot(&app, &session_id, &overlay);
+            SessionEventEmitter::emit_snapshot_logged(&app, &session_id, &overlay);
             return Ok(overlay);
         }
     };
@@ -246,7 +246,7 @@ pub async fn submit_player_action(
             turn_index,
             session.messages.len().saturating_add(1),
         );
-        let _ = SessionEventEmitter::emit_snapshot(&app, &session_id, &snapshot);
+        SessionEventEmitter::emit_snapshot_logged(&app, &session_id, &snapshot);
     }
 
     let speaker_turn_result = {
@@ -260,7 +260,7 @@ pub async fn submit_player_action(
                     turn_index,
                     base_message_count,
                 );
-                let _ = SessionEventEmitter::emit_snapshot(&app, &session_id, &snapshot);
+                SessionEventEmitter::emit_snapshot_logged(&app, &session_id, &snapshot);
             };
         state
             .services
@@ -311,7 +311,7 @@ pub async fn submit_player_action(
             snapshot.messages.push(failure_message);
             snapshot
         };
-        let _ = SessionEventEmitter::emit_snapshot(&app, &session_id, &overlay);
+        SessionEventEmitter::emit_snapshot_logged(&app, &session_id, &overlay);
         return Ok(overlay);
     }
 
@@ -445,7 +445,7 @@ pub async fn switch_player_character(
             .session_orchestrator
             .writeback_switch_player_character(db.conn(), &updated)?;
     }
-    let _ = SessionEventEmitter::emit_snapshot(&app, &session_id, &updated);
+    SessionEventEmitter::emit_snapshot_logged(&app, &session_id, &updated);
     Ok(updated)
 }
 
@@ -484,16 +484,28 @@ pub async fn retry_failed_llm_step(
             .services
             .runtime
             .session_orchestrator
-            .verify_retry_capsule(db.conn(), &session_id, &request.retry_token)?;
+            .claim_retry_capsule(db.conn(), &session_id, &request.retry_token)?;
     }
-    let result = resume_last_incomplete_turn(app, state.clone(), session_id.clone()).await?;
+    let result = match resume_last_incomplete_turn(app, state.clone(), session_id.clone()).await {
+        Ok(result) => result,
+        Err(err) => {
+            // 回合执行失败:把胶囊退回 active,允许用户用同一 token 再试(不双重消费)。
+            let db = state.db.lock().await;
+            let _ = state
+                .services
+                .runtime
+                .session_orchestrator
+                .release_retry_capsule(db.conn(), &session_id, &request.retry_token);
+            return Err(err);
+        }
+    };
     {
         let db = state.db.lock().await;
         state
             .services
             .runtime
             .session_orchestrator
-            .consume_retry_capsule(db.conn(), &session_id, &request.retry_token)?;
+            .finalize_retry_capsule(db.conn(), &session_id, &request.retry_token)?;
     }
     Ok(result)
 }
@@ -547,7 +559,7 @@ async fn run_agent_chat_player_action(
                     turn_index,
                     base_message_count,
                 );
-                let _ = SessionEventEmitter::emit_snapshot(app, &session_id, &snapshot);
+                SessionEventEmitter::emit_snapshot_logged(app, &session_id, &snapshot);
             };
         crate::services::game_engine::orchestrator::run_agent_chat_speaker_turn(
             &state.services.runtime.session_orchestrator,
@@ -592,7 +604,7 @@ async fn run_agent_chat_player_action(
             snapshot.messages.push(failure_message);
             snapshot
         };
-        let _ = SessionEventEmitter::emit_snapshot(app, &session_id, &overlay);
+        SessionEventEmitter::emit_snapshot_logged(app, &session_id, &overlay);
         return Ok(overlay);
     }
 
@@ -694,7 +706,7 @@ async fn run_agent_chat_player_action(
             &world,
         )?;
     }
-    let _ = SessionEventEmitter::emit_snapshot(app, &session_id, &updated);
+    SessionEventEmitter::emit_snapshot_logged(app, &session_id, &updated);
     Ok(updated)
 }
 
@@ -826,7 +838,7 @@ fn finalize_turn_snapshot(
         runtime_application,
         world,
     )?;
-    let _ = SessionEventEmitter::emit_snapshot(app, session_id, updated);
+    SessionEventEmitter::emit_snapshot_logged(app, session_id, updated);
     Ok(())
 }
 
@@ -1136,24 +1148,23 @@ fn build_progress_present_characters(
 }
 
 fn slugify_progress_scene_id(value: &str) -> String {
-    let mut normalized = value
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() {
-                character.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>();
-    while normalized.contains("--") {
-        normalized = normalized.replace("--", "-");
+    // L2: 单次扫描折叠连续 '-',避免反复全量 replace。
+    let mut normalized = String::with_capacity(value.len());
+    let mut last_was_dash = false;
+    for character in value.chars() {
+        if character.is_ascii_alphanumeric() {
+            normalized.push(character.to_ascii_lowercase());
+            last_was_dash = false;
+        } else if !last_was_dash {
+            normalized.push('-');
+            last_was_dash = true;
+        }
     }
-    let normalized = normalized.trim_matches('-').to_string();
+    let normalized = normalized.trim_matches('-');
     if normalized.is_empty() {
         "scene-switch".to_string()
     } else {
-        normalized
+        normalized.to_string()
     }
 }
 

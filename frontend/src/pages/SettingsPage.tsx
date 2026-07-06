@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useIsMobile } from "../components/ResponsiveLayout";
+import { useSectionParam } from "../hooks/useSectionParam";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   assetUrl,
@@ -118,7 +119,11 @@ export function SettingsPage() {
 
   // Desktop: activeTab, Mobile: activeSection + section-list navigation
   const [activeTab, setActiveTab] = useState<TabId>("text-model");
-  const [activeSection, setActiveSection] = useState<TabId | null>(null);
+  // 移动端「打开某项设置」由 URL 的 ?section= 驱动（见 useSectionParam）：
+  // 打开即 push 一条历史，关闭则在有应用内历史时走历史回退、否则清参数回到列表。
+  const { activeSection, openSection: openSectionParam, closeSection } = useSectionParam<TabId>(
+    tabIds.map((tab) => tab.id),
+  );
 
   const [settings, setSettings] = useState<SettingsResponse | null>(null);
   const [textModels, setTextModels] = useState<ModelConfigResponse[]>([]);
@@ -201,7 +206,7 @@ export function SettingsPage() {
 
   // Mobile-specific navigation
   function openSection(sectionId: TabId) {
-    setActiveSection(sectionId);
+    openSectionParam(sectionId);
     if (isModelTab(sectionId)) {
       setActiveTab(sectionId);
     }
@@ -210,31 +215,10 @@ export function SettingsPage() {
   }
 
   function closeMobileSection() {
-    setActiveSection(null);
     closeModelEditor();
     setError(null);
+    closeSection();
   }
-
-  useEffect(() => {
-    if (!isMobile) {
-      delete document.documentElement.dataset.settingsDetailOpen;
-      return;
-    }
-    if (activeSection) {
-      document.documentElement.dataset.settingsDetailOpen = "true";
-    } else {
-      delete document.documentElement.dataset.settingsDetailOpen;
-    }
-
-    const handleSettingsBack = () => {
-      closeMobileSection();
-    };
-    window.addEventListener("settings:navigate-back", handleSettingsBack);
-    return () => {
-      window.removeEventListener("settings:navigate-back", handleSettingsBack);
-      delete document.documentElement.dataset.settingsDetailOpen;
-    };
-  }, [activeSection, isMobile]);
 
 
   function openNewModel() {
@@ -1049,9 +1033,6 @@ export function SettingsPage() {
     return (
       <div className="settings-page-shell">
         <div className="settings-detail-head">
-          <button type="button" onClick={closeMobileSection} className="settings-detail-back action-btn">
-            <ArrowLeft size={14} /> {t("common.back")}
-          </button>
           <div className="settings-detail-head-copy">
             <span>{t("settings.currentGroup")}</span>
             <strong>{currentSectionMeta ? t(currentSectionMeta.labelKey) : ""}</strong>

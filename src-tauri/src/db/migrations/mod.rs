@@ -91,11 +91,15 @@ fn repair_desktop_ui_question_marks(conn: &Connection) -> Result<(), rusqlite::E
 }
 
 fn repair_schedule_status_attribute_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
+    // M4: 仅修复仍处于损坏状态(value_type 不是 'list')的行,带守卫避免每次启动无条件
+    // 覆盖,从而不会把用户对该 schema 的修改静默回滚(与 repair_garbled_embedding_model_name
+    // 的 `name != …` 守卫思路一致)。
     conn.execute(
         "UPDATE attribute_schemas
          SET value_type = 'list',
              default_value_json = '[]'
-         WHERE id = 'attr-schedule-assistant-notifications'",
+         WHERE id = 'attr-schedule-assistant-notifications'
+           AND value_type <> 'list'",
         [],
     )?;
     Ok(())
@@ -187,5 +191,20 @@ pub(crate) fn run(conn: &Connection) -> Result<(), rusqlite::Error> {
     )?;
     repair_desktop_ui_question_marks(conn)?;
     repair_schedule_status_attribute_schema(conn)?;
+    repair_garbled_embedding_model_name(conn)?;
+    Ok(())
+}
+
+fn repair_garbled_embedding_model_name(conn: &Connection) -> Result<(), rusqlite::Error> {
+    // The builtin-local embedding model was seeded with a corrupted UTF-8 name.
+    // Match by id and provider to be safe.
+    conn.execute(
+        "UPDATE model_configs
+         SET name = '内置本地 Embedding / bge-small-zh-v1.5'
+         WHERE id = 'model-seed-bge-small-embedding'
+           AND provider = 'builtin-local'
+           AND name != '内置本地 Embedding / bge-small-zh-v1.5'",
+        [],
+    )?;
     Ok(())
 }

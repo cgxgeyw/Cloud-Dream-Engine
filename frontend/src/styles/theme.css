@@ -3618,12 +3618,12 @@
     display: grid;
     gap: 12px;
     margin-bottom: 14px;
-    padding-right: 96px;
   }
 
   .worlds-mobile-title {
     margin: 0;
     padding-left: 65px;
+    padding-right: 96px;
     min-height: 44px;
     display: flex;
     align-items: center;
@@ -3658,12 +3658,12 @@
     gap: 12px;
     min-height: 48px;
     margin-bottom: 14px;
-    padding-right: 96px;
   }
 
   .character-pool-mobile-copy {
     min-width: 0;
     padding-left: 65px;
+    padding-right: 96px;
     min-height: 44px;
     display: flex;
     align-items: center;
@@ -3695,16 +3695,17 @@
   }
 
   .character-editor-mobile-actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
     align-items: center;
-    gap: 8px;
+    gap: 10px;
+    margin-top: calc(env(safe-area-inset-top, 0px) + 68px);
     margin-bottom: 14px;
-    padding-left: 65px;
-    padding-right: 96px;
-    min-height: 48px;
+    min-height: 42px;
   }
 
   .character-editor-mobile-actions .action-btn {
-    flex: 1;
+    width: 100%;
     justify-content: center;
     min-height: 42px;
     padding: 8px 10px;
@@ -4495,6 +4496,22 @@
   color: var(--color-muted, rgba(120, 130, 140, 0.85));
   opacity: 0.7;
   margin-bottom: 6px;
+}
+
+.game-director-trace-label {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--color-muted, rgba(120, 130, 140, 0.85));
+  opacity: 0.7;
+  margin-bottom: 4px;
+}
+
+.game-director-trace-line {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--color-muted, rgba(120, 130, 140, 0.85));
+  opacity: 0.7;
+  line-height: 1.55;
 }
 
 .game-cot-header {

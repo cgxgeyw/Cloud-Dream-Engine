@@ -26,17 +26,19 @@ export const COT_PREVIEW_LIMIT = 200;
 export const CotBlock: React.FC<{
   text: string;
   label?: string;
-}> = ({ text, label = "思维链" }) => {
+  streaming?: boolean;
+}> = ({ text, label = "思维链", streaming = false }) => {
   const [expanded, setExpanded] = useState(false);
   const normalized = text.trim();
   if (!normalized) {
     return null;
   }
-  const overflow = normalized.length > COT_PREVIEW_LIMIT;
-  const shown = expanded || !overflow ? normalized : normalized.slice(0, COT_PREVIEW_LIMIT);
+  // 流式进行中时全量显示，让思维链逐字增长可见；流式结束后恢复 200 字折叠。
+  const overflow = !streaming && normalized.length > COT_PREVIEW_LIMIT;
+  const shown = streaming || expanded || !overflow ? normalized : normalized.slice(0, COT_PREVIEW_LIMIT);
 
   return (
-    <div className="game-cot">
+    <div className="game-cot" data-streaming={streaming ? "true" : "false"}>
       <div className="game-cot-header">
         <span className="game-cot-label">{label}</span>
         {overflow ? (
@@ -72,7 +74,7 @@ export const RenderDirectorTrace: React.FC<{
       <div className="game-director-trace-title">
         {trace.reasoningExpanded ? "世界主控正在思考…" : "世界主控思维链"}
       </div>
-      {trace.reasoning ? <CotBlock text={trace.reasoning} /> : null}
+      {trace.reasoning ? <CotBlock text={trace.reasoning} streaming={trace.reasoningExpanded} /> : null}
       <div className="game-director-trace-block">
         <div className="game-director-trace-label">正文</div>
         <div className="game-director-trace-lines">

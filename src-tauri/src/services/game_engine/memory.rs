@@ -54,6 +54,48 @@ type LocalEmbeddingCache = Mutex<Option<LocalEmbeddingInstance>>;
 #[cfg(not(feature = "local-embedding"))]
 type LocalEmbeddingCache = Mutex<()>;
 
+/// 角色记忆召回的分阶段计划。
+///
+/// 设计目的(C1/H9):嵌入 HTTP 调用绝不能在持有全局 DB 锁期间发起。
+/// 召回因此被拆为三步:
+/// 1. `prepare_character_recall`(同步,持锁):读取候选记忆、词法打分、已存向量,
+///    并收集仍需嵌入的输入。
+/// 2. `embed_recall_plan`(异步,锁外):做嵌入 HTTP 往返,填充查询向量与新向量。
+/// 3. `finalize_character_recall`(同步,持锁):写回新向量缓存并完成排序。
+pub struct CharacterRecallPlan {
+    limit: i32,
+    candidates: Vec<MemoryEntry>,
+    lexical_scores: HashMap<String, f64>,
+    retrieval_mode: String,
+    semantic_weight: f64,
+    model: Option<ModelConfig>,
+    model_key: String,
+    query_input: String,
+    stored_vectors: HashMap<String, Vec<f32>>,
+    pending_inputs: Vec<(String, String)>,
+    query_vector: Vec<f32>,
+    computed_vectors: Vec<(String, Vec<f32>)>,
+}
+
+impl CharacterRecallPlan {
+    fn empty() -> Self {
+        Self {
+            limit: 1,
+            candidates: Vec::new(),
+            lexical_scores: HashMap::new(),
+            retrieval_mode: "hybrid".to_string(),
+            semantic_weight: 0.65,
+            model: None,
+            model_key: String::new(),
+            query_input: String::new(),
+            stored_vectors: HashMap::new(),
+            pending_inputs: Vec::new(),
+            query_vector: Vec::new(),
+            computed_vectors: Vec::new(),
+        }
+    }
+}
+
 pub struct MemoryService {
     data_dir: PathBuf,
     http_client: reqwest::blocking::Client,
@@ -79,6 +121,10 @@ impl MemoryService {
         }
     }
 
+    /// 同步召回(测试 / 非锁敏感场景使用)。生产说话人回合走分阶段路径
+    /// (`prepare_character_recall` → `embed_recall_plan` → `finalize_character_recall`),
+    /// 以避免持锁期间发起嵌入 HTTP(C1/H9)。此处复用同一套阶段以保证行为一致。
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn recall_entries_for_character(
         &self,
         conn: &Connection,
@@ -92,32 +138,199 @@ impl MemoryService {
         participants: &[String],
         limit: i32,
     ) -> Result<Vec<MemoryEntry>, String> {
+        let mut plan = self.prepare_character_recall(
+            conn,
+            world,
+            world_id,
+            session_id,
+            character_id,
+            query_text,
+            location,
+            scene_id,
+            participants,
+            limit,
+        )?;
+        self.embed_recall_plan(&mut plan);
+        Ok(self.finalize_character_recall(conn, plan))
+    }
+
+    /// 阶段 1(同步,持锁):读取候选记忆 + 词法打分 + 已存向量,收集待嵌入输入。
+    /// 不做任何 HTTP。返回的 plan 交给 `embed_recall_plan`(锁外)继续。
+    pub fn prepare_character_recall(
+        &self,
+        conn: &Connection,
+        world: &WorldDefinition,
+        world_id: &str,
+        session_id: &str,
+        character_id: Option<&str>,
+        query_text: &str,
+        location: &str,
+        scene_id: Option<&str>,
+        participants: &[String],
+        limit: i32,
+    ) -> Result<CharacterRecallPlan, String> {
         let Some(character_id) = character_id
             .map(|value| value.trim())
             .filter(|value| !value.is_empty())
         else {
-            return Ok(Vec::new());
+            return Ok(CharacterRecallPlan::empty());
         };
         let repo = crate::db::repositories::memory_repo::MemoryRepository::new(conn);
         let candidate_limit = resolve_character_memory_candidate_limit(world).max(limit.max(1) * 4);
-        let memories = repo.list(&MemoryQueryParams {
+        let candidates = repo.list(&MemoryQueryParams {
             world_id: Some(world_id.to_string()),
             session_id: Some(session_id.to_string()),
             character_id: Some(character_id.to_string()),
             layer: None,
             limit: Some(candidate_limit),
         })?;
-        let ranked = self.rank_character_memories(
-            conn,
-            world,
-            memories,
-            session_id,
-            query_text,
-            location,
-            scene_id,
-            participants,
+
+        let normalized_query = normalize_memory_text(query_text);
+        let query_terms = build_memory_search_terms(query_text);
+        let participant_terms = participants
+            .iter()
+            .map(|item| normalize_memory_text(item))
+            .filter(|item| !item.is_empty())
+            .collect::<Vec<_>>();
+        let location_term = normalize_memory_text(location);
+        let newest_created_at = candidates.iter().map(|entry| entry.created_at.clone()).max();
+        let lexical_scores = candidates
+            .iter()
+            .map(|entry| {
+                (
+                    entry.id.clone(),
+                    score_memory_entry(
+                        entry,
+                        &normalized_query,
+                        &query_terms,
+                        &participant_terms,
+                        &location_term,
+                        scene_id,
+                        session_id,
+                        newest_created_at.as_deref(),
+                    ),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        let retrieval_mode = resolve_character_memory_retrieval_mode(world);
+        let semantic_weight = resolve_character_memory_semantic_weight(world);
+        let mut plan = CharacterRecallPlan {
+            limit,
+            candidates,
+            lexical_scores,
+            retrieval_mode: retrieval_mode.clone(),
+            semantic_weight,
+            ..CharacterRecallPlan::empty()
+        };
+
+        if retrieval_mode == "lexical_only" {
+            return Ok(plan);
+        }
+        let Some(model) = self.resolve_embedding_model(conn).ok().flatten() else {
+            return Ok(plan);
+        };
+
+        let model_key = model.id.trim().to_string();
+        let memory_ids = plan
+            .candidates
+            .iter()
+            .map(|entry| entry.id.clone())
+            .collect::<Vec<_>>();
+        let embedding_repo =
+            crate::db::repositories::memory_embedding_repo::MemoryEmbeddingRepository::new(conn);
+        let stored_vectors =
+            embedding_repo.list_by_model_and_memory_ids(&model_key, &memory_ids)?;
+        let pending_inputs = plan
+            .candidates
+            .iter()
+            .filter(|entry| !stored_vectors.contains_key(&entry.id))
+            .map(|entry| (entry.id.clone(), build_memory_embedding_input(entry)))
+            .collect::<Vec<_>>();
+
+        plan.query_input =
+            build_memory_query_text(query_text, location, scene_id, participants);
+        plan.model = Some(model);
+        plan.model_key = model_key;
+        plan.stored_vectors = stored_vectors;
+        plan.pending_inputs = pending_inputs;
+        Ok(plan)
+    }
+
+    /// 阶段 2(可在锁外的 spawn_blocking 中执行):做嵌入 HTTP 往返。
+    /// 仅触网,不碰 DB。本地嵌入模型同样在此完成(纯 CPU,无锁)。
+    pub fn embed_recall_plan(&self, plan: &mut CharacterRecallPlan) {
+        let Some(model) = plan.model.clone() else {
+            return;
+        };
+        match self.embed_texts(&model, std::slice::from_ref(&plan.query_input)) {
+            Ok(vectors) => {
+                plan.query_vector = vectors.into_iter().next().unwrap_or_default();
+            }
+            Err(_) => {
+                // 嵌入失败时退回纯词法排序。
+                plan.model = None;
+                return;
+            }
+        }
+        if plan.query_vector.is_empty() {
+            plan.model = None;
+            return;
+        }
+        if plan.pending_inputs.is_empty() {
+            return;
+        }
+        let inputs = plan
+            .pending_inputs
+            .iter()
+            .map(|(_, input)| input.clone())
+            .collect::<Vec<_>>();
+        if let Ok(vectors) = self.embed_texts(&model, &inputs) {
+            for ((id, _), vector) in plan.pending_inputs.iter().zip(vectors.into_iter()) {
+                if !vector.is_empty() {
+                    plan.computed_vectors.push((id.clone(), vector));
+                }
+            }
+        }
+    }
+
+    /// 阶段 3(同步,持锁):写回新算出的向量缓存,计算语义分并完成排序。
+    pub fn finalize_character_recall(
+        &self,
+        conn: &Connection,
+        mut plan: CharacterRecallPlan,
+    ) -> Vec<MemoryEntry> {
+        let limit = plan.limit.max(1) as usize;
+        let semantic_scores = if plan.model.is_some() && !plan.query_vector.is_empty() {
+            if !plan.computed_vectors.is_empty() {
+                let embedding_repo =
+                    crate::db::repositories::memory_embedding_repo::MemoryEmbeddingRepository::new(
+                        conn,
+                    );
+                for (id, vector) in &plan.computed_vectors {
+                    let _ = embedding_repo.upsert(id, &plan.model_key, vector);
+                    plan.stored_vectors.insert(id.clone(), vector.clone());
+                }
+            }
+            let mut scores = HashMap::new();
+            for entry in &plan.candidates {
+                if let Some(vector) = plan.stored_vectors.get(&entry.id) {
+                    let cosine = cosine_similarity(&plan.query_vector, vector);
+                    scores.insert(entry.id.clone(), (cosine.clamp(-1.0, 1.0) + 1.0) / 2.0);
+                }
+            }
+            scores
+        } else {
+            HashMap::new()
+        };
+        let ranked = rank_memories_by_scores(
+            plan.candidates,
+            &plan.lexical_scores,
+            &semantic_scores,
+            &plan.retrieval_mode,
+            plan.semantic_weight,
         );
-        Ok(ranked.into_iter().take(limit.max(1) as usize).collect())
+        ranked.into_iter().take(limit).collect()
     }
 
     pub fn build_turn_entries(
@@ -540,75 +753,6 @@ impl MemoryService {
         Ok(None)
     }
 
-    fn build_semantic_score_map(
-        &self,
-        conn: &Connection,
-        memories: &[MemoryEntry],
-        model: &ModelConfig,
-        query_text: &str,
-        location: &str,
-        scene_id: Option<&str>,
-        participants: &[String],
-    ) -> Result<HashMap<String, f64>, String> {
-        if memories.is_empty() {
-            return Ok(HashMap::new());
-        }
-        let query_inputs = vec![build_memory_query_text(
-            query_text,
-            location,
-            scene_id,
-            participants,
-        )];
-        let query_vector = self
-            .embed_texts(model, &query_inputs)?
-            .into_iter()
-            .next()
-            .unwrap_or_default();
-        if query_vector.is_empty() {
-            return Ok(HashMap::new());
-        }
-
-        let model_key = model.id.trim().to_string();
-        let memory_ids = memories
-            .iter()
-            .map(|entry| entry.id.clone())
-            .collect::<Vec<_>>();
-        let embedding_repo =
-            crate::db::repositories::memory_embedding_repo::MemoryEmbeddingRepository::new(conn);
-        let mut stored_vectors =
-            embedding_repo.list_by_model_and_memory_ids(&model_key, &memory_ids)?;
-
-        let missing = memories
-            .iter()
-            .filter(|entry| !stored_vectors.contains_key(&entry.id))
-            .cloned()
-            .collect::<Vec<_>>();
-        if !missing.is_empty() {
-            let inputs = missing
-                .iter()
-                .map(build_memory_embedding_input)
-                .collect::<Vec<_>>();
-            let vectors = self.embed_texts(model, &inputs)?;
-            for (entry, vector) in missing.iter().zip(vectors.into_iter()) {
-                if vector.is_empty() {
-                    continue;
-                }
-                embedding_repo.upsert(&entry.id, &model_key, &vector)?;
-                stored_vectors.insert(entry.id.clone(), vector);
-            }
-        }
-
-        let mut scores = HashMap::new();
-        for entry in memories {
-            let Some(vector) = stored_vectors.get(&entry.id) else {
-                continue;
-            };
-            let cosine = cosine_similarity(&query_vector, vector);
-            scores.insert(entry.id.clone(), (cosine.clamp(-1.0, 1.0) + 1.0) / 2.0);
-        }
-        Ok(scores)
-    }
-
     fn embed_texts(&self, model: &ModelConfig, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
         if texts.is_empty() {
             return Ok(Vec::new());
@@ -800,129 +944,78 @@ impl MemoryService {
             })
             .collect())
     }
+}
 
-    fn rank_character_memories(
-        &self,
-        conn: &Connection,
-        world: &WorldDefinition,
-        mut memories: Vec<MemoryEntry>,
-        session_id: &str,
-        query_text: &str,
-        location: &str,
-        scene_id: Option<&str>,
-        participants: &[String],
-    ) -> Vec<MemoryEntry> {
-        let normalized_query = normalize_memory_text(query_text);
-        let query_terms = build_memory_search_terms(query_text);
-        let participant_terms = participants
-            .iter()
-            .map(|item| normalize_memory_text(item))
-            .filter(|item| !item.is_empty())
-            .collect::<Vec<_>>();
-        let location_term = normalize_memory_text(location);
-        let newest_created_at = memories.iter().map(|entry| entry.created_at.clone()).max();
-        let retrieval_mode = resolve_character_memory_retrieval_mode(world);
-        let lexical_scores = memories
-            .iter()
-            .map(|entry| {
-                (
-                    entry.id.clone(),
-                    score_memory_entry(
-                        entry,
-                        &normalized_query,
-                        &query_terms,
-                        &participant_terms,
-                        &location_term,
-                        scene_id,
-                        session_id,
-                        newest_created_at.as_deref(),
-                    ),
-                )
-            })
-            .collect::<HashMap<_, _>>();
-        let semantic_scores = if retrieval_mode == "lexical_only" {
-            HashMap::new()
+/// 纯排序+分层配额选择:给定词法分与语义分,产出最终顺序。
+/// 与任何 DB / 网络 IO 无关,可在锁内或锁外随意调用(C1/H9 分阶段共用)。
+fn rank_memories_by_scores(
+    mut memories: Vec<MemoryEntry>,
+    lexical_scores: &HashMap<String, f64>,
+    semantic_scores: &HashMap<String, f64>,
+    retrieval_mode: &str,
+    semantic_weight: f64,
+) -> Vec<MemoryEntry> {
+    let lexical_weight = (1.0 - semantic_weight).clamp(0.0, 1.0);
+    let lexical_normalized = normalize_rank_scores(lexical_scores);
+
+    memories.sort_by(|left, right| {
+        let left_semantic = semantic_scores.get(&left.id).copied().unwrap_or(0.0);
+        let right_semantic = semantic_scores.get(&right.id).copied().unwrap_or(0.0);
+        let left_lexical = lexical_normalized.get(&left.id).copied().unwrap_or(0.0);
+        let right_lexical = lexical_normalized.get(&right.id).copied().unwrap_or(0.0);
+        let left_final = if semantic_scores.is_empty() {
+            left_lexical
+        } else if retrieval_mode == "semantic_only" {
+            left_semantic
         } else {
-            self.resolve_embedding_model(conn)
-                .ok()
-                .flatten()
-                .and_then(|model| {
-                    self.build_semantic_score_map(
-                        conn,
-                        &memories,
-                        &model,
-                        query_text,
-                        location,
-                        scene_id,
-                        participants,
-                    )
-                    .ok()
-                })
-                .unwrap_or_default()
+            left_lexical * lexical_weight + left_semantic * semantic_weight
         };
-        let semantic_weight = resolve_character_memory_semantic_weight(world);
-        let lexical_weight = (1.0 - semantic_weight).clamp(0.0, 1.0);
-        let lexical_normalized = normalize_rank_scores(&lexical_scores);
+        let right_final = if semantic_scores.is_empty() {
+            right_lexical
+        } else if retrieval_mode == "semantic_only" {
+            right_semantic
+        } else {
+            right_lexical * lexical_weight + right_semantic * semantic_weight
+        };
+        right_final
+            .partial_cmp(&left_final)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| {
+                lexical_scores
+                    .get(&right.id)
+                    .copied()
+                    .unwrap_or(0.0)
+                    .partial_cmp(&lexical_scores.get(&left.id).copied().unwrap_or(0.0))
+                    .unwrap_or(Ordering::Equal)
+            })
+    });
 
-        memories.sort_by(|left, right| {
-            let left_semantic = semantic_scores.get(&left.id).copied().unwrap_or(0.0);
-            let right_semantic = semantic_scores.get(&right.id).copied().unwrap_or(0.0);
-            let left_lexical = lexical_normalized.get(&left.id).copied().unwrap_or(0.0);
-            let right_lexical = lexical_normalized.get(&right.id).copied().unwrap_or(0.0);
-            let left_final = if semantic_scores.is_empty() {
-                left_lexical
-            } else if retrieval_mode == "semantic_only" {
-                left_semantic
-            } else {
-                left_lexical * lexical_weight + left_semantic * semantic_weight
-            };
-            let right_final = if semantic_scores.is_empty() {
-                right_lexical
-            } else if retrieval_mode == "semantic_only" {
-                right_semantic
-            } else {
-                right_lexical * lexical_weight + right_semantic * semantic_weight
-            };
-            right_final
-                .partial_cmp(&left_final)
-                .unwrap_or(Ordering::Equal)
-                .then_with(|| {
-                    lexical_scores
-                        .get(&right.id)
-                        .copied()
-                        .unwrap_or(0.0)
-                        .partial_cmp(&lexical_scores.get(&left.id).copied().unwrap_or(0.0))
-                        .unwrap_or(Ordering::Equal)
-                })
-        });
-
-        let mut balanced = Vec::new();
-        let mut selected_ids = Vec::new();
-        for (layer, quota) in [
-            ("working", 2usize),
-            ("short_term", 2usize),
-            ("archive", 2usize),
-            ("canonical_event", 1usize),
-        ] {
-            let mut used = 0usize;
-            for entry in &memories {
-                if entry.layer != layer || selected_ids.contains(&entry.id) || used >= quota {
-                    continue;
-                }
-                balanced.push(entry.clone());
-                selected_ids.push(entry.id.clone());
-                used += 1;
-            }
-        }
-        for entry in memories {
-            if selected_ids.contains(&entry.id) {
+    let mut balanced = Vec::new();
+    let mut selected_ids = Vec::new();
+    for (layer, quota) in [
+        ("working", 2usize),
+        ("short_term", 2usize),
+        ("archive", 2usize),
+        ("canonical_event", 1usize),
+    ] {
+        let mut used = 0usize;
+        for entry in &memories {
+            if entry.layer != layer || selected_ids.contains(&entry.id) || used >= quota {
                 continue;
             }
             balanced.push(entry.clone());
             selected_ids.push(entry.id.clone());
+            used += 1;
         }
-        balanced
     }
+    for entry in memories {
+        if selected_ids.contains(&entry.id) {
+            continue;
+        }
+        balanced.push(entry.clone());
+        selected_ids.push(entry.id.clone());
+    }
+    balanced
 }
 
 fn sanitize_embedding_model_id(model_id: &str) -> String {

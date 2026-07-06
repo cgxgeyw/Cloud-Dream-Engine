@@ -82,7 +82,8 @@ export function isAndroidRuntime(): boolean {
 }
 
 export function isDesktopRuntime(): boolean {
-  return runtimePlatform === "desktop" || runtimePlatform === "web";
+  // L3: web 不应被当作 desktop,否则桌面专属功能可能被误调。仅真正的桌面运行时返回 true。
+  return runtimePlatform === "desktop";
 }
 
 async function getTauri() {
@@ -230,11 +231,29 @@ export async function fetchCharacter(characterId: string) {
 }
 
 export async function createWorldCharacter(worldId: string, payload: CharacterCreateRequest) {
-  return isTauri ? (await getTauri()).createWorldCharacter(worldId, payload) : (await getHttp()).createWorldCharacter(worldId, payload as any);
+  if (isTauri) return (await getTauri()).createWorldCharacter(worldId, payload);
+  // H10: HTTP 后端要求 CharacterUpsertRequest(含 world_id / custom_tabs),
+  // 此前用 `as any` 强转会丢这两个必填字段导致后端静默丢数据或 422。显式补全。
+  return (await getHttp()).createWorldCharacter(worldId, toUpsertRequest(worldId, payload));
 }
 
 export async function updateWorldCharacter(worldId: string, characterId: string, payload: CharacterCreateRequest) {
-  return isTauri ? (await getTauri()).updateWorldCharacter(worldId, characterId, payload) : (await getHttp()).updateWorldCharacter(worldId, characterId, payload as any);
+  if (isTauri) return (await getTauri()).updateWorldCharacter(worldId, characterId, payload);
+  return (await getHttp()).updateWorldCharacter(worldId, characterId, toUpsertRequest(worldId, payload));
+}
+
+/// H10: 把通用的 CharacterCreateRequest 适配为 HTTP 后端要求的 CharacterUpsertRequest
+/// (api.ts 版本,含 world_id / custom_tabs)。
+function toUpsertRequest(
+  worldId: string,
+  payload: CharacterCreateRequest,
+): import("./api").CharacterUpsertRequest {
+  return {
+    ...payload,
+    world_id: worldId,
+    custom_tabs:
+      (payload as Partial<import("./api").CharacterUpsertRequest>).custom_tabs ?? {},
+  };
 }
 
 export async function deleteWorldCharacter(worldId: string, characterId: string) {
@@ -461,6 +480,10 @@ export async function createAttributeSchema(payload: AttributeSchemaUpsertReques
 
 export async function updateAttributeSchema(schemaId: string, payload: AttributeSchemaUpsertRequest) {
   return isTauri ? (await getTauri()).updateAttributeSchema(schemaId, payload) : (await getHttp()).updateAttributeSchema(schemaId, payload);
+}
+
+export async function deleteAttributeSchema(schemaId: string) {
+  return isTauri ? (await getTauri()).deleteAttributeSchema(schemaId) : (await getHttp()).deleteAttributeSchema(schemaId);
 }
 
 export async function fetchAttributeValues(params: { ownerType?: string; ownerId?: string; schemaId?: string }) {

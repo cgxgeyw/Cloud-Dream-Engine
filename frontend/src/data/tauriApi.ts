@@ -503,6 +503,10 @@ export function updateAttributeSchema(schemaId: string, payload: AttributeSchema
   return tauriCommand("update_attribute_schema", { id: schemaId, request: payload });
 }
 
+export function deleteAttributeSchema(schemaId: string): Promise<void> {
+  return tauriCommand("delete_attribute_schema", { id: schemaId });
+}
+
 export function fetchAttributeValues(params: { ownerType?: string; ownerId?: string; schemaId?: string }): Promise<AttributeValueResponse[]> {
   return tauriCommand("list_attribute_values", params);
 }

@@ -35,10 +35,12 @@ pub async fn delete_asset(state: State<'_, AppState>, filename: String) -> Resul
         normalize_asset_relative_path(&filename).ok_or_else(|| "Invalid asset path".to_string())?;
     let canonical_refs = canonical_asset_refs(&relative);
     let file_path = asset_root(&state.data_dir).join(&relative);
+    // H4: 先清理 DB 引用,成功后再删物理文件。否则若引用清理失败(DB 锁/序列化错误),
+    // 文件已被删除而 worlds/characters/sessions 仍引用它 → UI 破图且无重试路径。
+    cleanup_asset_references(&state, &canonical_refs).await?;
     if file_path.exists() {
         fs::remove_file(&file_path).map_err(|e| e.to_string())?;
     }
-    cleanup_asset_references(&state, &canonical_refs).await?;
     Ok(())
 }
 

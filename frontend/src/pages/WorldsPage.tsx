@@ -300,7 +300,7 @@ export function WorldsPage() {
             style={{ display: "none" }}
             onChange={(event) => void handleImport(event)}
           />
-          <button type="button" onClick={() => navigate(-1)} className="action-btn">
+          <button type="button" onClick={() => navigate("/")} className="action-btn">
             {t("common.back")}
           </button>
           <button

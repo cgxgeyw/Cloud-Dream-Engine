@@ -8,7 +8,6 @@ use crate::models::session::*;
 use crate::models::settings::AppSettings;
 use crate::models::world::WorldDefinition;
 use crate::services::game_engine::dialogue::DialoguePipeline;
-use crate::services::game_engine::memory::MemoryService;
 use crate::services::game_engine::prompting::{
     build_prompt_call, collect_prompt_preset_contents, llm_chat_messages_to_values,
     render_prompt_variables, resolve_runtime_context_prompt,
@@ -1442,33 +1441,6 @@ pub(crate) fn load_character_memory_pool(
         layer: None,
         limit: Some(200),
     })
-}
-
-pub(crate) fn load_recent_character_memories(
-    memory_service: &MemoryService,
-    conn: &Connection,
-    world: &WorldDefinition,
-    world_id: &str,
-    session_id: &str,
-    character_id: Option<&str>,
-    query_text: &str,
-    location: &str,
-    scene_id: Option<String>,
-    participants: &[String],
-    limit: i32,
-) -> Result<Vec<MemoryEntry>, String> {
-    memory_service.recall_entries_for_character(
-        conn,
-        world,
-        world_id,
-        session_id,
-        character_id,
-        query_text,
-        location,
-        scene_id.as_deref(),
-        participants,
-        limit,
-    )
 }
 
 pub(crate) fn resolve_default_image_model(

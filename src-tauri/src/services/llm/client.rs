@@ -115,8 +115,11 @@ pub struct LlmClient {
 
 impl LlmClient {
     pub fn new() -> Self {
+        // H6: 不设整体 `.timeout()`,否则长剧情 / 大 max_tokens / 慢本地模型的单次生成
+        // 超过该时限时,流式 body 读取会被拦腰切断,整段已生成内容丢失。改为只约束
+        // 连接建立阶段(connect_timeout),生成时长由各 provider 的流式循环自然驱动。
         let http_client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(120))
+            .connect_timeout(std::time::Duration::from_secs(30))
             .build()
             .unwrap_or_default();
 
@@ -165,7 +168,16 @@ impl LlmClient {
                 .await
             }
             "anthropic" => {
-                anthropic::chat_completion(&self.http_client, base_url, api_key, request).await
+                // H5: Anthropic 此前直接走非流式,on_chunk 永不触发、整段回复一次性出现。
+                // 现走真正的 SSE 流式实现,逐字回调。
+                anthropic::chat_completion_stream(
+                    &self.http_client,
+                    base_url,
+                    api_key,
+                    request,
+                    on_chunk,
+                )
+                .await
             }
             _ => Err(format!("Unsupported provider: {}", provider)),
         }

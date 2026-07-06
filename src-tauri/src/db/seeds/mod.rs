@@ -633,7 +633,7 @@ fn ensure_core_seed_data(conn: &Connection) -> Result<(), rusqlite::Error> {
             ",
             params![
                 "model-seed-bge-small-embedding",
-                "闁告劕鎳愰悿?Embedding闁挎稒顑孉AI/bge-small-zh-v1.5",
+                "内置本地 Embedding / bge-small-zh-v1.5",
                 "builtin-local",
                 "BAAI/bge-small-zh-v1.5",
                 "",

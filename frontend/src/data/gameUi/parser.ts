@@ -1,16 +1,13 @@
-import { parse } from "jsonc-parser";
+import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
 import type { CSSProperties } from "react";
 import type {
   GameUiAnchor,
   GameUiComponentStyleDefinition,
   GameUiDocument,
-  GameUiDocumentV1,
   GameUiDocumentV2,
   GameUiLayoutNode,
-  GameUiLayoutNodeV1,
   GameUiLayoutNodeV2,
   GameUiMountId,
-  GameUiMountNode,
   GameUiMountOptions,
   GameUiNodeBase,
   GameUiPlatform,
@@ -33,47 +30,9 @@ import {
   DEFAULT_MOBILE_UI_SOURCE,
 } from "./defaults";
 
-const EMPTY_V1_NODE: GameUiLayoutNodeV1 = {
-  type: "stack",
-  children: [],
-};
-
 const EMPTY_V2_NODE: GameUiLayoutNodeV2 = {
   type: "stack",
   children: [],
-};
-
-const DEFAULT_V1_DOCUMENTS: Record<GameUiPlatform, GameUiDocumentV1> = {
-  desktop: {
-    schema_version: 1,
-    meta: {
-      name: "Desktop Gameplay UI (Legacy)",
-      platform: "desktop",
-    },
-    layout: {
-      root: structuredClone(EMPTY_V1_NODE),
-    },
-    mounts: {},
-    components: {},
-    tokens: {},
-    effects: {},
-    custom_css: "",
-  },
-  mobile: {
-    schema_version: 1,
-    meta: {
-      name: "Mobile Gameplay UI (Legacy)",
-      platform: "mobile",
-    },
-    layout: {
-      root: structuredClone(EMPTY_V1_NODE),
-    },
-    mounts: {},
-    components: {},
-    tokens: {},
-    effects: {},
-    custom_css: "",
-  },
 };
 
 export const DEFAULT_DESKTOP_UI_FILE = DEFAULT_DESKTOP_UI_SOURCE;
@@ -165,7 +124,31 @@ export function parseGameUiDocument(
   }
 
   try {
-    const parsed = parse(trimmed) as unknown;
+    // M14: jsonc-parser 的 parse 对非法 JSON 不抛异常而返回 undefined,使外层 try/catch 形同虚设,
+    // 截断/损坏的 JSON 可能被恢复成残缺对象并恰好通过校验、静默使用错误内容。这里收集解析错误,
+    // 有错误就明确按解析失败处理。
+    const parseErrors: ParseError[] = [];
+    const parsed = parse(trimmed, parseErrors, {
+      allowTrailingComma: true,
+      disallowComments: false,
+    }) as unknown;
+    if (parseErrors.length > 0) {
+      const first = parseErrors[0];
+      return {
+        document: fallbackDocument,
+        source: fallbackSource,
+        error: `Invalid UI document JSON: ${printParseErrorCode(first.error)} at offset ${first.offset}.`,
+        usedFallback: true,
+      };
+    }
+    if (parsed === undefined) {
+      return {
+        document: fallbackDocument,
+        source: fallbackSource,
+        error: "Failed to parse UI document: empty or invalid JSON.",
+        usedFallback: true,
+      };
+    }
     const schemaVersion = readRequestedSchemaVersion(parsed);
     if (!isSupportedSchemaVersion(schemaVersion)) {
       return {
@@ -176,9 +159,7 @@ export function parseGameUiDocument(
       };
     }
 
-    const validationError = schemaVersion === 1
-      ? validateGameUiDocumentV1(parsed)
-      : validateGameUiDocumentV2(parsed);
+    const validationError = validateGameUiDocumentV2(parsed);
 
     if (validationError) {
       return {
@@ -189,9 +170,7 @@ export function parseGameUiDocument(
       };
     }
 
-    const document = schemaVersion === 1
-      ? normalizeGameUiDocumentV1(parsed, platform)
-      : normalizeGameUiDocumentV2(parsed);
+    const document = normalizeGameUiDocumentV2(parsed);
 
     return {
       document,
@@ -207,25 +186,6 @@ export function parseGameUiDocument(
       usedFallback: true,
     };
   }
-}
-
-function normalizeGameUiDocumentV1(raw: unknown, platform: GameUiPlatform): GameUiDocumentV1 {
-  const fallbackV1 = DEFAULT_V1_DOCUMENTS[platform];
-  const value = isPlainObject(raw) ? raw : {};
-  const layoutValue = isPlainObject(value.layout) ? value.layout : {};
-
-  return {
-    schema_version: 1,
-    meta: normalizeMeta(value.meta, fallbackV1.meta),
-    layout: {
-      root: normalizeLayoutNodeV1(layoutValue.root, fallbackV1.layout.root),
-    },
-    mounts: normalizeMountOptions(value.mounts),
-    components: normalizeComponents(value.components, fallbackV1.components),
-    tokens: normalizeTokens(value.tokens, fallbackV1.tokens ?? {}),
-    effects: normalizeMeta(value.effects, fallbackV1.effects),
-    custom_css: typeof value.custom_css === "string" ? value.custom_css : fallbackV1.custom_css ?? "",
-  };
 }
 
 function normalizeGameUiDocumentV2(raw: unknown): GameUiDocumentV2 {
@@ -254,51 +214,9 @@ function normalizeMeta(
   if (!isPlainObject(raw)) {
     return structuredClone(fallback);
   }
-  return raw;
-}
-
-function normalizeLayoutNodeV1(raw: unknown, fallback: GameUiLayoutNodeV1): GameUiLayoutNodeV1 {
-  const value = isPlainObject(raw) ? raw : {};
-  const type = readOptionalString(value.type) ?? fallback.type;
-
-  if (type === "mount") {
-    return {
-      ...normalizeNodeBase(value),
-      type: "mount",
-      mount: isMountId(value.mount) ? value.mount : fallback.type === "mount" ? fallback.mount : GAME_UI_MOUNT_IDS[0],
-      area: readOptionalString(value.area),
-      anchor: normalizeAnchor(value.anchor),
-    };
-  }
-
-  if (type === "absolute") {
-    return {
-      ...normalizeNodeBase(value),
-      type: "absolute",
-      children: normalizeChildrenV1(value.children),
-    };
-  }
-
-  if (type === "stack") {
-    return {
-      ...normalizeNodeBase(value),
-      type: "stack",
-      direction: value.direction === "horizontal" ? "horizontal" : "vertical",
-      wrap: typeof value.wrap === "boolean" ? value.wrap : false,
-      gap: readOptionalString(value.gap),
-      children: normalizeChildrenV1(value.children),
-    };
-  }
-
-  return {
-    ...normalizeNodeBase(value),
-    type: "grid",
-    columns: normalizeStringList(value.columns),
-    rows: normalizeStringList(value.rows),
-    areas: normalizeStringMatrix(value.areas),
-    gap: readOptionalString(value.gap),
-    children: normalizeChildrenV1(value.children),
-  };
+  // L7: 深拷贝返回,避免与 fallback 分支(structuredClone)行为不一致;直接返回 raw 会让
+  // 后续就地修改污染解析得到的源对象。
+  return structuredClone(raw);
 }
 
 function normalizeLayoutNodeV2(raw: unknown, fallback: GameUiLayoutNodeV2): GameUiLayoutNodeV2 {
@@ -451,13 +369,6 @@ function normalizeLayoutNodeV2(raw: unknown, fallback: GameUiLayoutNodeV2): Game
     gap: readOptionalString(value.gap),
     children: normalizeChildrenV2(value.children),
   };
-}
-
-function normalizeChildrenV1(raw: unknown): GameUiLayoutNodeV1[] {
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  return raw.map((item) => normalizeLayoutNodeV1(item, EMPTY_V1_NODE));
 }
 
 function normalizeChildrenV2(raw: unknown): GameUiLayoutNodeV2[] {
@@ -685,35 +596,15 @@ function isSupportedSchemaVersion(value: number): value is GameUiDocument["schem
   );
 }
 
-function validateGameUiDocumentV1(raw: unknown): string | null {
-  if (!isPlainObject(raw)) {
-    return "UI document root must be an object.";
-  }
-
-  if (raw.schema_version !== undefined && raw.schema_version !== 1) {
-    return "schema_version must be 1 for a v1 UI document.";
-  }
-
-  const layout = validateLayoutRoot(raw.layout);
-  if (layout.error) {
-    return layout.error;
-  }
-
-  const duplicateMountGuard = new Set<GameUiMountId>();
-  const layoutError = validateLayoutNodeV1(layout.root, "layout.root", duplicateMountGuard);
-  if (layoutError) {
-    return layoutError;
-  }
-
-  return validateCommonDocumentFields(raw);
-}
-
 function validateGameUiDocumentV2(raw: unknown): string | null {
   if (!isPlainObject(raw)) {
     return "UI document root must be an object.";
   }
 
-  if (raw.schema_version !== 2) {
+  // M13: 缺省 schema_version 在 readRequestedSchemaVersion 里按 DEFAULT(=2)处理并通过
+  // isSupportedSchemaVersion,这里也应一致地把"缺字段"视作默认 v2,只拒绝显式写了非 2 的值,
+  // 否则合法但省略 schema_version 的文档会被错误地强制回退默认模板。
+  if (raw.schema_version !== undefined && raw.schema_version !== 2) {
     return "schema_version must be 2 for a v2 UI document.";
   }
 
@@ -785,78 +676,6 @@ function validateCommonDocumentFields(value: Record<string, unknown>): string | 
       if (propError) {
         return propError;
       }
-    }
-  }
-
-  return null;
-}
-
-function validateLayoutNodeV1(
-  raw: unknown,
-  path: string,
-  duplicateMountGuard: Set<GameUiMountId>,
-): string | null {
-  if (!isPlainObject(raw)) {
-    return `${path} must be an object.`;
-  }
-
-  const type = raw.type;
-  if (type !== "grid" && type !== "stack" && type !== "absolute" && type !== "mount") {
-    return `${path}.type must be one of grid / stack / absolute / mount.`;
-  }
-
-  const sharedFieldError = validateSharedNodeFields(raw, path);
-  if (sharedFieldError) {
-    return sharedFieldError;
-  }
-
-  if (type === "mount") {
-    if (!isMountId(raw.mount)) {
-      return `${path}.mount must be a supported mount id.`;
-    }
-    if (duplicateMountGuard.has(raw.mount)) {
-      return `Duplicate mount "${raw.mount}" found in the same UI document.`;
-    }
-    duplicateMountGuard.add(raw.mount);
-
-    const anchorError = validateAnchor(raw.anchor, `${path}.anchor`);
-    if (anchorError) {
-      return anchorError;
-    }
-    return null;
-  }
-
-  if (raw.children !== undefined && !Array.isArray(raw.children)) {
-    return `${path}.children must be an array.`;
-  }
-
-  if (type === "grid") {
-    if (raw.columns !== undefined && !isStringLikeArray(raw.columns)) {
-      return `${path}.columns must be an array of strings or numbers.`;
-    }
-    if (raw.rows !== undefined && !isStringLikeArray(raw.rows)) {
-      return `${path}.rows must be an array of strings or numbers.`;
-    }
-    if (raw.areas !== undefined) {
-      if (!Array.isArray(raw.areas) || !raw.areas.every((row) => isStringLikeArray(row))) {
-        return `${path}.areas must be a two-dimensional string array.`;
-      }
-      const rowLengths = raw.areas.map((row) => row.length);
-      if (rowLengths.length > 1 && rowLengths.some((length) => length !== rowLengths[0])) {
-        return `${path}.areas rows must all have the same length.`;
-      }
-    }
-  }
-
-  if (type === "stack" && raw.direction !== undefined && raw.direction !== "vertical" && raw.direction !== "horizontal") {
-    return `${path}.direction must be vertical or horizontal.`;
-  }
-
-  const children = raw.children ?? [];
-  for (let index = 0; index < children.length; index += 1) {
-    const childError = validateLayoutNodeV1(children[index], `${path}.children[${index}]`, duplicateMountGuard);
-    if (childError) {
-      return childError;
     }
   }
 
@@ -1371,6 +1190,17 @@ export function buildGameUiStylesheet(
     `${scopeSelector} .game-typing-bubble {\nmax-width: 80px;\npadding: 12px 16px;\n}\n${scopeSelector} .game-typing-dots {\ndisplay: flex;\ngap: 4px;\nalign-items: center;\njustify-content: center;\nheight: 20px;\n}\n${scopeSelector} .game-typing-dot {\nwidth: 6px;\nheight: 6px;\nborder-radius: 50%;\nbackground: var(--game-ui-token-color-text-muted, var(--game-text-muted, rgba(255,255,255,0.4)));\nanimation: game-typing-bounce 1.4s ease-in-out infinite;\n}\n${scopeSelector} .game-typing-dot:nth-child(2) {\nanimation-delay: 0.2s;\n}\n${scopeSelector} .game-typing-dot:nth-child(3) {\nanimation-delay: 0.4s;\n}\n${scopeSelector} .game-message-row--typing {\nanimation: game-ui-typing-enter 200ms ease-out;\n}\n@keyframes game-typing-bounce {\n0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }\n30% { transform: translateY(-4px); opacity: 1; }\n}\n@keyframes game-ui-typing-enter {\nfrom { opacity: 0; transform: translateY(6px); }\nto { opacity: 1; transform: translateY(0); }\n}`,
     `${scopeSelector} .game-mobile-error-notice {\ndisplay: flex;\nflex-direction: column;\ngap: 6px;\nwidth: 100%;\npadding: 12px 14px;\nborder-radius: var(--game-ui-token-radius-md, 14px);\nborder: 1px solid color-mix(in srgb, #dc2626 38%, transparent);\nbackground: color-mix(in srgb, #dc2626 12%, var(--game-ui-token-color-panel, rgba(255,255,255,0.06)));\ncolor: var(--game-ui-token-color-text, currentColor);\n}\n${scopeSelector} .game-mobile-error-title {\nfont-size: 13px;\nfont-weight: 700;\ncolor: color-mix(in srgb, #dc2626 72%, var(--game-ui-token-color-text, currentColor));\n}\n${scopeSelector} .game-mobile-error-summary {\nfont-size: 13px;\nline-height: 1.5;\ncolor: var(--game-ui-token-color-text-dim, var(--game-text-muted, inherit));\nwhite-space: pre-wrap;\n}\n${scopeSelector} .game-mobile-error-retry {\nalign-self: flex-start;\nmin-height: 34px;\nmargin-top: 2px;\npadding: 0 16px;\nborder-radius: 999px;\nborder: 0;\nbackground: #dc2626;\ncolor: #ffffff;\nfont-size: 13px;\nfont-weight: 600;\n}\n${scopeSelector} .game-mobile-error-retry:disabled {\nopacity: 0.6;\n}`,
     `${scopeSelector} .game-map-graph {\ndisplay: flex;\nmin-height: 0;\nheight: 100%;\nflex-direction: column;\ngap: 12px;\n}\n${scopeSelector} .game-map-flow-canvas {\nposition: relative;\nmin-height: 260px;\nheight: 100%;\noverflow: hidden;\nborder: 1px solid var(--game-border, rgba(255,255,255,0.16));\nborder-radius: var(--game-ui-token-radius-lg, 16px);\nbackground: color-mix(in srgb, var(--game-ui-token-color-panel, rgba(255,255,255,0.08)) 48%, transparent);\n}\n${scopeSelector} .game-map-flow-canvas .react-flow {\nfont-family: var(--game-ui-token-font-body, inherit);\n}\n${scopeSelector} .game-map-flow-background {\nopacity: 0.45;\n}\n${scopeSelector} .game-map-flow-node {\nwidth: 150px;\npadding: 8px 10px;\nborder: 1px solid var(--game-border, rgba(255,255,255,0.16));\nborder-radius: var(--game-ui-token-radius-md, 12px);\nbackground: var(--game-ui-token-color-panel, rgba(255,255,255,0.10));\ncolor: var(--game-ui-token-color-text, currentColor);\nfont-size: 12px;\nfont-weight: 700;\nline-height: 1.25;\ntext-align: center;\nbox-shadow: 0 10px 24px rgba(0,0,0,0.14);\n}\n${scopeSelector} .game-map-flow-node--current {\nborder-color: var(--game-ui-token-color-primary, var(--game-accent, currentColor));\nbackground: color-mix(in srgb, var(--game-ui-token-color-primary, var(--game-accent, currentColor)) 22%, var(--game-ui-token-color-panel, rgba(255,255,255,0.12)));\n}\n${scopeSelector} .game-map-flow-node--undiscovered {\nopacity: 0.58;\nfilter: saturate(0.74);\n}\n${scopeSelector} .game-map-flow-edge path {\nstroke: var(--game-border, rgba(255,255,255,0.22));\nstroke-width: 1.6;\n}\n${scopeSelector} .game-map-flow-edge--current path {\nstroke: var(--game-ui-token-color-primary, var(--game-accent, #dbeafe));\nstroke-width: 2.2;\n}\n${scopeSelector} .react-flow__controls {\nbox-shadow: 0 10px 24px rgba(0,0,0,0.18);\n}\n${scopeSelector} .react-flow__controls-button {\nbackground: var(--game-ui-token-color-panel, rgba(255,255,255,0.12));\nborder-color: var(--game-border, rgba(255,255,255,0.14));\ncolor: var(--game-ui-token-color-text, currentColor);\n}`,
+    // Base sizing for scene-focus character portraits. Theme custom_css can
+    // override these via more specific selectors; without this baseline a theme
+    // that only restyles (e.g. sets a filter on) .game-avatar-image leaves the
+    // <img> unsized, so the portrait never shows.
+    `${scopeSelector} .game-avatar {\ndisplay: flex;\nalign-items: center;\njustify-content: center;\nwidth: 256px;\nheight: 320px;\nmax-width: 100%;\noverflow: hidden;\n}\n${scopeSelector} .game-avatar-image {\nwidth: 100%;\nheight: 100%;\nobject-fit: cover;\n}`,
+    // Base styling for director-trace / chain-of-thought labels and lines.
+    // These read as quiet grey captions on every platform and world. Desktop
+    // seed UIs spell this out in their custom_css, but mobile seeds don't — so
+    // without a baseline the labels fall back to default black body text on
+    // mobile. Worlds can still override via more specific custom_css selectors.
+    `${scopeSelector} .game-director-trace-title,\n${scopeSelector} .game-director-trace-label,\n${scopeSelector} .game-director-trace-line,\n${scopeSelector} .game-agent-answer-label {\nfont-size: 12px;\nfont-weight: 400;\nline-height: 1.55;\ncolor: var(--game-ui-token-color-text-muted, var(--game-text-muted, rgba(120,130,140,0.85)));\nopacity: 0.7;\n}\n${scopeSelector} .game-cot-label {\nfont-size: 12px;\nfont-weight: 600;\ncolor: var(--game-ui-token-color-text-muted, var(--game-text-muted, rgba(120,130,140,0.85)));\nopacity: 0.7;\n}\n${scopeSelector} .game-cot-content {\nfont-size: 12px;\nline-height: 1.55;\ncolor: var(--game-ui-token-color-text-muted, var(--game-text-muted, rgba(120,130,140,0.85)));\nopacity: 0.85;\nwhite-space: pre-wrap;\nword-break: break-word;\n}`,
   ];
 
   const background = (document.effects?.background ?? {}) as Record<string, unknown>;

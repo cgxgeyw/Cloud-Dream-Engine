@@ -18,15 +18,19 @@ impl<'a> ScheduledNotificationRepository<'a> {
         request: &ScheduledNotificationCreate,
     ) -> Result<ScheduledNotification, String> {
         let source = request.source.trim();
+        // M5: source 为空时此前赋随机 uuid,使 ON CONFLICT(session_id, source) 去重彻底失效,
+        // 同一逻辑提醒每次调用都新插一行、到点重复推送。改用基于内容(标题+正文+时间)的稳定
+        // 派生键,保证同一逻辑提醒命中去重。
+        let resolved_source = if source.is_empty() {
+            derive_stable_source(&request.title, &request.body, &request.scheduled_at)
+        } else {
+            source.to_string()
+        };
         let notification = ScheduledNotification {
             id: uuid::Uuid::new_v4().to_string(),
             session_id: request.session_id.trim().to_string(),
             world_name: request.world_name.trim().to_string(),
-            source: if source.is_empty() {
-                uuid::Uuid::new_v4().to_string()
-            } else {
-                source.to_string()
-            },
+            source: resolved_source,
             title: request.title.trim().to_string(),
             body: request.body.trim().to_string(),
             scheduled_at: request.scheduled_at.trim().to_string(),
@@ -227,7 +231,13 @@ impl<'a> ScheduledNotificationRepository<'a> {
     }
 
     #[cfg(mobile)]
-    pub fn mark_native_scheduled(&self, id: &str, native_id: i32) -> Result<(), String> {
+    pub fn mark_native_scheduled(
+        &self,
+        id: &str,
+        calendar_event_id: Option<i64>,
+    ) -> Result<(), String> {
+        // 安卓行程提醒写入系统日历,delivery=native 表示"到点由系统触发,应用未运行时也生效",
+        // calendar_event_id 保存用于取消/调试(取消实际按 notification id 经 JNI 完成)。
         self.conn
             .execute(
                 "UPDATE scheduled_notifications
@@ -235,11 +245,11 @@ impl<'a> ScheduledNotificationRepository<'a> {
                      COALESCE(NULLIF(metadata_json, ''), '{}'),
                      '$.delivery',
                      'native',
-                     '$.native_notification_id',
+                     '$.calendar_event_id',
                      ?2
                  )
                  WHERE id = ?1 AND status = 'scheduled'",
-                params![id, native_id],
+                params![id, calendar_event_id],
             )
             .map_err(|error| error.to_string())?;
         Ok(())
@@ -275,4 +285,15 @@ fn row_to_notification(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScheduledNot
         status: row.get(9)?,
         metadata: serde_json::from_str(&metadata_json).unwrap_or_else(|_| serde_json::json!({})),
     })
+}
+
+/// M5: source 为空时,用内容(标题+正文+计划时间)派生稳定去重键,
+/// 使同一逻辑提醒命中 ON CONFLICT(session_id, source) 去重而非每次新插一行。
+fn derive_stable_source(title: &str, body: &str, scheduled_at: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    title.trim().hash(&mut hasher);
+    body.trim().hash(&mut hasher);
+    scheduled_at.trim().hash(&mut hasher);
+    format!("auto:{:016x}", hasher.finish())
 }

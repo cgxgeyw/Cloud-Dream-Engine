@@ -33,6 +33,7 @@ import {
 import { AttributePanel } from "../components/AttributePanel";
 import { ConfirmDialog } from "../components/ModalDialog";
 import { useIsMobile } from "../components/ResponsiveLayout";
+import { useSectionParam } from "../hooks/useSectionParam";
 import { GameUiPreview } from "../components/GameUiPreview";
 import { GameUiStructureEditor } from "../components/game-ui-editor/GameUiStructureEditor";
 import { PromptSendPreviewCard } from "../components/PromptTraceView";
@@ -66,146 +67,6 @@ const fixedTabs = [
   { id: "style", label: "界面风格" },
   { id: "configPreview", label: "配置预览" },
 ] as const;
-
-function createLegacyGameUiFile(platform: GameUiPlatform): string {
-  const legacyDocument = platform === "desktop"
-    ? {
-        schema_version: 1 as const,
-        meta: {
-          name: "Desktop Gameplay UI (Legacy)",
-          platform: "desktop",
-        },
-        layout: {
-          root: {
-            type: "grid",
-            columns: ["minmax(280px, 1fr)", "minmax(360px, 1.24fr)", "minmax(240px, 0.82fr)"],
-            rows: ["auto", "minmax(0, 1fr)"],
-            areas: [
-              ["header", "header", "header"],
-              ["scene", "chat", "side"],
-            ],
-            gap: "16px",
-            padding: "18px",
-            style: {
-              height: "100%",
-              min_height: "0",
-            },
-            children: [
-              { type: "mount", mount: "header", area: "header" },
-              {
-                type: "stack",
-                area: "scene",
-                gap: "12px",
-                style: {
-                  height: "100%",
-                  min_height: "0",
-                },
-                children: [
-                  { type: "mount", mount: "scene_focus" },
-                  { type: "mount", mount: "character_bar" },
-                ],
-              },
-              {
-                type: "stack",
-                area: "chat",
-                gap: "12px",
-                style: {
-                  height: "100%",
-                  min_height: "0",
-                },
-                children: [
-                  { type: "mount", mount: "narration" },
-                  { type: "mount", mount: "message_list" },
-                  { type: "mount", mount: "input_area" },
-                ],
-              },
-              { type: "mount", mount: "side_panel", area: "side" },
-              {
-                type: "absolute",
-                children: [
-                  {
-                    type: "mount",
-                    mount: "floating_actions",
-                    anchor: {
-                      top: "18px",
-                      right: "20px",
-                    },
-                  },
-                ],
-              },
-            ],
-          },
-        },
-        mounts: {
-          side_panel: {
-            tab_order: ["map"],
-          },
-        },
-        tokens: {},
-        components: {},
-        effects: {},
-        custom_css: "",
-      }
-    : {
-        schema_version: 1 as const,
-        meta: {
-          name: "Mobile Gameplay UI (Legacy)",
-          platform: "mobile",
-        },
-        layout: {
-          root: {
-            type: "stack",
-            direction: "vertical",
-            gap: "10px",
-            padding: "12px",
-            style: {
-              height: "100%",
-              min_height: "0",
-            },
-            children: [
-              { type: "mount", mount: "header" },
-              { type: "mount", mount: "scene_focus" },
-              { type: "mount", mount: "character_bar" },
-              { type: "mount", mount: "narration" },
-              {
-                type: "mount",
-                mount: "message_list",
-                style: {
-                  flex: "1 1 0",
-                  min_height: "0",
-                },
-              },
-              { type: "mount", mount: "side_panel" },
-              { type: "mount", mount: "input_area" },
-              {
-                type: "absolute",
-                children: [
-                  {
-                    type: "mount",
-                    mount: "floating_actions",
-                    anchor: {
-                      top: "12px",
-                      right: "12px",
-                    },
-                  },
-                ],
-              },
-            ],
-          },
-        },
-        mounts: {
-          side_panel: {
-            tab_order: ["map"],
-          },
-        },
-        tokens: {},
-        components: {},
-        effects: {},
-        custom_css: "",
-      };
-
-  return `${JSON.stringify(legacyDocument, null, 2)}\n`;
-}
 
 type FixedTabId = (typeof fixedTabs)[number]["id"];
 type OpeningComposerRole = "system" | "agent";
@@ -294,8 +155,6 @@ type UiThemeConfig = {
   desktop_file: string;
   mobile_file: string;
 };
-
-type GameUiSchemaVersion = 1 | 2;
 
 const defaultWorldDirectorPrompt = "";
 
@@ -816,8 +675,13 @@ export function WorldEditorPage() {
   const { id } = useParams();
   const isNew = id === "new" || !id;
   const [activeTab, setActiveTab] = useState<FixedTabId>("basic");
-  const [activeSection, setActiveSection] = useState<FixedTabId | null>(null);
-  const [previewPlatform, setPreviewPlatform] = useState<GameUiPlatform>(isMobile ? "mobile" : "desktop");
+  // 移动端「打开某项设置」由 URL 的 ?section= 驱动（见 useSectionParam）：
+  // 点返回按钮与侧滑/系统返回都只是历史回退，落点一致（都回到编辑页、关闭子面板）。
+  const { activeSection, openSection: openSectionParam, closeSection } = useSectionParam<FixedTabId>(
+    fixedTabs.map((tab) => tab.id),
+  );
+  // 预览始终跟随当前设备平台：电脑端只预览桌面界面，手机端只预览移动界面。
+  const previewPlatform: GameUiPlatform = isMobile ? "mobile" : "desktop";
   const [world, setWorld] = useState<WorldResponse | null>(isNew ? createNewWorldDraft() : null);
   const [characters, setCharacters] = useState<CharacterResponse[]>([]);
   const [textModels, setTextModels] = useState<ModelConfigResponse[]>([]);
@@ -847,10 +711,6 @@ export function WorldEditorPage() {
   });
   const pendingTimeSlotFocusRef = useRef(false);
   const timeSlotsContainerRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    setPreviewPlatform(isMobile ? "mobile" : "desktop");
-  }, [isMobile]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1286,12 +1146,8 @@ export function WorldEditorPage() {
     updateGameUiFile(platform, stringifyGameUiDocument(nextDocument));
   }
 
-  function replaceGameUiSchema(platform: GameUiPlatform, schemaVersion: GameUiSchemaVersion) {
-    updateGameUiFile(
-      platform,
-      schemaVersion === 2 ? defaultGameUiFile(platform) : createLegacyGameUiFile(platform),
-    );
-    setPreviewPlatform(platform);
+  function loadDefaultGameUiTemplate(platform: GameUiPlatform) {
+    updateGameUiFile(platform, defaultGameUiFile(platform));
     setError(null);
   }
 
@@ -1301,8 +1157,6 @@ export function WorldEditorPage() {
   ) {
     const label = platform === "desktop" ? "桌面界面" : "移动界面";
     const source = platform === "desktop" ? uiThemeConfig.desktop_file : uiThemeConfig.mobile_file;
-    const isActivePreview = previewPlatform === platform;
-    const isLegacy = !parsed.error && parsed.document.schema_version === 1;
     const compileResult = platform === "desktop" ? uiGovernance.desktopCompile : uiGovernance.mobileCompile;
     const compatibilityDocument = uiGovernance.compatibility?.documents.find((entry) => entry.platform === platform) ?? null;
 
@@ -1317,40 +1171,21 @@ export function WorldEditorPage() {
             <div className="text-muted" style={{ fontSize: 12 }}>
               {parsed.error
                 ? "Current source is invalid. Preview is using fallback."
-                : `schema_version: ${parsed.document.schema_version}${isLegacy ? " (legacy compatibility)" : " (component tree)"}`}
+                : `schema_version: ${parsed.document.schema_version} (component tree)`}
             </div>
           </div>
           <div className="flex flex--gap-sm" style={{ flexWrap: "wrap" }}>
             <button
               type="button"
-              className={`action-btn${isActivePreview ? " action-btn--accent" : ""}`}
-              onClick={() => setPreviewPlatform(platform)}
-            >
-              {isActivePreview ? "Previewing" : "Use for Preview"}
-            </button>
-            <button
-              type="button"
               className="action-btn"
-              onClick={() => replaceGameUiSchema(platform, 1)}
+              onClick={() => loadDefaultGameUiTemplate(platform)}
             >
-              Load v1 Template
-            </button>
-            <button
-              type="button"
-              className="action-btn"
-              onClick={() => replaceGameUiSchema(platform, 2)}
-            >
-              载入 v2 模板
+              载入默认模板
             </button>
           </div>
         </div>
 
         {parsed.error ? <div className="game-input-bubble">{parsed.error}</div> : null}
-        {isLegacy ? (
-          <div className="text-muted" style={{ fontSize: 12 }}>
-            v1 仅为兼容保留，新的界面能力请使用 v2 编写。
-          </div>
-        ) : null}
 
         <label className="editor-field">
           <span className="editor-field-label">Raw JSONC</span>
@@ -1440,24 +1275,6 @@ export function WorldEditorPage() {
       <FoldableEditorSection title="界面预览">
         <div className="flex flex--items-center flex--justify-between world-editor-section-head" style={{ gap: 12 }}>
           <div className="editor-field-label">{previewLabel}</div>
-          <div className="world-editor-section-head-action" style={{ display: "flex", gap: 8 }}>
-            <button
-              type="button"
-              className="action-btn"
-              onClick={() => setPreviewPlatform("desktop")}
-              disabled={previewPlatform === "desktop"}
-            >
-              桌面端
-            </button>
-            <button
-              type="button"
-              className="action-btn"
-              onClick={() => setPreviewPlatform("mobile")}
-              disabled={previewPlatform === "mobile"}
-            >
-              移动端
-            </button>
-          </div>
         </div>
         <div className={`world-style-preview-shell world-style-preview-shell--${previewPlatform}`}>
           <div className={`world-style-preview-frame world-style-preview-frame--${previewPlatform}`}>
@@ -1842,41 +1659,15 @@ export function WorldEditorPage() {
 
   // Mobile-specific navigation
   function openSection(sectionId: FixedTabId) {
-    setActiveSection(sectionId);
+    openSectionParam(sectionId);
     setError(null);
   }
 
   function handleDetailBack() {
-    if (activeSection) {
-      setActiveSection(null);
-    } else {
-      navigate(-1);
-    }
+    // activeSection 由 ?section= 驱动：有应用内历史时走历史回退（与侧滑/系统返回
+    // 一致），无历史（首屏深链/刷新进入）时清除 ?section= 回到列表，避免离开应用。
+    closeSection();
   }
-
-  // 移动端：打开某项设置时标记 detail 状态，并接管侧边栏返回按钮，
-  // 使其先退回各项编辑列表，而不是直接退回世界列表。
-  useEffect(() => {
-    if (!isMobile) {
-      delete document.documentElement.dataset.worldEditorDetailOpen;
-      return;
-    }
-    if (activeSection) {
-      document.documentElement.dataset.worldEditorDetailOpen = "true";
-    } else {
-      delete document.documentElement.dataset.worldEditorDetailOpen;
-    }
-
-    const handleWorldEditorBack = () => {
-      setActiveSection(null);
-      setError(null);
-    };
-    window.addEventListener("world-editor:navigate-back", handleWorldEditorBack);
-    return () => {
-      window.removeEventListener("world-editor:navigate-back", handleWorldEditorBack);
-      delete document.documentElement.dataset.worldEditorDetailOpen;
-    };
-  }, [activeSection, isMobile]);
 
   // ==================== Mobile-specific rendering ====================
   function renderMobileSectionList() {

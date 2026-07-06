@@ -181,6 +181,8 @@ impl<'a> ModelRepository<'a> {
             is_default: req.is_default.unwrap_or(existing.is_default),
         };
 
+        // L6: 主 UPDATE 不直接写 is_default=1,否则在 set_default 清理同类默认之前
+        // 会出现"多个默认"的中间态。这里先写 0,默认标志统一交给 set_default 落定。
         self.conn.execute(
             "UPDATE model_configs SET name = ?1, model_type = ?2, provider = ?3, model_id = ?4, base_url = ?5, api_key = ?6, max_tokens = ?7, streaming_enabled = ?8, is_default = ?9 WHERE id = ?10",
             params![
@@ -192,7 +194,7 @@ impl<'a> ModelRepository<'a> {
                 updated.api_key,
                 updated.max_tokens,
                 if updated.streaming_enabled { 1 } else { 0 },
-                if updated.is_default { 1 } else { 0 },
+                0,
                 id,
             ],
         )
@@ -215,6 +217,8 @@ impl<'a> ModelRepository<'a> {
 
     pub fn set_default(&self, id: &str) -> Result<(), String> {
         let model = self.get(id)?.ok_or_else(|| "Model not found".to_string())?;
+        // L6: 清空同类默认 + 置位本行,放进事务内原子完成,避免中间态出现 0 或多个默认。
+        let tx = self.conn.unchecked_transaction().map_err(|e| e.to_string())?;
         self.conn
             .execute(
                 "UPDATE model_configs SET is_default = 0 WHERE model_type = ?1",
@@ -227,6 +231,7 @@ impl<'a> ModelRepository<'a> {
                 params![id],
             )
             .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
         Ok(())
     }
 

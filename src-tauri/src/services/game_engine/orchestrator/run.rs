@@ -1529,6 +1529,24 @@ impl SessionOrchestrator {
         crate::db::repositories::session_repo::SessionRepository::new(conn).upsert(session)
     }
 
+    /// C2: 资产解析在锁外异步进行;回写时不能整体覆盖快照,否则会丢失这期间
+    /// 其它命令对同一 session 的并发修改。此处在第二次持锁内重读最新快照,
+    /// 仅合并 `resolve_session_assets` 真正改动的 `assets` 字段后回写。
+    pub fn persist_resolved_session_assets(
+        &self,
+        conn: &Connection,
+        session_id: &str,
+        resolved: &SessionSnapshot,
+    ) -> Result<SessionSnapshot, String> {
+        let repo = crate::db::repositories::session_repo::SessionRepository::new(conn);
+        let mut latest = repo
+            .get(session_id)?
+            .ok_or_else(|| "Session not found".to_string())?;
+        latest.assets = resolved.assets.clone();
+        repo.upsert(&latest)?;
+        Ok(latest)
+    }
+
     pub fn load_resume_player_request(
         &self,
         conn: &Connection,
@@ -1701,33 +1719,51 @@ impl SessionOrchestrator {
         }))
     }
 
-    pub fn verify_retry_capsule(
-        &self,
-        conn: &Connection,
-        session_id: &str,
-        retry_token: &str,
-    ) -> Result<(), String> {
-        let mut stmt = conn
-            .prepare("SELECT COUNT(*) FROM llm_retry_capsules WHERE session_id = ?1 AND retry_token = ?2 AND status = 'active'")
-            .map_err(|e| e.to_string())?;
-        let count: i64 = stmt
-            .query_row(params![session_id, retry_token], |row| row.get(0))
-            .map_err(|e| e.to_string())?;
-        if count <= 0 {
-            return Err("Retry token is missing or no longer active".to_string());
-        }
-        Ok(())
-    }
-
-    pub fn consume_retry_capsule(
+    /// H3: 原子认领胶囊。把 active → consuming 用单条带 status 守卫的 UPDATE 完成,
+    /// 仅当本次确实改动一行(`changes() == 1`)才算认领成功。两个并发同 token 调用中
+    /// 只有一个能赢得这行,另一个看到 0 行被改、立即报错,从而杜绝双重消费/双重付费回合。
+    pub fn claim_retry_capsule(
         &self,
         conn: &Connection,
         session_id: &str,
         retry_token: &str,
     ) -> Result<(), String> {
         conn.execute(
-            "UPDATE llm_retry_capsules SET status = 'consumed', consumed_at = ?3 WHERE session_id = ?1 AND retry_token = ?2 AND status = 'active'",
+            "UPDATE llm_retry_capsules SET status = 'consuming' WHERE session_id = ?1 AND retry_token = ?2 AND status = 'active'",
+            params![session_id, retry_token],
+        )
+        .map_err(|e| e.to_string())?;
+        if conn.changes() == 0 {
+            return Err("Retry token is missing or no longer active".to_string());
+        }
+        Ok(())
+    }
+
+    /// H3: 认领成功的回合跑完后,把 consuming → consumed 落定。
+    pub fn finalize_retry_capsule(
+        &self,
+        conn: &Connection,
+        session_id: &str,
+        retry_token: &str,
+    ) -> Result<(), String> {
+        conn.execute(
+            "UPDATE llm_retry_capsules SET status = 'consumed', consumed_at = ?3 WHERE session_id = ?1 AND retry_token = ?2 AND status = 'consuming'",
             params![session_id, retry_token, Utc::now().to_rfc3339()],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// H3: 回合执行失败(返回 Err)时把胶囊从 consuming 退回 active,允许重试。
+    pub fn release_retry_capsule(
+        &self,
+        conn: &Connection,
+        session_id: &str,
+        retry_token: &str,
+    ) -> Result<(), String> {
+        conn.execute(
+            "UPDATE llm_retry_capsules SET status = 'active' WHERE session_id = ?1 AND retry_token = ?2 AND status = 'consuming'",
+            params![session_id, retry_token],
         )
         .map_err(|e| e.to_string())?;
         Ok(())

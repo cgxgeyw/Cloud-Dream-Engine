@@ -15,6 +15,8 @@ class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+    // 行程提醒写入系统日历需要 appContext,否则 Rust 经 JNI 调用时会因 context 未就绪而失败。
+    ScheduledNotificationReceiver.initialize(applicationContext)
     requestNotificationPermissionIfNeeded()
   }
 

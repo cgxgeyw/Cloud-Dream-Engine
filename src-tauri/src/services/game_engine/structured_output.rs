@@ -171,23 +171,23 @@ pub fn validate_director_payload(
     if let Some(value) = object.get("switch_character_proposal") {
         if !value.is_null() {
             let Some(proposal) = value.as_object() else {
+                // M7: 此前依赖"schema_errors 刚 push 必非空 → 提前 return"的隐式不变量,
+                // 末尾用 unreachable!() 兜底,任何改动 push/guard 顺序的编辑都会让它变成
+                // 运行时 panic、崩掉导演回合。改为无条件返回 schema 校验错误,不再依赖该不变量。
                 schema_errors.push("switch_character_proposal must be an object".to_string());
-                if !schema_errors.is_empty() || !domain_errors.is_empty() {
-                    return Err(build_failure(
-                        stage,
-                        "schema_validation_failed",
-                        "导演输出字段结构无效",
-                        provider,
-                        model_id,
-                        turn_index,
-                        None,
-                        raw_text,
-                        repair_summary,
-                        schema_errors,
-                        domain_errors,
-                    ));
-                }
-                unreachable!();
+                return Err(build_failure(
+                    stage,
+                    "schema_validation_failed",
+                    "导演输出字段结构无效",
+                    provider,
+                    model_id,
+                    turn_index,
+                    None,
+                    raw_text,
+                    repair_summary,
+                    schema_errors,
+                    domain_errors,
+                ));
             };
             let target_name = proposal
                 .get("target_character_name")

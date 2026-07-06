@@ -13,12 +13,20 @@ impl<'a> SaveRepository<'a> {
     }
 
     pub fn list(&self) -> Result<Vec<SaveSummary>, String> {
+        // M6: 此前逐个 save 读 turn_journal、比较、再回写 turn_index,并发 list 时既不一致
+        // 又产生写放大。改为单条查询用子查询取 turn_journal 最新值,只读不写。
         let mut stmt = self
             .conn
-            .prepare("SELECT * FROM saves ORDER BY updated_at DESC")
+            .prepare(
+                "SELECT s.id, s.session_id, s.title, s.world_name, s.updated_at, s.progress, \
+                        s.summary, s.player_character_name, s.parent_save_id, s.branch_root_save_id, \
+                        s.branch_label, \
+                        MAX(s.turn_index, COALESCE((SELECT MAX(j.turn_index) FROM turn_journal j WHERE j.session_id = s.session_id), 0)) \
+                 FROM saves s ORDER BY s.updated_at DESC",
+            )
             .map_err(|e| e.to_string())?;
 
-        let mut saves = stmt
+        let saves = stmt
             .query_map([], |row| {
                 Ok(SaveSummary {
                     id: row.get(0)?,
@@ -38,21 +46,6 @@ impl<'a> SaveRepository<'a> {
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
-
-        // Update turn_index from turn_journal
-        for save in &mut saves {
-            let turn_index = self.load_latest_turn_index(&save.session_id)?;
-            if turn_index > save.turn_index {
-                save.turn_index = turn_index;
-                // Update the database
-                self.conn
-                    .execute(
-                        "UPDATE saves SET turn_index = ?1 WHERE id = ?2",
-                        params![save.turn_index, save.id],
-                    )
-                    .map_err(|e| e.to_string())?;
-            }
-        }
 
         Ok(saves)
     }
@@ -177,6 +170,10 @@ impl<'a> SaveRepository<'a> {
             state: source_session.state.clone(),
         };
 
+        // M2: 分支涉及 sessions + memories + memory_embeddings + attribute_values + saves
+        // 多表写入,用事务包裹:中途任何一步失败都整体回滚,不留孤儿 session/半套记忆。
+        let tx = self.conn.unchecked_transaction().map_err(|e| e.to_string())?;
+
         self.conn.execute(
             "INSERT INTO sessions (id, world_name, location, time_label, current_speaker, current_line, player_character_id, player_character_name, visible_characters_json, messages_json, player_stats_json, map_graph_nodes_json, map_graph_edges_json, inventory_items_json, system_log_json, scene_json, assets_json, state_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
@@ -221,6 +218,7 @@ impl<'a> SaveRepository<'a> {
         };
 
         self.upsert(&branched_save)?;
+        tx.commit().map_err(|e| e.to_string())?;
         Ok(branched_save)
     }
 
@@ -239,13 +237,27 @@ impl<'a> SaveRepository<'a> {
         Ok(count as u64)
     }
 
+    /// H1: 列出所有存档指向的会话 id,供删除存档时清理底层会话数据。
+    pub fn list_session_ids(&self) -> Result<Vec<String>, String> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT session_id FROM saves")
+            .map_err(|e| e.to_string())?;
+        let ids = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        Ok(ids)
+    }
+
     fn copy_branch_memories(
         &self,
         source_session_id: &str,
         branched_session_id: &str,
     ) -> Result<(), String> {
         let mut stmt = self.conn
-            .prepare("SELECT world_id, character_id, layer, content, source, importance, created_at, turn_index, conversation_id, event_id, item_id, scene_id, memory_type, speaker, role, location, participants_json, keywords_json FROM memories WHERE session_id = ?1")
+            .prepare("SELECT id, world_id, character_id, layer, content, source, importance, created_at, turn_index, conversation_id, event_id, item_id, scene_id, memory_type, speaker, role, location, participants_json, keywords_json FROM memories WHERE session_id = ?1")
             .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map(params![source_session_id], |row| {
@@ -255,25 +267,34 @@ impl<'a> SaveRepository<'a> {
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
                     row.get::<_, String>(4)?,
-                    row.get::<_, f64>(5)?,
-                    row.get::<_, String>(6)?,
-                    row.get::<_, i64>(7)?,
-                    row.get::<_, Option<String>>(8)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, f64>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, i64>(8)?,
                     row.get::<_, Option<String>>(9)?,
                     row.get::<_, Option<String>>(10)?,
                     row.get::<_, Option<String>>(11)?,
-                    row.get::<_, String>(12)?,
-                    row.get::<_, Option<String>>(13)?,
+                    row.get::<_, Option<String>>(12)?,
+                    row.get::<_, String>(13)?,
                     row.get::<_, Option<String>>(14)?,
                     row.get::<_, Option<String>>(15)?,
-                    row.get::<_, String>(16)?,
+                    row.get::<_, Option<String>>(16)?,
                     row.get::<_, String>(17)?,
+                    row.get::<_, String>(18)?,
                 ))
             })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
+
+        // M3: 记忆换新 id 时,memory_embeddings(FK→memory_id)必须一并按新 id 复制,
+        // 否则分支会话的记忆缺向量,语义检索返回空、角色"失忆"直到重新嵌入。
+        // 这里记录 旧 id → 新 id 映射,稍后复制对应的嵌入行。
+        let mut id_map: Vec<(String, String)> = Vec::with_capacity(rows.len());
 
         for row in rows {
             let (
+                old_id,
                 world_id,
                 character_id,
                 layer,
@@ -292,12 +313,13 @@ impl<'a> SaveRepository<'a> {
                 location,
                 participants_json,
                 keywords_json,
-            ) = row.map_err(|e| e.to_string())?;
+            ) = row;
+            let new_id = format!("memory-{}", uuid::Uuid::new_v4().simple());
 
             self.conn.execute(
                 "INSERT INTO memories (id, world_id, session_id, character_id, layer, content, source, importance, created_at, turn_index, conversation_id, event_id, item_id, scene_id, memory_type, speaker, role, location, participants_json, keywords_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
                 params![
-                    format!("memory-{}", uuid::Uuid::new_v4().simple()),
+                    new_id,
                     world_id,
                     branched_session_id,
                     character_id,
@@ -320,6 +342,18 @@ impl<'a> SaveRepository<'a> {
                 ],
             )
             .map_err(|e| e.to_string())?;
+            id_map.push((old_id, new_id));
+        }
+
+        // 复制每条记忆的嵌入向量到新 id。
+        for (old_id, new_id) in &id_map {
+            self.conn
+                .execute(
+                    "INSERT INTO memory_embeddings (memory_id, model_key, vector_json, updated_at) \
+                     SELECT ?1, model_key, vector_json, updated_at FROM memory_embeddings WHERE memory_id = ?2",
+                    params![new_id, old_id],
+                )
+                .map_err(|e| e.to_string())?;
         }
 
         Ok(())

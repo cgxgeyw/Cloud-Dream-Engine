@@ -29,16 +29,32 @@ function readStringProp(
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
 
+// 为待发图片创建一次性 blob URL，并在文件变化/卸载时释放，避免每次重渲染
+// 都新建一个永不回收的 object URL 造成内存泄漏。
+function ImagePreview({ file }: { file: File }) {
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    const objectUrl = URL.createObjectURL(file);
+    setUrl(objectUrl);
+    return () => {
+      URL.revokeObjectURL(objectUrl);
+    };
+  }, [file]);
+
+  if (!url) {
+    return null;
+  }
+  return <img src={url} alt={`Preview ${file.name}`} />;
+}
+
 export function InputComposerComponent({ runtime, actions, node }: InputComposerComponentProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
   const imageInputId = useId();
-
-  if (!runtime.session) {
-    return null;
-  }
 
   const checkMicPermission = async (): Promise<boolean> => {
     try {
@@ -84,6 +100,7 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
@@ -106,6 +123,7 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
         );
         runtime.draft_input.set_audios((previous) => [...previous, file]);
         stream.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
       };
       mediaRecorder.start();
       setIsRecording(true);
@@ -132,6 +150,22 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
       actions.attachInputComposerBridge(null);
     };
   }, [actions, imageInputId]);
+
+  // 卸载时停止仍在进行的录音并释放麦克风音轨，避免离开页面后麦克风长开、指示灯长亮。
+  useEffect(() => {
+    return () => {
+      const recorder = mediaRecorderRef.current;
+      if (recorder && recorder.state !== "inactive") {
+        recorder.stop();
+      }
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
+    };
+  }, []);
+
+  if (!runtime.session) {
+    return null;
+  }
 
   const submitMode = runtime.editing ? "edit" : "submit";
   const placeholder = readStringProp(node, "placeholder", "输入消息或行动...");
@@ -275,7 +309,7 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
         <div className="game-input-images">
           {runtime.draft_input.images.map((file, index) => (
             <div key={`${file.name}-${index}`} className="game-input-image-preview">
-              <img src={URL.createObjectURL(file)} alt={`Preview ${file.name}`} />
+              <ImagePreview file={file} />
               <button
                 type="button"
                 className="game-input-image-remove"

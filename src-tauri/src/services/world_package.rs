@@ -302,7 +302,15 @@ fn unique_file_path(dir: &Path, filename: &str) -> PathBuf {
         }
     }
 
-    candidate
+    // L10: 序号用尽时不要回退到已存在的 candidate(会静默覆盖);改用唯一 uuid 后缀,
+    // 保证返回的是一个尚不存在的路径。
+    let unique_suffix = uuid::Uuid::new_v4().simple().to_string();
+    let fallback_name = if ext.is_empty() {
+        format!("{stem}-{unique_suffix}")
+    } else {
+        format!("{stem}-{unique_suffix}.{ext}")
+    };
+    dir.join(fallback_name)
 }
 
 fn normalize_selected_package_path(path: &str) -> String {

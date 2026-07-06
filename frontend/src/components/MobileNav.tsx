@@ -124,23 +124,18 @@ export function MobileNav({ children }: MobileNavProps) {
   };
 
   const handleBack = () => {
-    if (
-      location.pathname === "/settings" &&
-      document.documentElement.dataset.settingsDetailOpen === "true"
-    ) {
-      window.dispatchEvent(new Event("settings:navigate-back"));
-      setIsOpen(false);
-      return;
+    // 优先与侧滑/系统返回保持一致：有应用内历史时走历史回退（navigate(-1)）。
+    // 仅当处于首屏/深链（history idx 为 0 或缺失，没有可回退的上一页）时，
+    // 才回退到逻辑父级，避免「返回」无效或离开应用。
+    const historyIdx =
+      typeof window !== "undefined" && window.history.state && typeof window.history.state.idx === "number"
+        ? (window.history.state.idx as number)
+        : 0;
+    if (historyIdx > 0) {
+      navigate(-1);
+    } else {
+      navigate(resolveParentPath(location.pathname, location.search));
     }
-    if (
-      /^\/worlds\/[^/]+\/edit$/.test(location.pathname) &&
-      document.documentElement.dataset.worldEditorDetailOpen === "true"
-    ) {
-      window.dispatchEvent(new Event("world-editor:navigate-back"));
-      setIsOpen(false);
-      return;
-    }
-    navigate(resolveParentPath(location.pathname, location.search));
     setIsOpen(false);
   };
 

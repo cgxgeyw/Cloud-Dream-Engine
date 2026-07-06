@@ -11,7 +11,7 @@ pub(crate) async fn get_debug_prompts_impl(
     let db = state.db.lock().await;
 
     let session = common::query_session(db.conn(), &session_id)?;
-    let world = common::query_world(db.conn(), &session.world_name)?;
+    let world = common::query_world_for_session(db.conn(), &session)?;
     let _characters = common::query_characters(db.conn(), world.as_ref().map(|w| w.id.as_str()))?;
 
     let prompt_calls = common::query_prompt_calls(db.conn(), &session_id)?;

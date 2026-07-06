@@ -82,17 +82,17 @@ impl SessionOrchestrator {
             }
 
             let speaker_char = characters.iter().find(|c| c.name == *speaker_name);
+            // C1/H9: 召回分三步,嵌入 HTTP 必须在锁外执行。
+            // 步骤 1(持锁):取候选记忆 + 词法打分 + 已存向量,不触网。
             let (
                 speaker_model,
                 visible_attribute_lines,
                 visible_inventory_items,
                 public_scene_state_lines,
                 memory_pool,
-                recalled_memories,
                 recent_messages,
-                speaker_request,
-                speaker_provider,
-                speaker_request_value,
+                speaker_character_id_owned,
+                mut recall_plan,
             ) = {
                 let db_guard = db.lock().await;
                 let conn = db_guard.conn();
@@ -118,8 +118,7 @@ impl SessionOrchestrator {
                     resolve_character_memory_recall_limit(speaker_char),
                     (resolve_character_memory_hit_turns(world) as i32 * 6).max(12),
                 );
-                let recalled_memories = load_recent_character_memories(
-                    memory_service,
+                let recall_plan = memory_service.prepare_character_recall(
                     conn,
                     world,
                     &world.id,
@@ -127,7 +126,7 @@ impl SessionOrchestrator {
                     speaker_character_id,
                     player_input,
                     &session.location,
-                    Some(session.scene.scene_id.clone()),
+                    Some(session.scene.scene_id.as_str()),
                     &build_turn_participants(visible_chars, &session.player_character_name),
                     recall_limit,
                 )?;
@@ -138,6 +137,29 @@ impl SessionOrchestrator {
                         .unwrap_or(2),
                     Some(session.player_character_name.as_str()),
                 );
+                (
+                    speaker_model,
+                    visible_attribute_lines,
+                    visible_inventory_items,
+                    public_scene_state_lines,
+                    memory_pool,
+                    recent_messages,
+                    speaker_character_id.map(|value| value.to_string()),
+                    recall_plan,
+                )
+            };
+            let _ = speaker_character_id_owned;
+
+            // 步骤 2(锁外):嵌入 HTTP / 本地推理。block_in_place 让阻塞调用不占用
+            // 其它 tokio worker,且此处已不持有 DB 锁,慢嵌入端点不再卡住全库。
+            tokio::task::block_in_place(|| memory_service.embed_recall_plan(&mut recall_plan));
+
+            // 步骤 3(持锁):写回向量缓存并完成排序,随后构建请求。
+            let (recalled_memories, speaker_request, speaker_provider, speaker_request_value) = {
+                let db_guard = db.lock().await;
+                let conn = db_guard.conn();
+                let recalled_memories =
+                    memory_service.finalize_character_recall(conn, recall_plan);
                 let mut speaker_request = build_character_chat_request(
                     dialogue_pipeline,
                     world,
@@ -168,13 +190,7 @@ impl SessionOrchestrator {
                     "request": serde_json::to_value(&speaker_request).unwrap_or_default(),
                 });
                 (
-                    speaker_model,
-                    visible_attribute_lines,
-                    visible_inventory_items,
-                    public_scene_state_lines,
-                    memory_pool,
                     recalled_memories,
-                    recent_messages,
                     speaker_request,
                     speaker_provider,
                     speaker_request_value,

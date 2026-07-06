@@ -7,16 +7,12 @@ import {
   type GameUiComponentNode,
   type GameUiAnchor,
   type GameUiDocument,
-  type GameUiDocumentV1,
   type GameUiDocumentV2,
   type GameUiForEachNode,
   type GameUiImageNode,
   type GameUiLayoutNode,
-  type GameUiLayoutNodeV1,
   type GameUiLayoutNodeV2,
   type GameUiMountId,
-  type GameUiMountNode,
-  type GameUiMountOptions,
   type GameUiTextNode,
   styleRecordToInlineStyle,
 } from "../data/gameUi";
@@ -61,7 +57,7 @@ export function GameUiRenderer({
   onAction,
 }: GameUiRendererProps) {
   const [uiState, setUiState] = useState<Record<string, unknown>>(() =>
-    document.schema_version === 2 ? normalizeInitialState(document.state) : {},
+    normalizeInitialState(document.state),
   );
   const context: GameUiRenderContext = {
     state: uiState,
@@ -75,9 +71,7 @@ export function GameUiRenderer({
 
   return (
     <div className="game-ui-layout">
-      {document.schema_version === 1
-        ? renderV1Layout(document, mounts)
-        : renderV2Layout(document, componentRenderers, evaluateCondition, resolveLoopSource, context, rendererActions)}
+      {renderV2Layout(document, componentRenderers, evaluateCondition, resolveLoopSource, context, rendererActions)}
     </div>
   );
 }
@@ -86,68 +80,6 @@ type GameUiElementActions = {
   setUiState: Dispatch<SetStateAction<Record<string, unknown>>>;
   onAction?: (action: GameUiActionReference, context: GameUiRenderContext) => void | Promise<void>;
 };
-
-function renderV1Layout(
-  document: GameUiDocumentV1,
-  mounts: Partial<Record<GameUiMountId, ReactNode>>,
-): ReactNode {
-  return renderV1Node(document.layout.root, document, mounts, "root");
-}
-
-function renderV1Node(
-  node: GameUiLayoutNodeV1,
-  document: GameUiDocumentV1,
-  mounts: Partial<Record<GameUiMountId, ReactNode>>,
-  key: string,
-): ReactNode {
-  if (node.visible === false) {
-    return null;
-  }
-
-  if (node.type === "mount") {
-    return renderMountNode(node, document.mounts?.[node.mount], mounts[node.mount], key);
-  }
-
-  if (node.type === "absolute") {
-    const children = (node.children ?? [])
-      .map((child, index) => renderV1Node(child, document, mounts, `${key}-${index}`))
-      .filter((child) => child !== null);
-    if (children.length === 0) {
-      return null;
-    }
-    return (
-      <div
-        key={key}
-        className={["game-ui-node", "game-ui-node--absolute", node.class_name].filter(Boolean).join(" ")}
-        style={buildNodeStyle(node)}
-      >
-        {children}
-      </div>
-    );
-  }
-
-  if (node.type === "stack") {
-    return (
-      <div
-        key={key}
-        className={["game-ui-node", "game-ui-node--stack", node.class_name].filter(Boolean).join(" ")}
-        style={buildNodeStyle(node)}
-      >
-        {(node.children ?? []).map((child, index) => renderV1Node(child, document, mounts, `${key}-${index}`))}
-      </div>
-    );
-  }
-
-  return (
-    <div
-      key={key}
-      className={["game-ui-node", "game-ui-node--grid", node.class_name].filter(Boolean).join(" ")}
-      style={buildNodeStyle(node)}
-    >
-      {(node.children ?? []).map((child, index) => renderV1Node(child, document, mounts, `${key}-${index}`))}
-    </div>
-  );
-}
 
 function renderV2Layout(
   document: GameUiDocumentV2,
@@ -326,38 +258,6 @@ function renderV2Node(
           `${key}-${index}`,
         ),
       )}
-    </div>
-  );
-}
-
-function renderMountNode(
-  node: GameUiMountNode,
-  mountOptions: GameUiMountOptions | undefined,
-  content: ReactNode,
-  key: string,
-): ReactNode {
-  if (mountOptions?.visible === false || !content) {
-    return null;
-  }
-
-  return (
-    <div
-      key={key}
-      className={[
-        "game-ui-node",
-        "game-ui-node--mount",
-        "game-ui-mount",
-        `game-ui-mount--${node.mount}`,
-        toMountClassSuffix(node.mount) === node.mount ? undefined : `game-ui-mount--${toMountClassSuffix(node.mount)}`,
-        node.class_name,
-        mountOptions?.class_name,
-      ].filter(Boolean).join(" ")}
-      data-mount={node.mount}
-      data-variant={mountOptions?.variant}
-      data-chrome={mountOptions?.chrome}
-      style={buildNodeStyle(node, mountOptions)}
-    >
-      {content}
     </div>
   );
 }
@@ -738,27 +638,21 @@ function stringifyTemplateValue(value: unknown): string {
   }
 }
 
-function toMountClassSuffix(mountId: GameUiMountId): string {
-  return mountId.replace(/_/g, "-");
-}
-
 function buildNodeStyle(
   node: GameUiLayoutNode,
-  mountOptions?: GameUiMountOptions,
 ): CSSProperties {
   const style: CSSProperties = {
     width: node.width,
     height: node.height,
     minWidth: node.min_width,
-    minHeight: mountOptions?.min_height ?? node.min_height,
-    maxWidth: mountOptions?.max_width ?? node.max_width,
+    minHeight: node.min_height,
+    maxWidth: node.max_width,
     maxHeight: node.max_height,
     padding: node.padding,
     margin: node.margin,
     alignItems: node.align,
     justifyContent: node.justify,
     ...styleRecordToInlineStyle(node.style),
-    ...styleRecordToInlineStyle(mountOptions?.style),
   };
 
   if (node.type === "grid") {
@@ -789,15 +683,6 @@ function buildNodeStyle(
     style.inset = 0;
     style.pointerEvents = "none";
     style.zIndex = 30;
-  }
-
-  if (node.type === "mount") {
-    applyAnchorStyle(style, node.anchor);
-    if (mountOptions?.sticky === "bottom") {
-      style.position = "sticky";
-      style.bottom = 0;
-      style.zIndex = 10;
-    }
   }
 
   if (node.type === "component") {

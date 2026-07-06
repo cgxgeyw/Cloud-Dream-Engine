@@ -10,20 +10,9 @@ use crate::models::world::{
     WorldUiDocumentRequest, WorldUiDocumentValidationResult,
 };
 
-const SUPPORTED_SCHEMA_VERSIONS: [u32; 2] = [1, 2];
+const SUPPORTED_SCHEMA_VERSIONS: [u32; 1] = [2];
 const SUPPORTED_CAPABILITIES: [&str; 3] =
     ["supports_file_picker", "supports_hover", "supports_mic"];
-const LEGACY_MOUNT_IDS: [&str; 9] = [
-    "header",
-    "scene",
-    "scene_focus",
-    "character_bar",
-    "narration",
-    "message_list",
-    "side_panel",
-    "input_area",
-    "floating_actions",
-];
 const SUPPORTED_ACTION_IDS: [&str; 18] = [
     "submit_message",
     "edit_turn_start",
@@ -500,10 +489,7 @@ impl GameUiService {
             };
         };
 
-        let mut normalized = parsed_value.clone();
-        let normalized_object = normalized
-            .as_object_mut()
-            .expect("normalized UI document should remain an object");
+        let normalized = parsed_value.clone();
 
         let schema_version = match object.get("schema_version") {
             Some(Value::Number(number)) => number.as_u64().map(|value| value as u32),
@@ -516,13 +502,12 @@ impl GameUiService {
                 None
             }
             None => {
-                normalized_object.insert("schema_version".to_string(), Value::from(1));
-                state.warn(
+                state.error(
                     "missing_schema_version",
-                    "schema_version is missing. Compatibility mode defaults this document to schema_version 1.",
+                    "schema_version is missing. UI documents must declare schema_version 2.",
                     "schema_version",
                 );
-                Some(1)
+                None
             }
         };
 
@@ -583,7 +568,6 @@ impl GameUiService {
         };
 
         match schema_version {
-            Some(1) => self.validate_v1_node(root, "layout.root", &mut state, &mut BTreeSet::new()),
             Some(2) => self.validate_v2_node(root, "layout.root", &mut state),
             Some(_) | None => {}
         }
@@ -593,65 +577,6 @@ impl GameUiService {
         }
 
         build_snapshot(platform, schema_version, normalized, state)
-    }
-
-    fn validate_v1_node(
-        &self,
-        node: &Value,
-        path: &str,
-        state: &mut CompilationState,
-        seen_mounts: &mut BTreeSet<String>,
-    ) {
-        let Some(object) = node.as_object() else {
-            state.error("invalid_node", "Layout node must be an object.", path);
-            return;
-        };
-
-        let node_type = read_required_string(object, "type", path, state);
-        validate_common_node_fields(object, path, state);
-
-        match node_type.as_deref() {
-            Some("grid") => {
-                validate_grid_fields(object, path, state);
-                validate_children_v1(self, object, path, state, seen_mounts);
-            }
-            Some("stack") => {
-                validate_stack_fields(object, path, state);
-                validate_children_v1(self, object, path, state, seen_mounts);
-            }
-            Some("absolute") => {
-                validate_children_v1(self, object, path, state, seen_mounts);
-            }
-            Some("mount") => {
-                let Some(mount_id) = read_required_string(object, "mount", path, state) else {
-                    return;
-                };
-                if !LEGACY_MOUNT_IDS.contains(&mount_id.as_str()) {
-                    state.error(
-                        "unknown_mount",
-                        format!("Unknown legacy mount `{mount_id}`."),
-                        format!("{path}.mount"),
-                    );
-                } else if !seen_mounts.insert(mount_id.clone()) {
-                    state.error(
-                        "duplicate_mount",
-                        format!("Mount `{mount_id}` is declared more than once."),
-                        format!("{path}.mount"),
-                    );
-                }
-                if let Some(anchor) = object.get("anchor") {
-                    validate_anchor(anchor, &format!("{path}.anchor"), state);
-                }
-            }
-            Some(other) => {
-                state.error(
-                    "unsupported_v1_node",
-                    format!("Node type `{other}` is not valid for schema_version 1."),
-                    path,
-                );
-            }
-            None => {}
-        }
     }
 
     fn validate_v2_node(&self, node: &Value, path: &str, state: &mut CompilationState) {
@@ -1105,33 +1030,6 @@ fn validate_stack_fields(object: &Map<String, Value>, path: &str, state: &mut Co
                 "invalid_wrap",
                 "wrap must be a boolean.",
                 format!("{path}.wrap"),
-            );
-        }
-    }
-}
-
-fn validate_children_v1(
-    service: &GameUiService,
-    object: &Map<String, Value>,
-    path: &str,
-    state: &mut CompilationState,
-    seen_mounts: &mut BTreeSet<String>,
-) {
-    if let Some(children) = object.get("children") {
-        let Some(children) = children.as_array() else {
-            state.error(
-                "invalid_children",
-                "children must be an array.",
-                format!("{path}.children"),
-            );
-            return;
-        };
-        for (index, child) in children.iter().enumerate() {
-            service.validate_v1_node(
-                child,
-                &format!("{path}.children[{index}]"),
-                state,
-                seen_mounts,
             );
         }
     }

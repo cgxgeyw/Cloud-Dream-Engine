@@ -4,10 +4,6 @@ use std::time::Duration as StdDuration;
 use chrono::{DateTime, Duration, Local, NaiveDateTime, TimeZone, Utc};
 use rusqlite::params;
 use tauri::AppHandle;
-#[cfg(mobile)]
-use tauri_plugin_notification::Schedule;
-#[cfg(target_os = "android")]
-use tauri_plugin_notification::{Channel, Importance, Visibility};
 use tauri_plugin_notification::{NotificationExt, PermissionState};
 
 #[cfg(target_os = "android")]
@@ -17,7 +13,6 @@ use crate::db::repositories::character_repo::CharacterRepository;
 use crate::db::repositories::scheduled_notification_repo::ScheduledNotificationRepository;
 use crate::db::repositories::session_repo::SessionRepository;
 use crate::db::repositories::world_repo::WorldRepository;
-use crate::db::Database;
 use crate::events::session_events::SessionEventEmitter;
 use crate::models::scheduled_notification::{
     PendingScheduledNotification, ScheduledNotification, ScheduledNotificationCreate,
@@ -94,7 +89,7 @@ impl NotificationScheduler {
             scheduled_at: scheduled_at.to_rfc3339(),
             metadata,
         })?;
-        Self::schedule_delivery(app.clone(), data_dir.to_path_buf(), notification.clone())?;
+        Self::schedule_delivery(conn, app.clone(), data_dir.to_path_buf(), notification.clone())?;
         Ok(notification)
     }
 
@@ -223,7 +218,7 @@ impl NotificationScheduler {
         let updated = repo
             .replace_scheduled(&existing.id, &title, &body, &scheduled_at, &metadata)?
             .ok_or_else(|| "Notification was not updated".to_string())?;
-        Self::schedule_delivery(app.clone(), data_dir.to_path_buf(), updated.clone())?;
+        Self::schedule_delivery(conn, app.clone(), data_dir.to_path_buf(), updated.clone())?;
         sync_session_schedule_attribute(conn, context.session_id)?;
         Ok(notification_result(&updated))
     }
@@ -276,80 +271,92 @@ impl NotificationScheduler {
         Ok(notification_result(&notification))
     }
 
-    pub fn restore_pending(app: &AppHandle, data_dir: &Path) -> Result<usize, String> {
-        let db = Database::new(&data_dir.to_path_buf())?;
-        let repo = ScheduledNotificationRepository::new(db.conn());
+    pub async fn restore_pending(app: &AppHandle, data_dir: &Path) -> Result<usize, String> {
+        use tauri::Manager;
+        // H7: 用主 AppState 的连接,不再 Database::new() 另开连接。
+        let state = app.state::<crate::state::AppState>();
+        let db_guard = state.db.lock().await;
+        let conn = db_guard.conn();
+        let repo = ScheduledNotificationRepository::new(conn);
         let pending = repo.list_pending()?;
         let count = pending.len();
         for notification in pending {
             if is_native_delivery(&notification) && is_due(&notification.scheduled_at) {
-                let _ = repo.mark_fired(&notification.id);
-                let _ = append_fired_notification_message(db.conn(), app, &notification);
+                if let Err(err) = repo.mark_fired(&notification.id) {
+                    log_notification_db_error("mark_fired", &notification.id, &err);
+                }
+                if let Err(err) = append_fired_notification_message(conn, app, &notification) {
+                    log_notification_db_error("append_fired_message", &notification.id, &err);
+                }
                 continue;
             }
             if let Err(error) =
-                Self::schedule_delivery(app.clone(), data_dir.to_path_buf(), notification.clone())
+                Self::schedule_delivery(conn, app.clone(), data_dir.to_path_buf(), notification.clone())
             {
-                let _ = repo.mark_failed(&notification.id, &error);
+                if let Err(err) = repo.mark_failed(&notification.id, &error) {
+                    log_notification_db_error("mark_failed", &notification.id, &err);
+                }
             }
         }
-        let _ = sync_all_session_schedule_attributes(db.conn());
+        let _ = sync_all_session_schedule_attributes(conn);
         Ok(count)
     }
 
     fn schedule_delivery(
+        conn: &rusqlite::Connection,
         app: AppHandle,
         data_dir: PathBuf,
         notification: ScheduledNotification,
     ) -> Result<(), String> {
-        #[cfg(mobile)]
+        #[cfg(target_os = "android")]
         {
-            return Self::schedule_native_notification(&app, &data_dir, &notification);
+            return Self::schedule_native_notification(conn, &app, &data_dir, &notification);
         }
 
-        Self::spawn_notification_task(app, data_dir, notification, true);
-        Ok(())
+        #[cfg(not(target_os = "android"))]
+        {
+            // 桌面路径在延时后由 spawn 的任务自行加锁取连接,这里无需 conn。
+            let _ = conn;
+            Self::spawn_notification_task(app, data_dir, notification, true);
+            Ok(())
+        }
     }
 
-    #[cfg(mobile)]
+    #[cfg(target_os = "android")]
     fn schedule_native_notification(
+        conn: &rusqlite::Connection,
         app: &AppHandle,
         data_dir: &Path,
         notification: &ScheduledNotification,
     ) -> Result<(), String> {
-        ensure_notification_permission(app)?;
-        ensure_reminder_notification_channel(app)?;
+        // 安卓行程提醒改为直接写入系统日历事件(见 workmanager_plugin.rs 与
+        // ScheduledNotificationReceiver.kt),由系统在应用未运行时也能可靠触发,
+        // 不再依赖 Tauri notification 插件的进程内 Schedule::At。
         let scheduled_at = parse_stored_notification_time(&notification.scheduled_at)?;
-        let date = chrono_to_offset_datetime(scheduled_at)?;
-        let native_id = native_notification_id(&notification.id);
-        let result = app
-            .notification()
-            .builder()
-            .id(native_id)
-            .channel_id(ANDROID_REMINDER_CHANNEL_ID)
-            .title(notification.title.clone())
-            .body(notification.body.clone())
-            .schedule(Schedule::At {
-                date,
-                repeating: false,
-                allow_while_idle: true,
-            })
-            .show();
-        match result {
-            Ok(_) => {
-                let db = Database::new(&data_dir.to_path_buf())?;
-                ScheduledNotificationRepository::new(db.conn())
-                    .mark_native_scheduled(&notification.id, native_id)?;
-                Self::spawn_notification_task(
-                    app.clone(),
-                    data_dir.to_path_buf(),
-                    (*notification).clone(),
-                    false,
-                );
-                Ok(())
-            }
-            Err(error) => Err(error.to_string()),
-        }
+        let delay_ms = (scheduled_at - Utc::now())
+            .num_milliseconds()
+            .max(0);
+        let result = crate::workmanager_plugin::schedule_notification_with_result(
+            app,
+            &notification.id,
+            &notification.title,
+            &notification.body,
+            ANDROID_REMINDER_CHANNEL_ID,
+            delay_ms,
+        )?;
+        // H7/M9: 复用调用方已持有的主连接,不再 Database::new() 另开连接。
+        // 保存日历 event id 到 metadata,供取消/调试使用。
+        ScheduledNotificationRepository::new(conn)
+            .mark_native_scheduled(&notification.id, result.calendar_event_id)?;
+        // 应用运行中到点时,本任务负责实时把 fired 消息补进聊天流
+        // (系统日历同时会弹出自己的提醒)。
+        Self::spawn_notification_task(
+            app.clone(),
+            data_dir.to_path_buf(),
+            (*notification).clone(),
+            false,
+        );
+        Ok(())
     }
 
     fn spawn_notification_task(
@@ -368,11 +375,13 @@ impl NotificationScheduler {
                 tokio::time::sleep(delay).await;
             }
 
-            let db = match Database::new(&data_dir) {
-                Ok(db) => db,
-                Err(_) => return,
-            };
-            let repo = ScheduledNotificationRepository::new(db.conn());
+            // H7: 统一走主 AppState 的单一 DB 连接,避免 Database::new() 开独立连接与主连接
+            // 并发写时产生 SQLITE_BUSY。conn 是 !Send,因此 guard 仅在本同步块内持有、不跨 await。
+            use tauri::Manager;
+            let state = app.state::<crate::state::AppState>();
+            let db_guard = state.db.lock().await;
+            let conn = db_guard.conn();
+            let repo = ScheduledNotificationRepository::new(conn);
             let current = match repo.get(&notification.id) {
                 Ok(Some(value))
                     if value.status == "scheduled"
@@ -393,7 +402,9 @@ impl NotificationScheduler {
             }
             if show_system_notification {
                 if let Err(error) = ensure_notification_permission(&app) {
-                    let _ = repo.mark_failed(&current.id, &error);
+                    if let Err(mark_err) = repo.mark_failed(&current.id, &error) {
+                        log_notification_db_error("mark_failed", &current.id, &mark_err);
+                    }
                     return;
                 }
             }
@@ -404,13 +415,19 @@ impl NotificationScheduler {
             };
             match result {
                 Ok(_) => {
-                    let _ = repo.mark_fired(&current.id);
-                    let _ = append_fired_notification_message(db.conn(), &app, &current);
-                    let _ = sync_session_schedule_attribute(db.conn(), &current.session_id);
+                    if let Err(err) = repo.mark_fired(&current.id) {
+                        log_notification_db_error("mark_fired", &current.id, &err);
+                    }
+                    if let Err(err) = append_fired_notification_message(conn, &app, &current) {
+                        log_notification_db_error("append_fired_message", &current.id, &err);
+                    }
+                    let _ = sync_session_schedule_attribute(conn, &current.session_id);
                 }
                 Err(error) => {
-                    let _ = repo.mark_failed(&current.id, &error.to_string());
-                    let _ = sync_session_schedule_attribute(db.conn(), &current.session_id);
+                    if let Err(err) = repo.mark_failed(&current.id, &error.to_string()) {
+                        log_notification_db_error("mark_failed", &current.id, &err);
+                    }
+                    let _ = sync_session_schedule_attribute(conn, &current.session_id);
                 }
             }
         });
@@ -420,26 +437,29 @@ impl NotificationScheduler {
         app: &AppHandle,
         notification: &ScheduledNotification,
     ) -> Result<(), String> {
-        #[cfg(mobile)]
+        #[cfg(target_os = "android")]
         {
-            if let Some(native_id) = notification
-                .metadata
-                .get("native_notification_id")
-                .and_then(|value| value.as_i64())
-                .and_then(|value| i32::try_from(value).ok())
-            {
-                app.notification()
-                    .cancel(vec![native_id])
-                    .map_err(|error| error.to_string())?;
-                let _ = app.notification().remove_active(vec![native_id]);
-            }
+            // 按 notification id 删除对应的系统日历事件
+            // (Kotlin 侧用 SharedPreferences 维护 id -> eventId 映射)。
+            crate::workmanager_plugin::cancel_notification(app, &notification.id)?;
         }
-        #[cfg(not(mobile))]
+        #[cfg(not(target_os = "android"))]
         {
             let _ = app;
             let _ = notification;
         }
         Ok(())
+    }
+}
+
+/// H7: 通知后台任务的 DB 错误此前被 `let _ =` 吞掉,导致通知静默丢失且无线索。
+/// 此处至少在 debug 构建打日志,便于排查 mark_fired/mark_failed 等失败。
+fn log_notification_db_error(op: &str, notification_id: &str, err: &str) {
+    #[cfg(debug_assertions)]
+    eprintln!("[notifications] {op} failed for {notification_id}: {err}");
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = (op, notification_id, err);
     }
 }
 
@@ -932,29 +952,6 @@ fn format_schedule_time(value: &str) -> String {
         .unwrap_or_else(|_| value.trim().to_string())
 }
 
-#[cfg(target_os = "android")]
-fn ensure_reminder_notification_channel(app: &AppHandle) -> Result<(), String> {
-    app.notification()
-        .create_channel(
-            Channel::builder(
-                ANDROID_REMINDER_CHANNEL_ID,
-                "\u{884c}\u{7a0b}\u{63d0}\u{9192}",
-            )
-            .description("\u{884c}\u{7a0b}\u{52a9}\u{624b}\u{7684}\u{5b9a}\u{65f6}\u{63d0}\u{9192}")
-            .importance(Importance::High)
-            .visibility(Visibility::Public)
-            .vibration(true)
-            .lights(true)
-            .build(),
-        )
-        .map_err(|error| error.to_string())
-}
-
-#[cfg(all(mobile, not(target_os = "android")))]
-fn ensure_reminder_notification_channel(_app: &AppHandle) -> Result<(), String> {
-    Ok(())
-}
-
 #[cfg(mobile)]
 fn ensure_notification_permission(app: &AppHandle) -> Result<(), String> {
     let notification = app.notification();
@@ -1294,22 +1291,6 @@ fn is_native_delivery(notification: &ScheduledNotification) -> bool {
         .get("delivery")
         .and_then(|value| value.as_str())
         == Some("native")
-}
-
-#[cfg(mobile)]
-fn chrono_to_offset_datetime(value: DateTime<Utc>) -> Result<time::OffsetDateTime, String> {
-    time::OffsetDateTime::from_unix_timestamp(value.timestamp())
-        .map_err(|error| format!("Invalid native notification time: {error}"))
-}
-
-#[cfg(mobile)]
-fn native_notification_id(id: &str) -> i32 {
-    let mut hash: u32 = 0x811c9dc5;
-    for byte in id.as_bytes() {
-        hash ^= u32::from(*byte);
-        hash = hash.wrapping_mul(0x01000193);
-    }
-    (hash & 0x7fff_ffff) as i32
 }
 
 fn delay_until(scheduled_at: &str) -> Option<StdDuration> {
