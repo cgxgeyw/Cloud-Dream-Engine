@@ -1,4 +1,5 @@
-![Uploading daa3d768c5380f71fa4d0ff76638c81c_720.png…]()
+<img width="1280" height="853" alt="daa3d768c5380f71fa4d0ff76638c81c_720" src="https://github.com/user-attachments/assets/25ae1d57-5e2b-478c-902b-628dad463876" />
+
 # 云朵梦境
 
 云朵梦境是一套面向 AI 叙事游戏的创作与运行引擎。它的核心不是“和一个机器人聊天”，而是让一个世界里的多个角色拥有各自的身份、记忆、视角和表达方式，并通过可定制界面呈现成更接近游戏的互动体验。✨
