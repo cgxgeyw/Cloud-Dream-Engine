@@ -609,15 +609,15 @@ impl WorldService {
         conn: &Connection,
         imported: ImportedWorldPackage,
     ) -> Result<WorldDefinition, String> {
-        let world_repo = WorldRepository::new(conn);
-        let char_repo = CharacterRepository::new(conn);
-
         let imported_world = imported.world;
         let desktop_ui_source = imported.desktop_ui_source;
         let mobile_ui_source = imported.mobile_ui_source;
         let imported_characters = imported.characters;
         let asset_map = imported.asset_map;
 
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        let world_repo = WorldRepository::new(&tx);
+        let char_repo = CharacterRepository::new(&tx);
         let created_world = world_repo.create(&WorldCreateRequest {
             name: imported_world.name.clone(),
             genre: imported_world.genre.clone(),
@@ -731,6 +731,8 @@ impl WorldService {
                 player_character_id: Some(player_character_id),
             },
         )?;
+
+        tx.commit().map_err(|e| e.to_string())?;
 
         Ok(Self::enrich_world(updated_world))
     }
@@ -1075,4 +1077,113 @@ fn remap_director_default_agent_id(
         );
     }
     director_config
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::schema;
+    use crate::models::character::CharacterPackageData;
+    use crate::models::world::WorldPackageWorldData;
+
+    fn imported_character(source_id: &str, name: &str) -> CharacterPackageData {
+        CharacterPackageData {
+            source_character_id: source_id.to_string(),
+            name: name.to_string(),
+            role: String::new(),
+            background_prompt: String::new(),
+            model: String::new(),
+            memory_strategy: "default".to_string(),
+            recent_dialogue_rounds: 6,
+            attributes: Vec::new(),
+            portrait_assets: Vec::new(),
+            avatar_asset: String::new(),
+            system_prompt_template: String::new(),
+            response_contract_prompt: String::new(),
+            narration_prompt: String::new(),
+            runtime_system_prompt: String::new(),
+        }
+    }
+
+    #[test]
+    fn imported_world_database_writes_roll_back_together() {
+        let conn = Connection::open_in_memory().expect("open database");
+        schema::create_tables(&conn).expect("create schema");
+        conn.execute_batch(
+            "
+            CREATE TRIGGER fail_imported_character
+            BEFORE INSERT ON characters
+            WHEN NEW.name = 'Imported Failure'
+            BEGIN
+                SELECT RAISE(ABORT, 'forced import failure');
+            END;
+            ",
+        )
+        .expect("create failure trigger");
+
+        let world_count_before: i64 = conn
+            .query_row("SELECT COUNT(*) FROM worlds", [], |row| row.get(0))
+            .expect("world count");
+        let character_count_before: i64 = conn
+            .query_row("SELECT COUNT(*) FROM characters", [], |row| row.get(0))
+            .expect("character count");
+        let imported = ImportedWorldPackage {
+            world: WorldPackageWorldData {
+                name: "Transactional Import".to_string(),
+                genre: String::new(),
+                background_prompt: String::new(),
+                opening_scene: "Opening".to_string(),
+                summary: String::new(),
+                time_system: String::new(),
+                map_nodes: serde_json::json!({ "version": 1, "nodes": [] }),
+                triggers: Vec::new(),
+                time_config: serde_json::json!({}),
+                director_config: serde_json::json!({}),
+                ui_assets_config: serde_json::json!({}),
+                opening_messages: Vec::new(),
+                opening_character_names: vec![
+                    "Imported Good".to_string(),
+                    "Imported Failure".to_string(),
+                ],
+                player_character_name: None,
+                opening_character_source_ids: vec!["good".to_string(), "failure".to_string()],
+                player_character_source_id: None,
+            },
+            desktop_ui_source: String::new(),
+            mobile_ui_source: String::new(),
+            characters: vec![
+                imported_character("good", "Imported Good"),
+                imported_character("failure", "Imported Failure"),
+            ],
+            asset_map: HashMap::new(),
+        };
+
+        let error = WorldService::new()
+            .persist_world_package(&conn, imported)
+            .expect_err("second character insert should fail");
+
+        assert!(error.contains("forced import failure"));
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM worlds", [], |row| row
+                .get::<_, i64>(0))
+                .expect("world count after failure"),
+            world_count_before
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM characters", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("character count after failure"),
+            character_count_before
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM worlds WHERE name = 'Transactional Import'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("imported world count"),
+            0
+        );
+    }
 }

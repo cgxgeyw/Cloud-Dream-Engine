@@ -177,6 +177,7 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
     && runtime.capabilities.supports_mic;
   const showSessionMeta = readBooleanProp(node, "show_session_meta", true);
   const enterToSubmit = readBooleanProp(node, "enter_to_submit", true);
+  const submitting = runtime.ui_state.submitting;
 
   return (
     <div className="game-input-area game-ui-panel">
@@ -222,7 +223,9 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
           onKeyDown={(event) => {
             if (enterToSubmit && event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
-              void actions.submitMessage({ mode: submitMode });
+              if (!submitting) {
+                void actions.submitMessage({ mode: submitMode });
+              }
             }
           }}
           placeholder={placeholder}
@@ -236,6 +239,7 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
               accept="image/*"
               multiple
               id={imageInputId}
+              disabled={submitting}
               style={{ display: "none" }}
               onChange={(event) => {
                 const files = Array.from(event.target.files || []);
@@ -244,12 +248,12 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
               }}
             />
             {showAudioButton ? (
-              <button type="button" className={`game-input-icon-btn game-ui-button${isRecording ? " game-input-icon-btn--recording" : ""}`} data-variant="ghost" onClick={() => void (isRecording ? actions.stopRecording() : actions.startRecording())} title={isRecording ? "停止录音" : "录音"}>
+              <button type="button" className={`game-input-icon-btn game-ui-button${isRecording ? " game-input-icon-btn--recording" : ""}`} data-variant="ghost" disabled={submitting && !isRecording} onClick={() => void (isRecording ? actions.stopRecording() : actions.startRecording())} title={isRecording ? "停止录音" : "录音"}>
                 {isRecording ? <Square size={20} /> : <Mic size={20} />}
               </button>
             ) : null}
             {showImageButton ? (
-              <button type="button" className="game-input-icon-btn game-ui-button" data-variant="ghost" onClick={() => actions.pickImage()} title="添加图片">
+              <button type="button" className="game-input-icon-btn game-ui-button" data-variant="ghost" disabled={submitting} onClick={() => actions.pickImage()} title="添加图片">
                 <Image size={20} />
               </button>
             ) : null}
@@ -273,6 +277,7 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
                 accept="image/*"
                 multiple
                 id={imageInputId}
+                disabled={submitting}
                 style={{ display: "none" }}
                 onChange={(event) => {
                   const files = Array.from(event.target.files || []);
@@ -281,12 +286,12 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
                 }}
               />
               {showImageButton ? (
-                <button type="button" className="game-input-attach-btn game-ui-button" data-variant="ghost" onClick={() => actions.pickImage()} title="添加图片">
+                <button type="button" className="game-input-attach-btn game-ui-button" data-variant="ghost" disabled={submitting} onClick={() => actions.pickImage()} title="添加图片">
                   <Image size={18} />
                 </button>
               ) : null}
               {showAudioButton ? (
-                <button type="button" className={`game-input-attach-btn game-ui-button${isRecording ? " game-input-attach-btn--recording" : ""}`} data-variant="ghost" onClick={() => void (isRecording ? actions.stopRecording() : actions.startRecording())} title={isRecording ? "停止录音" : "录音"}>
+                <button type="button" className={`game-input-attach-btn game-ui-button${isRecording ? " game-input-attach-btn--recording" : ""}`} data-variant="ghost" disabled={submitting && !isRecording} onClick={() => void (isRecording ? actions.stopRecording() : actions.startRecording())} title={isRecording ? "停止录音" : "录音"}>
                   {isRecording ? <Square size={18} /> : <Mic size={18} />}
                 </button>
               ) : null}
@@ -313,6 +318,7 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
               <button
                 type="button"
                 className="game-input-image-remove"
+                disabled={submitting}
                 onClick={() => actions.removeImage(index)}
               >
                 ×
@@ -330,6 +336,7 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
               <button
                 type="button"
                 className="game-input-audio-remove"
+                disabled={submitting}
                 onClick={() => actions.removeAudio(index)}
               >
                 ×

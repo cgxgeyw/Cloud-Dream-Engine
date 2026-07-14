@@ -12,7 +12,6 @@ import {
   fetchMcpTools,
   fetchWorld,
   fetchWorldCharacters,
-  fetchWorldOpeningPromptPreview,
   isTauriEnvironment,
   uploadFile,
   updateWorld,
@@ -26,7 +25,6 @@ import {
   type WorldUiCompatibilityReport,
   type WorldCreateRequest,
   type WorldMapTopology,
-  type WorldOpeningPromptPreviewResponse,
   type WorldOpeningMessage,
   type WorldResponse,
 } from "../data/apiAdapter";
@@ -34,6 +32,7 @@ import { AttributePanel } from "../components/AttributePanel";
 import { ConfirmDialog } from "../components/ModalDialog";
 import { useIsMobile } from "../components/ResponsiveLayout";
 import { useSectionParam } from "../hooks/useSectionParam";
+import { useWorldPromptPreview } from "../hooks/useWorldPromptPreview";
 import { GameUiPreview } from "../components/GameUiPreview";
 import { GameUiStructureEditor } from "../components/game-ui-editor/GameUiStructureEditor";
 import { PromptSendPreviewCard } from "../components/PromptTraceView";
@@ -697,9 +696,17 @@ export function WorldEditorPage() {
   const [openingComposerSpeaker, setOpeningComposerSpeaker] = useState("");
   const [openingComposerContent, setOpeningComposerContent] = useState("");
   const [mcpToolSearch, setMcpToolSearch] = useState("");
-  const [promptPreview, setPromptPreview] = useState<WorldOpeningPromptPreviewResponse | null>(null);
-  const [promptPreviewLoading, setPromptPreviewLoading] = useState(false);
-  const [promptPreviewError, setPromptPreviewError] = useState<string | null>(null);
+  const {
+    preview: promptPreview,
+    loading: promptPreviewLoading,
+    error: promptPreviewError,
+    reload: reloadPromptPreview,
+  } = useWorldPromptPreview({
+    active: (isMobile ? activeSection : activeTab) === "promptPreview",
+    isNew,
+    worldId: world?.id,
+    playerCharacterId: world?.player_character_id,
+  });
   const [mapTopologySource, setMapTopologySource] = useState(formatMapTopologyJson(createNewWorldDraft().map_nodes));
   const [uiGovernance, setUiGovernance] = useState<UiGovernanceSnapshot>({
     loading: false,
@@ -1023,36 +1030,6 @@ export function WorldEditorPage() {
     };
   }, [tauriUiGovernanceEnabled, uiThemeConfig.desktop_file, uiThemeConfig.mobile_file]);
 
-  useEffect(() => {
-    if (isNew || activeTab !== "promptPreview" || !world?.id) {
-      return;
-    }
-
-    const stableWorldId = world.id;
-    const stablePlayerCharacterId = world.player_character_id;
-    let cancelled = false;
-    async function loadPromptPreview() {
-      try {
-        setPromptPreviewLoading(true);
-        setPromptPreviewError(null);
-        const data = await fetchWorldOpeningPromptPreview(stableWorldId, {
-          playerCharacterId: stablePlayerCharacterId,
-          playerInput: "缁х画",
-        });
-        if (!cancelled) setPromptPreview(data);
-      } catch (previewError) {
-        if (!cancelled) setPromptPreviewError(previewError instanceof Error ? previewError.message : "加载 prompt 预览失败");
-      } finally {
-        if (!cancelled) setPromptPreviewLoading(false);
-      }
-    }
-
-    void loadPromptPreview();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeTab, isNew, world?.id, world?.player_character_id]);
-
   function updateDraft(patch: Partial<WorldResponse>) {
     setWorld((current) => (current ? { ...current, ...patch } : current));
   }
@@ -1064,26 +1041,6 @@ export function WorldEditorPage() {
       setError(null);
     } catch {
       // Allow partially typed JSON; save performs the hard validation.
-    }
-  }
-
-  async function reloadPromptPreview() {
-    if (isNew || !world?.id) {
-      setPromptPreviewError("新世界保存后才能生成 prompt 预览。");
-      return;
-    }
-    try {
-      setPromptPreviewLoading(true);
-      setPromptPreviewError(null);
-      const data = await fetchWorldOpeningPromptPreview(world.id, {
-        playerCharacterId: world.player_character_id,
-        playerInput: "缁х画",
-      });
-      setPromptPreview(data);
-    } catch (previewError) {
-      setPromptPreviewError(previewError instanceof Error ? previewError.message : "加载 prompt 预览失败");
-    } finally {
-      setPromptPreviewLoading(false);
     }
   }
 
@@ -2083,7 +2040,16 @@ export function WorldEditorPage() {
                   </label>
                   <label className="editor-field">
                     <span className="editor-field-label">检索模式</span>
-                    <select value={directorConfig.character_memory_retrieval_mode} onChange={(e) => updateDirectorPatch({ character_memory_retrieval_mode: e.target.value as any })} className="editor-field-input editor-field-select">
+                    <select
+                      value={directorConfig.character_memory_retrieval_mode}
+                      onChange={(event) => {
+                        const mode = event.target.value;
+                        if (mode === "lexical_only" || mode === "hybrid" || mode === "semantic_only") {
+                          updateDirectorPatch({ character_memory_retrieval_mode: mode });
+                        }
+                      }}
+                      className="editor-field-input editor-field-select"
+                    >
                       <option value="lexical_only">仅关键词</option>
                       <option value="hybrid">混合</option>
                       <option value="semantic_only">仅语义</option>

@@ -35,6 +35,7 @@ import {
   type SessionMapEdge,
   type SessionMapNode,
   type SessionSnapshotResponse,
+  type SwitchPlayerCharacterRequest,
   type WorldResponse,
 } from "../data/apiAdapter";
 import type { ContentPart } from "../data/types";
@@ -274,6 +275,7 @@ export function useGameSession(
 
   const chatMessagesRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const submitInFlightRef = useRef(false);
   const shouldAutoScrollRef = useRef(true);
   const seenCharacterCreationsRef = useRef<Set<string>>(new Set());
   // 记录已为“某组缺失角色名”触发过的刷新签名，避免角色名始终匹配不上时
@@ -1015,48 +1017,6 @@ export function useGameSession(
       const images = inputImages;
       const audios = inputAudios;
 
-      // 构建 content: string | ContentPart[]
-      let content: string | ContentPart[] = textContent;
-      if (images.length > 0 || audios.length > 0) {
-        const parts: ContentPart[] = [];
-        // 添加图片部分
-        for (const file of images) {
-          const base64 = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-          });
-          parts.push({
-            type: "image_url",
-            image_url: { url: base64 }
-          });
-        }
-        // 添加音频部分
-        for (const file of audios) {
-          const base64 = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-          });
-          // 从文件名或MIME类型推断格式
-          const format = file.name.split('.').pop()?.toLowerCase() || "wav";
-          parts.push({
-            type: "input_audio",
-            input_audio: { data: base64, format }
-          });
-        }
-        // 添加文本部分（如果有文本）
-        if (textContent) {
-          parts.push({
-            type: "text",
-            text: textContent
-          });
-        }
-        content = parts;
-      }
-
       if (!textContent && images.length === 0 && audios.length === 0) {
         return;
       }
@@ -1078,19 +1038,65 @@ export function useGameSession(
         return;
       }
 
-      const notificationPermissionReady = await ensureNotificationPermissionForSubmit(
-        textContent,
-        audios.length > 0,
-      );
-      if (!notificationPermissionReady) {
+      if (submitInFlightRef.current) {
         return;
       }
+      submitInFlightRef.current = true;
+      setSubmitting(true);
+      setActionError(null);
 
       try {
-        setSubmitting(true);
-        setStreamingResponseActive(true);
-        setActionError(null);
+        // 构建 content: string | ContentPart[]
+        let content: string | ContentPart[] = textContent;
+        if (images.length > 0 || audios.length > 0) {
+          const parts: ContentPart[] = [];
+          // 添加图片部分
+          for (const file of images) {
+            const base64 = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result as string);
+              reader.onerror = reject;
+              reader.readAsDataURL(file);
+            });
+            parts.push({
+              type: "image_url",
+              image_url: { url: base64 }
+            });
+          }
+          // 添加音频部分
+          for (const file of audios) {
+            const base64 = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result as string);
+              reader.onerror = reject;
+              reader.readAsDataURL(file);
+            });
+            // 从文件名或MIME类型推断格式
+            const format = file.name.split('.').pop()?.toLowerCase() || "wav";
+            parts.push({
+              type: "input_audio",
+              input_audio: { data: base64, format }
+            });
+          }
+          // 添加文本部分（如果有文本）
+          if (textContent) {
+            parts.push({
+              type: "text",
+              text: textContent
+            });
+          }
+          content = parts;
+        }
 
+        const notificationPermissionReady = await ensureNotificationPermissionForSubmit(
+          textContent,
+          audios.length > 0,
+        );
+        if (!notificationPermissionReady) {
+          return;
+        }
+
+        setStreamingResponseActive(true);
         if (isReplay) {
           setOptimisticPlayerMessage(null);
           setInputImages([]);
@@ -1146,10 +1152,14 @@ export function useGameSession(
       } catch (submitError) {
         setActionError(
           formatActionErrorMessage(
-            submitError instanceof Error ? submitError.message : "发言失败",
+            submitError instanceof Error
+              ? submitError.message
+              : String(submitError ?? "发言失败"),
           ),
         );
         setOptimisticPlayerMessage(null);
+        setInputImages(images);
+        setInputAudios(audios);
 
         if (mode === "edit" && resolvedTurnIndex !== undefined) {
           setEditingTurn({ turnIndex: resolvedTurnIndex, originalContent: textContent });
@@ -1163,12 +1173,15 @@ export function useGameSession(
         setStreamingResponseActive(false);
         setSubmitting(false);
         scheduleRuntimeAttributeRefresh();
+        submitInFlightRef.current = false;
       }
     },
     [
       applySessionSnapshot,
       editingTurn,
       ensureNotificationPermissionForSubmit,
+      inputAudios,
+      inputImages,
       inputValue,
       scheduleRuntimeAttributeRefresh,
       session,
@@ -1241,35 +1254,33 @@ export function useGameSession(
           targetCharacterId = target?.id ?? "";
         }
 
-        const payload: {
-          target_character_name: string;
-          reason?: string;
-          location?: string;
-          scene_name?: string;
-          scene_background_hint?: string;
-          scene_tags?: string[];
-          visible_characters?: string[];
-          target_character_id?: string;
-        } = {
-          target_character_name: proposal.targetCharacterName,
-          reason: proposal.reason || undefined,
-          location: proposal.proposal.location || undefined,
-          scene_name: proposal.proposal.scene_name || undefined,
-          scene_background_hint:
-            proposal.proposal.scene_background_hint || undefined,
-          scene_tags: proposal.proposal.scene_tags,
-          visible_characters: proposal.proposal.visible_characters,
-        };
-
-        if (targetCharacterId) {
-          payload.target_character_id = targetCharacterId;
+        if (!targetCharacterId) {
+          throw new Error(`未找到角色：${proposal.targetCharacterName}`);
         }
 
-        await switchPlayerCharacter(session.id, payload as never);
+        const payload: SwitchPlayerCharacterRequest = {
+          player_character_id: targetCharacterId,
+          proposal: {
+            target_character_name: proposal.targetCharacterName,
+            reason: proposal.reason || undefined,
+            location: proposal.proposal.location || undefined,
+            scene_name: proposal.proposal.scene_name || undefined,
+            scene_background_hint:
+              proposal.proposal.scene_background_hint || undefined,
+            scene_tags: proposal.proposal.scene_tags,
+            visible_characters: proposal.proposal.visible_characters,
+          },
+        };
+
+        await switchPlayerCharacter(session.id, payload);
         dismissSwitchProposal(proposal.key);
       } catch (switchError) {
         setError(
-          switchError instanceof Error ? switchError.message : "切换角色失败",
+          formatActionErrorMessage(
+            switchError instanceof Error
+              ? switchError.message
+              : String(switchError ?? "切换角色失败"),
+          ),
         );
       } finally {
         setSwitching(false);
@@ -1295,7 +1306,11 @@ export function useGameSession(
         applySessionSnapshot(snapshot);
       } catch (retryError) {
         setActionError(
-          retryError instanceof Error ? retryError.message : "重发失败",
+          formatActionErrorMessage(
+            retryError instanceof Error
+              ? retryError.message
+              : String(retryError ?? "重发失败"),
+          ),
         );
       } finally {
         setRetryingToken(null);

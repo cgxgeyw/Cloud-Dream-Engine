@@ -3,6 +3,7 @@ import type {
   CharacterResponse,
   RuntimeAttributeItem,
   SaveResponse,
+  SessionRuntimeAttributesResponse,
   SessionMapEdge,
   SessionMapNode,
 } from "../data/apiAdapter";
@@ -17,6 +18,76 @@ import {
   type GameUiPlatform,
   type GameUiPlatformCapabilities,
 } from "./capabilities";
+
+export type RuntimeAttributesByOwner = Record<
+  string,
+  Record<string, Record<string, unknown>>
+>;
+
+function isCurrentPlayerAttributeOwner(
+  ownerId: string,
+  sessionId: string,
+  playerCharacterId: string,
+): boolean {
+  return ownerId === playerCharacterId
+    || ownerId === `session_character:${playerCharacterId}`
+    || ownerId === `${sessionId}:${playerCharacterId}`
+    || ownerId === `session_character:${sessionId}:${playerCharacterId}`;
+}
+
+export function buildRuntimeAttributeMaps(
+  runtimeAttributes: SessionRuntimeAttributesResponse,
+  sessionId: string,
+  playerCharacterId?: string,
+): {
+  attributes: Record<string, unknown>;
+  attributesByOwner: RuntimeAttributesByOwner;
+} {
+  const attributes: Record<string, unknown> = {};
+  const attributesByOwner: RuntimeAttributesByOwner = {};
+  const groups = [
+    ...runtimeAttributes.session_attributes,
+    ...runtimeAttributes.character_attributes,
+  ];
+
+  for (const group of groups) {
+    const ownerType = group.owner_type.trim();
+    const ownerId = group.owner_id.trim();
+    let ownerAttributes: Record<string, unknown> | null = null;
+    if (ownerType && ownerId) {
+      const ownersOfType = attributesByOwner[ownerType] ?? {};
+      ownerAttributes = ownersOfType[ownerId] ?? {};
+      attributesByOwner[ownerType] = ownersOfType;
+      ownersOfType[ownerId] = ownerAttributes;
+    }
+
+    for (const item of group.items) {
+      if (ownerAttributes) {
+        ownerAttributes[item.key] = item.value;
+      }
+    }
+  }
+
+  const flatGroups = [...runtimeAttributes.session_attributes];
+  if (playerCharacterId) {
+    flatGroups.push(
+      ...runtimeAttributes.character_attributes.filter((group) =>
+        isCurrentPlayerAttributeOwner(
+          group.owner_id.trim(),
+          sessionId,
+          playerCharacterId,
+        )
+      ),
+    );
+  }
+  for (const group of flatGroups) {
+    for (const item of group.items) {
+      attributes[item.key] = item.value;
+    }
+  }
+
+  return { attributes, attributesByOwner };
+}
 
 export type GameUiRuntimeContext = {
   capabilities: GameUiPlatformCapabilities;
@@ -38,6 +109,7 @@ export type GameUiRuntimeContext = {
   } | null;
   world_characters: CharacterResponse[];
   attributes: Record<string, unknown>;
+  attributes_by_owner: RuntimeAttributesByOwner;
   attribute_items: RuntimeAttributeItem[];
   messages: RenderChatMessage[];
   latest_narration: string;
@@ -96,6 +168,12 @@ export function createGameUiRuntimeContext(
   bag: GameSessionStateBag,
   platform: GameUiPlatform,
 ): GameUiRuntimeContext {
+  const { attributes, attributesByOwner } = buildRuntimeAttributeMaps(
+    bag.runtimeAttributes,
+    bag.session?.id ?? bag.sessionId,
+    bag.playerCharacter?.id,
+  );
+
   return {
     capabilities: createGameUiPlatformCapabilities(platform),
     session: bag.session
@@ -121,11 +199,8 @@ export function createGameUiRuntimeContext(
         }
       : null,
     world_characters: bag.worldCharacters,
-    attributes: Object.fromEntries(
-      [...bag.runtimeAttributes.session_attributes, ...bag.runtimeAttributes.character_attributes]
-        .flatMap((group) => group.items)
-        .map((item) => [item.key, item.value]),
-    ),
+    attributes,
+    attributes_by_owner: attributesByOwner,
     attribute_items: [...bag.runtimeAttributes.session_attributes, ...bag.runtimeAttributes.character_attributes]
       .flatMap((group) => group.items),
     messages: bag.renderedDialogueMessages,

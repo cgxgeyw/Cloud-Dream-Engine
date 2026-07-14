@@ -13,6 +13,7 @@ import type {
   ImageModelTestRequest, EmbeddingModelFileStatus, EmbeddingModelStatus,
   SettingsResponse, SettingsUpdateRequest, PluginResponse,
   McpToolResponse, McpToolUpsertRequest,
+  MemoryEntry,
   AttributeSchemaResponse, AttributeSchemaUpsertRequest,
   AttributeValueResponse, AttributeValueUpsertRequest,
   RuntimeAttributeItem, RuntimeAttributeGroup, SessionRuntimeAttributesResponse,
@@ -81,7 +82,7 @@ export type CharacterUpsertRequest = {
 
 export type CharacterMemoryGroupResponse = { character_id: string; character_name: string; memories: MemoryEntryResponse[]; };
 export type ImageModelTestResponse = { ok: boolean; detail: string; debug_lines: string[]; asset_path?: string | null; image_url?: string | null; seed?: number | null; };
-export type MemoryEntryResponse = { id: string; world_id: string; session_id: string; conversation_id?: string | null; character_id: string; event_id?: string | null; item_id?: string | null; scene_id?: string | null; layer: string; content: string; source: string; importance: number; created_at: string; memory_type: string; speaker?: string | null; role?: string | null; location?: string | null; participants: string[]; keywords: string[]; };
+export type MemoryEntryResponse = MemoryEntry;
 export type ModelConfigUpsertRequest = { name: string; model_type: string; provider: string; model_id: string; base_url: string; api_key: string; max_tokens: number; streaming_enabled: boolean; is_default: boolean; };
 export type ModelEndpointDiscoveryRequest = { provider: string; base_url: string; api_key: string; };
 export type ModelEndpointDiscoveryResponse = { ok: boolean; detail: string; model_ids: string[]; debug_lines: string[]; };

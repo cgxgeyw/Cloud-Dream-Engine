@@ -1,6 +1,7 @@
 import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
 import type { CSSProperties } from "react";
 import type {
+  GameUiActionReference,
   GameUiAnchor,
   GameUiComponentStyleDefinition,
   GameUiDocument,
@@ -18,7 +19,6 @@ import type {
   WorldUiEnvelope,
 } from "./types";
 import {
-  DEFAULT_GAME_UI_SCHEMA_VERSION,
   DEFAULT_UI_ASSET_CONFIG,
   GAME_UI_MOUNT_IDS,
   SUPPORTED_GAME_UI_SCHEMA_VERSIONS,
@@ -150,6 +150,17 @@ export function parseGameUiDocument(
       };
     }
     const schemaVersion = readRequestedSchemaVersion(parsed);
+    if (schemaVersion === null) {
+      const hasSchemaVersion = isPlainObject(parsed) && "schema_version" in parsed;
+      return {
+        document: fallbackDocument,
+        source: fallbackSource,
+        error: hasSchemaVersion
+          ? "schema_version must be a number."
+          : "schema_version is missing. UI documents must declare schema_version 2.",
+        usedFallback: true,
+      };
+    }
     if (!isSupportedSchemaVersion(schemaVersion)) {
       return {
         document: fallbackDocument,
@@ -322,7 +333,7 @@ function normalizeLayoutNodeV2(raw: unknown, fallback: GameUiLayoutNodeV2): Game
       label: readOptionalString(value.label) ?? (fallback.type === "button" ? fallback.label : ""),
       variant: readOptionalString(value.variant),
       disabled_when_empty_state: readOptionalString(value.disabled_when_empty_state),
-      action: isPlainObject(value.action) ? normalizePropValue(value.action) as never : undefined,
+      action: normalizeActionReference(value.action),
     };
   }
 
@@ -418,6 +429,31 @@ function normalizePropRecord(raw: unknown): Record<string, GameUiPropValue> | un
   );
 
   return Object.keys(props).length > 0 ? props : undefined;
+}
+
+function normalizeActionReference(raw: unknown): GameUiActionReference | undefined {
+  if (!isPlainObject(raw)) {
+    return undefined;
+  }
+
+  const id = readOptionalString(raw.id);
+  if (!id) {
+    return undefined;
+  }
+
+  const args = isPlainObject(raw.args)
+    ? Object.fromEntries(
+        Object.entries(raw.args).map(([key, value]) => [key, normalizePropValue(value)]),
+      )
+    : undefined;
+
+  return {
+    id,
+    args,
+    content: typeof raw.content === "string" ? raw.content : undefined,
+    content_template: typeof raw.content_template === "string" ? raw.content_template : undefined,
+    mode: typeof raw.mode === "string" ? raw.mode : undefined,
+  };
 }
 
 function normalizePropValue(raw: unknown): GameUiPropValue {
@@ -579,9 +615,9 @@ function readOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 
-function readRequestedSchemaVersion(raw: unknown): number {
+function readRequestedSchemaVersion(raw: unknown): number | null {
   if (!isPlainObject(raw) || typeof raw.schema_version !== "number") {
-    return DEFAULT_GAME_UI_SCHEMA_VERSION;
+    return null;
   }
   return raw.schema_version;
 }
@@ -601,10 +637,7 @@ function validateGameUiDocumentV2(raw: unknown): string | null {
     return "UI document root must be an object.";
   }
 
-  // M13: 缺省 schema_version 在 readRequestedSchemaVersion 里按 DEFAULT(=2)处理并通过
-  // isSupportedSchemaVersion,这里也应一致地把"缺字段"视作默认 v2,只拒绝显式写了非 2 的值,
-  // 否则合法但省略 schema_version 的文档会被错误地强制回退默认模板。
-  if (raw.schema_version !== undefined && raw.schema_version !== 2) {
+  if (raw.schema_version !== 2) {
     return "schema_version must be 2 for a v2 UI document.";
   }
 

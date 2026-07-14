@@ -103,6 +103,16 @@ pub async fn submit_player_action(
     session_id: String,
     request: PlayerActionRequest,
 ) -> Result<SessionSnapshot, String> {
+    let _mutation_permit = state.session_mutations.try_acquire(&session_id)?;
+    submit_player_action_inner(app, state, session_id, request).await
+}
+
+async fn submit_player_action_inner(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    request: PlayerActionRequest,
+) -> Result<SessionSnapshot, String> {
     let prepared = {
         let db = state.db.lock().await;
         state
@@ -412,6 +422,16 @@ pub async fn switch_player_character(
     session_id: String,
     request: SwitchCharacterRequest,
 ) -> Result<SessionSnapshot, String> {
+    let _mutation_permit = state.session_mutations.try_acquire(&session_id)?;
+    switch_player_character_inner(app, state, session_id, request).await
+}
+
+async fn switch_player_character_inner(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    request: SwitchCharacterRequest,
+) -> Result<SessionSnapshot, String> {
     let prepared = {
         let db = state.db.lock().await;
         state
@@ -455,6 +475,15 @@ pub async fn resume_last_incomplete_turn(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<SessionSnapshot, String> {
+    let _mutation_permit = state.session_mutations.try_acquire(&session_id)?;
+    resume_last_incomplete_turn_inner(app, state, session_id).await
+}
+
+async fn resume_last_incomplete_turn_inner(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<SessionSnapshot, String> {
     let player_request = {
         let db = state.db.lock().await;
         state
@@ -465,7 +494,7 @@ pub async fn resume_last_incomplete_turn(
     };
 
     if let Some(player_request) = player_request {
-        submit_player_action(app, state, session_id, player_request).await
+        submit_player_action_inner(app, state, session_id, player_request).await
     } else {
         get_session(state, session_id).await
     }
@@ -478,6 +507,7 @@ pub async fn retry_failed_llm_step(
     session_id: String,
     request: RetryFailedLlmStepRequest,
 ) -> Result<SessionSnapshot, String> {
+    let _mutation_permit = state.session_mutations.try_acquire(&session_id)?;
     {
         let db = state.db.lock().await;
         state
@@ -486,19 +516,20 @@ pub async fn retry_failed_llm_step(
             .session_orchestrator
             .claim_retry_capsule(db.conn(), &session_id, &request.retry_token)?;
     }
-    let result = match resume_last_incomplete_turn(app, state.clone(), session_id.clone()).await {
-        Ok(result) => result,
-        Err(err) => {
-            // 回合执行失败:把胶囊退回 active,允许用户用同一 token 再试(不双重消费)。
-            let db = state.db.lock().await;
-            let _ = state
-                .services
-                .runtime
-                .session_orchestrator
-                .release_retry_capsule(db.conn(), &session_id, &request.retry_token);
-            return Err(err);
-        }
-    };
+    let result =
+        match resume_last_incomplete_turn_inner(app, state.clone(), session_id.clone()).await {
+            Ok(result) => result,
+            Err(err) => {
+                // 回合执行失败:把胶囊退回 active,允许用户用同一 token 再试(不双重消费)。
+                let db = state.db.lock().await;
+                let _ = state
+                    .services
+                    .runtime
+                    .session_orchestrator
+                    .release_retry_capsule(db.conn(), &session_id, &request.retry_token);
+                return Err(err);
+            }
+        };
     {
         let db = state.db.lock().await;
         state

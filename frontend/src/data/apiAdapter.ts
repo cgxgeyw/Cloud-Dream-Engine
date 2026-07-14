@@ -330,7 +330,7 @@ export async function streamPlayerAction(
 ) {
   return isTauri
     ? (await getTauri()).streamPlayerAction(sessionId, payload, handlers)
-    : (await getHttp()).streamPlayerAction(sessionId, payload, handlers as any);
+    : (await getHttp()).streamPlayerAction(sessionId, payload, handlers);
 }
 
 export async function retryFailedLlmStep(
@@ -375,7 +375,7 @@ export async function createModel(payload: Omit<ModelConfig, "id">) {
 }
 
 export async function updateModel(modelId: string, payload: Partial<Omit<ModelConfig, "id">>) {
-  return isTauri ? (await getTauri()).updateModel(modelId, payload) : (await getHttp()).updateModel(modelId, payload as any);
+  return isTauri ? (await getTauri()).updateModel(modelId, payload) : (await getHttp()).updateModel(modelId, payload);
 }
 
 export async function deleteModel(modelId: string) {
@@ -459,11 +459,11 @@ export async function fetchMcpTools() {
 }
 
 export async function createMcpTool(payload: McpToolCreateRequest) {
-  return isTauri ? (await getTauri()).createMcpTool(payload) : (await getHttp()).createMcpTool(payload as any);
+  return isTauri ? (await getTauri()).createMcpTool(payload) : (await getHttp()).createMcpTool(payload);
 }
 
 export async function updateMcpTool(toolId: string, payload: McpToolCreateRequest) {
-  return isTauri ? (await getTauri()).updateMcpTool(toolId, payload) : (await getHttp()).updateMcpTool(toolId, payload as any);
+  return isTauri ? (await getTauri()).updateMcpTool(toolId, payload) : (await getHttp()).updateMcpTool(toolId, payload);
 }
 
 export async function deleteMcpTool(toolId: string) {
@@ -515,10 +515,9 @@ export async function fetchSessionDebug(sessionId: string) {
 }
 
 export async function fetchSessionRuntimeAttributes(sessionId: string) {
-  if (!isTauri) {
-    throw new Error("Runtime attributes are available only in Tauri mode.");
-  }
-  return (await getTauri()).fetchSessionRuntimeAttributes(sessionId);
+  return isTauri
+    ? (await getTauri()).fetchSessionRuntimeAttributes(sessionId)
+    : (await getHttp()).fetchSessionRuntimeAttributes(sessionId);
 }
 
 export async function onSessionSnapshot(sessionId: string, callback: (snapshot: SessionSnapshot) => void): Promise<() => void> {

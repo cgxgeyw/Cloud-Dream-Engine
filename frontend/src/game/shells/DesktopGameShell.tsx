@@ -17,6 +17,7 @@ import { createGameUiComponentRenderers } from "../../gameUiRuntime/registry";
 import { createGameUiRuntimeContext } from "../../gameUiRuntime/runtimeContext";
 import { getDocumentCspNonce } from "../cspNonce";
 import type { GameSessionStateBag } from "../useGameSession";
+import { resolvePlayerActionMode } from "../utils";
 
 export const DesktopGameShell: React.FC<{
   bag: GameSessionStateBag;
@@ -43,6 +44,7 @@ export const DesktopGameShell: React.FC<{
       world: runtime.world,
       player: runtime.player,
       attributes: runtime.attributes,
+      attributes_by_owner: runtime.attributes_by_owner,
       attribute_items: runtime.attribute_items,
       messages: runtime.messages,
       visible_characters: runtime.visible_characters,
@@ -58,7 +60,7 @@ export const DesktopGameShell: React.FC<{
       if (!content) {
         return;
       }
-      await actions.submitMessage({ mode: action.mode as never, content });
+      await actions.submitMessage({ mode: resolvePlayerActionMode(action.mode), content });
     },
     [actions],
   );

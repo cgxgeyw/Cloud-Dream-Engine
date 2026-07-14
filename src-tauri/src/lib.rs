@@ -11,7 +11,7 @@ mod workmanager_plugin;
 
 use db::Database;
 use services::backend::BackendServices;
-use state::AppState;
+use state::{AppState, SessionMutationCoordinator};
 
 fn get_data_dir(app: &tauri::App) -> Result<PathBuf, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -35,6 +35,7 @@ pub fn run() {
                 db: tokio::sync::Mutex::new(db),
                 services,
                 data_dir,
+                session_mutations: SessionMutationCoordinator::default(),
             });
             tauri::async_runtime::spawn(async move {
                 let _ = crate::services::notifications::NotificationScheduler::restore_pending(

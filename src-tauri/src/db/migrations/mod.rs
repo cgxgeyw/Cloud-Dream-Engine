@@ -1,6 +1,16 @@
 use rusqlite::{params, Connection};
 use serde_json::Value;
 
+use crate::db::seeds::feihualing_world::SEED_WORLD_POETRY_ID;
+use crate::db::seeds::schedule_assistant_world::SEED_WORLD_SCHEDULE_ASSISTANT_ID;
+
+const MIGRATION_LEGACY_COLUMNS: i64 = 1;
+const MIGRATION_HOME_BACKGROUND_STRATEGY: i64 = 2;
+const MIGRATION_BUILTIN_DESKTOP_UI_REPAIR: i64 = 3;
+const MIGRATION_SCHEDULE_ATTRIBUTE_REPAIR: i64 = 4;
+const MIGRATION_EMBEDDING_MODEL_NAME_REPAIR: i64 = 5;
+const CURRENT_SCHEMA_VERSION: i64 = MIGRATION_EMBEDDING_MODEL_NAME_REPAIR;
+
 fn ensure_column(
     conn: &Connection,
     table_name: &str,
@@ -23,10 +33,15 @@ fn ensure_column(
 }
 
 fn repair_desktop_ui_question_marks(conn: &Connection) -> Result<(), rusqlite::Error> {
-    let mut stmt = conn.prepare("SELECT id, ui_theme_config_json FROM worlds")?;
-    let rows = stmt.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-    })?;
+    let mut stmt = conn.prepare(
+        "SELECT id, ui_theme_config_json
+         FROM worlds
+         WHERE id IN (?1, ?2)",
+    )?;
+    let rows = stmt.query_map(
+        params![SEED_WORLD_POETRY_ID, SEED_WORLD_SCHEDULE_ASSISTANT_ID],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+    )?;
     let world_configs = rows.collect::<Result<Vec<_>, _>>()?;
 
     for (world_id, raw_config) in world_configs {
@@ -105,7 +120,7 @@ fn repair_schedule_status_attribute_schema(conn: &Connection) -> Result<(), rusq
     Ok(())
 }
 
-pub(crate) fn run(conn: &Connection) -> Result<(), rusqlite::Error> {
+fn add_legacy_columns(conn: &Connection) -> Result<(), rusqlite::Error> {
     ensure_column(
         conn,
         "characters",
@@ -185,13 +200,14 @@ pub(crate) fn run(conn: &Connection) -> Result<(), rusqlite::Error> {
         "input_schema_json",
         "TEXT NOT NULL DEFAULT '{\"type\":\"object\",\"properties\":{}}'",
     )?;
+    Ok(())
+}
+
+fn repair_home_background_strategy(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute(
         "UPDATE settings SET home_background_strategy = '' WHERE home_background_strategy = 'static'",
         [],
     )?;
-    repair_desktop_ui_question_marks(conn)?;
-    repair_schedule_status_attribute_schema(conn)?;
-    repair_garbled_embedding_model_name(conn)?;
     Ok(())
 }
 
@@ -207,4 +223,219 @@ fn repair_garbled_embedding_model_name(conn: &Connection) -> Result<(), rusqlite
         [],
     )?;
     Ok(())
+}
+
+fn schema_version(conn: &Connection) -> Result<i64, rusqlite::Error> {
+    conn.query_row("PRAGMA user_version", [], |row| row.get(0))
+}
+
+fn set_schema_version(conn: &Connection, version: i64) -> Result<(), rusqlite::Error> {
+    conn.pragma_update(None, "user_version", version)
+}
+
+pub(crate) fn run(conn: &Connection) -> Result<(), rusqlite::Error> {
+    if schema_version(conn)? >= CURRENT_SCHEMA_VERSION {
+        return Ok(());
+    }
+
+    let tx = conn.unchecked_transaction()?;
+    let mut version = schema_version(&tx)?;
+
+    if version < MIGRATION_LEGACY_COLUMNS {
+        add_legacy_columns(&tx)?;
+        version = MIGRATION_LEGACY_COLUMNS;
+        set_schema_version(&tx, version)?;
+    }
+    if version < MIGRATION_HOME_BACKGROUND_STRATEGY {
+        repair_home_background_strategy(&tx)?;
+        version = MIGRATION_HOME_BACKGROUND_STRATEGY;
+        set_schema_version(&tx, version)?;
+    }
+    if version < MIGRATION_BUILTIN_DESKTOP_UI_REPAIR {
+        repair_desktop_ui_question_marks(&tx)?;
+        version = MIGRATION_BUILTIN_DESKTOP_UI_REPAIR;
+        set_schema_version(&tx, version)?;
+    }
+    if version < MIGRATION_SCHEDULE_ATTRIBUTE_REPAIR {
+        repair_schedule_status_attribute_schema(&tx)?;
+        version = MIGRATION_SCHEDULE_ATTRIBUTE_REPAIR;
+        set_schema_version(&tx, version)?;
+    }
+    if version < MIGRATION_EMBEDDING_MODEL_NAME_REPAIR {
+        repair_garbled_embedding_model_name(&tx)?;
+        set_schema_version(&tx, MIGRATION_EMBEDDING_MODEL_NAME_REPAIR)?;
+    }
+
+    tx.commit()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_legacy_schema(conn: &Connection) {
+        conn.execute_batch(
+            "
+            CREATE TABLE characters (id TEXT PRIMARY KEY);
+            CREATE TABLE settings (
+                id INTEGER PRIMARY KEY,
+                home_background_strategy TEXT NOT NULL DEFAULT ''
+            );
+            CREATE TABLE model_configs (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                provider TEXT NOT NULL DEFAULT ''
+            );
+            CREATE TABLE llm_call_traces (id TEXT PRIMARY KEY);
+            CREATE TABLE saves (id TEXT PRIMARY KEY);
+            CREATE TABLE mcp_tools (id TEXT PRIMARY KEY);
+            CREATE TABLE worlds (
+                id TEXT PRIMARY KEY,
+                ui_theme_config_json TEXT NOT NULL DEFAULT '{}'
+            );
+            CREATE TABLE attribute_schemas (
+                id TEXT PRIMARY KEY,
+                value_type TEXT NOT NULL DEFAULT 'text',
+                default_value_json TEXT NOT NULL DEFAULT 'null'
+            );
+            ",
+        )
+        .expect("create legacy schema");
+    }
+
+    fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> bool {
+        let mut stmt = conn
+            .prepare(&format!("PRAGMA table_info({table_name})"))
+            .expect("prepare table info");
+        let mut columns = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("query table info");
+        columns.any(|column| column.expect("column name") == column_name)
+    }
+
+    fn desktop_file(conn: &Connection, world_id: &str) -> String {
+        let raw: String = conn
+            .query_row(
+                "SELECT ui_theme_config_json FROM worlds WHERE id = ?1",
+                params![world_id],
+                |row| row.get(0),
+            )
+            .expect("world config");
+        serde_json::from_str::<Value>(&raw)
+            .expect("valid world config")
+            .get("desktop_file")
+            .and_then(Value::as_str)
+            .expect("desktop file")
+            .to_string()
+    }
+
+    #[test]
+    fn versioned_migrations_upgrade_legacy_database_once() {
+        let conn = Connection::open_in_memory().expect("open database");
+        create_legacy_schema(&conn);
+
+        let damaged_desktop = ".game-scene-center::before {\\n  content: \\\"????\\\";";
+        let damaged_config = serde_json::json!({ "desktop_file": damaged_desktop }).to_string();
+        conn.execute(
+            "INSERT INTO settings (id, home_background_strategy) VALUES (1, 'static')",
+            [],
+        )
+        .expect("insert settings");
+        conn.execute(
+            "INSERT INTO model_configs (id, name, provider)
+             VALUES ('model-seed-bge-small-embedding', 'garbled', 'builtin-local')",
+            [],
+        )
+        .expect("insert model");
+        conn.execute(
+            "INSERT INTO attribute_schemas (id, value_type, default_value_json)
+             VALUES ('attr-schedule-assistant-notifications', 'text', 'null')",
+            [],
+        )
+        .expect("insert attribute schema");
+        conn.execute(
+            "INSERT INTO worlds (id, ui_theme_config_json) VALUES (?1, ?2)",
+            params![SEED_WORLD_POETRY_ID, damaged_config],
+        )
+        .expect("insert seed world");
+        conn.execute(
+            "INSERT INTO worlds (id, ui_theme_config_json) VALUES ('user-world', ?1)",
+            params![damaged_config],
+        )
+        .expect("insert user world");
+
+        run(&conn).expect("run migrations");
+
+        assert_eq!(
+            schema_version(&conn).expect("schema version"),
+            CURRENT_SCHEMA_VERSION
+        );
+        assert!(column_exists(&conn, "characters", "system_prompt_template"));
+        assert!(column_exists(&conn, "settings", "embedding_enabled"));
+        assert!(column_exists(&conn, "mcp_tools", "input_schema_json"));
+        assert_eq!(
+            conn.query_row(
+                "SELECT home_background_strategy FROM settings WHERE id = 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("background strategy"),
+            ""
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT value_type FROM attribute_schemas
+                 WHERE id = 'attr-schedule-assistant-notifications'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("attribute type"),
+            "list"
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT name FROM model_configs
+                 WHERE id = 'model-seed-bge-small-embedding'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("model name"),
+            "内置本地 Embedding / bge-small-zh-v1.5"
+        );
+        assert!(desktop_file(&conn, SEED_WORLD_POETRY_ID).contains("\\\\5f53"));
+        assert_eq!(desktop_file(&conn, "user-world"), damaged_desktop);
+
+        conn.execute(
+            "UPDATE settings SET home_background_strategy = 'static' WHERE id = 1",
+            [],
+        )
+        .expect("change migrated data");
+        run(&conn).expect("rerun migrations");
+        assert_eq!(
+            conn.query_row(
+                "SELECT home_background_strategy FROM settings WHERE id = 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("background strategy after rerun"),
+            "static"
+        );
+    }
+
+    #[test]
+    fn migration_failure_rolls_back_schema_and_version() {
+        let conn = Connection::open_in_memory().expect("open database");
+        conn.execute("CREATE TABLE characters (id TEXT PRIMARY KEY)", [])
+            .expect("create partial legacy schema");
+
+        let error = run(&conn).expect_err("missing tables should fail migration");
+
+        assert!(error.to_string().contains("settings"));
+        assert!(!column_exists(
+            &conn,
+            "characters",
+            "system_prompt_template"
+        ));
+        assert_eq!(schema_version(&conn).expect("schema version"), 0);
+    }
 }

@@ -131,6 +131,10 @@ export const CHARACTER_CREATION_STORAGE_PREFIX = "game:seen-character-creations:
    Shared Pure Functions
    ============================================================ */
 
+export function resolvePlayerActionMode(mode?: string): PlayerActionMode {
+  return mode === "edit" || mode === "resend" ? mode : "submit";
+}
+
 export function readSeenCharacterCreationKeys(sessionId: string): Set<string> {
   if (typeof window === "undefined") {
     return new Set();
@@ -401,6 +405,9 @@ export function resolveRuntimeBackgroundAsset(
 }
 
 export function formatActionErrorMessage(error: string): string {
+  if (error.includes("SESSION_MUTATION_IN_PROGRESS")) {
+    return "当前回合仍在处理中，请稍候。";
+  }
   if (error.includes("未配置文本模型")) {
     return "未配置 LLM。请先到「设置」里添加文本模型，然后再回来发言。";
   }
