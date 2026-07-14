@@ -17,6 +17,7 @@ import type {
   ParsedGameUiDocument,
   UiAssetConfig,
   WorldUiEnvelope,
+  WorldUiEnvelopeV3,
 } from "./types";
 import {
   DEFAULT_UI_ASSET_CONFIG,
@@ -89,21 +90,73 @@ function normalizeAssetGroupMap(raw: unknown): Record<string, string[]> {
 
 export function normalizeWorldUiEnvelope(raw: unknown): WorldUiEnvelope {
   const value = isPlainObject(raw) ? raw : {};
+  const rawEntries = isPlainObject(value.entries) ? value.entries : {};
+  const desktopEntry = normalizeWorldUiEntry(
+    rawEntries.desktop,
+    value.desktop_file,
+    value.desktop_stylesheet,
+    DEFAULT_DESKTOP_UI_FILE,
+  );
+  const mobileEntry = normalizeWorldUiEntry(
+    rawEntries.mobile,
+    value.mobile_file,
+    value.mobile_stylesheet,
+    DEFAULT_MOBILE_UI_FILE,
+  );
   return {
+    runtime_version: value.runtime_version === 3 ? 3 : 2,
+    capabilities: Array.isArray(value.capabilities)
+      ? value.capabilities.map((item) => String(item).trim()).filter(Boolean)
+      : [],
     assets: normalizeAssetConfig(value.assets),
-    desktop_file:
-      typeof value.desktop_file === "string" && value.desktop_file.trim()
-        ? value.desktop_file
-        : DEFAULT_DESKTOP_UI_FILE,
-    mobile_file:
-      typeof value.mobile_file === "string" && value.mobile_file.trim()
-        ? value.mobile_file
-        : DEFAULT_MOBILE_UI_FILE,
+    entries: {
+      desktop: desktopEntry,
+      mobile: mobileEntry,
+    },
+    desktop_file: desktopEntry.document,
+    mobile_file: mobileEntry.document,
   };
 }
 
+function normalizeWorldUiEntry(
+  rawEntry: unknown,
+  legacyDocument: unknown,
+  legacyStylesheet: unknown,
+  fallbackDocument: string,
+) {
+  const entry = isPlainObject(rawEntry) ? rawEntry : {};
+  const document = typeof entry.document === "string" && entry.document.trim()
+    ? entry.document
+    : typeof legacyDocument === "string" && legacyDocument.trim()
+      ? legacyDocument
+      : fallbackDocument;
+  const stylesheet = typeof entry.stylesheet === "string"
+    ? entry.stylesheet
+    : typeof legacyStylesheet === "string"
+      ? legacyStylesheet
+      : "";
+  return { document, stylesheet };
+}
+
 export function resolveUiFile(envelope: WorldUiEnvelope, platform: GameUiPlatform): string {
-  return platform === "desktop" ? envelope.desktop_file : envelope.mobile_file;
+  return envelope.entries[platform].document;
+}
+
+export function resolveUiStylesheet(envelope: WorldUiEnvelope, platform: GameUiPlatform): string {
+  return envelope.entries[platform].stylesheet;
+}
+
+export function migrateWorldUiEnvelopeToV3(raw: unknown): WorldUiEnvelopeV3 {
+  const normalized = normalizeWorldUiEnvelope(raw);
+  return {
+    runtime_version: 3,
+    capabilities: [...normalized.capabilities],
+    assets: structuredClone(normalized.assets),
+    entries: {
+      desktop: { ...normalized.entries.desktop },
+      mobile: { ...normalized.entries.mobile },
+    },
+  };
 }
 
 export function parseGameUiDocument(

@@ -37,9 +37,24 @@ export type UiAssetConfig = {
 };
 
 export type WorldUiEnvelope = {
+  runtime_version: 2 | 3;
+  capabilities: string[];
   assets: UiAssetConfig;
+  entries: Record<GameUiPlatform, WorldUiEntry>;
   desktop_file: string;
   mobile_file: string;
+};
+
+export type WorldUiEntry = {
+  document: string;
+  stylesheet: string;
+};
+
+export type WorldUiEnvelopeV3 = {
+  runtime_version: 3;
+  capabilities: string[];
+  assets: UiAssetConfig;
+  entries: Record<GameUiPlatform, WorldUiEntry>;
 };
 
 export type GameUiStyleRecord = Record<string, string | number | boolean | null | undefined>;

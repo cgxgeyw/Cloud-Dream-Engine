@@ -33,7 +33,7 @@ import { ConfirmDialog } from "../components/ModalDialog";
 import { useIsMobile } from "../components/ResponsiveLayout";
 import { useSectionParam } from "../hooks/useSectionParam";
 import { useWorldPromptPreview } from "../hooks/useWorldPromptPreview";
-import { GameUiPreview } from "../components/GameUiPreview";
+import { GameUiSandboxPreview } from "../components/GameUiSandboxPreview";
 import { GameUiStructureEditor } from "../components/game-ui-editor/GameUiStructureEditor";
 import { PromptSendPreviewCard } from "../components/PromptTraceView";
 import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
@@ -146,6 +146,8 @@ type TimeConfig = {
 };
 
 type UiThemeConfig = {
+  runtime_version: 2 | 3;
+  capabilities: string[];
   background_source_mode: string;
   portrait_source_mode: string;
   runtime_image_generation_enabled: boolean;
@@ -153,6 +155,8 @@ type UiThemeConfig = {
   local_scene_backgrounds: Record<string, string[]>;
   desktop_file: string;
   mobile_file: string;
+  desktop_stylesheet: string;
+  mobile_stylesheet: string;
 };
 
 const defaultWorldDirectorPrompt = "";
@@ -193,6 +197,8 @@ const defaultTimeConfig: TimeConfig = {
 };
 
 const defaultUiThemeConfig: UiThemeConfig = {
+  runtime_version: 3,
+  capabilities: ["supports_file_picker", "supports_mic"],
   background_source_mode: "local-first",
   portrait_source_mode: "local-first",
   runtime_image_generation_enabled: false,
@@ -200,6 +206,8 @@ const defaultUiThemeConfig: UiThemeConfig = {
   local_scene_backgrounds: {},
   desktop_file: defaultGameUiFile("desktop"),
   mobile_file: defaultGameUiFile("mobile"),
+  desktop_stylesheet: "",
+  mobile_stylesheet: "",
 };
 
 function resolveExposurePolicyMode(policy: string | Record<string, unknown> | undefined): string {
@@ -505,6 +513,8 @@ function normalizeUiThemeConfig(raw: Record<string, unknown> | undefined): UiThe
   const envelope = normalizeWorldUiEnvelope(raw);
   const assets = normalizeAssetConfig(envelope.assets);
   return {
+    runtime_version: envelope.runtime_version,
+    capabilities: envelope.capabilities,
     background_source_mode: assets.background_source_mode,
     portrait_source_mode: assets.portrait_source_mode,
     runtime_image_generation_enabled: assets.runtime_image_generation_enabled,
@@ -512,11 +522,15 @@ function normalizeUiThemeConfig(raw: Record<string, unknown> | undefined): UiThe
     local_scene_backgrounds: assets.local_scene_backgrounds,
     desktop_file: envelope.desktop_file,
     mobile_file: envelope.mobile_file,
+    desktop_stylesheet: envelope.entries.desktop.stylesheet,
+    mobile_stylesheet: envelope.entries.mobile.stylesheet,
   };
 }
 
 function buildUiThemeEnvelope(config: UiThemeConfig): Record<string, unknown> {
   return {
+    runtime_version: config.runtime_version,
+    capabilities: config.capabilities,
     assets: {
       background_source_mode: config.background_source_mode,
       portrait_source_mode: config.portrait_source_mode,
@@ -526,6 +540,16 @@ function buildUiThemeEnvelope(config: UiThemeConfig): Record<string, unknown> {
     },
     desktop_file: config.desktop_file,
     mobile_file: config.mobile_file,
+    entries: {
+      desktop: {
+        document: config.desktop_file,
+        stylesheet: config.desktop_stylesheet,
+      },
+      mobile: {
+        document: config.mobile_file,
+        stylesheet: config.mobile_stylesheet,
+      },
+    },
   };
 }
 
@@ -825,14 +849,14 @@ export function WorldEditorPage() {
   const desktopPreviewScopeId = normalizeGameUiScopeId(useId());
   const desktopPreviewScopeSelector = useMemo(() => createGameUiScopeSelector(desktopPreviewScopeId), [desktopPreviewScopeId]);
   const desktopPreviewStylesheet = useMemo(
-    () => buildGameUiStylesheet(parsedDesktopGameUi.document, previewBackgroundAsset ? assetUrl(previewBackgroundAsset) : undefined, desktopPreviewScopeSelector),
-    [desktopPreviewScopeSelector, parsedDesktopGameUi.document, previewBackgroundAsset],
+    () => `${buildGameUiStylesheet(parsedDesktopGameUi.document, previewBackgroundAsset ? assetUrl(previewBackgroundAsset) : undefined, desktopPreviewScopeSelector)}\n${uiThemeConfig.desktop_stylesheet}`,
+    [desktopPreviewScopeSelector, parsedDesktopGameUi.document, previewBackgroundAsset, uiThemeConfig.desktop_stylesheet],
   );
   const mobilePreviewScopeId = normalizeGameUiScopeId(useId());
   const mobilePreviewScopeSelector = useMemo(() => createGameUiScopeSelector(mobilePreviewScopeId), [mobilePreviewScopeId]);
   const mobilePreviewStylesheet = useMemo(
-    () => buildGameUiStylesheet(parsedMobileGameUi.document, previewBackgroundAsset ? assetUrl(previewBackgroundAsset) : undefined, mobilePreviewScopeSelector),
-    [mobilePreviewScopeSelector, parsedMobileGameUi.document, previewBackgroundAsset],
+    () => `${buildGameUiStylesheet(parsedMobileGameUi.document, previewBackgroundAsset ? assetUrl(previewBackgroundAsset) : undefined, mobilePreviewScopeSelector)}\n${uiThemeConfig.mobile_stylesheet}`,
+    [mobilePreviewScopeSelector, parsedMobileGameUi.document, previewBackgroundAsset, uiThemeConfig.mobile_stylesheet],
   );
   const totalSceneBackgroundCount = useMemo(
     () => countGroupedAssets(uiThemeConfig.local_scene_backgrounds),
@@ -983,6 +1007,10 @@ export function WorldEditorPage() {
             validateWorldUiBundle({
               desktop_file: uiThemeConfig.desktop_file,
               mobile_file: uiThemeConfig.mobile_file,
+              runtime_version: uiThemeConfig.runtime_version,
+              desktop_stylesheet: uiThemeConfig.desktop_stylesheet,
+              mobile_stylesheet: uiThemeConfig.mobile_stylesheet,
+              capabilities: uiThemeConfig.capabilities,
             }),
             compileWorldUiDocument({
               source: uiThemeConfig.desktop_file,
@@ -1099,6 +1127,12 @@ export function WorldEditorPage() {
     updateThemePatch(platform === "desktop" ? { desktop_file: source } : { mobile_file: source });
   }
 
+  function updateGameUiStylesheet(platform: GameUiPlatform, source: string) {
+    updateThemePatch(platform === "desktop"
+      ? { desktop_stylesheet: source, runtime_version: 3 }
+      : { mobile_stylesheet: source, runtime_version: 3 });
+  }
+
   function updateStructuredGameUiDocument(platform: GameUiPlatform, nextDocument: GameUiDocumentV2) {
     updateGameUiFile(platform, stringifyGameUiDocument(nextDocument));
   }
@@ -1114,6 +1148,9 @@ export function WorldEditorPage() {
   ) {
     const label = platform === "desktop" ? "桌面界面" : "移动界面";
     const source = platform === "desktop" ? uiThemeConfig.desktop_file : uiThemeConfig.mobile_file;
+    const stylesheet = platform === "desktop"
+      ? uiThemeConfig.desktop_stylesheet
+      : uiThemeConfig.mobile_stylesheet;
     const compileResult = platform === "desktop" ? uiGovernance.desktopCompile : uiGovernance.mobileCompile;
     const compatibilityDocument = uiGovernance.compatibility?.documents.find((entry) => entry.platform === platform) ?? null;
 
@@ -1152,6 +1189,17 @@ export function WorldEditorPage() {
             className="editor-field-input editor-field-textarea"
             spellCheck={false}
             style={{ minHeight: 320, fontFamily: "Consolas, 'Courier New', monospace", fontSize: 12 }}
+          />
+        </label>
+
+        <label className="editor-field">
+          <span className="editor-field-label">{"v3 \u539f\u59cb\u6837\u5f0f\u8868\uff08iframe \u5185\uff09"}</span>
+          <textarea
+            value={stylesheet}
+            onChange={(event) => updateGameUiStylesheet(platform, event.target.value)}
+            className="editor-field-input editor-field-textarea"
+            spellCheck={false}
+            style={{ minHeight: 220, fontFamily: "Consolas, 'Courier New', monospace", fontSize: 12 }}
           />
         </label>
 
@@ -1235,7 +1283,7 @@ export function WorldEditorPage() {
         </div>
         <div className={`world-style-preview-shell world-style-preview-shell--${previewPlatform}`}>
           <div className={`world-style-preview-frame world-style-preview-frame--${previewPlatform}`}>
-            <GameUiPreview
+            <GameUiSandboxPreview
               platform={previewPlatform}
               document={parsedPreview.document}
               stylesheet={previewStylesheet}

@@ -116,6 +116,9 @@ pub struct WorldPackageManifest {
     pub world_file: Option<String>,
     pub desktop_ui_file: Option<String>,
     pub mobile_ui_file: Option<String>,
+    pub ui_runtime_version: Option<u32>,
+    pub desktop_ui_stylesheet_file: Option<String>,
+    pub mobile_ui_stylesheet_file: Option<String>,
     pub characters_file: Option<String>,
     pub character_files: Vec<WorldPackageCharacterFileEntry>,
     pub assets: Vec<WorldPackageAssetEntry>,
@@ -149,6 +152,10 @@ pub struct WorldPackageWorldData {
     pub time_config: serde_json::Value,
     pub director_config: serde_json::Value,
     pub ui_assets_config: serde_json::Value,
+    #[serde(default)]
+    pub ui_runtime_version: Option<u32>,
+    #[serde(default)]
+    pub ui_capabilities: Vec<String>,
     pub opening_messages: Vec<WorldOpeningMessage>,
     pub opening_character_names: Vec<String>,
     pub player_character_name: Option<String>,
@@ -166,6 +173,14 @@ pub struct WorldUiDocumentRequest {
 pub struct WorldUiBundleValidationRequest {
     pub desktop_file: String,
     pub mobile_file: String,
+    #[serde(default)]
+    pub runtime_version: Option<u32>,
+    #[serde(default)]
+    pub desktop_stylesheet: String,
+    #[serde(default)]
+    pub mobile_stylesheet: String,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

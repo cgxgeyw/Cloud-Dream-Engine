@@ -110,8 +110,8 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
   const mobileSimple = readBooleanProp(node, "mobile_simple", false) && runtime.capabilities.platform === "mobile";
 
   useEffect(() => {
-    runtime.message_preferences.set_auto_scroll_enabled(autoScroll);
-  }, [autoScroll, runtime.message_preferences.set_auto_scroll_enabled]);
+    actions.setAutoScrollEnabled(autoScroll);
+  }, [actions, autoScroll]);
 
   const hasActiveAgentStream = runtime.messages.some((message) => {
     if (message.role !== "agent") {

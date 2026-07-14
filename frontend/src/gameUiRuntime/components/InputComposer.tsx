@@ -121,7 +121,7 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
           `recording_${new Date().toISOString().slice(0, 19).replace(/[:\-T]/g, "")}.${extension}`,
           { type: mediaRecorder.mimeType },
         );
-        runtime.draft_input.set_audios((previous) => [...previous, file]);
+        actions.addAudio(file);
         stream.getTracks().forEach((track) => track.stop());
         mediaStreamRef.current = null;
       };
@@ -215,7 +215,7 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
           ref={runtime.draft_input.input_ref}
           value={runtime.draft_input.value}
           onChange={(event) => {
-            runtime.draft_input.set_value(event.target.value);
+            actions.setDraftValue(event.target.value);
             if (runtime.errors.action_error) {
               actions.clearActionError();
             }
@@ -314,7 +314,7 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
         <div className="game-input-images">
           {runtime.draft_input.images.map((file, index) => (
             <div key={`${file.name}-${index}`} className="game-input-image-preview">
-              <ImagePreview file={file} />
+              <ImagePreview file={file as File} />
               <button
                 type="button"
                 className="game-input-image-remove"

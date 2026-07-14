@@ -13,6 +13,7 @@ import {
   type GameUiLayoutNode,
   type GameUiLayoutNodeV2,
   type GameUiMountId,
+  type GameUiPropValue,
   type GameUiTextNode,
   styleRecordToInlineStyle,
 } from "../data/gameUi";
@@ -35,7 +36,7 @@ type GameUiRendererProps = {
   document: GameUiDocument;
   mounts?: Partial<Record<GameUiMountId, ReactNode>>;
   componentRenderers?: Partial<Record<string, GameUiComponentRenderer>>;
-  evaluateCondition?: (expr: string) => boolean;
+  evaluateCondition?: (expr: string, context: GameUiRenderContext) => boolean;
   resolveLoopSource?: (source: string) => unknown[];
   runtimeData?: Record<string, unknown>;
   onAction?: (action: GameUiActionReference, context: GameUiRenderContext) => void | Promise<void>;
@@ -84,7 +85,7 @@ type GameUiElementActions = {
 function renderV2Layout(
   document: GameUiDocumentV2,
   componentRenderers: Partial<Record<string, GameUiComponentRenderer>> | undefined,
-  evaluateCondition: ((expr: string) => boolean) | undefined,
+  evaluateCondition: ((expr: string, context: GameUiRenderContext) => boolean) | undefined,
   resolveLoopSource: ((source: string) => unknown[]) | undefined,
   context: GameUiRenderContext,
   actions: GameUiElementActions,
@@ -105,7 +106,7 @@ function renderV2Node(
   node: GameUiLayoutNodeV2,
   document: GameUiDocumentV2,
   componentRenderers: Partial<Record<string, GameUiComponentRenderer>> | undefined,
-  evaluateCondition: ((expr: string) => boolean) | undefined,
+  evaluateCondition: ((expr: string, context: GameUiRenderContext) => boolean) | undefined,
   resolveLoopSource: ((source: string) => unknown[]) | undefined,
   context: GameUiRenderContext,
   actions: GameUiElementActions,
@@ -160,7 +161,7 @@ function renderV2Node(
   }
 
   if (node.type === "when") {
-    if (evaluateCondition && evaluateCondition(node.expr) === false) {
+    if (evaluateCondition && evaluateCondition(node.expr, context) === false) {
       return null;
     }
     return renderV2Node(
@@ -266,17 +267,25 @@ function renderComponentNode(
   node: GameUiComponentNode,
   document: GameUiDocumentV2,
   componentRenderers: Partial<Record<string, GameUiComponentRenderer>> | undefined,
-  evaluateCondition: ((expr: string) => boolean) | undefined,
+  evaluateCondition: ((expr: string, context: GameUiRenderContext) => boolean) | undefined,
   resolveLoopSource: ((source: string) => unknown[]) | undefined,
   context: GameUiRenderContext,
   actions: GameUiElementActions,
   key: string,
 ): ReactNode {
   const renderer = componentRenderers?.[node.component];
+  const resolvedNode = node.props
+    ? {
+        ...node,
+        props: Object.fromEntries(
+          Object.entries(node.props).map(([name, value]) => [name, resolveGameUiPropValue(value, context)]),
+        ),
+      }
+    : node;
   const content = renderer
     ? renderer({
         document,
-        node,
+        node: resolvedNode,
         renderSlot: (slotName) =>
           renderSlotValue(
             node.slots?.[slotName],
@@ -331,7 +340,7 @@ function renderLoopNode(
   node: GameUiForEachNode,
   document: GameUiDocumentV2,
   componentRenderers: Partial<Record<string, GameUiComponentRenderer>> | undefined,
-  evaluateCondition: ((expr: string) => boolean) | undefined,
+  evaluateCondition: ((expr: string, context: GameUiRenderContext) => boolean) | undefined,
   resolveLoopSource: ((source: string) => unknown[]) | undefined,
   context: GameUiRenderContext,
   actions: GameUiElementActions,
@@ -386,7 +395,7 @@ function renderSlotValue(
   value: GameUiLayoutNodeV2 | GameUiLayoutNodeV2[] | undefined,
   document: GameUiDocumentV2,
   componentRenderers: Partial<Record<string, GameUiComponentRenderer>> | undefined,
-  evaluateCondition: ((expr: string) => boolean) | undefined,
+  evaluateCondition: ((expr: string, context: GameUiRenderContext) => boolean) | undefined,
   resolveLoopSource: ((source: string) => unknown[]) | undefined,
   context: GameUiRenderContext,
   actions: GameUiElementActions,
@@ -579,6 +588,42 @@ function resolveText(template: string, context: GameUiRenderContext): string {
   return template.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, expression: string) =>
     stringifyTemplateValue(resolvePath(context, expression.trim())),
   );
+}
+
+export function resolveGameUiPropValue(value: GameUiPropValue, context: GameUiRenderContext): GameUiPropValue {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.startsWith("$") && !trimmed.includes(" ")) {
+      return normalizeResolvedPropValue(resolvePath(context, trimmed));
+    }
+    return value.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, expression: string) =>
+      stringifyTemplateValue(resolvePath(context, expression.trim())),
+    );
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => resolveGameUiPropValue(item, context));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, resolveGameUiPropValue(item, context)]),
+    );
+  }
+  return value;
+}
+
+function normalizeResolvedPropValue(value: unknown): GameUiPropValue {
+  if (value == null || ["string", "number", "boolean"].includes(typeof value)) {
+    return value as GameUiPropValue;
+  }
+  if (Array.isArray(value)) {
+    return value.map(normalizeResolvedPropValue);
+  }
+  if (typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, normalizeResolvedPropValue(item)]),
+    );
+  }
+  return String(value);
 }
 
 function resolvePath(context: GameUiRenderContext, expression: string): unknown {

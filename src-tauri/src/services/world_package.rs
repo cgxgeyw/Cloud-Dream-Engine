@@ -13,15 +13,22 @@ use crate::models::world::{
 use crate::state::AppState;
 
 const WORLD_PACKAGE_FORMAT: &str = "dream-world-package";
-const WORLD_PACKAGE_VERSION: u32 = 5;
+const WORLD_PACKAGE_VERSION: u32 = 6;
+const LEGACY_WORLD_PACKAGE_VERSION: u32 = 5;
 const WORLD_PACKAGE_FILE: &str = "world/world.json";
 const WORLD_PACKAGE_DESKTOP_UI_FILE: &str = "world/ui.desktop.jsonc";
 const WORLD_PACKAGE_MOBILE_UI_FILE: &str = "world/ui.mobile.jsonc";
+const WORLD_PACKAGE_DESKTOP_UI_STYLESHEET: &str = "world/ui.desktop.css";
+const WORLD_PACKAGE_MOBILE_UI_STYLESHEET: &str = "world/ui.mobile.css";
 
 pub struct ImportedWorldPackage {
     pub world: WorldPackageWorldData,
     pub desktop_ui_source: String,
     pub mobile_ui_source: String,
+    pub desktop_ui_stylesheet: String,
+    pub mobile_ui_stylesheet: String,
+    pub ui_runtime_version: u32,
+    pub ui_capabilities: Vec<String>,
     pub characters: Vec<CharacterPackageData>,
     pub asset_map: HashMap<String, String>,
 }
@@ -97,10 +104,7 @@ impl WorldPackageService {
                 )
                 .map_err(|e| e.to_string())?;
 
-            if let Some(source) = world
-                .ui_theme_config
-                .get("desktop_file")
-                .and_then(|value| value.as_str())
+            if let Some(source) = world_ui_entry_value(world, "desktop", "document", "desktop_file")
                 .filter(|value| !value.trim().is_empty())
             {
                 archive
@@ -111,10 +115,7 @@ impl WorldPackageService {
                     .map_err(|e| e.to_string())?;
             }
 
-            if let Some(source) = world
-                .ui_theme_config
-                .get("mobile_file")
-                .and_then(|value| value.as_str())
+            if let Some(source) = world_ui_entry_value(world, "mobile", "document", "mobile_file")
                 .filter(|value| !value.trim().is_empty())
             {
                 archive
@@ -123,6 +124,24 @@ impl WorldPackageService {
                 archive
                     .write_all(source.as_bytes())
                     .map_err(|e| e.to_string())?;
+            }
+
+            if let Some(source) = world_ui_entry_value(world, "desktop", "stylesheet", "desktop_stylesheet")
+                .filter(|value| !value.trim().is_empty())
+            {
+                archive
+                    .start_file(WORLD_PACKAGE_DESKTOP_UI_STYLESHEET, options)
+                    .map_err(|e| e.to_string())?;
+                archive.write_all(source.as_bytes()).map_err(|e| e.to_string())?;
+            }
+
+            if let Some(source) = world_ui_entry_value(world, "mobile", "stylesheet", "mobile_stylesheet")
+                .filter(|value| !value.trim().is_empty())
+            {
+                archive
+                    .start_file(WORLD_PACKAGE_MOBILE_UI_STYLESHEET, options)
+                    .map_err(|e| e.to_string())?;
+                archive.write_all(source.as_bytes()).map_err(|e| e.to_string())?;
             }
 
             for (entry, character) in &character_data {
@@ -184,7 +203,9 @@ impl WorldPackageService {
         let mut archive = zip::ZipArchive::new(Cursor::new(data)).map_err(|e| e.to_string())?;
         let manifest: WorldPackageManifest = read_json_from_zip(&mut archive, "manifest.json")
             .map_err(|e| format!("Invalid manifest: {e}"))?;
-        if manifest.format != WORLD_PACKAGE_FORMAT || manifest.version != WORLD_PACKAGE_VERSION {
+        if manifest.format != WORLD_PACKAGE_FORMAT
+            || ![LEGACY_WORLD_PACKAGE_VERSION, WORLD_PACKAGE_VERSION].contains(&manifest.version)
+        {
             return Err("Unsupported world package format".to_string());
         }
 
@@ -216,6 +237,16 @@ impl WorldPackageService {
             .unwrap_or_else(|| WORLD_PACKAGE_MOBILE_UI_FILE.to_string());
         let mobile_ui_source =
             read_text_from_zip(&mut archive, &mobile_ui_file).unwrap_or_default();
+        let desktop_ui_stylesheet = manifest
+            .desktop_ui_stylesheet_file
+            .as_deref()
+            .and_then(|path| read_text_from_zip(&mut archive, path).ok())
+            .unwrap_or_default();
+        let mobile_ui_stylesheet = manifest
+            .mobile_ui_stylesheet_file
+            .as_deref()
+            .and_then(|path| read_text_from_zip(&mut archive, path).ok())
+            .unwrap_or_default();
         let mut package_characters = Vec::new();
         for entry in &manifest.character_files {
             let mut character: CharacterPackageData =
@@ -230,10 +261,15 @@ impl WorldPackageService {
             return Err("World package is missing character files".to_string());
         }
 
+        let ui_capabilities = package_world.ui_capabilities.clone();
         Ok(ImportedWorldPackage {
             world: package_world,
             desktop_ui_source,
             mobile_ui_source,
+            desktop_ui_stylesheet,
+            mobile_ui_stylesheet,
+            ui_runtime_version: manifest.ui_runtime_version.unwrap_or(2),
+            ui_capabilities,
             characters: package_characters,
             asset_map,
         })
@@ -478,6 +514,14 @@ fn build_manifest(
         world_file: Some(WORLD_PACKAGE_FILE.to_string()),
         desktop_ui_file: Some(WORLD_PACKAGE_DESKTOP_UI_FILE.to_string()),
         mobile_ui_file: Some(WORLD_PACKAGE_MOBILE_UI_FILE.to_string()),
+        ui_runtime_version: Some(
+            world.ui_theme_config
+                .get("runtime_version")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(2) as u32,
+        ),
+        desktop_ui_stylesheet_file: Some(WORLD_PACKAGE_DESKTOP_UI_STYLESHEET.to_string()),
+        mobile_ui_stylesheet_file: Some(WORLD_PACKAGE_MOBILE_UI_STYLESHEET.to_string()),
         characters_file: None,
         character_files,
         assets,
@@ -508,6 +552,18 @@ fn to_world_package_data(
             .get("assets")
             .cloned()
             .unwrap_or_else(|| serde_json::json!({})),
+        ui_runtime_version: Some(
+            world.ui_theme_config
+                .get("runtime_version")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(2) as u32,
+        ),
+        ui_capabilities: world
+            .ui_theme_config
+            .get("capabilities")
+            .and_then(|value| value.as_array())
+            .map(|items| items.iter().filter_map(|item| item.as_str().map(str::to_string)).collect())
+            .unwrap_or_default(),
         opening_messages: world.opening_messages.clone(),
         opening_character_names: world
             .opening_character_ids
@@ -521,6 +577,21 @@ fn to_world_package_data(
         opening_character_source_ids: world.opening_character_ids.clone(),
         player_character_source_id: world.player_character_id.clone(),
     }
+}
+
+fn world_ui_entry_value<'a>(
+    world: &'a WorldDefinition,
+    platform: &str,
+    field: &str,
+    legacy_field: &str,
+) -> Option<&'a str> {
+    world
+        .ui_theme_config
+        .get("entries")
+        .and_then(|entries| entries.get(platform))
+        .and_then(|entry| entry.get(field))
+        .and_then(|value| value.as_str())
+        .or_else(|| world.ui_theme_config.get(legacy_field).and_then(|value| value.as_str()))
 }
 
 fn remap_world_ui_theme_assets(

@@ -512,22 +512,56 @@ impl WorldService {
 
     pub fn normalize_world_ui_theme_config(raw: &serde_json::Value) -> serde_json::Value {
         let mut object = raw.as_object().cloned().unwrap_or_default();
+        let runtime_version = object
+            .get("runtime_version")
+            .and_then(|value| value.as_u64())
+            .filter(|value| *value == 3)
+            .unwrap_or(2);
+        let entries = object.get("entries").and_then(|value| value.as_object());
         let desktop_file = object
-            .get("desktop_file")
+            .get("entries")
+            .and_then(|value| value.get("desktop"))
+            .and_then(|value| value.get("document"))
             .and_then(|value| value.as_str())
+            .or_else(|| object.get("desktop_file").and_then(|value| value.as_str()))
             .map(|value| value.to_string())
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(Self::default_desktop_ui_file);
         let mobile_file = object
-            .get("mobile_file")
+            .get("entries")
+            .and_then(|value| value.get("mobile"))
+            .and_then(|value| value.get("document"))
             .and_then(|value| value.as_str())
+            .or_else(|| object.get("mobile_file").and_then(|value| value.as_str()))
             .map(|value| value.to_string())
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(Self::default_mobile_ui_file);
         let empty = serde_json::json!({});
         let assets = Self::normalize_world_ui_assets_config(object.get("assets").unwrap_or(&empty));
+        let desktop_stylesheet = entries
+            .and_then(|value| value.get("desktop"))
+            .and_then(|value| value.get("stylesheet"))
+            .and_then(|value| value.as_str())
+            .or_else(|| object.get("desktop_stylesheet").and_then(|value| value.as_str()))
+            .unwrap_or_default()
+            .to_string();
+        let mobile_stylesheet = entries
+            .and_then(|value| value.get("mobile"))
+            .and_then(|value| value.get("stylesheet"))
+            .and_then(|value| value.as_str())
+            .or_else(|| object.get("mobile_stylesheet").and_then(|value| value.as_str()))
+            .unwrap_or_default()
+            .to_string();
 
         object.insert("assets".to_string(), assets);
+        object.insert("runtime_version".to_string(), serde_json::json!(runtime_version));
+        object.insert(
+            "entries".to_string(),
+            serde_json::json!({
+                "desktop": { "document": desktop_file, "stylesheet": desktop_stylesheet },
+                "mobile": { "document": mobile_file, "stylesheet": mobile_stylesheet },
+            }),
+        );
         object.insert(
             "desktop_file".to_string(),
             serde_json::Value::String(desktop_file),
@@ -612,6 +646,10 @@ impl WorldService {
         let imported_world = imported.world;
         let desktop_ui_source = imported.desktop_ui_source;
         let mobile_ui_source = imported.mobile_ui_source;
+        let desktop_ui_stylesheet = imported.desktop_ui_stylesheet;
+        let mobile_ui_stylesheet = imported.mobile_ui_stylesheet;
+        let ui_runtime_version = imported.ui_runtime_version;
+        let ui_capabilities = imported.ui_capabilities;
         let imported_characters = imported.characters;
         let asset_map = imported.asset_map;
 
@@ -636,6 +674,18 @@ impl WorldService {
                 ),
                 "desktop_file": desktop_ui_source,
                 "mobile_file": mobile_ui_source,
+                "runtime_version": ui_runtime_version,
+                "capabilities": ui_capabilities,
+                "entries": {
+                    "desktop": {
+                        "document": desktop_ui_source,
+                        "stylesheet": desktop_ui_stylesheet,
+                    },
+                    "mobile": {
+                        "document": mobile_ui_source,
+                        "stylesheet": mobile_ui_stylesheet,
+                    },
+                },
             })),
             opening_messages: imported_world.opening_messages.clone(),
             opening_character_ids: Vec::new(),
@@ -1140,6 +1190,8 @@ mod tests {
                 time_config: serde_json::json!({}),
                 director_config: serde_json::json!({}),
                 ui_assets_config: serde_json::json!({}),
+                ui_runtime_version: Some(2),
+                ui_capabilities: Vec::new(),
                 opening_messages: Vec::new(),
                 opening_character_names: vec![
                     "Imported Good".to_string(),
@@ -1151,6 +1203,10 @@ mod tests {
             },
             desktop_ui_source: String::new(),
             mobile_ui_source: String::new(),
+            desktop_ui_stylesheet: String::new(),
+            mobile_ui_stylesheet: String::new(),
+            ui_runtime_version: 2,
+            ui_capabilities: Vec::new(),
             characters: vec![
                 imported_character("good", "Imported Good"),
                 imported_character("failure", "Imported Failure"),

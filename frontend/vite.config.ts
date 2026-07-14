@@ -41,6 +41,7 @@ export default defineConfig({
     chunkSizeWarningLimit: 1700,
   },
   server: {
+    cors: true,
     host: devConfig.host,
     port: devConfig.frontendPort,
     strictPort: true,

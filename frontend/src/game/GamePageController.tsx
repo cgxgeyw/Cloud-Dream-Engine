@@ -1,8 +1,7 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import { useGameSession } from "./useGameSession";
-import { DesktopGameShell } from "./shells/DesktopGameShell";
-import { MobileGameShell } from "./shells/MobileGameShell";
+import { GameUiSandboxRuntime } from "../components/GameUiSandboxRuntime";
 
 /* ============================================================
    GamePageController
@@ -40,11 +39,7 @@ export const GamePageController: React.FC<GamePageControllerProps> = ({
     return <div className="game-loading">跳转中...</div>;
   }
 
-  if (isMobile) {
-    return <MobileGameShell bag={bag} />;
-  }
-
-  return <DesktopGameShell bag={bag} />;
+  return <GameUiSandboxRuntime bag={bag} platform={isMobile ? "mobile" : "desktop"} />;
 };
 
 export default GamePageController;

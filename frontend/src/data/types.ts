@@ -98,6 +98,10 @@ export type WorldUiDocumentRequest = {
 export type WorldUiBundleValidationRequest = {
   desktop_file: string;
   mobile_file: string;
+  runtime_version?: number | null;
+  desktop_stylesheet?: string;
+  mobile_stylesheet?: string;
+  capabilities?: string[];
 };
 
 export type WorldUiCompileRequest = {

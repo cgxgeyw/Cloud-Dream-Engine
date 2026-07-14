@@ -4,7 +4,9 @@ frontend/node_modules/
 
 # Frontend build/cache
 frontend/dist/
+frontend/public/world-frame/
 frontend/*.tsbuildinfo
+src-tauri/tauri.dev.override.json
 
 # Rust/Tauri build output
 src-tauri/target/

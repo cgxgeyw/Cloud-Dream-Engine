@@ -2,9 +2,10 @@
 
 > An offline-first desktop & mobile engine for building LLM-driven narrative games and "world packs" — author worlds, characters, custom in-game UIs, and an AI director, then play them locally.
 
-<!-- TODO: replace with a real screenshot or GIF of the world editor + a running game. This single image matters more than any paragraph below. -->
+> [World package developer guide v3 (Chinese)](docs/world-package-guide-v3.md)
+
 <p align="center">
-  <img src="docs/assets/hero.png" alt="Cloud Dream Engine — world editor and runtime" width="820">
+  <img src="https://github.com/user-attachments/assets/25ae1d57-5e2b-478c-902b-628dad463876" alt="Cloud Dream Engine — world editor and runtime" width="820">
 </p>
 
 <p align="center">
@@ -27,14 +28,14 @@ Worlds are content, not code. They live in SQLite and can be exported as portabl
 - **Backend-driven game loop.** A Rust orchestrator drives the turn: director parses input → applies scene/state/attribute/rule/inventory/memory writebacks → frontend refreshes session state.
 - **Director + character model.** A world director coordinates the scene; characters respond with their own prompts, memory, and attributes.
 - **Reusable prompt presets.** Attach scoped, ordered prompt fragments to a world (director / character / both) without editing core prompts.
-- **Desktop + mobile shells.** The same world renders through desktop and mobile shells from one UI document.
+- **Independent desktop + mobile world UIs.** Runtime v3 gives each platform its own complete UI document and raw stylesheet inside an isolated iframe.
 
 ## Features
 
 - World & character editor (background, attributes, memory strategy, per-character prompts)
 - AI-assisted world creation — describe a concept, get a draft world + characters (single- or multi-agent)
 - Custom in-game UI documents (`schema_version: 2` component tree: grid/stack/absolute, components, slots, conditionals, loops, text/image/badge/button/checkbox …)
-- Per-world theming and scoped custom CSS
+- Per-platform raw CSS inside an isolated world iframe, with scoped v2 CSS compatibility
 - Memory, attributes, inventory, rules, scene/state writeback
 - Prompt trace viewer — inspect exactly what was sent to the model and how the response was processed
 - World pack import/export
@@ -54,8 +55,8 @@ Worlds are content, not code. They live in SQLite and can be exported as portabl
 
 ```
 GamePage → GamePageController → useGameSession()
-  → DesktopGameShell / MobileGameShell
-  → GameUiRenderer (renders the world's sandboxed UI document)
+  → GameUiSandboxRuntime (trusted parent capability bridge)
+  → sandboxed WorldFrame → GameUiRenderer
 
 Rust orchestrator (per turn):
   director parses input
@@ -118,20 +119,22 @@ No license file yet — all rights reserved until one is added.
 
 > **隐私与离线优先：** 应用和你的所有世界都在本地运行。你接入自己的 LLM 端点（任意 OpenAI 兼容 API），数据与密钥不出本机。
 
+> [世界包开发指南 v3](docs/world-package-guide-v3.md)
+
 ### 特点
 
 - **世界自带界面**：运行时 UI 由沙箱化的 UI 文档（`ui_theme_config`）描述，不是固定页面。世界只能调用已注册的组件、动作和能力，无法执行任意代码。
 - **后端驱动游戏循环**：Rust orchestrator 驱动每个回合——导演解析输入 → 写回场景/状态/属性/规则/道具/记忆 → 前端刷新会话状态。
 - **导演 + 角色模型**：世界导演统筹场景，角色用各自的提示词、记忆和属性回应。
 - **可复用提示词预设**：按作用域（导演/角色/两者）和顺序给世界挂载提示词片段，无需改动核心提示词。
-- **桌面 + 移动双 shell**：同一份 UI 文档在桌面与移动 shell 上分别渲染。
+- **桌面 + 移动双入口**：runtime v3 为两个平台分别提供完整 UI 文档和原始 stylesheet，并在隔离 iframe 中渲染。
 
 ### 功能
 
 - 世界与角色编辑器（背景、属性、记忆策略、各角色提示词）
 - AI 辅助创建世界：输入一个构想，生成草稿世界与角色（单/多智能体）
 - 自定义游戏内 UI 文档（`schema_version: 2` 组件树）
-- 每个世界独立主题与作用域化自定义 CSS
+- 桌面/移动分别使用 iframe 内原始 CSS，并兼容 v2 作用域化 CSS
 - 记忆、属性、道具、规则、场景/状态写回
 - 提示词追踪：查看实际发给模型的内容及返回处理过程
 - 世界包导入/导出

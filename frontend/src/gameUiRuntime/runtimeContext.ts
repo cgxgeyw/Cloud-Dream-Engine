@@ -1,4 +1,4 @@
-import type { Dispatch, RefObject, SetStateAction } from "react";
+import type { RefObject } from "react";
 import type {
   CharacterResponse,
   RuntimeAttributeItem,
@@ -23,6 +23,14 @@ export type RuntimeAttributesByOwner = Record<
   string,
   Record<string, Record<string, unknown>>
 >;
+
+export type GameUiDraftAttachment = File | {
+  id: string;
+  name: string;
+  size: number;
+  type: string;
+  preview_url?: string;
+};
 
 function isCurrentPlayerAttributeOwner(
   ownerId: string,
@@ -125,16 +133,14 @@ export type GameUiRuntimeContext = {
   active_attribute_content: string;
   draft_input: {
     value: string;
-    set_value: Dispatch<SetStateAction<string>>;
-    images: File[];
-    set_images: Dispatch<SetStateAction<File[]>>;
-    audios: File[];
-    set_audios: Dispatch<SetStateAction<File[]>>;
+    images: GameUiDraftAttachment[];
+    audios: GameUiDraftAttachment[];
+    is_recording: boolean;
+    microphone_error: string | null;
     input_ref: RefObject<HTMLTextAreaElement | null>;
   };
   message_preferences: {
     auto_scroll_enabled: boolean;
-    set_auto_scroll_enabled: Dispatch<SetStateAction<boolean>>;
   };
   editing: EditingTurnState | null;
   ui_state: {
@@ -157,7 +163,6 @@ export type GameUiRuntimeContext = {
   message_state: {
     active_character_creation_keys: string[];
     expanded_director_trace_keys: Set<string>;
-    set_expanded_director_trace_keys: Dispatch<SetStateAction<Set<string>>>;
     dismissed_proposal_keys: Set<string>;
     dismissed_retry_card_keys: Set<string>;
   };
@@ -219,16 +224,14 @@ export function createGameUiRuntimeContext(
     active_attribute_content: bag.activeAttributeContent,
     draft_input: {
       value: bag.inputValue,
-      set_value: bag.setInputValue,
       images: bag.inputImages,
-      set_images: bag.setInputImages,
       audios: bag.inputAudios,
-      set_audios: bag.setInputAudios,
+      is_recording: false,
+      microphone_error: null,
       input_ref: bag.inputRef,
     },
     message_preferences: {
       auto_scroll_enabled: bag.chatAutoScrollEnabled,
-      set_auto_scroll_enabled: bag.setChatAutoScrollEnabled,
     },
     editing: bag.editingTurn,
     ui_state: {
@@ -251,7 +254,6 @@ export function createGameUiRuntimeContext(
     message_state: {
       active_character_creation_keys: bag.activeCharacterCreationKeys,
       expanded_director_trace_keys: bag.expandedDirectorTraceKeys,
-      set_expanded_director_trace_keys: bag.setExpandedDirectorTraceKeys,
       dismissed_proposal_keys: bag.dismissedProposalKeys,
       dismissed_retry_card_keys: bag.dismissedRetryCardKeys,
     },

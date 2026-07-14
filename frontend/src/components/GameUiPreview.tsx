@@ -10,19 +10,19 @@ import {
   type GameUiPlatform,
 } from "../data/gameUi";
 
-type PreviewMessage = {
+export type PreviewMessage = {
   role: string;
   content: string;
   speaker?: string | null;
 };
 
-type PreviewStatusTab = {
+export type PreviewStatusTab = {
   key: string;
   label: string;
   content: string;
 };
 
-type GameUiPreviewProps = {
+export type GameUiPreviewProps = {
   platform: GameUiPlatform;
   document: GameUiDocument;
   stylesheet?: string;

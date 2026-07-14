@@ -11,6 +11,8 @@ type InputComposerBridge = {
 
 export type GameUiRuntimeActions = {
   clearActionError: () => void;
+  setDraftValue: (value: string) => void;
+  setAutoScrollEnabled: (enabled: boolean) => void;
   submitMessage: (options?: SubmitActionOptions) => Promise<void>;
   startEditingTurn: (content: string, turnIndex: number) => void;
   cancelEditingTurn: () => void;
@@ -29,6 +31,7 @@ export type GameUiRuntimeActions = {
   startRecording: () => Promise<void>;
   stopRecording: () => void;
   removeAudio: (index: number) => void;
+  addAudio: (file: File) => void;
   attachInputComposerBridge: (bridge: InputComposerBridge | null) => void;
 };
 
@@ -41,6 +44,8 @@ export function createGameUiRuntimeActions(
 
   return {
     clearActionError: bag.clearActionError,
+    setDraftValue: bag.setInputValue,
+    setAutoScrollEnabled: bag.setChatAutoScrollEnabled,
     submitMessage: (options = {}) => bag.handleSubmitAction(options),
     startEditingTurn: bag.startEditingTurn,
     cancelEditingTurn: bag.cancelEditingTurn,
@@ -67,27 +72,24 @@ export function createGameUiRuntimeActions(
     },
     pickImage: (files) => {
       if (files && files.length > 0) {
-        runtime.draft_input.set_images((previous) => [...previous, ...files]);
+        bag.setInputImages((previous) => [...previous, ...files]);
         return;
       }
       inputComposerBridge?.openImagePicker();
     },
     removeImage: (index) => {
-      runtime.draft_input.set_images((previous) =>
+      bag.setInputImages((previous) =>
         previous.filter((_, imageIndex) => imageIndex !== index),
       );
     },
-    startRecording: async () => {
-      await inputComposerBridge?.startRecording();
-    },
-    stopRecording: () => {
-      inputComposerBridge?.stopRecording();
-    },
+    startRecording: async () => inputComposerBridge?.startRecording(),
+    stopRecording: () => inputComposerBridge?.stopRecording(),
     removeAudio: (index) => {
-      runtime.draft_input.set_audios((previous) =>
+      bag.setInputAudios((previous) =>
         previous.filter((_, audioIndex) => audioIndex !== index),
       );
     },
+    addAudio: (file) => bag.setInputAudios((previous) => [...previous, file]),
     attachInputComposerBridge: (bridge) => {
       inputComposerBridge = bridge;
     },

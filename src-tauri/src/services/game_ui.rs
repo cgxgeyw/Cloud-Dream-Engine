@@ -11,9 +11,11 @@ use crate::models::world::{
 };
 
 const SUPPORTED_SCHEMA_VERSIONS: [u32; 1] = [2];
+const SUPPORTED_UI_RUNTIME_VERSIONS: [u32; 2] = [2, 3];
+const MAX_WORLD_STYLESHEET_BYTES: usize = 1024 * 1024;
 const SUPPORTED_CAPABILITIES: [&str; 3] =
     ["supports_file_picker", "supports_hover", "supports_mic"];
-const SUPPORTED_ACTION_IDS: [&str; 18] = [
+const SUPPORTED_ACTION_IDS: [&str; 19] = [
     "submit_message",
     "edit_turn_start",
     "edit_turn_cancel",
@@ -24,6 +26,7 @@ const SUPPORTED_ACTION_IDS: [&str; 18] = [
     "dismiss_retry_card",
     "copy_text",
     "switch_side_tab",
+    "navigate_back",
     "navigate_home",
     "navigate_settings",
     "navigate_debug",
@@ -53,6 +56,7 @@ fn component_support(component_id: &str) -> Option<ComponentSupport> {
                 "show_visible_characters",
                 "title_mode",
                 "player_identity_format",
+                "show_copy_button",
             ],
             implicit_actions: &["copy_text"],
             implicit_capabilities: &[],
@@ -82,6 +86,7 @@ fn component_support(component_id: &str) -> Option<ComponentSupport> {
                 "mobile_simple",
                 "show_pending_state",
                 "show_agent_reasoning",
+                "show_typing_indicator",
             ],
             implicit_actions: &[
                 "submit_message",
@@ -130,8 +135,16 @@ fn component_support(component_id: &str) -> Option<ComponentSupport> {
             allowed_slots: &["content"],
         }),
         "floating_actions" => Some(ComponentSupport {
-            props: &["show_back", "show_debug", "show_settings", "layout"],
-            implicit_actions: &["navigate_home", "navigate_settings", "navigate_debug"],
+            props: &[
+                "show_back",
+                "show_debug",
+                "show_settings",
+                "back_label",
+                "debug_label",
+                "settings_label",
+                "layout",
+            ],
+            implicit_actions: &["navigate_back", "navigate_settings", "navigate_debug"],
             implicit_capabilities: &[],
             allowed_slots: &[],
         }),
@@ -187,6 +200,7 @@ impl CompilationState {
             "dismiss_retry_card" => {}
             "copy_text" => {}
             "switch_side_tab" => {}
+            "navigate_back" => {}
             "navigate_home" => {}
             "navigate_settings" => {}
             "navigate_debug" => {}
@@ -247,6 +261,7 @@ impl GameUiService {
         &self,
         request: WorldUiBundleValidationRequest,
     ) -> WorldUiBundleValidationResult {
+        let runtime_version = request.runtime_version.unwrap_or(2);
         let desktop = self.validate_world_ui_document(WorldUiDocumentRequest {
             source: request.desktop_file,
             platform: Some("desktop".to_string()),
@@ -257,6 +272,37 @@ impl GameUiService {
         });
 
         let mut diagnostics = Vec::new();
+        if !SUPPORTED_UI_RUNTIME_VERSIONS.contains(&runtime_version) {
+            diagnostics.push(WorldUiDiagnostic {
+                severity: "error".to_string(),
+                code: "unsupported_ui_runtime_version".to_string(),
+                message: format!("Unsupported UI runtime version: {runtime_version}."),
+                path: Some("bundle.runtime_version".to_string()),
+            });
+        }
+        for (platform, stylesheet) in [
+            ("desktop", &request.desktop_stylesheet),
+            ("mobile", &request.mobile_stylesheet),
+        ] {
+            if stylesheet.len() > MAX_WORLD_STYLESHEET_BYTES {
+                diagnostics.push(WorldUiDiagnostic {
+                    severity: "error".to_string(),
+                    code: "stylesheet_too_large".to_string(),
+                    message: format!("{platform} stylesheet exceeds the 1 MiB limit."),
+                    path: Some(format!("bundle.{platform}_stylesheet")),
+                });
+            }
+        }
+        for capability in &request.capabilities {
+            if !SUPPORTED_CAPABILITIES.contains(&capability.as_str()) {
+                diagnostics.push(WorldUiDiagnostic {
+                    severity: "error".to_string(),
+                    code: "unsupported_declared_capability".to_string(),
+                    message: format!("Unsupported declared capability: {capability}."),
+                    path: Some("bundle.capabilities".to_string()),
+                });
+            }
+        }
         if desktop.schema_version != mobile.schema_version {
             diagnostics.push(WorldUiDiagnostic {
                 severity: "warning".to_string(),
@@ -1479,6 +1525,10 @@ mod tests {
         let bundle = service.validate_world_ui_bundle(WorldUiBundleValidationRequest {
             desktop_file: desktop.to_string(),
             mobile_file: mobile.to_string(),
+            runtime_version: Some(3),
+            desktop_stylesheet: String::new(),
+            mobile_stylesheet: String::new(),
+            capabilities: Vec::new(),
         });
         assert!(
             bundle.ok,
@@ -1515,6 +1565,37 @@ mod tests {
             );
             assert!(result.components.contains(&"input_composer".to_string()));
             assert!(result.components.contains(&"side_panel_tabs".to_string()));
+        }
+    }
+
+    #[test]
+    fn validates_v3_migration_bundles_for_preserved_example_worlds() {
+        let service = GameUiService::new();
+        for (desktop, mobile) in [
+            (
+                include_str!("../db/seeds/assets/poetry-desktop-ui.jsonc"),
+                include_str!("../db/seeds/assets/poetry-mobile-ui.jsonc"),
+            ),
+            (
+                include_str!("../db/seeds/assets/schedule-assistant-desktop-ui.jsonc"),
+                include_str!("../db/seeds/assets/schedule-assistant-mobile-ui.jsonc"),
+            ),
+        ] {
+            let result = service.validate_world_ui_bundle(WorldUiBundleValidationRequest {
+                desktop_file: desktop.to_string(),
+                mobile_file: mobile.to_string(),
+                runtime_version: Some(3),
+                desktop_stylesheet: ".desktop-entry { min-width: 0; }".to_string(),
+                mobile_stylesheet: ".mobile-entry { min-width: 0; }".to_string(),
+                capabilities: vec!["supports_file_picker".to_string(), "supports_mic".to_string()],
+            });
+            assert!(
+                result.ok,
+                "desktop: {:?}; mobile: {:?}; bundle: {:?}",
+                result.desktop.errors,
+                result.mobile.errors,
+                result.errors,
+            );
         }
     }
 

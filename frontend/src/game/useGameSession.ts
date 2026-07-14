@@ -46,6 +46,7 @@ import {
   normalizeWorldUiEnvelope,
   parseGameUiDocument,
   resolveUiFile,
+  resolveUiStylesheet,
   type WorldUiEnvelope,
 } from "../data/gameUi";
 import {
@@ -192,6 +193,7 @@ export interface GameSessionStateBag {
   runtimeBackgroundAsset: string;
   runtimeBackgroundStyle: React.CSSProperties & Record<string, string>;
   themeCustomCss: string;
+  worldUiRuntimeVersion: 2 | 3;
   mapGraphNodes: SessionMapNode[];
   mapGraphEdges: SessionMapEdge[];
   runtimeAttributes: SessionRuntimeAttributesResponse;
@@ -734,13 +736,21 @@ export function useGameSession(
   }, [runtimeBackgroundAsset, themeStyle]);
 
   const themeCustomCss = useMemo(
-    () =>
-      buildGameUiStylesheet(
+    () => {
+      const generatedStylesheet = buildGameUiStylesheet(
         parsedGameUi.document,
         runtimeBackgroundAsset ? assetUrl(runtimeBackgroundAsset) : undefined,
         gameUiScopeSelector,
-      ),
-    [gameUiScopeSelector, parsedGameUi.document, runtimeBackgroundAsset],
+      );
+      const worldStylesheet = resolveUiStylesheet(
+        worldUiEnvelope,
+        isMobile ? "mobile" : "desktop",
+      ).trim();
+      return worldStylesheet
+        ? `${generatedStylesheet}\n/* World UI v3 stylesheet */\n${worldStylesheet}`
+        : generatedStylesheet;
+    },
+    [gameUiScopeSelector, isMobile, parsedGameUi.document, runtimeBackgroundAsset, worldUiEnvelope],
   );
 
   const mapGraphNodes = useMemo(
@@ -1395,6 +1405,7 @@ export function useGameSession(
     runtimeBackgroundAsset,
     runtimeBackgroundStyle,
     themeCustomCss,
+    worldUiRuntimeVersion: worldUiEnvelope.runtime_version,
     mapGraphNodes,
     mapGraphEdges,
     runtimeAttributes,

@@ -5,9 +5,12 @@
   "main": "index.js",
   "scripts": {
     "postinstall": "node ./scripts/patch-vite-net-use.js",
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
+    "world-frame:build": "vite build --config vite.world-frame.config.ts && node ./scripts/check-world-frame-bundle.mjs",
+    "predev": "npm run world-frame:build",
+    "dev": "vite --config vite.config.ts",
+    "prebuild": "npm run world-frame:build",
+    "build": "vite build --config vite.config.ts",
+    "preview": "vite preview --config vite.config.ts",
     "test": "vitest run"
   },
   "keywords": [],
