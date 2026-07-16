@@ -5,8 +5,6 @@
   "scripts": {
     "tauri": "tauri",
     "tauri:dev": "node ./scripts/tauri-dev.js",
-    "build:windows-msi": "powershell -ExecutionPolicy Bypass -File scripts/build-windows-msi.ps1",
-    "build:android-apk": "powershell -ExecutionPolicy Bypass -File scripts/build_android_apk.ps1",
     "frontend:install": "cd frontend && npm install"
   },
   "devDependencies": {

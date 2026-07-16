@@ -88,16 +88,6 @@ npm run tauri:dev
 
 Then open **Settings** and add an LLM text model (OpenAI-compatible base URL + API key). That model powers AI-assisted world creation and the in-game director.
 
-### Build
-
-```bash
-# Windows installer (.msi)
-npm run build:windows-msi
-
-# Android (.apk)
-npm run build:android-apk
-```
-
 ## Status
 
 Early and actively developed. Expect rapid changes. Issues and feedback are welcome.
@@ -150,13 +140,6 @@ npm run tauri:dev          # 开发模式运行（Tauri + Vite）
 ```
 
 随后在**设置**中添加一个 LLM 文本模型（OpenAI 兼容的 base URL + API key），它驱动 AI 辅助创建世界和游戏内导演。
-
-### 构建
-
-```bash
-npm run build:windows-msi   # Windows 安装包
-npm run build:android-apk   # 安卓 APK
-```
 
 ### 状态
 

@@ -48,11 +48,27 @@ __pycache__/
 
 # Local config and secrets
 .claude/settings.local.json
+.claude/
+AGENTS.md
+agentsui.md
+project.md
+PRODUCT.md
 .env
 .env.*
 *.keystore
 *.jks
 dev.config.json
+
+# Local release and maintenance helpers
+/build-apk.ps1
+/build-installer.ps1
+/scripts/build-backend-sidecar.ps1
+/scripts/build-windows-msi.ps1
+/scripts/build_android_apk.ps1
+/scripts/create_hongloumeng_world.py
+/scripts/fix_strings.py
+/scripts/generate_app_icons.py
+/scripts/gradle_maven_proxy.py
 
 # OS/editor noise
 Thumbs.db
