@@ -978,6 +978,11 @@ mod tests {
         let desktop_file = serde_json::from_str::<Value>(desktop_source).unwrap();
         let mobile_file = serde_json::from_str::<Value>(mobile_source).unwrap();
 
+        assert!(
+            !desktop_source.contains("\"component\": \"narration_card\""),
+            "poetry chat must render narration inline after character messages"
+        );
+
         assert_eq!(
             desktop_file.pointer("/meta/name").and_then(Value::as_str),
             Some("诗词世界桌面界面")
