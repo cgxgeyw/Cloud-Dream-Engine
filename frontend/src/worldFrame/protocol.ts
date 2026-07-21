@@ -26,7 +26,8 @@ export type WorldFrameAction =
   | { type: "pick-image" }
   | { type: "remove-image"; index: number }
   | { type: "start-recording" }
-  | { type: "stop-recording" }
+  | { type: "stop-recording"; send?: boolean }
+  | { type: "voice-mode"; enabled: boolean }
   | { type: "remove-audio"; index: number };
 
 export type WorldFrameConnectMessage = {
@@ -160,6 +161,7 @@ function isWorldFrameAction(value: unknown): value is WorldFrameAction {
     "remove-image",
     "start-recording",
     "stop-recording",
+    "voice-mode",
     "remove-audio",
   ].includes(value.type);
 }

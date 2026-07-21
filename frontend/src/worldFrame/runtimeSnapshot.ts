@@ -32,6 +32,8 @@ export type GameUiRuntimeSnapshot = Omit<
     audios: Exclude<GameUiDraftAttachment, File>[];
     is_recording: boolean;
     microphone_error: string | null;
+    voice_mode: boolean;
+    voice_cancel: boolean;
   };
   message_state: {
     active_character_creation_keys: string[];
@@ -60,6 +62,8 @@ export function createGameUiRuntimeSnapshot(
     isRecording: boolean;
     microphoneError: string | null;
     viewport: WorldFrameViewportSnapshot;
+    voiceMode: boolean;
+    voiceCancel: boolean;
   },
 ): GameUiRuntimeSnapshot {
   const runtime = createGameUiRuntimeContext(bag, platform);
@@ -86,6 +90,8 @@ export function createGameUiRuntimeSnapshot(
       audios: options.audios,
       is_recording: options.isRecording,
       microphone_error: options.microphoneError,
+      voice_mode: options.voiceMode,
+      voice_cancel: options.voiceCancel,
     },
     message_preferences: runtime.message_preferences,
     editing: runtime.editing,

@@ -117,7 +117,7 @@ export function DebugPage() {
   }
 
   return (
-    <>
+    <div className="debug-page-shell">
       <ScreenLayout
         title="调试面板"
         subtitle="按回合查看每次 LLM 调用到底发给了谁、发了什么、模型返回后如何处理并写入游戏。"
@@ -217,6 +217,6 @@ export function DebugPage() {
           回到顶部
         </button>
       ) : null}
-    </>
+    </div>
   );
 }

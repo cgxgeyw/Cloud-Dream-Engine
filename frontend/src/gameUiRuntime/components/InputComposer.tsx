@@ -60,7 +60,12 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
     try {
       if (isTauriEnvironment()) {
         try {
-          await requestWorldPermissions(["microphone"]);
+          const statuses = await requestWorldPermissions(["microphone"], true);
+          const micStatus = statuses.find((status) => status.permission === "microphone");
+          if (micStatus?.granted === false) {
+            setMicError("\u9ea6\u514b\u98ce\u6743\u9650\u88ab\u62d2\u7edd\u3002");
+            return false;
+          }
         } catch (nativePermissionError) {
           console.warn("[audio] failed to request native microphone permission:", nativePermissionError);
         }
@@ -127,8 +132,10 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
       };
       mediaRecorder.start();
       setIsRecording(true);
-    } catch {
-      setMicError("\u542f\u52a8\u5f55\u97f3\u5931\u8d25\u3002");
+    } catch (errorLike) {
+      const errorState = errorLike as { name?: string; message?: string };
+      const detail = typeof errorLike === "string" ? errorLike : errorState.name || errorState.message || "\u672a\u77e5\u9519\u8bef";
+      setMicError(`\u542f\u52a8\u5f55\u97f3\u5931\u8d25\uff1a${detail}`);
     }
   };
 

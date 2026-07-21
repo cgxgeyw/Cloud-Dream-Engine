@@ -67,6 +67,8 @@ pub struct AndroidScheduleResult {
 static ANDROID_JVM: OnceLock<JavaVM> = OnceLock::new();
 #[cfg(target_os = "android")]
 static SCHEDULED_NOTIFICATION_CLASS: OnceLock<GlobalRef> = OnceLock::new();
+#[cfg(target_os = "android")]
+static MAIN_ACTIVITY_CLASS: OnceLock<GlobalRef> = OnceLock::new();
 
 #[cfg(target_os = "android")]
 pub fn android_vm() -> Option<&'static JavaVM> {
@@ -85,6 +87,15 @@ pub extern "system" fn JNI_OnLoad(vm: JavaVM, _reserved: *mut std::ffi::c_void) 
         } else {
             let _ = env.exception_clear();
             android_log("JNI_OnLoad could not find ScheduledNotificationReceiver class");
+        }
+        if let Ok(class) = env.find_class("com/dreamnarrativeengine/app/MainActivity") {
+            if let Ok(global_class) = env.new_global_ref(class) {
+                let _ = MAIN_ACTIVITY_CLASS.set(global_class);
+                android_log("JNI_OnLoad initialized MainActivity class");
+            }
+        } else {
+            let _ = env.exception_clear();
+            android_log("JNI_OnLoad could not find MainActivity class");
         }
     }
     let _ = ANDROID_JVM.set(vm);
@@ -182,6 +193,13 @@ fn scheduler_class() -> Result<&'static GlobalRef, String> {
     SCHEDULED_NOTIFICATION_CLASS.get().ok_or_else(|| {
         "Android calendar reminder class was not initialized".to_string()
     })
+}
+
+#[cfg(target_os = "android")]
+pub fn main_activity_class() -> Result<&'static GlobalRef, String> {
+    MAIN_ACTIVITY_CLASS
+        .get()
+        .ok_or_else(|| "Android MainActivity class was not initialized".to_string())
 }
 
 #[cfg(target_os = "android")]

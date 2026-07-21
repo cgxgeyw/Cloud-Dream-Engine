@@ -29,7 +29,8 @@ export type GameUiRuntimeActions = {
   pickImage: (files?: File[]) => void;
   removeImage: (index: number) => void;
   startRecording: () => Promise<void>;
-  stopRecording: () => void;
+  stopRecording: (options?: { send?: boolean; discard?: boolean }) => void;
+  setVoiceMode: (enabled: boolean) => void;
   removeAudio: (index: number) => void;
   addAudio: (file: File) => void;
   attachInputComposerBridge: (bridge: InputComposerBridge | null) => void;
@@ -84,6 +85,7 @@ export function createGameUiRuntimeActions(
     },
     startRecording: async () => inputComposerBridge?.startRecording(),
     stopRecording: () => inputComposerBridge?.stopRecording(),
+    setVoiceMode: () => undefined,
     removeAudio: (index) => {
       bag.setInputAudios((previous) =>
         previous.filter((_, audioIndex) => audioIndex !== index),

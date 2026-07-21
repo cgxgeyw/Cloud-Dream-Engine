@@ -1,6 +1,6 @@
 [package]
 name = "dream-narrative-engine"
-version = "0.1.0"
+version = "0.2.0"
 description = "梦叙引擎：以 AI 驱动的叙事游戏引擎"
 authors = ["Dream Narrative Engine"]
 edition = "2021"

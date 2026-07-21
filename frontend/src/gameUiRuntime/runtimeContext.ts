@@ -137,6 +137,8 @@ export type GameUiRuntimeContext = {
     audios: GameUiDraftAttachment[];
     is_recording: boolean;
     microphone_error: string | null;
+    voice_mode: boolean;
+    voice_cancel: boolean;
     input_ref: RefObject<HTMLTextAreaElement | null>;
   };
   message_preferences: {
@@ -228,6 +230,8 @@ export function createGameUiRuntimeContext(
       audios: bag.inputAudios,
       is_recording: false,
       microphone_error: null,
+      voice_mode: false,
+      voice_cancel: false,
       input_ref: bag.inputRef,
     },
     message_preferences: {

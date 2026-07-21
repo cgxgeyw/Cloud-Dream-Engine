@@ -1,6 +1,6 @@
-import React, { useEffect } from "react";
-import { Copy, GitBranch } from "lucide-react";
-import type { ContentPart } from "../../data/types";
+import React, { useEffect, useRef, useState } from "react";
+import { Copy, GitBranch, Play, Square } from "lucide-react";
+import type { AudioContentPart, ContentPart } from "../../data/types";
 import type { GameUiComponentNode } from "../../data/gameUi";
 import {
   CotBlock,
@@ -85,6 +85,71 @@ function getMessageText(content: string | ContentPart[]): string {
     .filter((part): part is { type: "text"; text: string } => part.type === "text")
     .map((part) => part.text)
     .join("");
+}
+
+function getAudioParts(content: string | ContentPart[]): AudioContentPart[] {
+  if (typeof content === "string") {
+    return [];
+  }
+  return content.filter((part): part is AudioContentPart => part.type === "input_audio");
+}
+
+// 微信式语音消息气泡：显示秒数，点击播放/停止。内联样式保证在宿主与 iframe 里都可用。
+function VoiceMessageBubble({ part }: { part: AudioContentPart }) {
+  const [playing, setPlaying] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const rawDuration = part.input_audio.duration_secs;
+  const seconds = typeof rawDuration === "number" && Number.isFinite(rawDuration)
+    ? Math.max(1, Math.round(rawDuration))
+    : null;
+
+  const stop = () => {
+    audioRef.current?.pause();
+    audioRef.current = null;
+    setPlaying(false);
+  };
+
+  const toggle = () => {
+    if (playing) {
+      stop();
+      return;
+    }
+    const audio = new Audio(part.input_audio.data);
+    audioRef.current = audio;
+    audio.onended = stop;
+    audio.onerror = stop;
+    setPlaying(true);
+    void audio.play().catch(stop);
+  };
+
+  useEffect(() => () => {
+    audioRef.current?.pause();
+    audioRef.current = null;
+  }, []);
+
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      title={"\u64ad\u653e\u8bed\u97f3"}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "6px 14px",
+        borderRadius: 18,
+        border: "1px solid rgba(127,127,127,0.35)",
+        background: playing ? "rgba(20,184,166,0.18)" : "rgba(255,255,255,0.55)",
+        color: "inherit",
+        fontSize: 14,
+        lineHeight: 1.4,
+        cursor: "pointer",
+      }}
+    >
+      {playing ? <Square size={13} /> : <Play size={13} />}
+      <span>{seconds !== null ? `${seconds}\u2033` : "\u8bed\u97f3"}</span>
+    </button>
+  );
 }
 
 type MessageListComponentProps = {
@@ -291,6 +356,9 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
               ) : (
                 <div className={`game-message-content ${message.role === "system" ? "game-message-content--system" : "game-message-content--default"}`}>
                   {getMessageText(message.content)}
+                  {getAudioParts(message.content).map((part, partIndex) => (
+                    <VoiceMessageBubble key={`audio-${partIndex}`} part={part} />
+                  ))}
                 </div>
               )}
             </div>

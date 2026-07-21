@@ -18,25 +18,49 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const pendingSendRef = useRef(false);
+  const pendingDiscardRef = useRef(false);
+  const sendAfterAudioRef = useRef(false);
+  const recordStartTsRef = useRef(0);
+  // 上滑取消预备状态（ref 供原生桥闭包读取，state 经快照下发给 iframe 横条）。
+  const [voiceCancelArmed, setVoiceCancelArmedState] = useState(false);
+  const voiceCancelArmedRef = useRef(false);
+  const setVoiceCancelArmed = useCallback((armed: boolean) => {
+    voiceCancelArmedRef.current = armed;
+    setVoiceCancelArmedState(armed);
+  }, []);
   const [isRecording, setIsRecording] = useState(false);
+  const [voiceMode, setVoiceMode] = useState(false);
   const [microphoneError, setMicrophoneError] = useState<string | null>(null);
   const viewport = useWorldFrameViewport(platform);
   const imageAttachments = useAttachmentSnapshots(bag.inputImages, "image", true);
   const audioAttachments = useAttachmentSnapshots(bag.inputAudios, "audio", false);
 
-  const stopRecording = useCallback(() => {
+  const stopRecording = useCallback((options?: { send?: boolean; discard?: boolean }) => {
     const recorder = mediaRecorderRef.current;
     if (recorder && recorder.state !== "inactive") {
+      if (options?.send) {
+        pendingSendRef.current = true;
+      }
+      if (options?.discard) {
+        pendingDiscardRef.current = true;
+      }
       recorder.stop();
     }
     setIsRecording(false);
-  }, []);
+    setVoiceCancelArmed(false);
+  }, [setVoiceCancelArmed]);
 
   const startRecording = useCallback(async () => {
     setMicrophoneError(null);
     try {
       if (isTauriEnvironment()) {
-        await requestWorldPermissions(["microphone"]);
+        const statuses = await requestWorldPermissions(["microphone"], true);
+        const micStatus = statuses.find((status) => status.permission === "microphone");
+        if (micStatus?.granted === false) {
+          setMicrophoneError("\u9ea6\u514b\u98ce\u6743\u9650\u88ab\u62d2\u7edd\u3002");
+          return;
+        }
       }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaStreamRef.current = stream;
@@ -49,6 +73,23 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
         }
       };
       recorder.onstop = () => {
+        const shouldSend = pendingSendRef.current;
+        pendingSendRef.current = false;
+        const shouldDiscard = pendingDiscardRef.current;
+        pendingDiscardRef.current = false;
+        const durationMs = Date.now() - recordStartTsRef.current;
+        stream.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
+        mediaRecorderRef.current = null;
+        if (shouldDiscard) {
+          audioChunksRef.current = [];
+          return;
+        }
+        if (shouldSend && durationMs < 1000) {
+          audioChunksRef.current = [];
+          setMicrophoneError("\u5f55\u97f3\u65f6\u95f4\u592a\u77ed\u3002");
+          return;
+        }
         const mimeType = recorder.mimeType || "audio/webm";
         const extension = mimeType.includes("ogg") ? "ogg" : mimeType.includes("mpeg") ? "mp3" : "webm";
         const file = new File(
@@ -56,21 +97,25 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
           `recording_${Date.now()}.${extension}`,
           { type: mimeType },
         );
+        Object.assign(file, { durationSecs: durationMs / 1000 });
         bag.setInputAudios((previous) => [...previous, file]);
-        stream.getTracks().forEach((track) => track.stop());
-        mediaStreamRef.current = null;
-        mediaRecorderRef.current = null;
+        if (shouldSend) {
+          sendAfterAudioRef.current = true;
+        }
       };
+      recordStartTsRef.current = Date.now();
       recorder.start();
       setIsRecording(true);
     } catch (errorLike) {
-      const name = (errorLike as { name?: string }).name;
+      const errorState = errorLike as { name?: string; message?: string };
+      const name = errorState.name;
+      const detail = typeof errorLike === "string" ? errorLike : name || errorState.message || "\u672a\u77e5\u9519\u8bef";
       setMicrophoneError(
         name === "NotAllowedError"
           ? "\u9ea6\u514b\u98ce\u6743\u9650\u88ab\u62d2\u7edd\u3002"
           : name === "NotFoundError"
             ? "\u672a\u627e\u5230\u53ef\u7528\u9ea6\u514b\u98ce\u3002"
-            : "\u542f\u52a8\u5f55\u97f3\u5931\u8d25\u3002",
+            : `\u542f\u52a8\u5f55\u97f3\u5931\u8d25\uff1a${detail}`,
       );
     }
   }, [bag]);
@@ -83,6 +128,15 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
     mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
   }, []);
 
+  // 按住说话松开后，音频附件先入列；等状态刷新后再提交，确保带上刚录好的音频。
+  useEffect(() => {
+    if (!sendAfterAudioRef.current || bag.inputAudios.length === 0) {
+      return;
+    }
+    sendAfterAudioRef.current = false;
+    void bag.handleSubmitAction({});
+  }, [bag]);
+
   const snapshot = useMemo(
     () => createGameUiRuntimeSnapshot(bag, platform, {
       images: imageAttachments,
@@ -90,8 +144,10 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
       isRecording,
       microphoneError,
       viewport,
+      voiceMode,
+      voiceCancel: voiceCancelArmed,
     }),
-    [audioAttachments, bag, imageAttachments, isRecording, microphoneError, platform, viewport],
+    [audioAttachments, bag, imageAttachments, isRecording, microphoneError, platform, viewport, voiceMode, voiceCancelArmed],
   );
   const payload = useMemo<WorldFrameRuntimePayload>(() => ({
     platform,
@@ -101,6 +157,35 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
     rootStyle: serializeRootStyle(bag.runtimeBackgroundStyle),
     snapshot,
   }), [bag.gameUiScopeId, bag.parsedGameUi.document, bag.runtimeBackgroundStyle, bag.themeCustomCss, platform, snapshot]);
+
+  // 系统 View 层一定能收到 DOWN/MOVE/UP/CANCEL（Oplus 助手也拦不住），Kotlin 侧经
+  // evaluateJavascript 转发到这里；这是按住说话松手与上滑取消的最可靠来源。
+  useEffect(() => {
+    const w = window as unknown as {
+      __nativeTouchEnd?: (up: boolean) => void;
+      __nativeTouchMove?: (dy: number) => void;
+    };
+    w.__nativeTouchEnd = (up: boolean) => {
+      const recorder = mediaRecorderRef.current;
+      if (recorder && recorder.state !== "inactive") {
+        if (up && !voiceCancelArmedRef.current) {
+          stopRecording({ send: true });
+        } else {
+          stopRecording({ discard: true });
+        }
+      }
+    };
+    w.__nativeTouchMove = (dy: number) => {
+      const recorder = mediaRecorderRef.current;
+      if (recorder && recorder.state !== "inactive") {
+        setVoiceCancelArmed(dy < -150);
+      }
+    };
+    return () => {
+      w.__nativeTouchEnd = undefined;
+      w.__nativeTouchMove = undefined;
+    };
+  }, [stopRecording, setVoiceCancelArmed]);
 
   const handleAction = useCallback(async (action: WorldFrameAction) => {
     switch (action.type) {
@@ -120,7 +205,8 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
       case "pick-image": imageInputRef.current?.click(); return;
       case "remove-image": bag.setInputImages((previous) => previous.filter((_, index) => index !== action.index)); return;
       case "start-recording": await startRecording(); return;
-      case "stop-recording": stopRecording(); return;
+      case "stop-recording": stopRecording({ send: action.send === true }); return;
+      case "voice-mode": setVoiceMode(action.enabled === true); return;
       case "remove-audio": bag.setInputAudios((previous) => previous.filter((_, index) => index !== action.index)); return;
       case "navigate":
         if (action.target === "back") navigate(-1);

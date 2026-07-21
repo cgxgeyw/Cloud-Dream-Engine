@@ -4621,3 +4621,30 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* 调试面板整页按暗色设计（白色文字 + 半透明白底色），
+   浅色主题下会白上白不可见，这里在页面作用域内强制暗色变量。 */
+.debug-page-shell {
+  --color-charcoal: #f4f4f5;
+  --color-concrete: #71717a;
+  --color-bg: #09090b;
+  --color-surface: #18181b;
+  --color-border: #27272a;
+  --color-border-hover: #d4d4d8;
+  --color-muted: #a1a1aa;
+  --color-faint: #d4d4d8;
+  --color-subtle-bg: #111113;
+  --color-hover-bg: #27272a;
+  --color-active-bg: rgba(255, 255, 255, 0.08);
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  background: var(--color-bg);
+  color: var(--color-charcoal);
+}
+
+.debug-page-shell .layout-root {
+  flex: 1;
+}
+

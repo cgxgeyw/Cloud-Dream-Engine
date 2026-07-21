@@ -114,8 +114,8 @@ export function MobileNav({ children }: MobileNavProps) {
     }) as CSSProperties,
     [viewportHeight],
   );
-  const isImmersiveRoute =
-    location.pathname.startsWith("/game/") || location.pathname.startsWith("/debug/");
+  // 调试页是内容页，需要正常的返回按钮与滚动能力，不能按沉浸式处理。
+  const isImmersiveRoute = location.pathname.startsWith("/game/");
   const showBackButton = !isImmersiveRoute && location.pathname !== "/";
 
   const handleNavigate = (path: string) => {

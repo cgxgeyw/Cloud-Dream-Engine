@@ -45,3 +45,5 @@
 # Called from Rust/JNI by class and method name.
 -keep class com.dreamnarrativeengine.app.ScheduledNotificationReceiver { *; }
 -keep class com.dreamnarrativeengine.app.ScheduledNotificationReceiver$Companion { *; }
+-keep class com.dreamnarrativeengine.app.MainActivity { *; }
+-keep class com.dreamnarrativeengine.app.MainActivity$Companion { *; }

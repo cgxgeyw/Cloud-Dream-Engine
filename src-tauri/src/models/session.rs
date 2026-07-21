@@ -136,6 +136,9 @@ pub struct ImageUrl {
 pub struct InputAudio {
     pub data: String,
     pub format: String,
+    /// 录音时长（秒），由客户端在采集时写入；旧消息可能没有。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_secs: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

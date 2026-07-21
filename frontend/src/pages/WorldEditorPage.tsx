@@ -2380,5 +2380,5 @@ export function WorldEditorPage() {
   );
 }
 
-/* TODO: WorldEditorPage 绉诲姩绔笌妗岄潰绔?UI 鏋舵瀯宸紓杈冨ぇ锛坰ection-list vs tabs锛夛紝
- * 褰撳墠閫氳繃 isMobile 鏉′欢娓叉煋涓ゅ甯冨眬锛屽悗缁彲鑰冭檻杩涗竴姝ラ噸鏋勪负缁熶竴缁勪欢銆?*/
+/* TODO: WorldEditorPage 移动端与桌面端 UI 结构差异较大(section-list vs tabs),
+ * 当前通过 isMobile 条件渲染两套布局,后续可考虑进一步重构为统一组件。*/

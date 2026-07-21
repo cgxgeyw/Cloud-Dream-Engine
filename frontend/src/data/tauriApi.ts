@@ -515,8 +515,8 @@ export function upsertAttributeValue(payload: AttributeValueUpsertRequest): Prom
   return tauriCommand("upsert_attribute_value", { request: payload });
 }
 
-export function requestWorldPermissions(permissions: string[]): Promise<WorldPermissionStatus[]> {
-  return tauriCommand("request_world_permissions", { request: { permissions } });
+export function requestWorldPermissions(permissions: string[], wait = false): Promise<WorldPermissionStatus[]> {
+  return tauriCommand("request_world_permissions", { request: { permissions, wait } });
 }
 
 export function fetchMemories(worldId?: string, sessionId?: string, characterId?: string, layer?: string, limit?: number): Promise<MemoryEntry[]> {

@@ -254,7 +254,7 @@ export type ImageContentPart = {
 
 export type AudioContentPart = {
   type: "input_audio";
-  input_audio: { data: string; format: string };
+  input_audio: { data: string; format: string; duration_secs?: number };
 };
 
 export type TextContentPart = {

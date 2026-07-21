@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Image, Mic, Send, Square, X } from "lucide-react";
+import { Image, Keyboard, Mic, Send, Square, X } from "lucide-react";
 
 import type { GameUiComponentNode } from "../data/gameUi";
 import type { GameUiRuntimeActions } from "../gameUiRuntime/actions";
@@ -17,6 +17,8 @@ export function WorldFrameInputComposer({ runtime, actions, node }: Props) {
   useEffect(() => {
     setDraftValue(runtime.draft_input.value);
   }, [runtime.draft_input.value]);
+
+
 
   if (!runtime.session) {
     return null;
@@ -44,6 +46,51 @@ export function WorldFrameInputComposer({ runtime, actions, node }: Props) {
     }
     void actions.submitMessage({ mode: editing ? "edit" : "submit", content: draftValue });
   };
+
+  // 微信式语音模式：左侧同位按钮在麦克风/键盘间切换，中间大横条按住说话；
+  // 松手发送、上滑取消由宿主原生桥驱动（见 GameUiSandboxRuntime）。
+  if (runtime.draft_input.voice_mode) {
+    const holdLabel = runtime.draft_input.is_recording
+      ? runtime.draft_input.voice_cancel
+        ? "\u677e\u5f00\u624b\u6307\uff0c\u53d6\u6d88\u53d1\u9001"
+        : "\u677e\u5f00\u53d1\u9001"
+      : "\u6309\u4f4f\u8bf4\u8bdd";
+    return (
+      <div className="game-input-area game-ui-panel">
+        <div className="game-input-compose">
+          <div className="game-input-actions">
+            <button
+              type="button"
+              className="game-input-icon-btn game-ui-button"
+              data-variant="ghost"
+              onClick={() => actions.setVoiceMode(false)}
+              title={"\u8fd4\u56de\u952e\u76d8"}
+            >
+              <Keyboard size={18} />
+            </button>
+            <button
+              type="button"
+              className={`game-voice-hold${runtime.draft_input.is_recording ? " game-voice-hold--recording" : ""}${runtime.draft_input.voice_cancel ? " game-voice-hold--cancel" : ""}`}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                if (submitting || runtime.draft_input.is_recording) {
+                  return;
+                }
+                void actions.startRecording();
+              }}
+              onContextMenu={(event) => event.preventDefault()}
+              style={{ touchAction: "none" }}
+            >
+              {holdLabel}
+            </button>
+          </div>
+        </div>
+        {runtime.errors.action_error ? <div className="game-input-bubble">{runtime.errors.action_error}</div> : null}
+        {runtime.draft_input.microphone_error ? <div className="game-input-bubble">{runtime.draft_input.microphone_error}</div> : null}
+        <style>{".game-voice-hold{flex:1;height:44px;border-radius:10px;border:1px solid rgba(127,127,127,0.35);background:rgba(255,255,255,0.72);color:inherit;font-size:16px;user-select:none;-webkit-user-select:none;touch-action:none;}.game-voice-hold--recording{animation:gameVoiceHoldPulse 1.1s ease-in-out infinite;border-color:#14b8a6;}.game-voice-hold--cancel{border-color:#dc2626;color:#dc2626;}@keyframes gameVoiceHoldPulse{0%,100%{transform:scale(1)}50%{transform:scale(0.96)}}"}</style>
+      </div>
+    );
+  }
 
   return (
     <div className="game-input-area game-ui-panel">
@@ -108,8 +155,12 @@ export function WorldFrameInputComposer({ runtime, actions, node }: Props) {
                 className={runtime.capabilities.platform === "mobile" ? "game-input-icon-btn game-ui-button" : "game-input-attach-btn game-ui-button"}
                 data-variant="ghost"
                 disabled={submitting && !runtime.draft_input.is_recording}
-                onClick={() => void (runtime.draft_input.is_recording ? actions.stopRecording() : actions.startRecording())}
-                title={runtime.draft_input.is_recording ? "\u505c\u6b62\u5f55\u97f3" : "\u5f55\u97f3"}
+                onClick={() => void (runtime.capabilities.platform === "mobile"
+                  ? actions.setVoiceMode(true)
+                  : runtime.draft_input.is_recording
+                    ? actions.stopRecording()
+                    : actions.startRecording())}
+                title={runtime.draft_input.is_recording ? "\u505c\u6b62\u5f55\u97f3" : runtime.capabilities.platform === "mobile" ? "\u8bed\u97f3\u8f93\u5165" : "\u5f55\u97f3"}
               >
                 {runtime.draft_input.is_recording ? <Square size={18} /> : <Mic size={18} />}
               </button>

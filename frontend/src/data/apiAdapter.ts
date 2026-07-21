@@ -494,7 +494,7 @@ export async function upsertAttributeValue(payload: AttributeValueUpsertRequest)
   return isTauri ? (await getTauri()).upsertAttributeValue(payload) : (await getHttp()).upsertAttributeValue(payload);
 }
 
-export async function requestWorldPermissions(permissions: string[]): Promise<WorldPermissionStatus[]> {
+export async function requestWorldPermissions(permissions: string[], wait = false): Promise<WorldPermissionStatus[]> {
   if (!isTauri) {
     return permissions.map((permission) => ({
       permission,
@@ -503,7 +503,7 @@ export async function requestWorldPermissions(permissions: string[]): Promise<Wo
       error: null,
     }));
   }
-  return (await getTauri()).requestWorldPermissions(permissions);
+  return (await getTauri()).requestWorldPermissions(permissions, wait);
 }
 
 export async function fetchMemories(worldId?: string, sessionId?: string, characterId?: string, layer?: string, limit?: number) {

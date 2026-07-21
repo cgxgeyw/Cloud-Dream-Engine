@@ -1085,7 +1085,11 @@ export function useGameSession(
             const format = file.name.split('.').pop()?.toLowerCase() || "wav";
             parts.push({
               type: "input_audio",
-              input_audio: { data: base64, format }
+              input_audio: {
+                data: base64,
+                format,
+                duration_secs: (file as File & { durationSecs?: number }).durationSecs,
+              }
             });
           }
           // 添加文本部分（如果有文本）
@@ -1114,7 +1118,7 @@ export function useGameSession(
         } else {
           setOptimisticPlayerMessage({
             role: "player",
-            content: textContent,
+            content,
             speaker: session?.player_character_name ?? "玩家",
             pending: true,
           });

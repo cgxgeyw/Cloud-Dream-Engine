@@ -139,6 +139,11 @@ export function WorldFrameApp() {
   useEffect(() => {
     const handleError = (event: ErrorEvent) => {
       const message = event.message || "World UI frame failed to render.";
+      // ResizeObserver loop 错误是浏览器在密集重排时抛出的良性警告（ReactFlow
+      // 在流式快照刷新时必现），布局会自行收敛，不能当成致命错误卸载整个界面。
+      if (isBenignResizeObserverError(message)) {
+        return;
+      }
       setError(message);
       const connection = connectionRef.current;
       connection?.port.postMessage({
@@ -163,6 +168,13 @@ export function WorldFrameApp() {
   return payload.mode === "runtime"
     ? <WorldFrameRuntimeView payload={payload.value} sendAction={sendAction} />
     : <GameUiPreview {...payload.value} />;
+}
+
+function isBenignResizeObserverError(message: string): boolean {
+  return (
+    message.includes("ResizeObserver loop completed with undelivered notifications")
+    || message.includes("ResizeObserver loop limit exceeded")
+  );
 }
 
 function createRequestId(): string {
