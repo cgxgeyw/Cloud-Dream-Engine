@@ -118,6 +118,41 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_memories_world ON memories(world_id);
         CREATE INDEX IF NOT EXISTS idx_memory_embeddings_model_key ON memory_embeddings(model_key);
 
+        CREATE TABLE IF NOT EXISTS memory_entities (
+            id TEXT PRIMARY KEY,
+            world_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            name_normalized TEXT NOT NULL,
+            entity_type TEXT NOT NULL DEFAULT '',
+            aliases_json TEXT NOT NULL DEFAULT '[]',
+            mention_count INTEGER NOT NULL DEFAULT 1,
+            first_seen_turn INTEGER NOT NULL DEFAULT 0,
+            last_seen_turn INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT '',
+            UNIQUE(session_id, name_normalized)
+        );
+
+        CREATE TABLE IF NOT EXISTS memory_relations (
+            id TEXT PRIMARY KEY,
+            world_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            subject_entity_id TEXT NOT NULL,
+            predicate TEXT NOT NULL,
+            object_entity_id TEXT,
+            object_text TEXT NOT NULL DEFAULT '',
+            valid_from_turn INTEGER NOT NULL DEFAULT 0,
+            invalid_at_turn INTEGER,
+            source TEXT NOT NULL DEFAULT 'llm_extraction',
+            confidence REAL NOT NULL DEFAULT 0.7,
+            created_at TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY (subject_entity_id) REFERENCES memory_entities(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_memory_entities_session ON memory_entities(session_id);
+        CREATE INDEX IF NOT EXISTS idx_memory_relations_session ON memory_relations(session_id);
+        CREATE INDEX IF NOT EXISTS idx_memory_relations_subject ON memory_relations(subject_entity_id);
+
         CREATE TABLE IF NOT EXISTS attribute_schemas (
             id TEXT PRIMARY KEY,
             scope TEXT NOT NULL,

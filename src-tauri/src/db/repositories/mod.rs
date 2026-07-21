@@ -2,6 +2,8 @@ pub mod attribute_repo;
 pub mod character_repo;
 pub mod mcp_tool_repo;
 pub mod memory_embedding_repo;
+pub mod memory_entity_repo;
+pub mod memory_relation_repo;
 pub mod memory_repo;
 pub mod model_repo;
 pub mod plugin_repo;

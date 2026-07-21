@@ -90,6 +90,8 @@ pub fn run() {
             commands::saves::delete_all_saves,
             // 记忆
             commands::memories::list_memories,
+            commands::memories::list_memory_entities,
+            commands::memories::list_memory_relations,
             // 属性
             commands::attributes::list_attribute_schemas,
             commands::attributes::create_attribute_schema,

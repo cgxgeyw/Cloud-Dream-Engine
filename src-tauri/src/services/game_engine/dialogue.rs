@@ -1,6 +1,22 @@
 use crate::models::character::{resolve_character_response_contract_prompt, CharacterDefinition};
 use crate::services::game_engine::prompting::render_prompt_variables;
 
+/// 内置回复契约。turn_context 里那份 response_contract JSON 只用于 prompt trace,
+/// 并不随 messages 发给模型;response_schema 也只是请求参数,模型未必看得到。
+/// 所以回复的 JSON 结构必须在这里讲清楚 —— 这是模型唯一能看到的格式说明。
+/// fact_extraction_enabled 关闭时只保留必填字段部分。
+pub const BUILTIN_RESPONSE_CONTRACT: &str = "【回复格式】你的回复必须是一个 JSON 对象,包含三个必填字段:\n\
+- \"speaker\": 你的名字(必须与被要求扮演的角色名一致)\n\
+- \"content\": 你说的话或做的事(玩家看到的主要内容,纯文本,不要带引号或 JSON 转义之外的标记)\n\
+- \"narration\": 旁白/动作描写(没有就给空字符串 \"\")\n\
+除了这三个字段和下方说明的可选字段外,不要输出任何其它内容,不要在 JSON 之外写解释。";
+
+pub const BUILTIN_MEMORY_CONTRACT: &str = "【记忆提取】如果你的回复中出现对剧情有长期价值的事实(物品位置、人物关系、秘密、约定、状态变化等),在 JSON 里额外输出两个可选字段:\n\
+\"memory_entries\": [{\"content\": \"值得记住的事\", \"character_names\": [\"知道这件事的角色名\"]}],\n\
+\"fact_extractions\": [{\"subject\": \"主语\", \"predicate\": \"谓语\", \"object\": \"宾语\"}]。\n\
+当某个已知事实被推翻时,输出 {\"subject\": \"...\", \"predicate\": \"...\", \"object\": \"...\", \"action\": \"invalidate\"} 来作废它。\n\
+只记录有长期价值的事实,日常寒暄不要记录;没有可记的事实就不要输出这两个字段。";
+
 pub struct DialoguePipeline;
 
 #[derive(Clone)]
@@ -22,6 +38,7 @@ impl DialoguePipeline {
         speaker_profile: Option<&CharacterDefinition>,
         system_prompt_template: Option<&str>,
         response_contract_prompt: Option<&str>,
+        fact_extraction_enabled: bool,
     ) -> String {
         let base =
             build_character_system_prompt(speaker_name, speaker_profile, system_prompt_template);
@@ -29,11 +46,22 @@ impl DialoguePipeline {
             resolve_character_response_contract_prompt(response_contract_prompt.or_else(|| {
                 speaker_profile.map(|profile| profile.response_contract_prompt.as_str())
             }));
-        if base.trim().is_empty() {
-            render_prompt_variables(&contract)
+        let mut combined = if base.trim().is_empty() {
+            contract
         } else {
-            render_prompt_variables(&format!("{base}\n\n{contract}"))
+            format!("{base}\n\n{contract}")
+        };
+        // 回复格式契约必须始终送达:种子角色的模板/契约都可能为空,
+        // 不告诉模型 JSON 结构它就会自己发明字段名(如 "utterance")。
+        combined = if combined.trim().is_empty() {
+            BUILTIN_RESPONSE_CONTRACT.to_string()
+        } else {
+            format!("{combined}\n\n{BUILTIN_RESPONSE_CONTRACT}")
+        };
+        if fact_extraction_enabled {
+            combined = format!("{combined}\n\n{BUILTIN_MEMORY_CONTRACT}");
         }
+        render_prompt_variables(&combined)
     }
 
     pub fn parse_character_response(
@@ -609,5 +637,33 @@ mod tests {
         // 模型直接回纯文本，不是 JSON。
         let parsed = pipeline.parse_character_response("我在这里等你很久了。", "袭人");
         assert_eq!(parsed.content, "我在这里等你很久了。");
+    }
+
+    #[test]
+    fn builtin_memory_contract_is_injected_when_fact_extraction_enabled() {
+        let pipeline = DialoguePipeline::new();
+        let prompt = pipeline.build_character_system_prompt_with_contract(
+            "林黛玉", None, None, None, true,
+        );
+        // 必填回复格式契约必须始终送达(种子角色模板/契约都可能为空)
+        assert!(prompt.contains("回复格式"));
+        assert!(prompt.contains("\"speaker\""));
+        assert!(prompt.contains("\"content\""));
+        assert!(prompt.contains("\"narration\""));
+        assert!(prompt.contains("fact_extractions"));
+        assert!(prompt.contains("memory_entries"));
+        assert!(prompt.contains("invalidate"));
+    }
+
+    #[test]
+    fn builtin_memory_contract_is_omitted_when_fact_extraction_disabled() {
+        let pipeline = DialoguePipeline::new();
+        let prompt = pipeline.build_character_system_prompt_with_contract(
+            "林黛玉", None, None, None, false,
+        );
+        assert!(!prompt.contains("fact_extractions"));
+        // 关闭提取时,必填格式契约仍然在
+        assert!(prompt.contains("回复格式"));
+        assert!(prompt.contains("\"speaker\""));
     }
 }

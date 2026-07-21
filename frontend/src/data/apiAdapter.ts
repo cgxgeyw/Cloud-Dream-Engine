@@ -510,6 +510,14 @@ export async function fetchMemories(worldId?: string, sessionId?: string, charac
   return isTauri ? (await getTauri()).fetchMemories(worldId, sessionId, characterId, layer, limit) : (await getHttp()).fetchMemories(worldId, sessionId, characterId, layer, limit);
 }
 
+export async function fetchMemoryEntities(sessionId: string) {
+  return isTauri ? (await getTauri()).fetchMemoryEntities(sessionId) : (await getHttp()).fetchMemoryEntities(sessionId);
+}
+
+export async function fetchMemoryRelations(sessionId: string, activeOnly = false) {
+  return isTauri ? (await getTauri()).fetchMemoryRelations(sessionId, activeOnly) : (await getHttp()).fetchMemoryRelations(sessionId, activeOnly);
+}
+
 export async function fetchSessionDebug(sessionId: string) {
   return isTauri ? (await getTauri()).fetchSessionDebug(sessionId) : (await getHttp()).fetchSessionDebug(sessionId);
 }

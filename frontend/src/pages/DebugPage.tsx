@@ -3,7 +3,8 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useIsMobile } from "../components/ResponsiveLayout";
 import { PromptCallCard, TraceBlock } from "../components/PromptTraceView";
 import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
-import { fetchSessionDebug, type SessionDebugResponse } from "../data/apiAdapter";
+import { fetchMemoryEntities, fetchMemoryRelations, fetchSessionDebug, type SessionDebugResponse } from "../data/apiAdapter";
+import type { MemoryEntity, MemoryRelation } from "../data/types";
 
 const actionStyle = {
   display: "inline-flex",
@@ -50,6 +51,8 @@ export function DebugPage() {
   const navigate = useNavigate();
   const { sessionId } = useParams();
   const [debugData, setDebugData] = useState<SessionDebugResponse | null>(null);
+  const [factEntities, setFactEntities] = useState<MemoryEntity[]>([]);
+  const [factRelations, setFactRelations] = useState<MemoryRelation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showBackToTop, setShowBackToTop] = useState(false);
@@ -71,6 +74,18 @@ export function DebugPage() {
         const data = await fetchSessionDebug(stableSessionId);
         if (!cancelled) {
           setDebugData(data);
+        }
+        try {
+          const [entities, relations] = await Promise.all([
+            fetchMemoryEntities(stableSessionId),
+            fetchMemoryRelations(stableSessionId),
+          ]);
+          if (!cancelled) {
+            setFactEntities(entities);
+            setFactRelations(relations);
+          }
+        } catch {
+          // 事实卡片加载失败不影响主调试数据展示
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -111,6 +126,11 @@ export function DebugPage() {
     });
     return Array.from(indexes).sort((left, right) => left - right);
   }, [debugData]);
+
+  const entityNameById = useMemo(
+    () => new Map(factEntities.map((entity) => [entity.id, entity.name])),
+    [factEntities],
+  );
 
   function handleBackToTop() {
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -194,6 +214,52 @@ export function DebugPage() {
                   );
                 })}
               </div>
+            </SurfacePanel>
+
+            <SurfacePanel style={{ padding: 20 }}>
+              <h3 style={{ marginTop: 0, fontSize: 22 }}>事实卡片</h3>
+              <div style={{ color: "rgba(255,255,255,0.70)", fontSize: 13, lineHeight: 1.6, marginBottom: 14 }}>
+                NPC 每回合从对话中提取的结构化事实。关系带时效:被推翻的事实会标记失效回合并保留历史。
+              </div>
+              {factEntities.length === 0 && factRelations.length === 0 ? (
+                <div style={{ color: "rgba(255,255,255,0.62)" }}>还没有提取到事实卡片。玩几个回合后再来看看。</div>
+              ) : (
+                <div style={{ display: "grid", gap: 18 }}>
+                  <section style={{ display: "grid", gap: 8 }}>
+                    <h4 style={{ margin: 0, fontSize: 16 }}>实体({factEntities.length})</h4>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      {factEntities.map((entity) => (
+                        <span key={entity.id} style={{ padding: "4px 12px", borderRadius: 999, background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)", fontSize: 13 }}>
+                          {entity.name}{entity.entity_type ? ` · ${entity.entity_type}` : ""}
+                          <span style={{ color: "rgba(255,255,255,0.5)" }}>(提及 {entity.mention_count} 次)</span>
+                        </span>
+                      ))}
+                    </div>
+                  </section>
+                  <section style={{ display: "grid", gap: 8 }}>
+                    <h4 style={{ margin: 0, fontSize: 16 }}>关系({factRelations.filter((relation) => relation.invalid_at_turn == null).length} 条生效 / {factRelations.length} 条总计)</h4>
+                    <div style={{ display: "grid", gap: 6 }}>
+                      {factRelations.map((relation) => {
+                        const subjectName = entityNameById.get(relation.subject_entity_id) ?? relation.subject_entity_id;
+                        const objectName = (relation.object_entity_id && entityNameById.get(relation.object_entity_id)) || relation.object_text;
+                        const expired = relation.invalid_at_turn != null;
+                        return (
+                          <div key={relation.id} style={{ ...rawBlockStyle, opacity: expired ? 0.45 : 1, fontSize: 13 }}>
+                            <strong>{subjectName}</strong>
+                            <span style={{ color: "rgba(255,255,255,0.62)" }}> —{relation.predicate}→ </span>
+                            <strong>{objectName}</strong>
+                            <span style={{ color: "rgba(255,255,255,0.5)", marginLeft: 8 }}>
+                              {expired
+                                ? `第 ${relation.valid_from_turn} 回合生效,第 ${relation.invalid_at_turn} 回合失效`
+                                : `第 ${relation.valid_from_turn} 回合起生效`}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+                </div>
+              )}
             </SurfacePanel>
 
             <SurfacePanel style={{ padding: 20 }}>

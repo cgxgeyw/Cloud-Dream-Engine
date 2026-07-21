@@ -629,6 +629,35 @@ export type MemoryEntry = {
   keywords: string[];
 };
 
+export type MemoryEntity = {
+  id: string;
+  world_id: string;
+  session_id: string;
+  name: string;
+  name_normalized: string;
+  entity_type: string;
+  aliases: string[];
+  mention_count: number;
+  first_seen_turn: number;
+  last_seen_turn: number;
+  created_at: string;
+};
+
+export type MemoryRelation = {
+  id: string;
+  world_id: string;
+  session_id: string;
+  subject_entity_id: string;
+  predicate: string;
+  object_entity_id?: string | null;
+  object_text: string;
+  valid_from_turn: number;
+  invalid_at_turn?: number | null;
+  source: string;
+  confidence: number;
+  created_at: string;
+};
+
 export type RuntimeAttributeItem = {
   schema_id: string;
   key: string;

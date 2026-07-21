@@ -21,3 +21,30 @@ pub async fn list_memories(
         limit,
     })
 }
+
+#[tauri::command]
+pub async fn list_memory_entities(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<Vec<MemoryEntity>, String> {
+    let db = state.db.lock().await;
+    let repo =
+        crate::db::repositories::memory_entity_repo::MemoryEntityRepository::new(db.conn());
+    repo.list_by_session(&session_id)
+}
+
+#[tauri::command]
+pub async fn list_memory_relations(
+    state: State<'_, AppState>,
+    session_id: String,
+    active_only: Option<bool>,
+) -> Result<Vec<MemoryRelation>, String> {
+    let db = state.db.lock().await;
+    let repo =
+        crate::db::repositories::memory_relation_repo::MemoryRelationRepository::new(db.conn());
+    if active_only.unwrap_or(false) {
+        repo.list_active_by_session(&session_id)
+    } else {
+        repo.list_by_session(&session_id, false)
+    }
+}

@@ -6,7 +6,7 @@ use rusqlite::Connection;
 use crate::db::repositories::attribute_repo::AttributeRepository;
 use crate::models::attribute::{AttributeSchema, AttributeValueUpsertRequest};
 use crate::models::character::CharacterDefinition;
-use crate::models::memory::MemoryEntry;
+use crate::models::memory::{FactUpdate, MemoryEntry};
 use crate::models::scheduled_notification::PendingScheduledNotification;
 use crate::models::session::{
     ChatMessage, InventoryItem, MessageContent, RuntimeAttributeItem, SceneRuntime, SessionSnapshot,
@@ -29,6 +29,7 @@ pub(crate) struct DirectorRuntimeApplication {
     pub session_attribute_updates: Vec<ParsedAttributeUpdate>,
     pub character_attribute_updates: Vec<ParsedCharacterAttributeUpdate>,
     pub memory_entries: Vec<MemoryEntry>,
+    pub fact_updates: Vec<FactUpdate>,
 }
 
 #[derive(Clone)]
@@ -379,6 +380,7 @@ pub(crate) fn apply_director_runtime_effects(
         player_input,
         parsed.get("memory_events"),
     );
+    runtime.fact_updates = parse_fact_extractions(parsed.get("fact_extractions"));
     runtime
         .memory_entries
         .extend(trigger_evaluation.memory_events.iter().flat_map(|event| {
@@ -886,8 +888,71 @@ fn parse_memory_entries(
         .collect()
 }
 
-fn parse_memory_target_characters(
-    value: Option<&serde_json::Value>,
+/// 解析 LLM 输出的 fact_extractions 数组为结构化事实更新。
+/// 非法项直接丢弃(与 parse_memory_entries 的容错策略一致):
+/// subject/predicate 为空丢弃;upsert 缺 object 丢弃;action 只认 invalidate,其余视为 upsert。
+fn parse_fact_extractions(value: Option<&serde_json::Value>) -> Vec<FactUpdate> {
+    let Some(items) = value.and_then(|value| value.as_array()) else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| item.as_object())
+        .filter_map(|item| {
+            let subject = item
+                .get("subject")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?
+                .to_string();
+            let predicate = item
+                .get("predicate")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?
+                .to_string();
+            let object = item
+                .get("object")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .unwrap_or_default()
+                .to_string();
+            let action = item
+                .get("action")
+                .and_then(|value| value.as_str())
+                .map(|value| value.trim().to_lowercase())
+                .filter(|value| value == "invalidate")
+                .unwrap_or_else(|| "upsert".to_string());
+            if action == "upsert" && object.is_empty() {
+                return None;
+            }
+            Some(FactUpdate {
+                subject,
+                predicate,
+                object,
+                action,
+                subject_type: item
+                    .get("subject_type")
+                    .and_then(|value| value.as_str())
+                    .map(str::trim)
+                    .unwrap_or_default()
+                    .to_string(),
+                object_type: item
+                    .get("object_type")
+                    .and_then(|value| value.as_str())
+                    .map(str::trim)
+                    .unwrap_or_default()
+                    .to_string(),
+                confidence: item
+                    .get("confidence")
+                    .and_then(|value| value.as_f64())
+                    .unwrap_or(0.7),
+            })
+        })
+        .collect()
+}
+
+fn parse_memory_target_characters(    value: Option<&serde_json::Value>,
     characters: &[CharacterDefinition],
     session: &SessionSnapshot,
 ) -> Vec<String> {
@@ -1049,5 +1114,52 @@ fn slugify_scene_id(value: &str) -> String {
         "scene-switch".to_string()
     } else {
         normalized
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_fact_extractions;
+
+    #[test]
+    fn parses_fact_extractions_with_defaults() {
+        let payload = serde_json::json!([
+            { "subject": "银钥匙", "predicate": "藏在", "object": "12号柜" },
+            { "subject": "鲍勃", "predicate": "不知道", "object": "银钥匙的位置", "confidence": 0.9 }
+        ]);
+        let facts = parse_fact_extractions(Some(&payload));
+        assert_eq!(facts.len(), 2);
+        assert_eq!(facts[0].subject, "银钥匙");
+        assert_eq!(facts[0].action, "upsert");
+        assert_eq!(facts[0].confidence, 0.7);
+        assert_eq!(facts[1].confidence, 0.9);
+    }
+
+    #[test]
+    fn drops_fact_extraction_items_missing_required_fields() {
+        let payload = serde_json::json!([
+            { "subject": "", "predicate": "藏在", "object": "12号柜" },
+            { "subject": "银钥匙", "object": "12号柜" },
+            { "subject": "银钥匙", "predicate": "藏在" },
+            "not-an-object"
+        ]);
+        assert!(parse_fact_extractions(Some(&payload)).is_empty());
+    }
+
+    #[test]
+    fn invalidate_action_allows_empty_object() {
+        let payload = serde_json::json!([
+            { "subject": "银钥匙", "predicate": "藏在", "action": "invalidate" },
+            { "subject": "银钥匙", "predicate": "藏在", "object": "12号柜", "action": "INVALIDATE" }
+        ]);
+        let facts = parse_fact_extractions(Some(&payload));
+        assert_eq!(facts.len(), 2);
+        assert!(facts.iter().all(|fact| fact.action == "invalidate"));
+    }
+
+    #[test]
+    fn non_array_fact_extractions_returns_empty() {
+        assert!(parse_fact_extractions(None).is_empty());
+        assert!(parse_fact_extractions(Some(&serde_json::json!({"subject": "x"}))).is_empty());
     }
 }

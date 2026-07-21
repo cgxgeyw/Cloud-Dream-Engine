@@ -325,6 +325,12 @@ async fn submit_player_action_inner(
         return Ok(overlay);
     }
 
+    // 普通导演模式下,说话人 payload 默认不进入 runtime 解析;事实卡片是唯一例外,
+    // 只并 fact_extractions 一个键,不改变其它字段的既有行为。
+    let parsed_runtime_with_facts = merge_speaker_fact_extractions(
+        &runtime_preparation.parsed_runtime,
+        &speaker_turn_result.runtime_payloads,
+    );
     let runtime_application = {
         let db = state.db.lock().await;
         crate::services::game_engine::runtime_effects::apply_director_runtime_effects_with_preface(
@@ -339,7 +345,7 @@ async fn submit_player_action_inner(
             &characters,
             turn_index,
             request.content.as_str(),
-            &runtime_preparation.parsed_runtime,
+            &parsed_runtime_with_facts,
             &runtime_preparation.pre_runtime_system_messages,
         )?
     };
@@ -749,6 +755,7 @@ fn merge_agent_chat_runtime_payloads(payloads: &[serde_json::Value]) -> serde_js
         "pending_notifications",
         "memory_entries",
         "memory_events",
+        "fact_extractions",
         "tool_calls",
     ];
     const VALUE_KEYS: &[&str] = &[
@@ -799,6 +806,39 @@ fn merge_agent_chat_runtime_payloads(payloads: &[serde_json::Value]) -> serde_js
         }
     }
     serde_json::Value::Object(merged)
+}
+
+/// 把各说话人 payload 里的 fact_extractions 数组并进导演 payload。
+/// 普通导演模式下 speaker_turn_result.runtime_payloads 不进入 runtime 解析,
+/// 事实卡片需要这条显式通道;parsed_runtime 已有同名字段时追加而非覆盖。
+fn merge_speaker_fact_extractions(
+    parsed_runtime: &serde_json::Value,
+    speaker_payloads: &[serde_json::Value],
+) -> serde_json::Value {
+    let facts: Vec<serde_json::Value> = speaker_payloads
+        .iter()
+        .filter_map(|payload| {
+            payload
+                .get("fact_extractions")
+                .and_then(|value| value.as_array())
+        })
+        .flatten()
+        .cloned()
+        .collect();
+    if facts.is_empty() {
+        return parsed_runtime.clone();
+    }
+    let mut merged = parsed_runtime.clone();
+    let Some(root) = merged.as_object_mut() else {
+        return parsed_runtime.clone();
+    };
+    let entry = root
+        .entry("fact_extractions".to_string())
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+    if let Some(target) = entry.as_array_mut() {
+        target.extend(facts);
+    }
+    merged
 }
 
 #[tauri::command]
@@ -1201,7 +1241,7 @@ fn slugify_progress_scene_id(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::merge_agent_chat_runtime_payloads;
+    use super::{merge_agent_chat_runtime_payloads, merge_speaker_fact_extractions};
 
     #[test]
     fn agent_memory_entries_are_aliased_into_memory_events() {
@@ -1232,5 +1272,53 @@ mod tests {
             .and_then(|value| value.as_array())
             .expect("memory_events present");
         assert_eq!(events.len(), 2);
+    }
+
+    #[test]
+    fn agent_fact_extractions_merge_across_speaker_payloads() {
+        let payloads = vec![
+            serde_json::json!({ "fact_extractions": [{ "subject": "银钥匙", "predicate": "藏在", "object": "12号柜" }] }),
+            serde_json::json!({ "fact_extractions": [{ "subject": "鲍勃", "predicate": "不知道", "object": "位置" }] }),
+        ];
+        let merged = merge_agent_chat_runtime_payloads(&payloads);
+        let facts = merged
+            .get("fact_extractions")
+            .and_then(|value| value.as_array())
+            .expect("fact_extractions present");
+        assert_eq!(facts.len(), 2);
+    }
+
+    #[test]
+    fn speaker_fact_extractions_merge_into_director_payload() {
+        let director_payload = serde_json::json!({
+            "planned_speakers": ["林黛玉"],
+            "fact_extractions": [{ "subject": "导演事实", "predicate": "发生", "object": "雷雨" }]
+        });
+        let speaker_payloads = vec![
+            serde_json::json!({ "fact_extractions": [{ "subject": "银钥匙", "predicate": "藏在", "object": "12号柜" }] }),
+            serde_json::json!({ "content": "没有事实的一轮" }),
+        ];
+        let merged = merge_speaker_fact_extractions(&director_payload, &speaker_payloads);
+        let facts = merged
+            .get("fact_extractions")
+            .and_then(|value| value.as_array())
+            .expect("fact_extractions present");
+        assert_eq!(facts.len(), 2, "导演已有的事实在前,说话人的追加在后");
+        assert_eq!(facts[0]["subject"], "导演事实");
+        assert_eq!(facts[1]["subject"], "银钥匙");
+        // 其它字段原样保留
+        assert_eq!(
+            merged.get("planned_speakers"),
+            Some(&serde_json::json!(["林黛玉"]))
+        );
+    }
+
+    #[test]
+    fn speaker_fact_extractions_noop_when_nothing_to_merge() {
+        let director_payload = serde_json::json!({ "planned_speakers": ["林黛玉"] });
+        let merged = merge_speaker_fact_extractions(&director_payload, &[]);
+        assert!(merged.get("fact_extractions").is_none());
+        // 没有事实时不应新建字段
+        assert_eq!(merged, director_payload);
     }
 }

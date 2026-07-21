@@ -17,7 +17,7 @@ use rusqlite::Connection;
 use tokenizers::Tokenizer;
 
 use crate::models::character::CharacterDefinition;
-use crate::models::memory::{MemoryEntry, MemoryQueryParams};
+use crate::models::memory::{FactUpdate, MemoryEntry, MemoryQueryParams, MemoryRelation};
 use crate::models::model_config::{EmbeddingModelFileStatus, EmbeddingModelStatus, ModelConfig};
 use crate::models::session::{ChatMessage, SessionSnapshot};
 use crate::models::world::WorldDefinition;
@@ -530,6 +530,108 @@ impl MemoryService {
         Ok(memory_entries)
     }
 
+    /// 把本回合提取的结构化事实(FactUpdate)落库为实体+时效关系。
+    /// 语义:
+    /// - upsert:同主语+谓语已有活跃关系且宾语相同 → 事实延续不动;宾语不同 → 作废旧关系
+    ///   (标记失效回合,不删除)并插入新关系;
+    /// - invalidate:作废该主语+谓语下的活跃关系(给了宾语则只作废宾语匹配的)。
+    /// 返回 (新增关系数, 作废关系数)。
+    pub fn persist_fact_updates(
+        &self,
+        conn: &Connection,
+        world: &WorldDefinition,
+        session_id: &str,
+        turn_index: i32,
+        updates: &[FactUpdate],
+    ) -> Result<(usize, usize), String> {
+        let entity_repo =
+            crate::db::repositories::memory_entity_repo::MemoryEntityRepository::new(conn);
+        let relation_repo =
+            crate::db::repositories::memory_relation_repo::MemoryRelationRepository::new(conn);
+        let mut added = 0usize;
+        let mut invalidated = 0usize;
+        for update in updates {
+            let subject_normalized = normalize_memory_text(&update.subject);
+            if subject_normalized.is_empty() || update.predicate.trim().is_empty() {
+                continue;
+            }
+            let subject = entity_repo.upsert(
+                &world.id,
+                session_id,
+                &update.subject,
+                &subject_normalized,
+                &update.subject_type,
+                turn_index,
+            )?;
+            let object_normalized = normalize_memory_text(&update.object);
+            let object_entity = if object_normalized.is_empty() {
+                None
+            } else {
+                Some(entity_repo.upsert(
+                    &world.id,
+                    session_id,
+                    &update.object,
+                    &object_normalized,
+                    &update.object_type,
+                    turn_index,
+                )?)
+            };
+
+            let active_relations =
+                relation_repo.find_active(session_id, &subject.id, update.predicate.trim())?;
+            if update.action == "invalidate" {
+                for relation in &active_relations {
+                    let object_matches = match &object_entity {
+                        Some(object) => {
+                            relation.object_entity_id.as_deref() == Some(object.id.as_str())
+                                || normalize_memory_text(&relation.object_text)
+                                    == object_normalized
+                        }
+                        None => true,
+                    };
+                    if object_matches {
+                        relation_repo.invalidate(&relation.id, turn_index)?;
+                        invalidated += 1;
+                    }
+                }
+                continue;
+            }
+
+            let already_known = active_relations.iter().any(|relation| {
+                match (&relation.object_entity_id, &object_entity) {
+                    (Some(existing), Some(new)) if existing == &new.id => true,
+                    _ => {
+                        normalize_memory_text(&relation.object_text) == object_normalized
+                            && !object_normalized.is_empty()
+                    }
+                }
+            });
+            if already_known {
+                continue;
+            }
+            for relation in &active_relations {
+                relation_repo.invalidate(&relation.id, turn_index)?;
+                invalidated += 1;
+            }
+            relation_repo.insert(&MemoryRelation {
+                id: format!("rel-{}", uuid::Uuid::new_v4().simple()),
+                world_id: world.id.clone(),
+                session_id: session_id.to_string(),
+                subject_entity_id: subject.id.clone(),
+                predicate: update.predicate.trim().to_string(),
+                object_entity_id: object_entity.as_ref().map(|entity| entity.id.clone()),
+                object_text: update.object.trim().to_string(),
+                valid_from_turn: turn_index,
+                invalid_at_turn: None,
+                source: "llm_extraction".to_string(),
+                confidence: update.confidence,
+                created_at: Utc::now().to_rfc3339(),
+            })?;
+            added += 1;
+        }
+        Ok((added, invalidated))
+    }
+
     pub fn commit_turn_memories(
         &self,
         conn: &Connection,
@@ -609,6 +711,29 @@ impl MemoryService {
                             "keywords": entry.keywords,
                         })
                     }).collect::<Vec<_>>()
+                }),
+            )?;
+        }
+        if resolve_fact_extraction_enabled(world)
+            && !journal_has_completed_step(recovery_journal, "facts_committed")
+        {
+            let (relations_added, relations_invalidated) = self.persist_fact_updates(
+                conn,
+                world,
+                session_id,
+                turn_index,
+                &runtime_application.fact_updates,
+            )?;
+            append_turn_journal(
+                conn,
+                session_id,
+                turn_index,
+                "facts_committed",
+                "completed",
+                serde_json::json!({
+                    "fact_update_count": runtime_application.fact_updates.len(),
+                    "relations_added": relations_added,
+                    "relations_invalidated": relations_invalidated,
                 }),
             )?;
         }
@@ -1121,6 +1246,16 @@ fn resolve_character_memory_semantic_weight(world: &WorldDefinition) -> f64 {
         .and_then(|value| value.as_f64())
         .map(|value| value.clamp(0.0, 1.0))
         .unwrap_or(0.65)
+}
+
+/// 事实卡片提取开关(director_config.fact_extraction_enabled,默认开)。
+/// 关闭时:提示词不注入提取契约、回合结束不落事实卡片,行为完全回到旧状。
+pub(crate) fn resolve_fact_extraction_enabled(world: &WorldDefinition) -> bool {
+    world
+        .director_config
+        .get("fact_extraction_enabled")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true)
 }
 
 fn resolve_character_memory_working_window_turns(world: &WorldDefinition) -> i32 {
@@ -2399,5 +2534,192 @@ mod tests {
     fn normalize_embedding_provider_accepts_chinese_builtin_local() {
         assert_eq!(normalize_embedding_provider("内置本地"), "builtin-local");
         assert_eq!(normalize_embedding_provider("builtin-local"), "builtin-local");
+    }
+
+    fn fact_update(subject: &str, predicate: &str, object: &str, action: &str) -> FactUpdate {
+        FactUpdate {
+            subject: subject.to_string(),
+            predicate: predicate.to_string(),
+            object: object.to_string(),
+            action: action.to_string(),
+            subject_type: String::new(),
+            object_type: String::new(),
+            confidence: 0.7,
+        }
+    }
+
+    #[test]
+    fn persist_fact_updates_creates_entities_and_temporal_relations() {
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        schema::create_tables(&conn).expect("create tables");
+        let service = MemoryService::new();
+        let world = sample_world();
+        let entity_repo =
+            crate::db::repositories::memory_entity_repo::MemoryEntityRepository::new(&conn);
+        let relation_repo =
+            crate::db::repositories::memory_relation_repo::MemoryRelationRepository::new(&conn);
+
+        // 第 3 回合:登记"银钥匙 —藏在→ 12号柜"
+        let (added, invalidated) = service
+            .persist_fact_updates(
+                &conn,
+                &world,
+                "sess-1",
+                3,
+                &[fact_update("银钥匙", "藏在", "12号柜", "upsert")],
+            )
+            .expect("persist fact");
+        assert_eq!((added, invalidated), (1, 0));
+        let entities = entity_repo.list_by_session("sess-1").expect("list entities");
+        assert_eq!(entities.len(), 2, "主语和宾语都应生成实体");
+
+        // 第 4 回合:重复登记同一事实 → 不动
+        let (added, invalidated) = service
+            .persist_fact_updates(
+                &conn,
+                &world,
+                "sess-1",
+                4,
+                &[fact_update("银钥匙", "藏在", "12号柜", "upsert")],
+            )
+            .expect("persist same fact");
+        assert_eq!((added, invalidated), (0, 0), "同一事实重复登记不应产生变化");
+        let key_entity = entity_repo
+            .find_by_normalized("sess-1", "银钥匙")
+            .expect("find entity")
+            .expect("entity exists");
+        assert_eq!(key_entity.mention_count, 2, "实体提及次数应累计");
+
+        // 第 5 回合:钥匙换地方了 → 旧关系失效,新关系生效
+        let (added, invalidated) = service
+            .persist_fact_updates(
+                &conn,
+                &world,
+                "sess-1",
+                5,
+                &[fact_update("银钥匙", "藏在", "13号柜", "upsert")],
+            )
+            .expect("persist contradicting fact");
+        assert_eq!((added, invalidated), (1, 1));
+        let active = relation_repo
+            .list_active_by_session("sess-1")
+            .expect("list active relations");
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].object_text, "13号柜");
+        assert_eq!(active[0].valid_from_turn, 5);
+        let all = relation_repo
+            .list_by_session("sess-1", false)
+            .expect("list all relations");
+        assert_eq!(all.len(), 2, "旧关系应保留为历史");
+        assert!(
+            all.iter()
+                .any(|relation| relation.object_text == "12号柜"
+                    && relation.invalid_at_turn == Some(5)),
+            "旧关系应在第 5 回合被标记失效"
+        );
+
+        // 第 6 回合:作废事实
+        let (added, invalidated) = service
+            .persist_fact_updates(
+                &conn,
+                &world,
+                "sess-1",
+                6,
+                &[fact_update("银钥匙", "藏在", "", "invalidate")],
+            )
+            .expect("invalidate fact");
+        assert_eq!((added, invalidated), (0, 1));
+        assert!(
+            relation_repo
+                .list_active_by_session("sess-1")
+                .expect("list active")
+                .is_empty(),
+            "作废后不应有活跃关系"
+        );
+        let key_entity = entity_repo
+            .find_by_normalized("sess-1", "银钥匙")
+            .expect("find entity")
+            .expect("entity exists");
+        assert_eq!(key_entity.mention_count, 4, "四个回合的提及都应累计");
+    }
+
+    #[test]
+    fn persist_fact_updates_invalidate_only_matches_given_object() {
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        schema::create_tables(&conn).expect("create tables");
+        let service = MemoryService::new();
+        let world = sample_world();
+        let relation_repo =
+            crate::db::repositories::memory_relation_repo::MemoryRelationRepository::new(&conn);
+
+        service
+            .persist_fact_updates(
+                &conn,
+                &world,
+                "sess-1",
+                3,
+                &[
+                    fact_update("爱丽丝", "信任", "鲍勃", "upsert"),
+                    fact_update("爱丽丝", "位于", "码头", "upsert"),
+                ],
+            )
+            .expect("persist facts");
+
+        // 宾语不匹配的作废请求:不应动任何关系
+        let (_added, invalidated) = service
+            .persist_fact_updates(
+                &conn,
+                &world,
+                "sess-1",
+                4,
+                &[fact_update("爱丽丝", "信任", "查理", "invalidate")],
+            )
+            .expect("invalidate non-matching");
+        assert_eq!(invalidated, 0);
+        assert_eq!(
+            relation_repo
+                .list_active_by_session("sess-1")
+                .expect("list active")
+                .len(),
+            2
+        );
+
+        // 宾语匹配的作废请求:只作废那一条
+        let (_added, invalidated) = service
+            .persist_fact_updates(
+                &conn,
+                &world,
+                "sess-1",
+                5,
+                &[fact_update("爱丽丝", "信任", "鲍勃", "invalidate")],
+            )
+            .expect("invalidate one");
+        assert_eq!(invalidated, 1);
+        let active = relation_repo
+            .list_active_by_session("sess-1")
+            .expect("list active");
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].predicate, "位于", "只应作废宾语匹配的关系");
+    }
+
+    #[test]
+    fn persist_fact_updates_skips_invalid_items() {
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        schema::create_tables(&conn).expect("create tables");
+        let service = MemoryService::new();
+        let world = sample_world();
+        let (added, invalidated) = service
+            .persist_fact_updates(
+                &conn,
+                &world,
+                "sess-1",
+                3,
+                &[
+                    fact_update("  ", "藏在", "12号柜", "upsert"),
+                    fact_update("银钥匙", "  ", "12号柜", "upsert"),
+                ],
+            )
+            .expect("persist invalid facts");
+        assert_eq!((added, invalidated), (0, 0));
     }
 }

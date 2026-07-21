@@ -128,6 +128,7 @@ pub(crate) fn build_character_prompt_artifacts(
         speaker_profile,
         None,
         None,
+        crate::services::game_engine::memory::resolve_fact_extraction_enabled(world),
     );
     let runtime_context_prompt = resolve_runtime_context_prompt(world);
     let character_runtime_context_prompt = speaker_profile
@@ -171,7 +172,7 @@ pub(crate) fn build_character_prompt_artifacts(
     );
     let response_contract = serde_json::json!({
         "format": "json_object",
-        "fields": ["speaker", "content", "narration", "session_attribute_updates", "character_attribute_updates", "memory_entries"],
+        "fields": ["speaker", "content", "narration", "session_attribute_updates", "character_attribute_updates", "memory_entries", "fact_extractions"],
         "runtime_update_format": {
             "session_attribute_updates": [
                 { "key": "attribute_key", "value": "new_value" }
@@ -181,6 +182,9 @@ pub(crate) fn build_character_prompt_artifacts(
             ],
             "memory_entries": [
                 { "content": "memory text", "character_names": ["target_character_name"] }
+            ],
+            "fact_extractions": [
+                { "subject": "entity", "predicate": "relation", "object": "entity or value", "action": "upsert | invalidate" }
             ]
         },
         "tool_policy": "Use provider-native tool_calls for every allowed tool; never include tool_calls, tool names, or tool arguments in the JSON body."
@@ -322,8 +326,8 @@ pub(crate) fn build_character_prompt_artifacts(
             metadata: None,
         });
     }
-    messages.extend([
-        crate::services::llm::client::ChatMessage {
+    if !narration_prompt.trim().is_empty() {
+        messages.push(crate::services::llm::client::ChatMessage {
             role: "system".to_string(),
             content: serde_json::Value::String(narration_prompt.clone()),
             reasoning_content: None,
@@ -331,7 +335,9 @@ pub(crate) fn build_character_prompt_artifacts(
             tool_call_id: None,
             tool_calls: None,
             metadata: None,
-        },
+        });
+    }
+    messages.extend([
         crate::services::llm::client::ChatMessage {
             role: "system".to_string(),
             content: serde_json::Value::String(init_payload.clone()),

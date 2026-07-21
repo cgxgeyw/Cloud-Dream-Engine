@@ -28,6 +28,8 @@ import type {
   McpToolResponse,
   McpToolUpsertRequest,
   MemoryEntry,
+  MemoryEntity,
+  MemoryRelation,
   ModelConfig,
   ModelConfigResponse,
   ModelDiscoverResponse,
@@ -521,6 +523,14 @@ export function requestWorldPermissions(permissions: string[], wait = false): Pr
 
 export function fetchMemories(worldId?: string, sessionId?: string, characterId?: string, layer?: string, limit?: number): Promise<MemoryEntry[]> {
   return tauriCommand("list_memories", { worldId, sessionId, characterId, layer, limit });
+}
+
+export function fetchMemoryEntities(sessionId: string): Promise<MemoryEntity[]> {
+  return tauriCommand("list_memory_entities", { sessionId });
+}
+
+export function fetchMemoryRelations(sessionId: string, activeOnly = false): Promise<MemoryRelation[]> {
+  return tauriCommand("list_memory_relations", { sessionId, activeOnly });
 }
 
 export function fetchSessionDebug(sessionId: string): Promise<SessionDebugResponse> {

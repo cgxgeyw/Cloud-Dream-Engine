@@ -13,7 +13,7 @@ import type {
   ImageModelTestRequest, EmbeddingModelFileStatus, EmbeddingModelStatus,
   SettingsResponse, SettingsUpdateRequest, PluginResponse,
   McpToolResponse, McpToolUpsertRequest,
-  MemoryEntry,
+  MemoryEntry, MemoryEntity, MemoryRelation,
   AttributeSchemaResponse, AttributeSchemaUpsertRequest,
   AttributeValueResponse, AttributeValueUpsertRequest,
   RuntimeAttributeItem, RuntimeAttributeGroup, SessionRuntimeAttributesResponse,
@@ -689,4 +689,12 @@ export function fetchAllCharacters() {
 
 export function fetchMemories(_worldId?: string, _sessionId?: string, _characterId?: string, _layer?: string, _limit?: number) {
   return fetchJson<MemoryEntryResponse[]>("/api/memories");
+}
+
+export function fetchMemoryEntities(sessionId: string) {
+  return fetchJson<MemoryEntity[]>(`/api/memory-entities?session_id=${encodeURIComponent(sessionId)}`);
+}
+
+export function fetchMemoryRelations(sessionId: string, activeOnly = false) {
+  return fetchJson<MemoryRelation[]>(`/api/memory-relations?session_id=${encodeURIComponent(sessionId)}&active_only=${activeOnly}`);
 }
