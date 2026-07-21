@@ -73,3 +73,7 @@ dev.config.json
 # OS/editor noise
 Thumbs.db
 .DS_Store
+
+# mimocode tool config (local only)
+.mimocode/
+/新建 文本文档.txt
