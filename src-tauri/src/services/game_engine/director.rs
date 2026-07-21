@@ -2218,7 +2218,7 @@ impl WorldDirectorService {
             .into_iter()
             .map(|message| {
                 let role = message.role.trim().to_string();
-                // 淇濈暀鍘熷 content锛堝彲鑳芥槸瀛楃涓叉垨澶氬獟浣撴暟缁勶級
+                // 保留原始 content(可能是字符串或多媒体数组)
                 let content = message.content.clone();
                 let speaker = self.resolve_history_speaker(&message, current_player_name);
                 let mut payload = serde_json::json!({

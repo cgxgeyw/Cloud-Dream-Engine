@@ -24,7 +24,7 @@ use crate::models::world::WorldDefinition;
 
 const BUILTIN_LOCAL_EMBEDDING_PROVIDER: &str = "builtin-local";
 const BUILTIN_LOCAL_EMBEDDING_MODEL_ID: &str = "BAAI/bge-small-zh-v1.5";
-const BUILTIN_LOCAL_EMBEDDING_DISPLAY_NAME: &str = "鍐呯疆 Embedding锛欱AAI/bge-small-zh-v1.5";
+const BUILTIN_LOCAL_EMBEDDING_DISPLAY_NAME: &str = "内置本地 Embedding / bge-small-zh-v1.5";
 #[cfg(feature = "local-embedding")]
 const BUILTIN_LOCAL_EMBEDDING_MAX_LENGTH: usize = 512;
 const BUILTIN_LOCAL_EMBEDDING_DOWNLOAD_BASES: &[&str] = &[
@@ -75,6 +75,11 @@ pub struct CharacterRecallPlan {
     pending_inputs: Vec<(String, String)>,
     query_vector: Vec<f32>,
     computed_vectors: Vec<(String, Vec<f32>)>,
+    /// 每个候选记忆的"有效层"(按回合年龄推算,见 derive_effective_layer)。
+    /// 排序层加成与分层配额都以它为准,存储层保持不变。
+    effective_layers: HashMap<String, String>,
+    /// archive 层配额(默认 2;角色策略 importance_bias 时提升到 3)。
+    archive_quota: usize,
 }
 
 impl CharacterRecallPlan {
@@ -92,6 +97,8 @@ impl CharacterRecallPlan {
             pending_inputs: Vec::new(),
             query_vector: Vec::new(),
             computed_vectors: Vec::new(),
+            effective_layers: HashMap::new(),
+            archive_quota: 2,
         }
     }
 }
@@ -137,6 +144,7 @@ impl MemoryService {
         scene_id: Option<&str>,
         participants: &[String],
         limit: i32,
+        memory_strategy: Option<&str>,
     ) -> Result<Vec<MemoryEntry>, String> {
         let mut plan = self.prepare_character_recall(
             conn,
@@ -149,6 +157,7 @@ impl MemoryService {
             scene_id,
             participants,
             limit,
+            memory_strategy,
         )?;
         self.embed_recall_plan(&mut plan);
         Ok(self.finalize_character_recall(conn, plan))
@@ -168,12 +177,21 @@ impl MemoryService {
         scene_id: Option<&str>,
         participants: &[String],
         limit: i32,
+        memory_strategy: Option<&str>,
     ) -> Result<CharacterRecallPlan, String> {
         let Some(character_id) = character_id
             .map(|value| value.trim())
             .filter(|value| !value.is_empty())
         else {
             return Ok(CharacterRecallPlan::empty());
+        };
+        let strategy = parse_memory_strategy(memory_strategy.unwrap_or_default());
+        if strategy.disabled {
+            return Ok(CharacterRecallPlan::empty());
+        }
+        let tuning = MemoryRecallTuning {
+            recency_bias: strategy.recency_bias,
+            importance_bias: strategy.importance_bias,
         };
         let repo = crate::db::repositories::memory_repo::MemoryRepository::new(conn);
         let candidate_limit = resolve_character_memory_candidate_limit(world).max(limit.max(1) * 4);
@@ -184,6 +202,24 @@ impl MemoryService {
             layer: None,
             limit: Some(candidate_limit),
         })?;
+
+        let newest_turn = candidates
+            .iter()
+            .map(|entry| entry.turn_index)
+            .max()
+            .unwrap_or(0);
+        let working_window = resolve_character_memory_working_window_turns(world);
+        let short_term_window = resolve_character_memory_short_term_window_turns(world);
+        let effective_layers = candidates
+            .iter()
+            .map(|entry| {
+                (
+                    entry.id.clone(),
+                    derive_effective_layer(entry, newest_turn, working_window, short_term_window)
+                        .to_string(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
 
         let normalized_query = normalize_memory_text(query_text);
         let query_terms = build_memory_search_terms(query_text);
@@ -201,6 +237,11 @@ impl MemoryService {
                     entry.id.clone(),
                     score_memory_entry(
                         entry,
+                        effective_layers
+                            .get(&entry.id)
+                            .map(String::as_str)
+                            .unwrap_or(entry.layer.as_str()),
+                        &tuning,
                         &normalized_query,
                         &query_terms,
                         &participant_terms,
@@ -213,7 +254,10 @@ impl MemoryService {
             })
             .collect::<HashMap<_, _>>();
 
-        let retrieval_mode = resolve_character_memory_retrieval_mode(world);
+        let retrieval_mode = strategy
+            .retrieval_mode
+            .clone()
+            .unwrap_or_else(|| resolve_character_memory_retrieval_mode(world));
         let semantic_weight = resolve_character_memory_semantic_weight(world);
         let mut plan = CharacterRecallPlan {
             limit,
@@ -221,6 +265,8 @@ impl MemoryService {
             lexical_scores,
             retrieval_mode: retrieval_mode.clone(),
             semantic_weight,
+            effective_layers,
+            archive_quota: if strategy.importance_bias { 3 } else { 2 },
             ..CharacterRecallPlan::empty()
         };
 
@@ -329,6 +375,8 @@ impl MemoryService {
             &semantic_scores,
             &plan.retrieval_mode,
             plan.semantic_weight,
+            &plan.effective_layers,
+            plan.archive_quota,
         );
         ranked.into_iter().take(limit).collect()
     }
@@ -392,24 +440,24 @@ impl MemoryService {
 
         if !player_message.as_str().trim().is_empty() {
             for character_id in &participant_ids {
-                for layer in ["working", "short_term", "archive"] {
-                    memories.push(build_memory_entry(
-                        world,
-                        session,
-                        turn_index,
-                        character_id,
-                        layer,
-                        player_message.as_str(),
-                        "player_action",
-                        0.65,
-                        "dialogue",
-                        Some(player_character_name),
-                        Some("player"),
-                        Some(session.location.as_str()),
-                        Some(session.scene.scene_id.as_str()),
-                        participant_names.clone(),
-                    ));
-                }
+                // 单层写入:对话记忆只存 working 一份,"有效层"在召回时按回合年龄推算
+                // (derive_effective_layer),避免同一段内容以多个 layer 副本重复入库/重复进提示词。
+                memories.push(build_memory_entry(
+                    world,
+                    session,
+                    turn_index,
+                    character_id,
+                    "working",
+                    player_message.as_str(),
+                    "player_action",
+                    0.65,
+                    "dialogue",
+                    Some(player_character_name),
+                    Some("player"),
+                    Some(session.location.as_str()),
+                    Some(session.scene.scene_id.as_str()),
+                    participant_names.clone(),
+                ));
             }
         }
 
@@ -429,24 +477,22 @@ impl MemoryService {
                 } else {
                     0.68
                 };
-                for layer in ["working", "short_term", "archive"] {
-                    memories.push(build_memory_entry(
-                        world,
-                        session,
-                        turn_index,
-                        character_id,
-                        layer,
-                        &content,
-                        "speaker_response",
-                        importance,
-                        "dialogue",
-                        Some(speaker_name),
-                        Some("agent"),
-                        Some(session.location.as_str()),
-                        Some(session.scene.scene_id.as_str()),
-                        participant_names.clone(),
-                    ));
-                }
+                memories.push(build_memory_entry(
+                    world,
+                    session,
+                    turn_index,
+                    character_id,
+                    "working",
+                    &content,
+                    "speaker_response",
+                    importance,
+                    "dialogue",
+                    Some(speaker_name),
+                    Some("agent"),
+                    Some(session.location.as_str()),
+                    Some(session.scene.scene_id.as_str()),
+                    participant_names.clone(),
+                ));
             }
         }
 
@@ -948,12 +994,15 @@ impl MemoryService {
 
 /// 纯排序+分层配额选择:给定词法分与语义分,产出最终顺序。
 /// 与任何 DB / 网络 IO 无关,可在锁内或锁外随意调用(C1/H9 分阶段共用)。
+/// 层配额比较用 effective_layers(查询时按回合年龄推算),查不到时回退存储层。
 fn rank_memories_by_scores(
     mut memories: Vec<MemoryEntry>,
     lexical_scores: &HashMap<String, f64>,
     semantic_scores: &HashMap<String, f64>,
     retrieval_mode: &str,
     semantic_weight: f64,
+    effective_layers: &HashMap<String, String>,
+    archive_quota: usize,
 ) -> Vec<MemoryEntry> {
     let lexical_weight = (1.0 - semantic_weight).clamp(0.0, 1.0);
     let lexical_normalized = normalize_rank_scores(lexical_scores);
@@ -995,12 +1044,16 @@ fn rank_memories_by_scores(
     for (layer, quota) in [
         ("working", 2usize),
         ("short_term", 2usize),
-        ("archive", 2usize),
+        ("archive", archive_quota),
         ("canonical_event", 1usize),
     ] {
         let mut used = 0usize;
         for entry in &memories {
-            if entry.layer != layer || selected_ids.contains(&entry.id) || used >= quota {
+            let effective_layer = effective_layers
+                .get(&entry.id)
+                .map(String::as_str)
+                .unwrap_or(entry.layer.as_str());
+            if effective_layer != layer || selected_ids.contains(&entry.id) || used >= quota {
                 continue;
             }
             balanced.push(entry.clone());
@@ -1033,7 +1086,7 @@ fn is_builtin_local_embedding_model(model: &ModelConfig) -> bool {
 
 fn normalize_embedding_provider(provider: &str) -> String {
     match provider.trim().to_ascii_lowercase().as_str() {
-        "builtin-local" | "builtin_local" | "local" | "鍐呯疆鏈湴" => {
+        "builtin-local" | "builtin_local" | "local" | "内置本地" => {
             BUILTIN_LOCAL_EMBEDDING_PROVIDER.to_string()
         }
         "openai-compatible" | "openai compatible" | "openai" => "openai".to_string(),
@@ -1068,6 +1121,103 @@ fn resolve_character_memory_semantic_weight(world: &WorldDefinition) -> f64 {
         .and_then(|value| value.as_f64())
         .map(|value| value.clamp(0.0, 1.0))
         .unwrap_or(0.65)
+}
+
+fn resolve_character_memory_working_window_turns(world: &WorldDefinition) -> i32 {
+    world
+        .director_config
+        .get("character_memory_working_window_turns")
+        .and_then(|value| value.as_i64())
+        .map(|value| value.clamp(1, 10) as i32)
+        .unwrap_or(3)
+}
+
+fn resolve_character_memory_short_term_window_turns(world: &WorldDefinition) -> i32 {
+    world
+        .director_config
+        .get("character_memory_short_term_window_turns")
+        .and_then(|value| value.as_i64())
+        .map(|value| value.clamp(5, 60) as i32)
+        .unwrap_or(15)
+}
+
+/// 召回时按回合年龄推算记忆的"有效层"。
+///
+/// 对话记忆(player_action / speaker_response)自 M6 起只按 working 单层写入,
+/// 这里的推算替代了过去"同一内容写三个 layer 副本"的做法:
+/// 距最新回合 ≤ working_window → working,≤ short_term_window → short_term,更老 → archive。
+/// 非对话记忆(trigger/rule/LLM 写入)与 canonical_event 保持存储层不变;
+/// turn_index 缺失(≤0)时无法推算年龄,同样回退存储层。
+fn derive_effective_layer<'a>(
+    entry: &'a MemoryEntry,
+    newest_turn: i32,
+    working_window: i32,
+    short_term_window: i32,
+) -> &'a str {
+    if entry.layer == "canonical_event" {
+        return entry.layer.as_str();
+    }
+    let is_dialogue = matches!(entry.source.as_str(), "player_action" | "speaker_response");
+    if is_dialogue
+        && matches!(entry.layer.as_str(), "working" | "short_term" | "archive")
+        && newest_turn > 0
+        && entry.turn_index > 0
+    {
+        let age = (newest_turn - entry.turn_index).max(0);
+        if age <= working_window {
+            "working"
+        } else if age <= short_term_window {
+            "short_term"
+        } else {
+            "archive"
+        }
+    } else {
+        entry.layer.as_str()
+    }
+}
+
+/// 角色 memory_strategy 自由文本解析出的召回行为覆盖项。
+/// 识别不到任何关键词时全部为默认,行为与之前完全一致(向后兼容)。
+#[derive(Debug, Clone, Default)]
+pub(crate) struct MemoryStrategyOverrides {
+    /// off/none/不记/无记忆:跳过召回。
+    pub disabled: bool,
+    /// semantic/语义 → semantic_only;lexical/词法 → lexical_only。
+    pub retrieval_mode: Option<String>,
+    /// recent/近期/最近:时效分加权。
+    pub recency_bias: bool,
+    /// important/archive/重要:重要度加权 + archive 配额提升。
+    pub importance_bias: bool,
+}
+
+pub(crate) fn parse_memory_strategy(strategy: &str) -> MemoryStrategyOverrides {
+    let text = strategy.trim().to_lowercase();
+    let mut overrides = MemoryStrategyOverrides::default();
+    if text.is_empty() {
+        return overrides;
+    }
+    let contains_any = |needles: &[&str]| needles.iter().any(|needle| text.contains(needle));
+    // 短英文词整词匹配,避免 "offline"/"often" 这类误伤;中文按子串匹配。
+    let has_word = |word: &str| {
+        text.split(|ch: char| !ch.is_alphanumeric())
+            .any(|token| token == word)
+    };
+    if has_word("off") || has_word("none") || contains_any(&["不记", "无记忆", "不用记"]) {
+        overrides.disabled = true;
+        return overrides;
+    }
+    if has_word("semantic") || text.contains("语义") {
+        overrides.retrieval_mode = Some("semantic_only".to_string());
+    } else if has_word("lexical") || text.contains("词法") {
+        overrides.retrieval_mode = Some("lexical_only".to_string());
+    }
+    if has_word("recent") || contains_any(&["近期", "最近"]) {
+        overrides.recency_bias = true;
+    }
+    if has_word("important") || has_word("archive") || text.contains("重要") {
+        overrides.importance_bias = true;
+    }
+    overrides
 }
 
 fn build_memory_query_text(
@@ -1339,8 +1489,19 @@ fn build_memory_search_terms(text: &str) -> Vec<String> {
     terms
 }
 
+/// 词法打分的可调项,来自角色 memory_strategy 的关键词解析(parse_memory_strategy)。
+#[derive(Debug, Clone, Default)]
+struct MemoryRecallTuning {
+    /// true 时 recency_bonus ×2.0(偏好近期记忆)。
+    recency_bias: bool,
+    /// true 时 importance 起始分 ×2.0(偏好高重要度记忆)。
+    importance_bias: bool,
+}
+
 fn score_memory_entry(
     entry: &MemoryEntry,
+    effective_layer: &str,
+    tuning: &MemoryRecallTuning,
     normalized_query: &str,
     query_terms: &[String],
     participant_terms: &[String],
@@ -1359,7 +1520,11 @@ fn score_memory_entry(
     searchable_parts.extend(entry.participants.clone());
     searchable_parts.extend(entry.keywords.clone());
     let searchable = normalize_memory_text(&searchable_parts.join(" "));
-    let mut score = entry.importance;
+    let mut score = if tuning.importance_bias {
+        entry.importance * 2.0
+    } else {
+        entry.importance
+    };
     if !normalized_query.is_empty() && searchable.contains(normalized_query) {
         score += 8.0;
     }
@@ -1402,13 +1567,18 @@ fn score_memory_entry(
     if entry.memory_type == "dialogue" {
         score += 0.4;
     }
-    score += match entry.layer.as_str() {
+    score += match effective_layer {
         "working" => 2.4,
         "short_term" => 1.6,
         "canonical_event" => 1.9,
         _ => 0.0,
     };
-    score += recency_bonus(entry.created_at.as_str(), newest_created_at);
+    let recency = recency_bonus(entry.created_at.as_str(), newest_created_at);
+    score += if tuning.recency_bias {
+        recency * 2.0
+    } else {
+        recency
+    };
     score
 }
 
@@ -1688,6 +1858,7 @@ mod tests {
                 Some("harbor-scene"),
                 &["Player".to_string(), "Alice".to_string()],
                 10,
+                None,
             )
             .expect("recall for alice");
         assert!(
@@ -1749,6 +1920,7 @@ mod tests {
                 Some("harbor-scene"),
                 &["Player".to_string(), "Alice".to_string()],
                 5,
+                None,
             )
             .expect("recall raw entries");
 
@@ -1760,7 +1932,7 @@ mod tests {
     }
 
     #[test]
-    fn persist_turn_entries_writes_archive_layer() {
+    fn persist_turn_entries_writes_single_working_layer_without_duplicates() {
         let conn = Connection::open_in_memory().expect("open sqlite");
         schema::create_tables(&conn).expect("create tables");
         let service = MemoryService::new();
@@ -1797,10 +1969,19 @@ mod tests {
                 &[],
             )
             .expect("persist turn entries");
+        // 单层写入:每条消息 × 每个在场角色(Player/Alice/Bob)恰好 1 条 working。
+        assert_eq!(written.len(), 2 * 3);
         assert!(
-            written.iter().any(|entry| entry.layer == "archive"),
-            "turn persistence should include archive layer for long-term memory"
+            written.iter().all(|entry| entry.layer == "working"),
+            "dialogue memories should be written once with the working layer"
         );
+        let mut unique_pairs = std::collections::HashSet::new();
+        for entry in &written {
+            assert!(
+                unique_pairs.insert((entry.character_id.clone(), entry.content.clone())),
+                "same content must not be stored twice for one character"
+            );
+        }
 
         let repo = MemoryRepository::new(&conn);
         let all_for_alice = repo
@@ -1894,29 +2075,26 @@ mod tests {
     }
 
     #[test]
-    fn recall_entries_for_character_keeps_archive_visible_despite_recent_noise() {
+    fn recall_entries_for_character_keeps_old_memory_visible_despite_recent_noise() {
         let conn = Connection::open_in_memory().expect("open sqlite");
         schema::create_tables(&conn).expect("create tables");
         let repo = MemoryRepository::new(&conn);
         let service = MemoryService::new();
         let world = sample_world();
 
+        // 近期噪音:turn 20-25,全部 stored working。
         for index in 0..6 {
             repo.insert(&MemoryEntry {
                 id: format!("m-work-{index}"),
                 world_id: "world-1".to_string(),
                 session_id: "sess-1".to_string(),
                 character_id: "char-a".to_string(),
-                layer: if index % 2 == 0 {
-                    "working".to_string()
-                } else {
-                    "short_term".to_string()
-                },
+                layer: "working".to_string(),
                 content: format!("Ambient harbor chatter {index}"),
                 source: "speaker_response".to_string(),
                 importance: 0.2,
                 created_at: Utc::now().to_rfc3339(),
-                turn_index: 10 + index,
+                turn_index: 20 + index,
                 conversation_id: Some("sess-1".to_string()),
                 event_id: None,
                 item_id: None,
@@ -1930,12 +2108,14 @@ mod tests {
             })
             .expect("insert noise memory");
         }
+        // 老记忆:turn 1,距最新 24 轮 > short_term 窗口(15),有效层推算为 archive,
+        // 应被 archive 配额保住;存储层保持 working 不变。
         repo.insert(&MemoryEntry {
             id: "m-archive-secret".to_string(),
             world_id: "world-1".to_string(),
             session_id: "sess-1".to_string(),
             character_id: "char-a".to_string(),
-            layer: "archive".to_string(),
+            layer: "working".to_string(),
             content: "Alice archived that the eclipse gate opens with moon glass.".to_string(),
             source: "speaker_response".to_string(),
             importance: 0.98,
@@ -1970,14 +2150,254 @@ mod tests {
                 Some("harbor-scene"),
                 &["Player".to_string(), "Alice".to_string()],
                 5,
+                None,
             )
             .expect("recall with archive");
 
         assert!(
             recalled
                 .iter()
-                .any(|entry| entry.layer == "archive" && entry.content.contains("moon glass")),
-            "archive memory should remain recallable even when recent working memories exist"
+                .any(|entry| entry.id == "m-archive-secret"
+                    && entry.layer == "working"
+                    && entry.content.contains("moon glass")),
+            "old memory should remain recallable via the derived archive quota, stored layer unchanged"
         );
+    }
+
+    fn bare_entry(id: &str, layer: &str, source: &str, turn_index: i32) -> MemoryEntry {
+        MemoryEntry {
+            id: id.to_string(),
+            world_id: "world-1".to_string(),
+            session_id: "sess-1".to_string(),
+            character_id: "char-a".to_string(),
+            layer: layer.to_string(),
+            content: format!("content-{id}"),
+            source: source.to_string(),
+            importance: 0.5,
+            created_at: Utc::now().to_rfc3339(),
+            turn_index,
+            conversation_id: Some("sess-1".to_string()),
+            event_id: None,
+            item_id: None,
+            scene_id: None,
+            memory_type: "dialogue".to_string(),
+            speaker: None,
+            role: None,
+            location: None,
+            participants: vec![],
+            keywords: vec![],
+        }
+    }
+
+    #[test]
+    fn derive_effective_layer_ages_dialogue_memories_by_turn_distance() {
+        let cases = [
+            // (turn_index, 期望有效层): newest=20, working≤3, short_term≤15
+            (20, "working"),
+            (17, "working"),  // age 3,边界
+            (16, "short_term"), // age 4
+            (5, "short_term"),  // age 15,边界
+            (4, "archive"),   // age 16
+            (1, "archive"),
+        ];
+        for (turn_index, expected) in cases {
+            let entry = bare_entry("m", "working", "speaker_response", turn_index);
+            assert_eq!(
+                derive_effective_layer(&entry, 20, 3, 15),
+                expected,
+                "turn {turn_index} should derive to {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn derive_effective_layer_passes_through_non_dialogue_and_canonical() {
+        // canonical_event 直通
+        let canonical = bare_entry("m", "canonical_event", "speaker_response", 1);
+        assert_eq!(
+            derive_effective_layer(&canonical, 20, 3, 15),
+            "canonical_event"
+        );
+        // 非对话 source(trigger/rule/LLM 写入)保持存储层
+        let rule_memory = bare_entry("m", "short_term", "rule", 1);
+        assert_eq!(
+            derive_effective_layer(&rule_memory, 20, 3, 15),
+            "short_term"
+        );
+        // turn_index 缺失(≤0)无法推算年龄,回退存储层
+        let no_turn = bare_entry("m", "working", "player_action", 0);
+        assert_eq!(derive_effective_layer(&no_turn, 20, 3, 15), "working");
+        // newest_turn 未知(空候选池)同样回退
+        let entry = bare_entry("m", "working", "player_action", 3);
+        assert_eq!(derive_effective_layer(&entry, 0, 3, 15), "working");
+    }
+
+    #[test]
+    fn parse_memory_strategy_recognizes_keywords() {
+        let default = parse_memory_strategy("");
+        assert!(!default.disabled && !default.recency_bias && !default.importance_bias);
+        assert!(default.retrieval_mode.is_none());
+
+        assert!(parse_memory_strategy("off").disabled);
+        assert!(parse_memory_strategy("无记忆").disabled);
+        assert!(parse_memory_strategy("不用记住玩家说的话").disabled);
+        // 整词匹配:"offline"/"often" 不应触发 disabled
+        assert!(!parse_memory_strategy("offline archive").disabled);
+        assert!(!parse_memory_strategy("often recalls").disabled);
+        // disabled 优先级最高
+        let disabled = parse_memory_strategy("off recent important");
+        assert!(disabled.disabled && !disabled.recency_bias && !disabled.importance_bias);
+
+        assert_eq!(
+            parse_memory_strategy("semantic").retrieval_mode.as_deref(),
+            Some("semantic_only")
+        );
+        assert_eq!(
+            parse_memory_strategy("用语义检索").retrieval_mode.as_deref(),
+            Some("semantic_only")
+        );
+        assert_eq!(
+            parse_memory_strategy("lexical").retrieval_mode.as_deref(),
+            Some("lexical_only")
+        );
+
+        assert!(parse_memory_strategy("recent").recency_bias);
+        assert!(parse_memory_strategy("多关注最近发生的事").recency_bias);
+        assert!(parse_memory_strategy("important").importance_bias);
+        assert!(parse_memory_strategy("重要的事要牢记").importance_bias);
+
+        // 种子里的自然语言描述不含任何关键词 → 全默认,行为不变
+        for seed_text in [
+            "记住宴会中的人际变化与诗句往来。",
+            "default",
+            "short memory guidance",
+        ] {
+            let parsed = parse_memory_strategy(seed_text);
+            assert!(
+                !parsed.disabled
+                    && !parsed.recency_bias
+                    && !parsed.importance_bias
+                    && parsed.retrieval_mode.is_none(),
+                "seed text {:?} should parse to defaults",
+                seed_text
+            );
+        }
+    }
+
+    #[test]
+    fn recall_with_disabled_strategy_returns_nothing() {
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        schema::create_tables(&conn).expect("create tables");
+        let repo = MemoryRepository::new(&conn);
+        let service = MemoryService::new();
+        let world = sample_world();
+        repo.insert(&bare_entry("m-1", "working", "speaker_response", 3))
+            .expect("insert memory");
+
+        let recalled = service
+            .recall_entries_for_character(
+                &conn,
+                &world,
+                "world-1",
+                "sess-1",
+                Some("char-a"),
+                "content",
+                "Harbor",
+                None,
+                &[],
+                5,
+                Some("不记"),
+            )
+            .expect("recall with disabled strategy");
+        assert!(recalled.is_empty(), "disabled strategy should skip recall");
+    }
+
+    #[test]
+    fn recall_strategy_overrides_retrieval_mode() {
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        schema::create_tables(&conn).expect("create tables");
+        let repo = MemoryRepository::new(&conn);
+        let service = MemoryService::new();
+        let world = sample_world();
+        repo.insert(&bare_entry("m-1", "working", "speaker_response", 3))
+            .expect("insert memory");
+
+        let plan = service
+            .prepare_character_recall(
+                &conn,
+                &world,
+                "world-1",
+                "sess-1",
+                Some("char-a"),
+                "content",
+                "Harbor",
+                None,
+                &[],
+                5,
+                Some("semantic"),
+            )
+            .expect("prepare recall");
+        assert_eq!(plan.retrieval_mode, "semantic_only");
+
+        let plan = service
+            .prepare_character_recall(
+                &conn,
+                &world,
+                "world-1",
+                "sess-1",
+                Some("char-a"),
+                "content",
+                "Harbor",
+                None,
+                &[],
+                5,
+                Some("important"),
+            )
+            .expect("prepare recall");
+        assert_eq!(plan.retrieval_mode, "hybrid", "mode 未指定时保持 world 默认");
+        assert_eq!(plan.archive_quota, 3, "importance_bias 应提升 archive 配额");
+    }
+
+    #[test]
+    fn rank_memories_uses_effective_layers_for_quotas() {
+        // B 词法分高于 C,但 B 的有效层是 archive、C 是 working:
+        // working 配额先选 A、C,archive 配额再选 B。
+        let memories = vec![
+            bare_entry("a", "working", "speaker_response", 20),
+            bare_entry("b", "working", "speaker_response", 1),
+            bare_entry("c", "working", "speaker_response", 19),
+        ];
+        let lexical_scores: HashMap<String, f64> = [
+            ("a".to_string(), 10.0),
+            ("b".to_string(), 8.0),
+            ("c".to_string(), 6.0),
+        ]
+        .into_iter()
+        .collect();
+        let effective_layers: HashMap<String, String> = [
+            ("a".to_string(), "working".to_string()),
+            ("b".to_string(), "archive".to_string()),
+            ("c".to_string(), "working".to_string()),
+        ]
+        .into_iter()
+        .collect();
+
+        let ranked = rank_memories_by_scores(
+            memories,
+            &lexical_scores,
+            &HashMap::new(),
+            "hybrid",
+            0.65,
+            &effective_layers,
+            2,
+        );
+        let order: Vec<&str> = ranked.iter().map(|entry| entry.id.as_str()).collect();
+        assert_eq!(order, vec!["a", "c", "b"]);
+    }
+
+    #[test]
+    fn normalize_embedding_provider_accepts_chinese_builtin_local() {
+        assert_eq!(normalize_embedding_provider("内置本地"), "builtin-local");
+        assert_eq!(normalize_embedding_provider("builtin-local"), "builtin-local");
     }
 }

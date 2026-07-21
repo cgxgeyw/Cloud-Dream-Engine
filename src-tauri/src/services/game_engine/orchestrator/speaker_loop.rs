@@ -129,6 +129,7 @@ impl SessionOrchestrator {
                     Some(session.scene.scene_id.as_str()),
                     &build_turn_participants(visible_chars, &session.player_character_name),
                     recall_limit,
+                    speaker_char.map(|character| character.memory_strategy.as_str()),
                 )?;
                 let recent_messages = slice_character_history(
                     &messages,

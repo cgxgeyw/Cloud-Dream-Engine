@@ -1390,8 +1390,48 @@ pub(crate) fn resolve_history_speaker(
 pub(crate) fn resolve_character_memory_recall_limit(
     speaker_profile: Option<&CharacterDefinition>,
 ) -> i32 {
-    let _ = speaker_profile;
-    8
+    let Some(profile) = speaker_profile else {
+        return 8;
+    };
+    let strategy = profile.memory_strategy.trim();
+    if strategy.is_empty() {
+        return 8;
+    }
+    let overrides =
+        crate::services::game_engine::memory::parse_memory_strategy(strategy);
+    if overrides.disabled {
+        // 策略为"不记"时召回条数归零(prepare_character_recall 也会短路,双保险)。
+        return 0;
+    }
+    extract_recall_limit_hint(strategy).unwrap_or(8)
+}
+
+/// 从 memory_strategy 自由文本里提取"<数字>轮" / "<数字> turns"这类条数线索。
+/// 手工扫描数字游标,不引 regex;取不到返回 None。
+fn extract_recall_limit_hint(strategy: &str) -> Option<i32> {
+    let lower = strategy.to_lowercase();
+    let chars: Vec<char> = lower.chars().collect();
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index].is_ascii_digit() {
+            let start = index;
+            while index < chars.len() && chars[index].is_ascii_digit() {
+                index += 1;
+            }
+            let number: String = chars[start..index].iter().collect();
+            let suffix: String = chars[index..]
+                .iter()
+                .skip_while(|ch| ch.is_whitespace())
+                .take(5)
+                .collect();
+            if suffix.starts_with('轮') || suffix.starts_with("turn") {
+                return number.parse::<i32>().ok().map(|value| value.clamp(1, 32));
+            }
+        } else {
+            index += 1;
+        }
+    }
+    None
 }
 
 pub(crate) fn resolve_character_memory_hit_turns(world: &WorldDefinition) -> usize {
@@ -1498,4 +1538,81 @@ pub(crate) fn resolve_world_for_session(
         .into_iter()
         .find(|world| world.name == session.world_name)
         .ok_or_else(|| "World not found".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn profile_with_strategy(memory_strategy: &str) -> CharacterDefinition {
+        CharacterDefinition {
+            id: "char-a".to_string(),
+            name: "Alice".to_string(),
+            world_id: "world-1".to_string(),
+            role: "".to_string(),
+            background_prompt: "".to_string(),
+            model: "".to_string(),
+            memory_strategy: memory_strategy.to_string(),
+            recent_dialogue_rounds: 8,
+            attributes: vec![],
+            portrait_assets: vec![],
+            avatar_asset: String::new(),
+            system_prompt_template: "".to_string(),
+            response_contract_prompt: "".to_string(),
+            narration_prompt: "".to_string(),
+            runtime_system_prompt: "".to_string(),
+        }
+    }
+
+    #[test]
+    fn recall_limit_reads_turn_hint_from_strategy() {
+        assert_eq!(
+            resolve_character_memory_recall_limit(Some(&profile_with_strategy("记住最近12轮的关键信息"))),
+            12
+        );
+        assert_eq!(
+            resolve_character_memory_recall_limit(Some(&profile_with_strategy("recall 5 turns"))),
+            5
+        );
+        // 超出上限的线索被钳制
+        assert_eq!(
+            resolve_character_memory_recall_limit(Some(&profile_with_strategy("99轮"))),
+            32
+        );
+    }
+
+    #[test]
+    fn recall_limit_falls_back_to_default() {
+        assert_eq!(resolve_character_memory_recall_limit(None), 8);
+        assert_eq!(
+            resolve_character_memory_recall_limit(Some(&profile_with_strategy(""))),
+            8
+        );
+        // 没有轮数线索的描述句 → 默认 8
+        assert_eq!(
+            resolve_character_memory_recall_limit(Some(&profile_with_strategy(
+                "记住宴会中的人际变化与诗句往来。"
+            ))),
+            8
+        );
+        // 年份这类数字后面不跟"轮/turn",不应被当成线索
+        assert_eq!(
+            resolve_character_memory_recall_limit(Some(&profile_with_strategy(
+                "2024年的约定要记住"
+            ))),
+            8
+        );
+    }
+
+    #[test]
+    fn recall_limit_zero_when_strategy_disabled() {
+        assert_eq!(
+            resolve_character_memory_recall_limit(Some(&profile_with_strategy("off"))),
+            0
+        );
+        assert_eq!(
+            resolve_character_memory_recall_limit(Some(&profile_with_strategy("无记忆"))),
+            0
+        );
+    }
 }

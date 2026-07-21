@@ -9,7 +9,8 @@ const MIGRATION_HOME_BACKGROUND_STRATEGY: i64 = 2;
 const MIGRATION_BUILTIN_DESKTOP_UI_REPAIR: i64 = 3;
 const MIGRATION_SCHEDULE_ATTRIBUTE_REPAIR: i64 = 4;
 const MIGRATION_EMBEDDING_MODEL_NAME_REPAIR: i64 = 5;
-const CURRENT_SCHEMA_VERSION: i64 = MIGRATION_EMBEDDING_MODEL_NAME_REPAIR;
+const MIGRATION_MEMORY_LAYER_DEDUP: i64 = 6;
+const CURRENT_SCHEMA_VERSION: i64 = MIGRATION_MEMORY_LAYER_DEDUP;
 
 fn ensure_column(
     conn: &Connection,
@@ -225,6 +226,70 @@ fn repair_garbled_embedding_model_name(conn: &Connection) -> Result<(), rusqlite
     Ok(())
 }
 
+fn table_exists(conn: &Connection, table_name: &str) -> Result<bool, rusqlite::Error> {
+    let count = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        params![table_name],
+        |row| row.get::<_, i64>(0),
+    )?;
+    Ok(count > 0)
+}
+
+fn dedup_memory_layer_copies(conn: &Connection) -> Result<(), rusqlite::Error> {
+    // M6 之前的对话记忆会把同一段内容按 working/short_term/archive 三层各写一份
+    // (仅 id 与 layer 不同)。改为单层写入 + 召回时推算有效层之后,这些副本只剩冗余,
+    // 且同一文本会以多条 id 不同的记录重复进入召回结果。
+    // 这里按 (world, session, character, turn, content, source, speaker) 分组,
+    // 仅当组内存在多个不同 layer 时删除多余副本,优先保留 working 那条。
+    // 缺表(迁移测试的遗留夹具)时直接跳过。
+    if !table_exists(conn, "memories")? {
+        return Ok(());
+    }
+    let mut stmt = conn.prepare(
+        "SELECT id FROM (
+           SELECT m.id,
+             ROW_NUMBER() OVER (
+               PARTITION BY m.world_id, m.session_id, m.character_id,
+                            m.turn_index, m.content, m.source, m.speaker
+               ORDER BY CASE m.layer
+                          WHEN 'working' THEN 0
+                          WHEN 'short_term' THEN 1
+                          WHEN 'archive' THEN 2
+                          ELSE 3 END, m.id
+             ) AS rn
+           FROM memories m
+           JOIN (
+             SELECT world_id, session_id, character_id, turn_index, content, source, speaker
+             FROM memories
+             GROUP BY world_id, session_id, character_id, turn_index, content, source, speaker
+             HAVING COUNT(DISTINCT layer) > 1
+           ) dup
+             ON m.world_id = dup.world_id
+            AND m.session_id = dup.session_id
+            AND m.character_id = dup.character_id
+            AND m.turn_index = dup.turn_index
+            AND m.content = dup.content
+            AND m.source = dup.source
+            AND m.speaker IS dup.speaker
+         ) WHERE rn > 1",
+    )?;
+    let duplicate_ids = stmt
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    let embeddings_table_exists = table_exists(conn, "memory_embeddings")?;
+    for id in duplicate_ids {
+        if embeddings_table_exists {
+            // 不赌 PRAGMA foreign_keys 是否开启,显式清理向量缓存。
+            conn.execute(
+                "DELETE FROM memory_embeddings WHERE memory_id = ?1",
+                params![id],
+            )?;
+        }
+        conn.execute("DELETE FROM memories WHERE id = ?1", params![id])?;
+    }
+    Ok(())
+}
+
 fn schema_version(conn: &Connection) -> Result<i64, rusqlite::Error> {
     conn.query_row("PRAGMA user_version", [], |row| row.get(0))
 }
@@ -265,6 +330,10 @@ pub(crate) fn run(conn: &Connection) -> Result<(), rusqlite::Error> {
         repair_garbled_embedding_model_name(&tx)?;
         set_schema_version(&tx, MIGRATION_EMBEDDING_MODEL_NAME_REPAIR)?;
     }
+    if version < MIGRATION_MEMORY_LAYER_DEDUP {
+        dedup_memory_layer_copies(&tx)?;
+        set_schema_version(&tx, MIGRATION_MEMORY_LAYER_DEDUP)?;
+    }
 
     tx.commit()
 }
@@ -297,6 +366,23 @@ mod tests {
                 id TEXT PRIMARY KEY,
                 value_type TEXT NOT NULL DEFAULT 'text',
                 default_value_json TEXT NOT NULL DEFAULT 'null'
+            );
+            CREATE TABLE memories (
+                id TEXT PRIMARY KEY,
+                world_id TEXT NOT NULL DEFAULT '',
+                session_id TEXT NOT NULL DEFAULT '',
+                character_id TEXT NOT NULL DEFAULT '',
+                layer TEXT NOT NULL DEFAULT 'working',
+                content TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT '',
+                turn_index INTEGER NOT NULL DEFAULT 0,
+                speaker TEXT
+            );
+            CREATE TABLE memory_embeddings (
+                memory_id TEXT NOT NULL,
+                model_key TEXT NOT NULL,
+                vector_json TEXT NOT NULL DEFAULT '[]',
+                PRIMARY KEY (memory_id, model_key)
             );
             ",
         )
@@ -422,9 +508,89 @@ mod tests {
         );
     }
 
+    fn insert_legacy_memory(
+        conn: &Connection,
+        id: &str,
+        layer: &str,
+        content: &str,
+        turn_index: i64,
+    ) {
+        conn.execute(
+            "INSERT INTO memories (id, world_id, session_id, character_id, layer, content, source, turn_index, speaker)
+             VALUES (?1, 'world-1', 'sess-1', 'char-a', ?2, ?3, 'speaker_response', ?4, 'Alice')",
+            params![id, layer, content, turn_index],
+        )
+        .expect("insert legacy memory");
+    }
+
+    fn memory_count(conn: &Connection) -> i64 {
+        conn.query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))
+            .expect("count memories")
+    }
+
     #[test]
-    fn migration_failure_rolls_back_schema_and_version() {
+    fn memory_layer_dedup_removes_triplicates_once() {
         let conn = Connection::open_in_memory().expect("open database");
+        create_legacy_schema(&conn);
+
+        // 三层副本组:同一内容 working/short_term/archive 各一份。
+        insert_legacy_memory(&conn, "m-work", "working", "钥匙在12号柜", 3);
+        insert_legacy_memory(&conn, "m-short", "short_term", "钥匙在12号柜", 3);
+        insert_legacy_memory(&conn, "m-arch", "archive", "钥匙在12号柜", 3);
+        // 单行记忆:不层叠,不应被动。
+        insert_legacy_memory(&conn, "m-solo", "working", "另一条独立记忆", 4);
+        for id in ["m-work", "m-short", "m-arch"] {
+            conn.execute(
+                "INSERT INTO memory_embeddings (memory_id, model_key, vector_json)
+                 VALUES (?1, 'model-1', '[0.1, 0.2]')",
+                params![id],
+            )
+            .expect("insert embedding");
+        }
+
+        dedup_memory_layer_copies(&conn).expect("dedup memories");
+
+        assert_eq!(memory_count(&conn), 2);
+        let remaining: Vec<(String, String)> = conn
+            .prepare("SELECT id, layer FROM memories ORDER BY id")
+            .expect("prepare select")
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .expect("query memories")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect memories");
+        assert_eq!(
+            remaining,
+            vec![
+                ("m-solo".to_string(), "working".to_string()),
+                ("m-work".to_string(), "working".to_string()),
+            ],
+            "三副本组应只保留 working 那条"
+        );
+        let embedding_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM memory_embeddings", [], |row| {
+                row.get(0)
+            })
+            .expect("count embeddings");
+        assert_eq!(
+            embedding_count, 1,
+            "被删副本的向量缓存应一并清理,只留保留行的"
+        );
+
+        // 幂等:再跑一次不应再删任何东西。
+        dedup_memory_layer_copies(&conn).expect("rerun dedup");
+        assert_eq!(memory_count(&conn), 2);
+    }
+
+    #[test]
+    fn memory_layer_dedup_skips_missing_table() {
+        let conn = Connection::open_in_memory().expect("open database");
+        conn.execute("CREATE TABLE characters (id TEXT PRIMARY KEY)", [])
+            .expect("create partial schema");
+        dedup_memory_layer_copies(&conn).expect("missing memories table should be fine");
+    }
+
+    #[test]
+    fn migration_failure_rolls_back_schema_and_version() {        let conn = Connection::open_in_memory().expect("open database");
         conn.execute("CREATE TABLE characters (id TEXT PRIMARY KEY)", [])
             .expect("create partial legacy schema");
 
