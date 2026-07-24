@@ -73,6 +73,7 @@ dev.config.json
 # OS/editor noise
 Thumbs.db
 .DS_Store
+.idea/
 
 # mimocode tool config (local only)
 .mimocode/

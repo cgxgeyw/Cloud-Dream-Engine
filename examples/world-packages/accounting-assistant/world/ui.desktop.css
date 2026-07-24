@@ -1,0 +1,59 @@
+:root {
+  color-scheme: light;
+}
+
+html,
+body,
+#root,
+.game-root,
+.game-ui-layout,
+[data-component="ledger_book"] {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+}
+
+.game-root {
+  overflow: hidden;
+  background: #edf2ef;
+}
+
+.game-ui-layout,
+[data-component="ledger_book"] {
+  overflow: hidden;
+}
+
+.accounting-ledger--desktop .ledger-book {
+  --ledger-bg: #f1f5f3;
+  --ledger-surface: #ffffff;
+  --ledger-surface-muted: #e7eeea;
+  --ledger-text: #16231d;
+  --ledger-muted: #607068;
+  --ledger-line: #d5dfda;
+  --ledger-accent: #16744a;
+  --ledger-accent-strong: #0f5838;
+  --ledger-accent-soft: #dcf0e6;
+  --ledger-income: #16744a;
+  --ledger-income-soft: #dcf0e6;
+  --ledger-expense: #c4483f;
+  --ledger-expense-soft: #fae8e5;
+}
+
+.accounting-ledger--desktop .ledger-header,
+.accounting-ledger--desktop .ledger-view-tabs {
+  padding-right: max(30px, var(--world-safe-area-right, 0px));
+  padding-left: max(30px, var(--world-safe-area-left, 0px));
+}
+
+.accounting-ledger--desktop .ledger-period-toolbar,
+.accounting-ledger--desktop .ledger-view {
+  padding-right: max(30px, var(--world-safe-area-right, 0px));
+  padding-left: max(30px, var(--world-safe-area-left, 0px));
+}
+
+.accounting-ledger--desktop .ledger-view {
+  width: min(1320px, 100%);
+  margin-right: auto;
+  margin-left: auto;
+}

@@ -11,4 +11,6 @@ pub mod rule_repo;
 pub mod save_repo;
 pub mod scheduled_notification_repo;
 pub mod session_repo;
+pub mod world_record_repo;
+pub mod world_kv_repo;
 pub mod world_repo;

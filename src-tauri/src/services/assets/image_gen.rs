@@ -19,6 +19,11 @@ pub struct ImageResponse {
     pub seed: Option<i32>,
 }
 
+enum OpenAiImageSource {
+    Base64(String),
+    Url(String),
+}
+
 pub struct ImageGenerator {
     http_client: Client,
 }
@@ -42,11 +47,10 @@ impl ImageGenerator {
             "automatic1111" | "stable-diffusion" => {
                 self.generate_automatic1111(base_url, request).await
             }
-            "openai" => {
+            _ => {
                 self.generate_openai(base_url, api_key, model_id, request)
                     .await
             }
-            _ => Err(format!("Unsupported image provider: {}", provider)),
         }
     }
 
@@ -82,10 +86,22 @@ impl ImageGenerator {
             return Err(format!("API error {}: {}", status, body));
         }
 
-        let result: serde_json::Value = response
-            .json()
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("unknown")
+            .to_string();
+        let body = response
+            .text()
             .await
-            .map_err(|e| format!("Failed to parse response: {}", e))?;
+            .map_err(|e| format!("Failed to read image API response: {}", e))?;
+        let result: serde_json::Value = serde_json::from_str(&body).map_err(|_| {
+            format!(
+                "Automatic1111 API returned {} instead of JSON.",
+                content_type
+            )
+        })?;
 
         let images = result["images"]
             .as_array()
@@ -147,33 +163,152 @@ impl ImageGenerator {
             return Err(format!("API error {}: {}", status, body));
         }
 
-        let result: serde_json::Value = response
-            .json()
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("unknown")
+            .to_string();
+        let body = response
+            .text()
             .await
-            .map_err(|e| format!("Failed to parse response: {}", e))?;
+            .map_err(|e| format!("Failed to read image API response: {}", e))?;
+        let result: serde_json::Value = serde_json::from_str(&body).map_err(|_| {
+            format!(
+                "Image API returned {} instead of JSON. Check that the Base URL includes the API version, for example /v1.",
+                content_type
+            )
+        })?;
 
-        let image_b64 = result["data"][0]["b64_json"]
-            .as_str()
-            .ok_or_else(|| "No image data in response".to_string())?;
-
-        use base64::Engine;
-        let image_data = base64::engine::general_purpose::STANDARD
-            .decode(image_b64)
-            .map_err(|e| format!("Failed to decode image: {}", e))?;
+        let (image_data, format) = match openai_image_source(&result)? {
+            OpenAiImageSource::Base64(image_b64) => {
+                use base64::Engine;
+                let image_data = base64::engine::general_purpose::STANDARD
+                    .decode(image_b64)
+                    .map_err(|e| format!("Failed to decode image: {}", e))?;
+                (image_data, "png".to_string())
+            }
+            OpenAiImageSource::Url(image_url) => self.download_generated_image(&image_url).await?,
+        };
 
         Ok(ImageResponse {
             image_data,
-            format: "png".to_string(),
+            format,
             seed: None,
         })
     }
+
+    async fn download_generated_image(&self, image_url: &str) -> Result<(Vec<u8>, String), String> {
+        let response = self
+            .http_client
+            .get(image_url)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to download generated image: {}", e))?;
+        if !response.status().is_success() {
+            return Err(format!(
+                "Generated image download returned HTTP {}",
+                response.status()
+            ));
+        }
+        let format = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(image_format_from_content_type)
+            .unwrap_or("png")
+            .to_string();
+        let image_data = response
+            .bytes()
+            .await
+            .map_err(|e| format!("Failed to read generated image: {}", e))?
+            .to_vec();
+        Ok((image_data, format))
+    }
 }
 
-fn normalize_provider(provider: &str) -> String {
+fn openai_image_source(result: &serde_json::Value) -> Result<OpenAiImageSource, String> {
+    let image = result
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|images| images.first())
+        .ok_or_else(|| "No image data in response".to_string())?;
+    if let Some(image_b64) = image.get("b64_json").and_then(serde_json::Value::as_str) {
+        return Ok(OpenAiImageSource::Base64(image_b64.to_string()));
+    }
+    if let Some(image_url) = image.get("url").and_then(serde_json::Value::as_str) {
+        return Ok(OpenAiImageSource::Url(image_url.to_string()));
+    }
+    Err("No image data in response; expected data[0].b64_json or data[0].url".to_string())
+}
+
+fn image_format_from_content_type(content_type: &str) -> &str {
+    match content_type.split(';').next().unwrap_or("").trim() {
+        "image/jpeg" => "jpg",
+        "image/webp" => "webp",
+        _ => "png",
+    }
+}
+
+pub(crate) fn preferred_image_size(model_id: &str, width: i32, height: i32) -> (i32, i32) {
+    if model_id.trim().to_ascii_lowercase().contains("-1k") {
+        (1024, 1024)
+    } else {
+        (width, height)
+    }
+}
+
+pub(crate) fn normalize_provider(provider: &str) -> String {
     match provider.trim().to_ascii_lowercase().as_str() {
         "openai-compatible" | "openai compatible" | "openai" | "gpt-image2" | "nanp banana2"
         | "google nano banana" => "openai".to_string(),
         "automatic1111" | "a1111" | "stable-diffusion" => "automatic1111".to_string(),
-        other => other.to_string(),
+        // Custom image endpoints use the OpenAI-compatible Images API by default.
+        _ => "openai".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{normalize_provider, openai_image_source, preferred_image_size, OpenAiImageSource};
+    use serde_json::json;
+
+    #[test]
+    fn normalizes_custom_image_provider_to_openai_compatible() {
+        assert_eq!(normalize_provider("123"), "openai");
+        assert_eq!(normalize_provider("my-image-proxy"), "openai");
+    }
+
+    #[test]
+    fn preserves_automatic1111_as_a_special_protocol() {
+        assert_eq!(normalize_provider("automatic1111"), "automatic1111");
+    }
+
+    #[test]
+    fn accepts_openai_compatible_url_image_responses() {
+        let result = json!({ "data": [{ "url": "https://example.test/image.png" }] });
+        let source = openai_image_source(&result).expect("image source");
+        assert!(
+            matches!(source, OpenAiImageSource::Url(url) if url == "https://example.test/image.png")
+        );
+    }
+
+    #[test]
+    fn accepts_openai_compatible_base64_image_responses() {
+        let result = json!({ "data": [{ "b64_json": "aGVsbG8=" }] });
+        let source = openai_image_source(&result).expect("image source");
+        assert!(matches!(source, OpenAiImageSource::Base64(value) if value == "aGVsbG8="));
+    }
+
+    #[test]
+    fn uses_square_size_for_one_k_models() {
+        assert_eq!(
+            preferred_image_size("firefly-gpt-image-2-1k", 1536, 1024),
+            (1024, 1024)
+        );
+        assert_eq!(
+            preferred_image_size("gpt-image-2", 1536, 1024),
+            (1536, 1024)
+        );
     }
 }

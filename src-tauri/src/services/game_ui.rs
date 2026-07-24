@@ -13,9 +13,14 @@ use crate::models::world::{
 const SUPPORTED_SCHEMA_VERSIONS: [u32; 1] = [2];
 const SUPPORTED_UI_RUNTIME_VERSIONS: [u32; 2] = [2, 3];
 const MAX_WORLD_STYLESHEET_BYTES: usize = 1024 * 1024;
-const SUPPORTED_CAPABILITIES: [&str; 3] =
-    ["supports_file_picker", "supports_hover", "supports_mic"];
-const SUPPORTED_ACTION_IDS: [&str; 19] = [
+const SUPPORTED_CAPABILITIES: [&str; 5] = [
+    "supports_file_picker",
+    "supports_hover",
+    "supports_mic",
+    "supports_world_records",
+    "supports_world_storage",
+];
+const SUPPORTED_ACTION_IDS: [&str; 28] = [
     "submit_message",
     "edit_turn_start",
     "edit_turn_cancel",
@@ -35,6 +40,15 @@ const SUPPORTED_ACTION_IDS: [&str; 19] = [
     "start_recording",
     "stop_recording",
     "remove_audio",
+    "storage.records.list",
+    "storage.records.create",
+    "storage.records.update",
+    "storage.records.delete",
+    "storage.kv.list",
+    "storage.kv.get",
+    "storage.kv.set",
+    "storage.kv.delete",
+    "logic.run",
 ];
 
 #[derive(Clone, Copy)]
@@ -148,6 +162,19 @@ fn component_support(component_id: &str) -> Option<ComponentSupport> {
             implicit_capabilities: &[],
             allowed_slots: &[],
         }),
+        "ledger_book" => Some(ComponentSupport {
+            props: &[
+                "title",
+                "collection",
+                "currency",
+                "default_view",
+                "income_categories",
+                "expense_categories",
+            ],
+            implicit_actions: &[],
+            implicit_capabilities: &["supports_world_records"],
+            allowed_slots: &[],
+        }),
         _ => None,
     }
 }
@@ -209,6 +236,18 @@ impl CompilationState {
             "start_recording" => {}
             "stop_recording" => {}
             "remove_audio" => {}
+            "storage.records.list"
+            | "storage.records.create"
+            | "storage.records.update"
+            | "storage.records.delete"
+            | "storage.kv.list"
+            | "storage.kv.get"
+            | "storage.kv.set"
+            | "storage.kv.delete"
+            | "logic.run" => {
+                self.capabilities
+                    .insert("supports_world_storage".to_string());
+            }
             other => {
                 self.error(
                     "unknown_action",
@@ -302,6 +341,90 @@ impl GameUiService {
                     path: Some("bundle.capabilities".to_string()),
                 });
             }
+        }
+        if let Err(message) =
+            crate::services::world_storage::validate_storage_config(&request.storage)
+        {
+            diagnostics.push(WorldUiDiagnostic {
+                severity: "error".to_string(),
+                code: "invalid_world_storage_config".to_string(),
+                message,
+                path: Some("bundle.storage".to_string()),
+            });
+        }
+        if let Err(message) =
+            crate::services::world_storage::validate_logic_config(&request.logic)
+        {
+            diagnostics.push(WorldUiDiagnostic {
+                severity: "error".to_string(),
+                code: "invalid_world_logic_config".to_string(),
+                message,
+                path: Some("bundle.logic".to_string()),
+            });
+        }
+        let uses_world_storage = desktop
+            .capabilities
+            .iter()
+            .chain(mobile.capabilities.iter())
+            .any(|capability| capability == "supports_world_storage")
+            || request
+                .storage
+                .get("collections")
+                .and_then(Value::as_object)
+                .map(|collections| !collections.is_empty())
+                .unwrap_or(false)
+            || request
+                .storage
+                .get("kv_namespaces")
+                .and_then(Value::as_array)
+                .map(|namespaces| !namespaces.is_empty())
+                .unwrap_or(false)
+            || request
+                .logic
+                .get("runtime")
+                .and_then(Value::as_str)
+                == Some("sandbox-js-v1");
+        if uses_world_storage
+            && !request
+                .capabilities
+                .iter()
+                .any(|capability| capability == "supports_world_storage")
+        {
+            diagnostics.push(WorldUiDiagnostic {
+                severity: "error".to_string(),
+                code: "missing_world_storage_capability".to_string(),
+                message: "Worlds using storage or sandbox logic must declare supports_world_storage."
+                    .to_string(),
+                path: Some("bundle.capabilities".to_string()),
+            });
+        }
+        let uses_world_records = desktop
+            .capabilities
+            .iter()
+            .chain(mobile.capabilities.iter())
+            .any(|capability| capability == "supports_world_records");
+        if uses_world_records && runtime_version < 3 {
+            diagnostics.push(WorldUiDiagnostic {
+                severity: "error".to_string(),
+                code: "world_records_require_runtime_v3".to_string(),
+                message: "World record storage is only available in UI runtime version 3."
+                    .to_string(),
+                path: Some("bundle.runtime_version".to_string()),
+            });
+        }
+        if uses_world_records
+            && !request
+                .capabilities
+                .iter()
+                .any(|capability| capability == "supports_world_records")
+        {
+            diagnostics.push(WorldUiDiagnostic {
+                severity: "error".to_string(),
+                code: "missing_world_records_capability".to_string(),
+                message: "Worlds using ledger_book must declare supports_world_records."
+                    .to_string(),
+                path: Some("bundle.capabilities".to_string()),
+            });
         }
         if desktop.schema_version != mobile.schema_version {
             diagnostics.push(WorldUiDiagnostic {
@@ -1172,7 +1295,8 @@ fn validate_mobile_document_rules(
     custom_css: Option<&Value>,
     state: &mut CompilationState,
 ) {
-    if !state.components.contains("input_composer") {
+    let is_standalone_ledger = state.components.contains("ledger_book");
+    if !is_standalone_ledger && !state.components.contains("input_composer") {
         state.warn(
             "mobile_missing_input_composer",
             "Mobile UI documents should include input_composer so the runtime can keep the composer visible when the keyboard opens.",
@@ -1180,7 +1304,7 @@ fn validate_mobile_document_rules(
         );
     }
 
-    if !state.components.contains("side_panel_tabs") {
+    if !is_standalone_ledger && !state.components.contains("side_panel_tabs") {
         state.warn(
             "mobile_missing_side_panel_tabs",
             "Mobile UI documents should put status, map, and custom tabs in side_panel_tabs instead of inline chat content.",
@@ -1346,7 +1470,14 @@ fn validate_action_reference(value: &Value, path: &str, state: &mut CompilationS
         }
     }
 
-    for key in ["content", "content_template", "mode"] {
+    for key in [
+        "content",
+        "content_template",
+        "mode",
+        "result_state",
+        "error_state",
+        "pending_state",
+    ] {
         if let Some(item) = object.get(key) {
             if !item.is_string() {
                 state.error(
@@ -1447,6 +1578,7 @@ fn current_compatibility_target() -> WorldUiCompatibilityTarget {
             "input_composer",
             "side_panel_tabs",
             "floating_actions",
+            "ledger_book",
         ]
         .iter()
         .map(|value| value.to_string())
@@ -1529,6 +1661,8 @@ mod tests {
             desktop_stylesheet: String::new(),
             mobile_stylesheet: String::new(),
             capabilities: Vec::new(),
+            storage: serde_json::json!({}),
+            logic: serde_json::json!({}),
         });
         assert!(
             bundle.ok,
@@ -1588,6 +1722,8 @@ mod tests {
                 desktop_stylesheet: ".desktop-entry { min-width: 0; }".to_string(),
                 mobile_stylesheet: ".mobile-entry { min-width: 0; }".to_string(),
                 capabilities: vec!["supports_file_picker".to_string(), "supports_mic".to_string()],
+                storage: serde_json::json!({}),
+                logic: serde_json::json!({}),
             });
             assert!(
                 result.ok,
@@ -1597,6 +1733,88 @@ mod tests {
                 result.errors,
             );
         }
+    }
+
+    #[test]
+    fn validates_accounting_assistant_world_package_ui() {
+        let service = GameUiService::new();
+        let desktop =
+            include_str!("../../../examples/world-packages/accounting-assistant/world/ui.desktop.jsonc");
+        let mobile =
+            include_str!("../../../examples/world-packages/accounting-assistant/world/ui.mobile.jsonc");
+
+        let result = service.validate_world_ui_bundle(WorldUiBundleValidationRequest {
+            desktop_file: desktop.to_string(),
+            mobile_file: mobile.to_string(),
+            runtime_version: Some(3),
+            desktop_stylesheet: include_str!(
+                "../../../examples/world-packages/accounting-assistant/world/ui.desktop.css"
+            )
+            .to_string(),
+            mobile_stylesheet: include_str!(
+                "../../../examples/world-packages/accounting-assistant/world/ui.mobile.css"
+            )
+            .to_string(),
+            capabilities: vec![
+                "supports_world_records".to_string(),
+                "supports_world_storage".to_string(),
+            ],
+            storage: serde_json::json!({
+                "collections": { "ledger.entries": {} }
+            }),
+            logic: serde_json::json!({}),
+        });
+
+        assert!(
+            result.ok,
+            "desktop: {:?}; mobile: {:?}; bundle: {:?}",
+            result.desktop.errors, result.mobile.errors, result.errors,
+        );
+        assert!(result
+            .desktop
+            .components
+            .contains(&"ledger_book".to_string()));
+        assert!(result
+            .desktop
+            .capabilities
+            .contains(&"supports_world_records".to_string()));
+        assert!(result.mobile.warnings.is_empty());
+    }
+
+    #[test]
+    fn ledger_book_requires_runtime_v3_and_explicit_capability() {
+        let service = GameUiService::new();
+        let document = r#"{
+          schema_version: 2,
+          layout: {
+            root: {
+              type: "component",
+              component: "ledger_book",
+              props: { collection: "ledger.entries" }
+            }
+          }
+        }"#;
+
+        let result = service.validate_world_ui_bundle(WorldUiBundleValidationRequest {
+            desktop_file: document.to_string(),
+            mobile_file: document.to_string(),
+            runtime_version: Some(2),
+            desktop_stylesheet: String::new(),
+            mobile_stylesheet: String::new(),
+            capabilities: Vec::new(),
+            storage: serde_json::json!({}),
+            logic: serde_json::json!({}),
+        });
+
+        assert!(!result.ok);
+        assert!(result
+            .errors
+            .iter()
+            .any(|diagnostic| diagnostic.code == "world_records_require_runtime_v3"));
+        assert!(result
+            .errors
+            .iter()
+            .any(|diagnostic| diagnostic.code == "missing_world_records_capability"));
     }
 
     #[test]

@@ -1,18 +1,20 @@
 import { useMemo, useRef } from "react";
 
 import { GameUiRenderer, type GameUiRenderContext } from "../components/GameUiRenderer";
-import type { GameUiActionReference, GameUiPropValue } from "../data/gameUi";
+import type { GameUiActionReference, GameUiPropValue, WorldLogicConfig } from "../data/gameUi";
 import { parseSwitchProposal, resolvePlayerActionMode } from "../game/utils";
 import type { GameUiRuntimeActions } from "../gameUiRuntime/actions";
 import { evaluateGameUiExpression } from "../gameUiRuntime/expression";
 import { createGameUiComponentRenderers } from "../gameUiRuntime/registry";
 import { hydrateGameUiRuntimeContext, type WorldFrameRuntimePayload } from "./runtimeSnapshot";
 import type { WorldFrameAction } from "./protocol";
+import { LedgerBook } from "./LedgerBook";
+import { invokeWorldLogic } from "./WorldLogicRuntime";
 import { WorldFrameInputComposer } from "./WorldFrameInputComposer";
 
 type Props = {
   payload: WorldFrameRuntimePayload;
-  sendAction: (action: WorldFrameAction) => Promise<void>;
+  sendAction: (action: WorldFrameAction) => Promise<unknown>;
 };
 
 export function WorldFrameRuntimeView({ payload, sendAction }: Props) {
@@ -28,7 +30,10 @@ export function WorldFrameRuntimeView({ payload, sendAction }: Props) {
     input_composer: ({ node }: Parameters<NonNullable<ReturnType<typeof createGameUiComponentRenderers>[string]>>[0]) => (
       <WorldFrameInputComposer runtime={runtime} actions={actions} node={node} />
     ),
-  }), [actions, runtime]);
+    ledger_book: ({ node }: Parameters<NonNullable<ReturnType<typeof createGameUiComponentRenderers>[string]>>[0]) => (
+      <LedgerBook node={node} platform={payload.platform} sendAction={sendAction} />
+    ),
+  }), [actions, payload.platform, runtime, sendAction]);
   const runtimeData = useMemo(() => ({
     session: runtime.session,
     world: runtime.world,
@@ -51,7 +56,7 @@ export function WorldFrameRuntimeView({ payload, sendAction }: Props) {
   }), [runtime]);
 
   const handleDslAction = async (action: GameUiActionReference, context: GameUiRenderContext) => {
-    await dispatchDslAction(action, context, runtime, actions, sendAction);
+    return dispatchDslAction(action, context, runtime, actions, payload.logic, sendAction);
   };
 
   const viewportStyle = {
@@ -99,8 +104,9 @@ async function dispatchDslAction(
   context: GameUiRenderContext,
   runtime: ReturnType<typeof hydrateGameUiRuntimeContext>,
   actions: GameUiRuntimeActions,
-  sendAction: (action: WorldFrameAction) => Promise<void>,
-) {
+  logic: WorldLogicConfig,
+  sendAction: (action: WorldFrameAction) => Promise<unknown>,
+): Promise<unknown> {
   const actionId = action.id.replace(/^@/, "");
   const args = resolveActionArgs(action.args ?? {}, context);
   const contentTemplate = action.content_template ?? action.content ?? readStringArg(args, "content");
@@ -113,13 +119,13 @@ async function dispatchDslAction(
         content: content || undefined,
         turnIndex: readNumberArg(args, "turn_index"),
       });
-      return;
+      return undefined;
     case "edit_turn_start":
       actions.startEditingTurn(content, readNumberArg(args, "turn_index") ?? 0);
-      return;
-    case "edit_turn_cancel": actions.cancelEditingTurn(); return;
-    case "branch_from_current": await actions.branchFromCurrent(); return;
-    case "retry_turn": await actions.retryTurn(readStringArg(args, "retry_token")); return;
+      return undefined;
+    case "edit_turn_cancel": actions.cancelEditingTurn(); return undefined;
+    case "branch_from_current": await actions.branchFromCurrent(); return undefined;
+    case "retry_turn": await actions.retryTurn(readStringArg(args, "retry_token")); return undefined;
     case "accept_switch_proposal": {
       const proposalKey = readStringArg(args, "proposal_key");
       const proposal = runtime.messages
@@ -129,45 +135,98 @@ async function dispatchDslAction(
         throw new Error(`Switch proposal not found: ${proposalKey}`);
       }
       await actions.acceptSwitchProposal(proposal);
-      return;
+      return undefined;
     }
-    case "dismiss_switch_proposal": actions.dismissSwitchProposal(readStringArg(args, "proposal_key")); return;
-    case "dismiss_retry_card": actions.dismissRetryCard(readStringArg(args, "card_key")); return;
-    case "copy_text": await actions.copyText(readStringArg(args, "text") || content); return;
-    case "switch_side_tab": actions.switchSideTab(readStringArg(args, "tab_key")); return;
-    case "navigate_back": actions.navigateBack(); return;
-    case "navigate_home": await sendAction({ type: "navigate", target: "home" }); return;
-    case "navigate_settings": actions.navigateSettings(); return;
-    case "navigate_debug": actions.navigateDebug(); return;
-    case "pick_image": actions.pickImage(); return;
-    case "remove_image": actions.removeImage(readNumberArg(args, "index") ?? -1); return;
-    case "start_recording": await actions.startRecording(); return;
-    case "stop_recording": actions.stopRecording(); return;
-    case "remove_audio": actions.removeAudio(readNumberArg(args, "index") ?? -1); return;
+    case "dismiss_switch_proposal": actions.dismissSwitchProposal(readStringArg(args, "proposal_key")); return undefined;
+    case "dismiss_retry_card": actions.dismissRetryCard(readStringArg(args, "card_key")); return undefined;
+    case "copy_text": await actions.copyText(readStringArg(args, "text") || content); return undefined;
+    case "switch_side_tab": actions.switchSideTab(readStringArg(args, "tab_key")); return undefined;
+    case "navigate_back": actions.navigateBack(); return undefined;
+    case "navigate_home": await sendAction({ type: "navigate", target: "home" }); return undefined;
+    case "navigate_settings": actions.navigateSettings(); return undefined;
+    case "navigate_debug": actions.navigateDebug(); return undefined;
+    case "pick_image": actions.pickImage(); return undefined;
+    case "remove_image": actions.removeImage(readNumberArg(args, "index") ?? -1); return undefined;
+    case "start_recording": await actions.startRecording(); return undefined;
+    case "stop_recording": actions.stopRecording(); return undefined;
+    case "remove_audio": actions.removeAudio(readNumberArg(args, "index") ?? -1); return undefined;
+    case "storage.records.list":
+      return sendAction({
+        type: "world-record-list",
+        collection: readStringArg(args, "collection"),
+      });
+    case "storage.records.create":
+      return sendAction({
+        type: "world-record-create",
+        collection: readStringArg(args, "collection"),
+        data: readRecordArg(args, "data"),
+      });
+    case "storage.records.update":
+      return sendAction({
+        type: "world-record-update",
+        collection: readStringArg(args, "collection"),
+        recordId: readStringArg(args, "record_id"),
+        data: readRecordArg(args, "data"),
+      });
+    case "storage.records.delete":
+      return sendAction({
+        type: "world-record-delete",
+        collection: readStringArg(args, "collection"),
+        recordId: readStringArg(args, "record_id"),
+      });
+    case "storage.kv.list":
+      return sendAction({ type: "world-kv-list", namespace: readStringArg(args, "namespace") });
+    case "storage.kv.get":
+      return sendAction({
+        type: "world-kv-get",
+        namespace: readStringArg(args, "namespace"),
+        key: readStringArg(args, "key"),
+      });
+    case "storage.kv.set":
+      return sendAction({
+        type: "world-kv-set",
+        namespace: readStringArg(args, "namespace"),
+        key: readStringArg(args, "key"),
+        value: args.value,
+      });
+    case "storage.kv.delete":
+      return sendAction({
+        type: "world-kv-delete",
+        namespace: readStringArg(args, "namespace"),
+        key: readStringArg(args, "key"),
+      });
+    case "logic.run":
+      return invokeWorldLogic(
+        logic,
+        readStringArg(args, "handler"),
+        args.input ?? args,
+        sendAction,
+      );
   }
+  throw new Error(`Unsupported world UI action: ${actionId}`);
 }
 
-function createFrameActions(send: (action: WorldFrameAction) => Promise<void>): GameUiRuntimeActions {
+function createFrameActions(send: (action: WorldFrameAction) => Promise<unknown>): GameUiRuntimeActions {
   return {
     clearActionError: () => void send({ type: "clear-action-error" }),
     setDraftValue: (value) => void send({ type: "set-draft-value", value }),
     setAutoScrollEnabled: (enabled) => void send({ type: "set-auto-scroll", enabled }),
-    submitMessage: (options = {}) => send({ type: "submit-message", options }),
+    submitMessage: (options = {}) => send({ type: "submit-message", options }).then(() => undefined),
     startEditingTurn: (content, turnIndex) => void send({ type: "start-editing-turn", content, turnIndex }),
     cancelEditingTurn: () => void send({ type: "cancel-editing-turn" }),
-    branchFromCurrent: () => send({ type: "branch-from-current" }),
-    retryTurn: (retryToken) => send({ type: "retry-turn", retryToken }),
-    acceptSwitchProposal: (proposal) => send({ type: "accept-switch-proposal", proposal }),
+    branchFromCurrent: () => send({ type: "branch-from-current" }).then(() => undefined),
+    retryTurn: (retryToken) => send({ type: "retry-turn", retryToken }).then(() => undefined),
+    acceptSwitchProposal: (proposal) => send({ type: "accept-switch-proposal", proposal }).then(() => undefined),
     dismissSwitchProposal: (proposalKey) => void send({ type: "dismiss-switch-proposal", proposalKey }),
     dismissRetryCard: (cardKey) => void send({ type: "dismiss-retry-card", cardKey }),
-    copyText: (text) => send({ type: "copy-text", text }),
+    copyText: (text) => send({ type: "copy-text", text }).then(() => undefined),
     switchSideTab: (tabKey) => void send({ type: "switch-side-tab", tabKey }),
     navigateBack: () => void send({ type: "navigate", target: "back" }),
     navigateSettings: () => void send({ type: "navigate", target: "settings" }),
     navigateDebug: () => void send({ type: "navigate", target: "debug" }),
     pickImage: () => void send({ type: "pick-image" }),
     removeImage: (index) => void send({ type: "remove-image", index }),
-    startRecording: () => send({ type: "start-recording" }),
+    startRecording: () => send({ type: "start-recording" }).then(() => undefined),
     stopRecording: (options) => void send({ type: "stop-recording", send: options?.send }),
     setVoiceMode: (enabled) => void send({ type: "voice-mode", enabled }),
     removeAudio: (index) => void send({ type: "remove-audio", index }),
@@ -219,6 +278,14 @@ function readStringArg(args: Record<string, unknown>, key: string): string {
 function readNumberArg(args: Record<string, unknown>, key: string): number | undefined {
   const value = Number(args[key]);
   return Number.isFinite(value) ? value : undefined;
+}
+
+function readRecordArg(args: Record<string, unknown>, key: string): Record<string, unknown> {
+  const value = args[key];
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`World UI action argument ${key} must be an object.`);
+  }
+  return value as Record<string, unknown>;
 }
 
 function resolveTemplatePath(context: GameUiRenderContext, expression: string): unknown {

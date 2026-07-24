@@ -8,3 +8,4 @@ pub mod map_topology;
 pub mod notifications;
 pub mod world_builder;
 pub mod world_package;
+pub mod world_storage;

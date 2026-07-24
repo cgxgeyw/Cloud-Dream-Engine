@@ -1,6 +1,11 @@
 import { createRef, type RefObject } from "react";
 
-import type { GameUiPlatform, GameUiDocument } from "../data/gameUi";
+import type {
+  GameUiPlatform,
+  GameUiDocument,
+  WorldLogicConfig,
+  WorldStorageConfig,
+} from "../data/gameUi";
 import type { GameSessionStateBag } from "../game/useGameSession";
 import { createGameUiPlatformCapabilities } from "../gameUiRuntime/capabilities";
 import {
@@ -50,6 +55,8 @@ export type WorldFrameRuntimePayload = {
   stylesheet: string;
   scopeId: string;
   rootStyle: Record<string, string | number>;
+  storage: WorldStorageConfig;
+  logic: WorldLogicConfig;
   snapshot: GameUiRuntimeSnapshot;
 };
 

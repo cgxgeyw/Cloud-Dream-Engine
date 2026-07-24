@@ -497,14 +497,22 @@ export function useGameSession(
     }
 
     const worldName = session.world_name;
+    const playerCharacterId = session.player_character_id;
     let cancelled = false;
 
     async function loadWorld() {
       try {
-        const worlds = await fetchWorlds();
+        const [worlds, sessionPlayer] = await Promise.all([
+          fetchWorlds(),
+          playerCharacterId
+            ? fetchCharacter(playerCharacterId).catch(() => null)
+            : Promise.resolve(null),
+        ]);
         if (!cancelled) {
           setThemeWorld(
-            worlds.find((world) => world.name === worldName) ?? null,
+            worlds.find((world) => world.id === sessionPlayer?.world_id)
+              ?? worlds.find((world) => world.name === worldName)
+              ?? null,
           );
         }
       } catch {
@@ -519,7 +527,7 @@ export function useGameSession(
     return () => {
       cancelled = true;
     };
-  }, [session?.world_name]);
+  }, [session?.player_character_id, session?.world_name]);
 
   useEffect(() => {
     if (!playerCharacterId) {

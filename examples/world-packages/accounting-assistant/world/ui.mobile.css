@@ -1,0 +1,47 @@
+:root {
+  color-scheme: light;
+}
+
+html,
+body,
+#root,
+.game-root,
+.game-ui-layout,
+[data-component="ledger_book"] {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+}
+
+.game-root,
+.game-ui-layout,
+[data-component="ledger_book"] {
+  overflow: hidden;
+}
+
+.accounting-ledger--mobile .ledger-book {
+  --ledger-bg: #f4f7f5;
+  --ledger-surface: #ffffff;
+  --ledger-surface-muted: #e8efeb;
+  --ledger-text: #17231e;
+  --ledger-muted: #63716a;
+  --ledger-line: #d7e0db;
+  --ledger-accent: #147049;
+  --ledger-accent-strong: #0d5637;
+  --ledger-accent-soft: #dcf1e6;
+  --ledger-income: #147049;
+  --ledger-income-soft: #dcf1e6;
+  --ledger-expense: #c0473e;
+  --ledger-expense-soft: #fae7e4;
+  overscroll-behavior: contain;
+}
+
+.accounting-ledger--mobile .ledger-header {
+  padding-top: max(16px, calc(var(--world-safe-area-top, 0px) + 10px));
+}
+
+.accounting-ledger--mobile .ledger-dialog-backdrop {
+  padding-top: max(10px, calc(var(--world-safe-area-top, 0px) + 6px));
+  padding-bottom: max(10px, calc(var(--world-safe-area-bottom, 0px) + 6px));
+}

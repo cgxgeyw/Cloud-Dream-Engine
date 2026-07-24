@@ -222,14 +222,21 @@ export function SidePanelTabsComponent({ runtime, actions, node, renderSlot }: R
         {customContent ? customContent : null}
         {!customContent && visibleTabs.length === 0 ? <div className="game-card">{emptyText}</div> : null}
         {!customContent && runtime.active_side_tab === "map" && (runtime.capabilities.platform !== "mobile" || mobileDrawerOpen) ? (
-          <Suspense fallback={<div className="game-map-graph" />}>
-            <SessionMapGraph
-              key={runtime.capabilities.platform === "mobile" ? `mobile-map-${mobileDrawerOpen ? "open" : "closed"}` : "desktop-map"}
-              nodes={runtime.map_graph.nodes}
-              edges={runtime.map_graph.edges}
-              compact={runtime.capabilities.platform === "mobile"}
-            />
-          </Suspense>
+          runtime.ui_state.streaming_response_active ? (
+            // 回合进行中快照会高频刷新,布局剧烈抖动时 ReactFlow 会量出 0 尺寸的画布
+            // 且不会自愈(ResizeObserver loop 错误被全局吞掉),表现为"回合后拓扑图消失"。
+            // 流式期间先挂占位,回合结束快照稳定后再挂载画布,强制重新测量 + fitView。
+            <div className="game-map-graph" />
+          ) : (
+            <Suspense fallback={<div className="game-map-graph" />}>
+              <SessionMapGraph
+                key={runtime.capabilities.platform === "mobile" ? `mobile-map-${mobileDrawerOpen ? "open" : "closed"}-${runtime.messages.length}` : `desktop-map-${runtime.messages.length}`}
+                nodes={runtime.map_graph.nodes}
+                edges={runtime.map_graph.edges}
+                compact={runtime.capabilities.platform === "mobile"}
+              />
+            </Suspense>
+          )
         ) : null}
         {!customContent && runtime.active_side_tab.startsWith("attribute:") && runtime.active_attribute_content ? (
           <div className="game-card game-attribute-tab-content">{runtime.active_attribute_content}</div>

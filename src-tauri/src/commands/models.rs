@@ -1,5 +1,5 @@
 use crate::models::model_config::*;
-use crate::services::assets::image_gen::{ImageGenerator, ImageRequest};
+use crate::services::assets::image_gen::{preferred_image_size, ImageGenerator, ImageRequest};
 use crate::services::llm::client::{ChatMessage, ChatRequest};
 use crate::state::AppState;
 use tauri::State;
@@ -220,7 +220,7 @@ pub async fn test_image_model(
         });
     }
 
-    let (width, height) = if model
+    let (default_width, default_height) = if model
         .provider
         .trim()
         .to_ascii_lowercase()
@@ -230,6 +230,7 @@ pub async fn test_image_model(
     } else {
         (1536, 1024)
     };
+    let (width, height) = preferred_image_size(&model.model_id, default_width, default_height);
 
     let generator = ImageGenerator::new();
     let result = generator

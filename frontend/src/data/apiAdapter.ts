@@ -33,6 +33,9 @@ import type {
   WorldUiDocumentValidationResult,
   WorldPermissionStatus,
   WorldUpsertRequest,
+  WorldRecord,
+  WorldRecordWriteRequest,
+  WorldKvEntry,
 } from "./types";
 
 async function detectTauri(): Promise<boolean> {
@@ -172,6 +175,8 @@ export type {
   WorldUiCompileResult,
   WorldUiCompatibilityReport,
   WorldUiDocumentValidationResult,
+  WorldRecord,
+  WorldRecordWriteRequest,
 } from "./types";
 
 // 仅 SessionDebugResponse 从 tauriApi 导入（tauriApi 特有）
@@ -204,6 +209,82 @@ export async function onAiWorldCreateProgress(callback: (receivedChars: number) 
 
 export async function updateWorld(worldId: string, payload: WorldUpsertRequest) {
   return isTauri ? (await getTauri()).updateWorld(worldId, payload) : (await getHttp()).updateWorld(worldId, payload);
+}
+
+export async function listWorldRecords(worldId: string, collection: string): Promise<WorldRecord[]> {
+  if (!isTauri) {
+    throw new Error("World record storage is only available in the local application.");
+  }
+  return (await getTauri()).listWorldRecords(worldId, collection);
+}
+
+export async function createWorldRecord(
+  worldId: string,
+  payload: WorldRecordWriteRequest,
+): Promise<WorldRecord> {
+  if (!isTauri) {
+    throw new Error("World record storage is only available in the local application.");
+  }
+  return (await getTauri()).createWorldRecord(worldId, payload);
+}
+
+export async function updateWorldRecord(
+  worldId: string,
+  recordId: string,
+  payload: WorldRecordWriteRequest,
+): Promise<WorldRecord> {
+  if (!isTauri) {
+    throw new Error("World record storage is only available in the local application.");
+  }
+  return (await getTauri()).updateWorldRecord(worldId, recordId, payload);
+}
+
+export async function deleteWorldRecord(
+  worldId: string,
+  collection: string,
+  recordId: string,
+): Promise<void> {
+  if (!isTauri) {
+    throw new Error("World record storage is only available in the local application.");
+  }
+  return (await getTauri()).deleteWorldRecord(worldId, collection, recordId);
+}
+
+export async function listWorldKv(worldId: string, namespace: string): Promise<WorldKvEntry[]> {
+  if (!isTauri) {
+    throw new Error("World KV storage is only available in the local application.");
+  }
+  return (await getTauri()).listWorldKv(worldId, namespace);
+}
+
+export async function getWorldKv(
+  worldId: string,
+  namespace: string,
+  key: string,
+): Promise<WorldKvEntry | null> {
+  if (!isTauri) {
+    throw new Error("World KV storage is only available in the local application.");
+  }
+  return (await getTauri()).getWorldKv(worldId, namespace, key);
+}
+
+export async function setWorldKv(
+  worldId: string,
+  namespace: string,
+  key: string,
+  value: unknown,
+): Promise<WorldKvEntry> {
+  if (!isTauri) {
+    throw new Error("World KV storage is only available in the local application.");
+  }
+  return (await getTauri()).setWorldKv(worldId, namespace, key, value);
+}
+
+export async function deleteWorldKv(worldId: string, namespace: string, key: string): Promise<void> {
+  if (!isTauri) {
+    throw new Error("World KV storage is only available in the local application.");
+  }
+  return (await getTauri()).deleteWorldKv(worldId, namespace, key);
 }
 
 export async function deleteWorld(worldId: string) {

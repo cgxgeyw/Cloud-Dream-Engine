@@ -5,7 +5,9 @@ use crate::models::character::CharacterDefinition;
 use crate::models::model_config::ModelConfig;
 use crate::models::session::{AssetSelection, CharacterVisualState, SceneRuntime, SessionSnapshot};
 use crate::models::world::WorldDefinition;
-use crate::services::assets::image_gen::{ImageGenerator, ImageRequest};
+use crate::services::assets::image_gen::{
+    normalize_provider, preferred_image_size, ImageGenerator, ImageRequest,
+};
 
 pub struct AssetResolver {
     image_generator: ImageGenerator,
@@ -632,17 +634,23 @@ async fn maybe_generate_asset_path(
     if model.base_url.trim().is_empty() {
         return None;
     }
+    let (default_width, default_height) = if kind == "background" {
+        (1536, 1024)
+    } else {
+        (1024, 1536)
+    };
+    let (width, height) = preferred_image_size(&model.model_id, default_width, default_height);
     let image = image_generator
         .generate(
-            normalize_provider_name(&model.provider).as_str(),
+            normalize_provider(&model.provider).as_str(),
             &model.base_url,
             &model.api_key,
             Some(model.model_id.as_str()),
             &ImageRequest {
                 prompt: prompt.to_string(),
                 negative_prompt: None,
-                width: Some(if kind == "background" { 1536 } else { 1024 }),
-                height: Some(if kind == "background" { 1024 } else { 1536 }),
+                width: Some(width),
+                height: Some(height),
                 steps: Some(20),
                 cfg_scale: Some(7.0),
                 seed: None,
@@ -651,14 +659,6 @@ async fn maybe_generate_asset_path(
         .await
         .ok()?;
     persist_generated_image(data_dir, kind, &image.image_data, &image.format).ok()
-}
-
-fn normalize_provider_name(provider: &str) -> String {
-    match provider.trim().to_lowercase().as_str() {
-        "openai-compatible" => "openai".to_string(),
-        "automatic1111" | "stable-diffusion" => "automatic1111".to_string(),
-        value => value.to_string(),
-    }
 }
 
 fn persist_generated_image(

@@ -22,7 +22,7 @@ type WorldFrameHostProps = {
   payload: WorldFramePreviewPayload | WorldFrameRuntimePayload;
   title: string;
   className?: string;
-  onAction?: (action: WorldFrameAction) => void | Promise<void>;
+  onAction?: (action: WorldFrameAction) => unknown | Promise<unknown>;
 };
 
 export function WorldFrameHost({ mode, payload, title, className, onAction }: WorldFrameHostProps) {
@@ -166,13 +166,14 @@ async function handleFrameAction(
     if (!handler) {
       throw new Error("This frame does not expose runtime actions.");
     }
-    await handler(action);
+    const result = await handler(action);
     connection.port.postMessage({
       type: "world-frame/action-result",
       protocolVersion: WORLD_FRAME_PROTOCOL_VERSION,
       channelId: connection.channelId,
       requestId,
       ok: true,
+      result,
     });
   } catch (errorLike) {
     connection.port.postMessage({

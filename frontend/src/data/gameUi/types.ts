@@ -36,10 +36,45 @@ export type UiAssetConfig = {
   local_scene_backgrounds: Record<string, string[]>;
 };
 
+export type WorldStorageFieldSchema = {
+  type?: "string" | "number" | "integer" | "boolean" | "object" | "array" | "null";
+  enum?: Array<string | number | boolean | null>;
+  minLength?: number;
+  maxLength?: number;
+  minimum?: number;
+  maximum?: number;
+};
+
+export type WorldStorageObjectSchema = {
+  type?: "object";
+  required?: string[];
+  properties?: Record<string, WorldStorageFieldSchema>;
+  additionalProperties?: boolean;
+};
+
+export type WorldStorageCollectionConfig = {
+  schema?: WorldStorageObjectSchema;
+  indexes?: string[];
+};
+
+export type WorldStorageConfig = {
+  kv_namespaces: string[];
+  collections: Record<string, WorldStorageCollectionConfig>;
+};
+
+export type WorldLogicConfig = {
+  runtime: "disabled" | "sandbox-js-v1";
+  source: string;
+  entry?: string;
+  timeout_ms: number;
+};
+
 export type WorldUiEnvelope = {
   runtime_version: 2 | 3;
   capabilities: string[];
   assets: UiAssetConfig;
+  storage: WorldStorageConfig;
+  logic: WorldLogicConfig;
   entries: Record<GameUiPlatform, WorldUiEntry>;
   desktop_file: string;
   mobile_file: string;
@@ -54,6 +89,8 @@ export type WorldUiEnvelopeV3 = {
   runtime_version: 3;
   capabilities: string[];
   assets: UiAssetConfig;
+  storage: WorldStorageConfig;
+  logic: WorldLogicConfig;
   entries: Record<GameUiPlatform, WorldUiEntry>;
 };
 
@@ -110,6 +147,9 @@ export type GameUiActionReference = {
   content?: string;
   content_template?: string;
   mode?: string;
+  result_state?: string;
+  error_state?: string;
+  pending_state?: string;
 };
 
 export type GameUiPropValue =

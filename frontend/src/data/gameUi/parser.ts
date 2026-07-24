@@ -18,6 +18,9 @@ import type {
   UiAssetConfig,
   WorldUiEnvelope,
   WorldUiEnvelopeV3,
+  WorldLogicConfig,
+  WorldStorageCollectionConfig,
+  WorldStorageConfig,
 } from "./types";
 import {
   DEFAULT_UI_ASSET_CONFIG,
@@ -88,6 +91,54 @@ function normalizeAssetGroupMap(raw: unknown): Record<string, string[]> {
   );
 }
 
+const STORAGE_NAME_PATTERN = /^[a-z0-9._-]{1,64}$/i;
+
+function normalizeWorldStorageConfig(raw: unknown): WorldStorageConfig {
+  const value = isPlainObject(raw) ? raw : {};
+  const rawCollections = isPlainObject(value.collections) ? value.collections : {};
+  const collections = Object.fromEntries(
+    Object.entries(rawCollections)
+      .filter(([name, config]) => STORAGE_NAME_PATTERN.test(name.trim()) && isPlainObject(config))
+      .map(([name, config]) => {
+        const collection = config as Record<string, unknown>;
+        const normalized: WorldStorageCollectionConfig = {};
+        if (isPlainObject(collection.schema)) {
+          normalized.schema = structuredClone(collection.schema) as WorldStorageCollectionConfig["schema"];
+        }
+        if (Array.isArray(collection.indexes)) {
+          normalized.indexes = collection.indexes
+            .map((item) => String(item).trim())
+            .filter(Boolean);
+        }
+        return [name.trim().toLowerCase(), normalized];
+      }),
+  );
+  const kvNamespaces = Array.isArray(value.kv_namespaces)
+    ? value.kv_namespaces
+      .map((item) => String(item).trim().toLowerCase())
+      .filter((item, index, items) => STORAGE_NAME_PATTERN.test(item) && items.indexOf(item) === index)
+    : [];
+  return { kv_namespaces: kvNamespaces, collections };
+}
+
+function normalizeWorldLogicConfig(raw: unknown): WorldLogicConfig {
+  const value = isPlainObject(raw) ? raw : {};
+  const source = typeof value.source === "string" ? value.source : "";
+  const runtime = value.runtime === "sandbox-js-v1" && source.trim()
+    ? "sandbox-js-v1"
+    : "disabled";
+  const requestedTimeout = Number(value.timeout_ms);
+  const timeoutMs = Number.isFinite(requestedTimeout)
+    ? Math.min(5_000, Math.max(100, Math.round(requestedTimeout)))
+    : 1_000;
+  return {
+    runtime,
+    source,
+    entry: typeof value.entry === "string" && value.entry.trim() ? value.entry.trim() : undefined,
+    timeout_ms: timeoutMs,
+  };
+}
+
 export function normalizeWorldUiEnvelope(raw: unknown): WorldUiEnvelope {
   const value = isPlainObject(raw) ? raw : {};
   const rawEntries = isPlainObject(value.entries) ? value.entries : {};
@@ -109,6 +160,8 @@ export function normalizeWorldUiEnvelope(raw: unknown): WorldUiEnvelope {
       ? value.capabilities.map((item) => String(item).trim()).filter(Boolean)
       : [],
     assets: normalizeAssetConfig(value.assets),
+    storage: normalizeWorldStorageConfig(value.storage),
+    logic: normalizeWorldLogicConfig(value.logic),
     entries: {
       desktop: desktopEntry,
       mobile: mobileEntry,
@@ -152,6 +205,8 @@ export function migrateWorldUiEnvelopeToV3(raw: unknown): WorldUiEnvelopeV3 {
     runtime_version: 3,
     capabilities: [...normalized.capabilities],
     assets: structuredClone(normalized.assets),
+    storage: structuredClone(normalized.storage),
+    logic: structuredClone(normalized.logic),
     entries: {
       desktop: { ...normalized.entries.desktop },
       mobile: { ...normalized.entries.mobile },
@@ -506,6 +561,9 @@ function normalizeActionReference(raw: unknown): GameUiActionReference | undefin
     content: typeof raw.content === "string" ? raw.content : undefined,
     content_template: typeof raw.content_template === "string" ? raw.content_template : undefined,
     mode: typeof raw.mode === "string" ? raw.mode : undefined,
+    result_state: typeof raw.result_state === "string" ? raw.result_state : undefined,
+    error_state: typeof raw.error_state === "string" ? raw.error_state : undefined,
+    pending_state: typeof raw.pending_state === "string" ? raw.pending_state : undefined,
   };
 }
 
@@ -1213,6 +1271,12 @@ function validateActionReference(raw: unknown, path: string): string | null {
 
   if (raw.mode !== undefined && typeof raw.mode !== "string") {
     return `${path}.mode must be a string.`;
+  }
+
+  for (const key of ["result_state", "error_state", "pending_state"] as const) {
+    if (raw[key] !== undefined && (typeof raw[key] !== "string" || !raw[key].trim())) {
+      return `${path}.${key} must be a non-empty string.`;
+    }
   }
 
   return null;

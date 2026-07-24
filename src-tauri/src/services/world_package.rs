@@ -13,13 +13,15 @@ use crate::models::world::{
 use crate::state::AppState;
 
 const WORLD_PACKAGE_FORMAT: &str = "dream-world-package";
-const WORLD_PACKAGE_VERSION: u32 = 6;
-const LEGACY_WORLD_PACKAGE_VERSION: u32 = 5;
+const WORLD_PACKAGE_VERSION: u32 = 7;
+const LEGACY_WORLD_PACKAGE_VERSIONS: [u32; 2] = [5, 6];
 const WORLD_PACKAGE_FILE: &str = "world/world.json";
 const WORLD_PACKAGE_DESKTOP_UI_FILE: &str = "world/ui.desktop.jsonc";
 const WORLD_PACKAGE_MOBILE_UI_FILE: &str = "world/ui.mobile.jsonc";
 const WORLD_PACKAGE_DESKTOP_UI_STYLESHEET: &str = "world/ui.desktop.css";
 const WORLD_PACKAGE_MOBILE_UI_STYLESHEET: &str = "world/ui.mobile.css";
+const WORLD_PACKAGE_LOGIC_FILE: &str = "world/logic.js";
+const MAX_WORLD_LOGIC_BYTES: usize = 256 * 1024;
 
 pub struct ImportedWorldPackage {
     pub world: WorldPackageWorldData,
@@ -42,6 +44,14 @@ impl WorldPackageService {
         characters: &[CharacterDefinition],
     ) -> Result<BinaryFileResponse, String> {
         let assets_root = assets_root(data_dir);
+        if let Some(source) = world_logic_source(world) {
+            if source.len() > MAX_WORLD_LOGIC_BYTES {
+                return Err(format!(
+                    "World logic exceeds the {} byte limit",
+                    MAX_WORLD_LOGIC_BYTES
+                ));
+            }
+        }
         let manifest = build_manifest(world, characters, &assets_root)?;
         let world_data = to_world_package_data(world, characters);
         let character_data: Vec<(WorldPackageCharacterFileEntry, CharacterPackageData)> =
@@ -144,6 +154,13 @@ impl WorldPackageService {
                 archive.write_all(source.as_bytes()).map_err(|e| e.to_string())?;
             }
 
+            if let Some(source) = world_logic_source(world) {
+                archive
+                    .start_file(WORLD_PACKAGE_LOGIC_FILE, options)
+                    .map_err(|e| e.to_string())?;
+                archive.write_all(source.as_bytes()).map_err(|e| e.to_string())?;
+            }
+
             for (entry, character) in &character_data {
                 archive
                     .start_file(&entry.file_path, options)
@@ -204,7 +221,8 @@ impl WorldPackageService {
         let manifest: WorldPackageManifest = read_json_from_zip(&mut archive, "manifest.json")
             .map_err(|e| format!("Invalid manifest: {e}"))?;
         if manifest.format != WORLD_PACKAGE_FORMAT
-            || ![LEGACY_WORLD_PACKAGE_VERSION, WORLD_PACKAGE_VERSION].contains(&manifest.version)
+            || !(manifest.version == WORLD_PACKAGE_VERSION
+                || LEGACY_WORLD_PACKAGE_VERSIONS.contains(&manifest.version))
         {
             return Err("Unsupported world package format".to_string());
         }
@@ -223,8 +241,29 @@ impl WorldPackageService {
             .world_file
             .clone()
             .unwrap_or_else(|| WORLD_PACKAGE_FILE.to_string());
-        let package_world: WorldPackageWorldData = read_json_from_zip(&mut archive, &world_file)
+        let mut package_world: WorldPackageWorldData = read_json_from_zip(&mut archive, &world_file)
             .map_err(|e| format!("Invalid world data: {e}"))?;
+        if let Some(logic_file) = manifest.logic_file.as_deref() {
+            let logic_source = read_text_from_zip(&mut archive, logic_file)
+                .map_err(|e| format!("Invalid world logic: {e}"))?;
+            if logic_source.len() > MAX_WORLD_LOGIC_BYTES {
+                return Err(format!(
+                    "World logic exceeds the {} byte limit",
+                    MAX_WORLD_LOGIC_BYTES
+                ));
+            }
+            if !package_world.ui_logic_config.is_object() {
+                package_world.ui_logic_config = serde_json::json!({});
+            }
+            let logic = package_world.ui_logic_config.as_object_mut().unwrap();
+            logic.insert("source".to_string(), serde_json::Value::String(logic_source));
+        }
+        crate::services::world_storage::validate_storage_config(
+            &package_world.ui_storage_config,
+        )?;
+        crate::services::world_storage::validate_logic_config(
+            &package_world.ui_logic_config,
+        )?;
         let desktop_ui_file = manifest
             .desktop_ui_file
             .clone()
@@ -522,6 +561,8 @@ fn build_manifest(
         ),
         desktop_ui_stylesheet_file: Some(WORLD_PACKAGE_DESKTOP_UI_STYLESHEET.to_string()),
         mobile_ui_stylesheet_file: Some(WORLD_PACKAGE_MOBILE_UI_STYLESHEET.to_string()),
+        logic_file: world_logic_source(world)
+            .map(|_| WORLD_PACKAGE_LOGIC_FILE.to_string()),
         characters_file: None,
         character_files,
         assets,
@@ -564,6 +605,12 @@ fn to_world_package_data(
             .and_then(|value| value.as_array())
             .map(|items| items.iter().filter_map(|item| item.as_str().map(str::to_string)).collect())
             .unwrap_or_default(),
+        ui_storage_config: world
+            .ui_theme_config
+            .get("storage")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({})),
+        ui_logic_config: world_logic_package_config(world),
         opening_messages: world.opening_messages.clone(),
         opening_character_names: world
             .opening_character_ids
@@ -577,6 +624,26 @@ fn to_world_package_data(
         opening_character_source_ids: world.opening_character_ids.clone(),
         player_character_source_id: world.player_character_id.clone(),
     }
+}
+
+fn world_logic_source(world: &WorldDefinition) -> Option<&str> {
+    world
+        .ui_theme_config
+        .get("logic")
+        .and_then(|value| value.get("source"))
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn world_logic_package_config(world: &WorldDefinition) -> serde_json::Value {
+    let mut logic = world
+        .ui_theme_config
+        .get("logic")
+        .and_then(|value| value.as_object())
+        .cloned()
+        .unwrap_or_default();
+    logic.remove("source");
+    serde_json::Value::Object(logic)
 }
 
 fn world_ui_entry_value<'a>(
@@ -712,5 +779,96 @@ fn slugify(value: &str, fallback: &str) -> String {
         fallback.to_string()
     } else {
         slug
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Cursor, Write};
+    use std::path::Path;
+
+    use super::WorldPackageService;
+
+    #[test]
+    fn imports_accounting_assistant_example_package() {
+        let files = [
+            (
+                "manifest.json",
+                include_str!(
+                    "../../../examples/world-packages/accounting-assistant/manifest.json"
+                ),
+            ),
+            (
+                "world/world.json",
+                include_str!(
+                    "../../../examples/world-packages/accounting-assistant/world/world.json"
+                ),
+            ),
+            (
+                "world/ui.desktop.jsonc",
+                include_str!(
+                    "../../../examples/world-packages/accounting-assistant/world/ui.desktop.jsonc"
+                ),
+            ),
+            (
+                "world/ui.mobile.jsonc",
+                include_str!(
+                    "../../../examples/world-packages/accounting-assistant/world/ui.mobile.jsonc"
+                ),
+            ),
+            (
+                "world/ui.desktop.css",
+                include_str!(
+                    "../../../examples/world-packages/accounting-assistant/world/ui.desktop.css"
+                ),
+            ),
+            (
+                "world/ui.mobile.css",
+                include_str!(
+                    "../../../examples/world-packages/accounting-assistant/world/ui.mobile.css"
+                ),
+            ),
+            (
+                "characters/accounting-assistant/character.json",
+                include_str!(
+                    "../../../examples/world-packages/accounting-assistant/characters/accounting-assistant/character.json"
+                ),
+            ),
+        ];
+
+        let mut buffer = Cursor::new(Vec::new());
+        {
+            let mut archive = zip::ZipWriter::new(&mut buffer);
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            for (path, source) in files {
+                archive.start_file(path, options).expect("start zip entry");
+                archive
+                    .write_all(source.as_bytes())
+                    .expect("write zip entry");
+            }
+            archive.finish().expect("finish package");
+        }
+
+        let imported = WorldPackageService::import_package_archive(
+            Path::new("."),
+            buffer.into_inner(),
+        )
+        .expect("import accounting assistant package");
+
+        assert_eq!(imported.world.name, "记账助手");
+        assert_eq!(imported.ui_runtime_version, 3);
+        assert_eq!(
+            imported.ui_capabilities,
+            vec![
+                "supports_world_records".to_string(),
+                "supports_world_storage".to_string(),
+            ]
+        );
+        assert!(imported.desktop_ui_source.contains("ledger_book"));
+        assert!(imported.mobile_ui_source.contains("ledger_book"));
+        assert_eq!(imported.characters.len(), 1);
+        assert_eq!(imported.characters[0].name, "记账助手");
+        assert!(imported.characters[0].model.is_empty());
     }
 }

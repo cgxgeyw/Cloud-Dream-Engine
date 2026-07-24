@@ -119,6 +119,8 @@ pub struct WorldPackageManifest {
     pub ui_runtime_version: Option<u32>,
     pub desktop_ui_stylesheet_file: Option<String>,
     pub mobile_ui_stylesheet_file: Option<String>,
+    #[serde(default)]
+    pub logic_file: Option<String>,
     pub characters_file: Option<String>,
     pub character_files: Vec<WorldPackageCharacterFileEntry>,
     pub assets: Vec<WorldPackageAssetEntry>,
@@ -156,6 +158,10 @@ pub struct WorldPackageWorldData {
     pub ui_runtime_version: Option<u32>,
     #[serde(default)]
     pub ui_capabilities: Vec<String>,
+    #[serde(default, rename = "storage")]
+    pub ui_storage_config: serde_json::Value,
+    #[serde(default, rename = "logic")]
+    pub ui_logic_config: serde_json::Value,
     pub opening_messages: Vec<WorldOpeningMessage>,
     pub opening_character_names: Vec<String>,
     pub player_character_name: Option<String>,
@@ -181,6 +187,10 @@ pub struct WorldUiBundleValidationRequest {
     pub mobile_stylesheet: String,
     #[serde(default)]
     pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub storage: serde_json::Value,
+    #[serde(default)]
+    pub logic: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

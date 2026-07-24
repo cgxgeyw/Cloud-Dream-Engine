@@ -1,0 +1,19 @@
+{
+  "source_character_id": "accounting-assistant",
+  "name": "记账助手",
+  "role": "本地账本界面占位角色",
+  "background_prompt": "本世界不使用角色对话。所有记账操作均由可信 ledger_book 组件执行，不调用大模型。",
+  "model": "",
+  "memory_strategy": "none",
+  "recent_dialogue_rounds": 0,
+  "attributes": [
+    "运行模式：无模型",
+    "数据范围：当前世界"
+  ],
+  "portrait_assets": [],
+  "avatar_asset": "",
+  "system_prompt_template": "",
+  "response_contract_prompt": "",
+  "narration_prompt": "",
+  "runtime_system_prompt": ""
+}

@@ -21,7 +21,7 @@ type FramePayload =
   | { mode: "runtime"; value: WorldFrameRuntimePayload };
 
 type PendingAction = {
-  resolve: () => void;
+  resolve: (value: unknown) => void;
   reject: (error: Error) => void;
 };
 
@@ -68,7 +68,7 @@ export function WorldFrameApp() {
           }
           pendingActionsRef.current.delete(messageEvent.data.requestId);
           if (messageEvent.data.ok) {
-            pending.resolve();
+            pending.resolve(messageEvent.data.result);
           } else {
             pending.reject(new Error(messageEvent.data.error || "World UI action failed."));
           }
@@ -118,13 +118,13 @@ export function WorldFrameApp() {
     };
   }, []);
 
-  const sendAction = useCallback((action: WorldFrameAction): Promise<void> => {
+  const sendAction = useCallback((action: WorldFrameAction): Promise<unknown> => {
     const connection = connectionRef.current;
     if (!connection) {
       return Promise.reject(new Error("World UI frame is not connected."));
     }
     const requestId = createRequestId();
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<unknown>((resolve, reject) => {
       pendingActionsRef.current.set(requestId, { resolve, reject });
       connection.port.postMessage({
         type: "world-frame/action",

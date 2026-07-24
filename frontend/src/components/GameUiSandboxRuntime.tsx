@@ -1,7 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { isTauriEnvironment, requestWorldPermissions } from "../data/apiAdapter";
+import {
+  createWorldRecord,
+  deleteWorldKv,
+  deleteWorldRecord,
+  getWorldKv,
+  isTauriEnvironment,
+  listWorldKv,
+  listWorldRecords,
+  requestWorldPermissions,
+  setWorldKv,
+  updateWorldRecord,
+} from "../data/apiAdapter";
 import type { GameUiPlatform } from "../data/gameUi";
 import type { GameSessionStateBag } from "../game/useGameSession";
 import type { WorldFrameAction } from "../worldFrame/protocol";
@@ -155,8 +166,10 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
     stylesheet: bag.themeCustomCss,
     scopeId: bag.gameUiScopeId,
     rootStyle: serializeRootStyle(bag.runtimeBackgroundStyle),
+    storage: bag.worldUiEnvelope.storage,
+    logic: bag.worldUiEnvelope.logic,
     snapshot,
-  }), [bag.gameUiScopeId, bag.parsedGameUi.document, bag.runtimeBackgroundStyle, bag.themeCustomCss, platform, snapshot]);
+  }), [bag.gameUiScopeId, bag.parsedGameUi.document, bag.runtimeBackgroundStyle, bag.themeCustomCss, bag.worldUiEnvelope.logic, bag.worldUiEnvelope.storage, platform, snapshot]);
 
   // 系统 View 层一定能收到 DOWN/MOVE/UP/CANCEL（Oplus 助手也拦不住），Kotlin 侧经
   // evaluateJavascript 转发到这里；这是按住说话松手与上滑取消的最可靠来源。
@@ -208,6 +221,41 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
       case "stop-recording": stopRecording({ send: action.send === true }); return;
       case "voice-mode": setVoiceMode(action.enabled === true); return;
       case "remove-audio": bag.setInputAudios((previous) => previous.filter((_, index) => index !== action.index)); return;
+      case "world-record-list": {
+        const worldId = requireWorldRecordScope(bag, action.collection);
+        return listWorldRecords(worldId, action.collection);
+      }
+      case "world-record-create": {
+        const worldId = requireWorldRecordScope(bag, action.collection);
+        return createWorldRecord(worldId, { collection: action.collection, data: action.data });
+      }
+      case "world-record-update": {
+        const worldId = requireWorldRecordScope(bag, action.collection);
+        return updateWorldRecord(worldId, action.recordId, {
+          collection: action.collection,
+          data: action.data,
+        });
+      }
+      case "world-record-delete": {
+        const worldId = requireWorldRecordScope(bag, action.collection);
+        return deleteWorldRecord(worldId, action.collection, action.recordId);
+      }
+      case "world-kv-list": {
+        const worldId = requireWorldKvScope(bag, action.namespace);
+        return listWorldKv(worldId, action.namespace);
+      }
+      case "world-kv-get": {
+        const worldId = requireWorldKvScope(bag, action.namespace);
+        return getWorldKv(worldId, action.namespace, action.key);
+      }
+      case "world-kv-set": {
+        const worldId = requireWorldKvScope(bag, action.namespace);
+        return setWorldKv(worldId, action.namespace, action.key, action.value);
+      }
+      case "world-kv-delete": {
+        const worldId = requireWorldKvScope(bag, action.namespace);
+        return deleteWorldKv(worldId, action.namespace, action.key);
+      }
       case "navigate":
         if (action.target === "back") navigate(-1);
         else if (action.target === "home") navigate("/");
@@ -241,6 +289,36 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
       />
     </div>
   );
+}
+
+function requireWorldRecordScope(bag: GameSessionStateBag, collection: string): string {
+  const normalized = collection.trim().toLowerCase();
+  const declared = Object.prototype.hasOwnProperty.call(
+    bag.worldUiEnvelope.storage.collections,
+    normalized,
+  );
+  const legacy = Object.keys(bag.worldUiEnvelope.storage.collections).length === 0
+    && bag.worldUiEnvelope.capabilities.includes("supports_world_records");
+  if (!declared && !legacy) {
+    throw new Error(`This world package did not declare storage collection: ${normalized}`);
+  }
+  return requireWorldId(bag);
+}
+
+function requireWorldKvScope(bag: GameSessionStateBag, namespace: string): string {
+  const normalized = namespace.trim().toLowerCase();
+  if (!bag.worldUiEnvelope.storage.kv_namespaces.includes(normalized)) {
+    throw new Error(`This world package did not declare KV namespace: ${normalized}`);
+  }
+  return requireWorldId(bag);
+}
+
+function requireWorldId(bag: GameSessionStateBag): string {
+  const worldId = bag.themeWorld?.id?.trim();
+  if (!worldId) {
+    throw new Error("The current world is unavailable.");
+  }
+  return worldId;
 }
 
 function useAttachmentSnapshots(files: File[], prefix: string, withPreview: boolean) {

@@ -39,7 +39,7 @@ type GameUiRendererProps = {
   evaluateCondition?: (expr: string, context: GameUiRenderContext) => boolean;
   resolveLoopSource?: (source: string) => unknown[];
   runtimeData?: Record<string, unknown>;
-  onAction?: (action: GameUiActionReference, context: GameUiRenderContext) => void | Promise<void>;
+  onAction?: (action: GameUiActionReference, context: GameUiRenderContext) => unknown | Promise<unknown>;
 };
 
 export type GameUiRenderContext = {
@@ -79,7 +79,7 @@ export function GameUiRenderer({
 
 type GameUiElementActions = {
   setUiState: Dispatch<SetStateAction<Record<string, unknown>>>;
-  onAction?: (action: GameUiActionReference, context: GameUiRenderContext) => void | Promise<void>;
+  onAction?: (action: GameUiActionReference, context: GameUiRenderContext) => unknown | Promise<unknown>;
 };
 
 function renderV2Layout(
@@ -512,13 +512,48 @@ function renderButtonNode(
           return;
         }
         if (node.action) {
-          void actions.onAction?.(node.action, context);
+          void executeAction(node.action, context, actions);
         }
       }}
     >
       {resolveText(node.label, context)}
     </button>
   );
+}
+
+async function executeAction(
+  action: GameUiActionReference,
+  context: GameUiRenderContext,
+  actions: GameUiElementActions,
+) {
+  const pendingState = action.pending_state?.trim();
+  const errorState = action.error_state?.trim();
+  const resultState = action.result_state?.trim();
+  if (pendingState) {
+    actions.setUiState((current) => ({ ...current, [pendingState]: true }));
+  }
+  if (errorState) {
+    actions.setUiState((current) => ({ ...current, [errorState]: null }));
+  }
+  try {
+    const result = await actions.onAction?.(action, context);
+    if (resultState) {
+      actions.setUiState((current) => ({ ...current, [resultState]: result }));
+    }
+  } catch (errorLike) {
+    if (errorState) {
+      actions.setUiState((current) => ({
+        ...current,
+        [errorState]: errorLike instanceof Error ? errorLike.message : String(errorLike),
+      }));
+      return;
+    }
+    throw errorLike;
+  } finally {
+    if (pendingState) {
+      actions.setUiState((current) => ({ ...current, [pendingState]: false }));
+    }
+  }
 }
 
 function renderCheckboxNode(

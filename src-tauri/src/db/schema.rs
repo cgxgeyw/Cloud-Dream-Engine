@@ -26,6 +26,32 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             player_character_id TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS world_records (
+            id TEXT PRIMARY KEY,
+            world_id TEXT NOT NULL,
+            collection TEXT NOT NULL,
+            data_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY (world_id) REFERENCES worlds(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_world_records_scope
+            ON world_records(world_id, collection, updated_at);
+
+        CREATE TABLE IF NOT EXISTS world_kv (
+            world_id TEXT NOT NULL,
+            namespace TEXT NOT NULL,
+            key TEXT NOT NULL,
+            value_json TEXT NOT NULL DEFAULT 'null',
+            updated_at TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (world_id, namespace, key),
+            FOREIGN KEY (world_id) REFERENCES worlds(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_world_kv_scope
+            ON world_kv(world_id, namespace, updated_at);
+
         CREATE TABLE IF NOT EXISTS characters (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,

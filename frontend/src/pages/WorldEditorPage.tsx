@@ -148,6 +148,8 @@ type TimeConfig = {
 type UiThemeConfig = {
   runtime_version: 2 | 3;
   capabilities: string[];
+  storage: Record<string, unknown>;
+  logic: Record<string, unknown>;
   background_source_mode: string;
   portrait_source_mode: string;
   runtime_image_generation_enabled: boolean;
@@ -199,6 +201,8 @@ const defaultTimeConfig: TimeConfig = {
 const defaultUiThemeConfig: UiThemeConfig = {
   runtime_version: 3,
   capabilities: ["supports_file_picker", "supports_mic"],
+  storage: { kv_namespaces: [], collections: {} },
+  logic: { runtime: "disabled", source: "", timeout_ms: 1000 },
   background_source_mode: "local-first",
   portrait_source_mode: "local-first",
   runtime_image_generation_enabled: false,
@@ -515,6 +519,8 @@ function normalizeUiThemeConfig(raw: Record<string, unknown> | undefined): UiThe
   return {
     runtime_version: envelope.runtime_version,
     capabilities: envelope.capabilities,
+    storage: structuredClone(envelope.storage) as unknown as Record<string, unknown>,
+    logic: structuredClone(envelope.logic) as unknown as Record<string, unknown>,
     background_source_mode: assets.background_source_mode,
     portrait_source_mode: assets.portrait_source_mode,
     runtime_image_generation_enabled: assets.runtime_image_generation_enabled,
@@ -531,6 +537,8 @@ function buildUiThemeEnvelope(config: UiThemeConfig): Record<string, unknown> {
   return {
     runtime_version: config.runtime_version,
     capabilities: config.capabilities,
+    storage: config.storage,
+    logic: config.logic,
     assets: {
       background_source_mode: config.background_source_mode,
       portrait_source_mode: config.portrait_source_mode,
@@ -1011,6 +1019,8 @@ export function WorldEditorPage() {
               desktop_stylesheet: uiThemeConfig.desktop_stylesheet,
               mobile_stylesheet: uiThemeConfig.mobile_stylesheet,
               capabilities: uiThemeConfig.capabilities,
+              storage: uiThemeConfig.storage,
+              logic: uiThemeConfig.logic,
             }),
             compileWorldUiDocument({
               source: uiThemeConfig.desktop_file,

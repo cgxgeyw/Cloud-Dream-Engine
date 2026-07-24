@@ -9,6 +9,8 @@ import {
   type GameUiMountId,
   type GameUiPlatform,
 } from "../data/gameUi";
+import { LedgerBook, LEDGER_PREVIEW_RECORDS } from "../worldFrame/LedgerBook";
+import type { WorldFrameAction } from "../worldFrame/protocol";
 
 export type PreviewMessage = {
   role: string;
@@ -210,6 +212,9 @@ export function GameUiPreview({
     input_composer: () => mounts.input_area ?? null,
     side_panel_tabs: () => mounts.side_panel ?? null,
     floating_actions: () => mounts.floating_actions ?? null,
+    ledger_book: ({ node }) => (
+      <LedgerBook node={node} platform={platform} sendAction={handleLedgerPreviewAction} />
+    ),
   };
 
   return (
@@ -223,4 +228,18 @@ export function GameUiPreview({
       />
     </div>
   );
+}
+
+async function handleLedgerPreviewAction(action: WorldFrameAction): Promise<unknown> {
+  if (action.type === "world-record-list") {
+    return LEDGER_PREVIEW_RECORDS;
+  }
+  if (
+    action.type === "world-record-create"
+    || action.type === "world-record-update"
+    || action.type === "world-record-delete"
+  ) {
+    throw new Error("编辑器预览不会写入真实账本，请进入已创建的游戏存档操作。");
+  }
+  return undefined;
 }

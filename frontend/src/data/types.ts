@@ -64,6 +64,28 @@ export type WorldUpsertRequest = {
 
 export type WorldCreateRequest = WorldUpsertRequest;
 
+export type WorldRecord = {
+  id: string;
+  world_id: string;
+  collection: string;
+  data: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WorldRecordWriteRequest = {
+  collection: string;
+  data: Record<string, unknown>;
+};
+
+export type WorldKvEntry = {
+  world_id: string;
+  namespace: string;
+  key: string;
+  value: unknown;
+  updated_at: string;
+};
+
 export type AiWorldCreateMode = "single_agent" | "multi_agent";
 
 export type AiWorldCreateRequest = {
@@ -102,6 +124,8 @@ export type WorldUiBundleValidationRequest = {
   desktop_stylesheet?: string;
   mobile_stylesheet?: string;
   capabilities?: string[];
+  storage?: Record<string, unknown>;
+  logic?: Record<string, unknown>;
 };
 
 export type WorldUiCompileRequest = {

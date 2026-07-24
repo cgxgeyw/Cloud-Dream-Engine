@@ -12,4 +12,6 @@ pub mod saves;
 pub mod sessions;
 pub mod settings;
 pub mod uploads;
+pub mod world_records;
+pub mod world_kv;
 pub mod worlds;

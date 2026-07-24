@@ -1,0 +1,91 @@
+{
+  "name": "记账助手",
+  "genre": "单智能体 / 本地记账 / 无模型",
+  "background_prompt": "这是一个完全由可信界面组件驱动的本地记账工具。账单录入、查询和统计不调用大模型。",
+  "opening_scene": "我的账本",
+  "summary": "录入每笔收入和支出，按日、月、年查看明细与分类统计。",
+  "time_system": "真实日期",
+  "map_nodes": {
+    "version": 1,
+    "root": {
+      "id": "ledger-root",
+      "label": "我的账本",
+      "children": []
+    },
+    "edges": []
+  },
+  "triggers": [],
+  "time_config": {
+    "mode": "realtime",
+    "label": "真实日期"
+  },
+  "director_config": {
+    "service_mode": "agent_chat",
+    "default_agent_id": "accounting-assistant",
+    "allow_scene_transition": false,
+    "allow_npc_spawn": false,
+    "history_dialogue_rounds": 0,
+    "director_tool_loop_limit": 0,
+    "runtime_context_prompt": "",
+    "world_director_prompt": "",
+    "prompt_presets": [],
+    "return_processing_rules": [],
+    "runtime_policy": {
+      "memory_write_mode": "none"
+    },
+    "allowed_mcp_tool_ids": []
+  },
+  "ui_assets_config": {
+    "background_source_mode": "local-first",
+    "portrait_source_mode": "local-first",
+    "runtime_image_generation_enabled": false,
+    "local_background_assets": [],
+    "local_scene_backgrounds": {}
+  },
+  "ui_runtime_version": 3,
+  "ui_capabilities": [
+    "supports_world_records",
+    "supports_world_storage"
+  ],
+  "storage": {
+    "kv_namespaces": [
+      "ledger.preferences"
+    ],
+    "collections": {
+      "ledger.entries": {
+        "schema": {
+          "type": "object",
+          "required": [
+            "schema_version",
+            "kind",
+            "amount_cents",
+            "date",
+            "category",
+            "account",
+            "note"
+          ],
+          "properties": {
+            "schema_version": { "type": "integer", "enum": [1] },
+            "kind": { "type": "string", "enum": ["income", "expense"] },
+            "amount_cents": { "type": "integer", "minimum": 1 },
+            "date": { "type": "string", "minLength": 10, "maxLength": 10 },
+            "category": { "type": "string", "maxLength": 80 },
+            "account": { "type": "string", "maxLength": 80 },
+            "note": { "type": "string", "maxLength": 500 }
+          },
+          "additionalProperties": false
+        },
+        "indexes": ["date", "kind", "category"]
+      }
+    }
+  },
+  "logic": {
+    "runtime": "disabled",
+    "timeout_ms": 1000
+  },
+  "opening_messages": [],
+  "opening_character_names": [],
+  "player_character_name": "记账助手",
+  "opening_character_source_ids": [],
+  "player_character_source_id": "accounting-assistant"
+}

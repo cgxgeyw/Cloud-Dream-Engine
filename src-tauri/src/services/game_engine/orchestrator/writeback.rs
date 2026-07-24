@@ -105,7 +105,11 @@ pub(crate) fn build_runtime_updated_session_snapshot(
             .player_stats
             .clone()
             .unwrap_or_else(|| input.session.player_stats.clone()),
-        map_graph_nodes: input.session.map_graph_nodes.clone(),
+        map_graph_nodes: update_current_map_graph_nodes(
+            &input.session.map_graph_nodes,
+            &resolved_scene_runtime.name,
+            input.next_location,
+        ),
         map_graph_edges: input.session.map_graph_edges.clone(),
         inventory_items: input
             .runtime_application
@@ -894,6 +898,39 @@ pub(crate) fn slugify_scene_id(value: &str) -> String {
     }
 }
 
+fn update_current_map_graph_nodes(
+    nodes: &[SessionMapNode],
+    scene_name: &str,
+    location: &str,
+) -> Vec<SessionMapNode> {
+    let target_node_id = [scene_name, location].into_iter().find_map(|candidate| {
+        let candidate = candidate.trim();
+        if candidate.is_empty() {
+            return None;
+        }
+        nodes
+            .iter()
+            .find(|node| {
+                node.label.trim() == candidate
+                    || node.node_id.trim().eq_ignore_ascii_case(candidate)
+            })
+            .map(|node| node.node_id.clone())
+    });
+
+    let Some(target_node_id) = target_node_id else {
+        return nodes.to_vec();
+    };
+
+    nodes
+        .iter()
+        .cloned()
+        .map(|mut node| {
+            node.current = node.node_id == target_node_id;
+            node
+        })
+        .collect()
+}
+
 pub(crate) fn merge_visible_characters(
     existing: &[String],
     additions: Vec<String>,
@@ -1346,6 +1383,11 @@ impl SessionOrchestrator {
                 &session.player_character_name,
             ),
         };
+        session.map_graph_nodes = update_current_map_graph_nodes(
+            &session.map_graph_nodes,
+            &session.scene.name,
+            &session.location,
+        );
         session.assets = input
             .asset_resolver
             .resolve(
@@ -1513,5 +1555,59 @@ impl SessionOrchestrator {
             )?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::update_current_map_graph_nodes;
+    use crate::models::session::SessionMapNode;
+
+    fn node(id: &str, label: &str, current: bool) -> SessionMapNode {
+        SessionMapNode {
+            node_id: id.to_string(),
+            label: label.to_string(),
+            discovered: true,
+            current,
+        }
+    }
+
+    #[test]
+    fn map_current_node_follows_scene_before_location() {
+        let updated = update_current_map_graph_nodes(
+            &[
+                node("luoyang", "Luoyang", true),
+                node("wu", "\u{5434}\u{56fd}", false),
+            ],
+            "\u{5434}\u{56fd}",
+            "Luoyang",
+        );
+
+        assert!(!updated[0].current);
+        assert!(updated[1].current);
+    }
+
+    #[test]
+    fn map_current_node_uses_location_when_scene_is_not_a_map_node() {
+        let updated = update_current_map_graph_nodes(
+            &[node("luoyang", "Luoyang", true), node("wu", "Wu", false)],
+            "Wu Capital",
+            "Wu",
+        );
+
+        assert!(!updated[0].current);
+        assert!(updated[1].current);
+    }
+
+    #[test]
+    fn map_current_node_keeps_existing_state_when_no_map_node_matches() {
+        let updated = update_current_map_graph_nodes(
+            &[node("luoyang", "Luoyang", true), node("wu", "Wu", false)],
+            "Unknown",
+            "Elsewhere",
+        );
+
+        assert!(updated[0].current);
+        assert!(!updated[1].current);
     }
 }

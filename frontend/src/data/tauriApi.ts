@@ -58,6 +58,9 @@ import type {
   WorldOpeningMessage,
   WorldOpeningPromptPreviewResponse,
   WorldResponse,
+  WorldRecord,
+  WorldRecordWriteRequest,
+  WorldKvEntry,
   WorldUiBundleValidationRequest,
   WorldUiBundleValidationResult,
   WorldUiCompileRequest,
@@ -87,6 +90,7 @@ export type {
   WorldUiBundleValidationRequest, WorldUiBundleValidationResult,
   WorldUiCompileRequest, WorldUiCompileResult,
   VerifyWorldPackageUiCompatibilityRequest, WorldUiCompatibilityReport, WorldPermissionStatus,
+  WorldRecord, WorldRecordWriteRequest, WorldKvEntry,
 } from "./types";
 
 
@@ -262,6 +266,58 @@ export function onAiWorldCreateProgress(callback: (receivedChars: number) => voi
 
 export function updateWorld(worldId: string, payload: WorldCreateRequest): Promise<WorldResponse> {
   return tauriCommand("update_world", { id: worldId, request: payload });
+}
+
+export function listWorldRecords(worldId: string, collection: string): Promise<WorldRecord[]> {
+  return tauriCommand("list_world_records", { worldId, collection });
+}
+
+export function createWorldRecord(
+  worldId: string,
+  payload: WorldRecordWriteRequest,
+): Promise<WorldRecord> {
+  return tauriCommand("create_world_record", { worldId, request: payload });
+}
+
+export function updateWorldRecord(
+  worldId: string,
+  recordId: string,
+  payload: WorldRecordWriteRequest,
+): Promise<WorldRecord> {
+  return tauriCommand("update_world_record", { worldId, id: recordId, request: payload });
+}
+
+export function deleteWorldRecord(
+  worldId: string,
+  collection: string,
+  recordId: string,
+): Promise<void> {
+  return tauriCommand("delete_world_record", { worldId, collection, id: recordId });
+}
+
+export function listWorldKv(worldId: string, namespace: string): Promise<WorldKvEntry[]> {
+  return tauriCommand("list_world_kv", { worldId, namespace });
+}
+
+export function getWorldKv(
+  worldId: string,
+  namespace: string,
+  key: string,
+): Promise<WorldKvEntry | null> {
+  return tauriCommand("get_world_kv", { worldId, namespace, key });
+}
+
+export function setWorldKv(
+  worldId: string,
+  namespace: string,
+  key: string,
+  value: unknown,
+): Promise<WorldKvEntry> {
+  return tauriCommand("set_world_kv", { worldId, namespace, key, value });
+}
+
+export function deleteWorldKv(worldId: string, namespace: string, key: string): Promise<void> {
+  return tauriCommand("delete_world_kv", { worldId, namespace, key });
 }
 
 export function deleteWorld(worldId: string): Promise<void> {

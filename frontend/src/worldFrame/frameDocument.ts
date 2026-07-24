@@ -13,6 +13,7 @@ export function createWorldFrameDocument(
     "font-src data: blob:",
     "media-src asset: http://asset.localhost data: blob:",
     "connect-src 'none'",
+    "worker-src blob:",
     "object-src 'none'",
     "frame-src 'none'",
     "base-uri 'none'",

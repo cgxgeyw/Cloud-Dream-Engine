@@ -2,7 +2,7 @@
 
 本文面向世界包设计者，说明如何为 Cloud Dream Engine 制作可导入、可导出、同时支持桌面与 Android 的世界包和游戏 UI。
 
-v3 的核心原则是：世界包拥有游戏页面的结构和视觉设计，应用拥有可信能力与数据写入。世界包可以提供 JSONC、CSS 和资源，但不能提供或执行 JavaScript。
+v3 的核心原则是：世界包拥有游戏页面的结构和视觉设计，应用拥有可信能力与数据写入。世界包可以提供 JSONC、CSS、资源和可选的受限 Worker 逻辑，但不能在宿主页面执行 JavaScript。
 
 ## 1. 先理解两个版本号
 
@@ -31,7 +31,7 @@ v3 的核心原则是：世界包拥有游戏页面的结构和视觉设计，�
 
 ## 2. v3 运行边界
 
-每个游戏页面运行在 `sandbox="allow-scripts"` 的隔离 iframe 中。iframe 内只执行引擎自带的可信渲染器，世界包不能附带脚本。
+每个游戏页面运行在 `sandbox="allow-scripts"` 的隔离 iframe 中。iframe 内执行引擎自带的可信渲染器；世界包的可选 `logic.js` 不注入页面，而是在按次创建的独立 Worker 中执行。
 
 世界包可以控制：
 
@@ -46,9 +46,9 @@ v3 的核心原则是：世界包拥有游戏页面的结构和视觉设计，�
 - Tauri、Rust、SQLite、文件系统和模型 API。
 - 应用首页、设置页、世界编辑器等游戏页之外的 UI。
 - iframe 外的 DOM、CSS、剪贴板、系统权限和导航历史。
-- 任意 JavaScript、远程脚本、`eval` 或网络请求。
+- 宿主页面 JavaScript、远程脚本、`eval`、网络请求或不受限的长驻脚本。
 
-图片选择、麦克风权限、录音、剪贴板、导航和游戏状态写入都由父页面执行。iframe 只接收可序列化快照并发送类型化动作。
+世界包可以选择提供 `sandbox-js-v1` 逻辑文件。该文件只在独立 Worker 中运行，通过受控 SDK 访问本世界存储，不能访问 DOM、Tauri、文件系统和网络。图片选择、麦克风权限、录音、剪贴板、导航和游戏状态写入仍由父页面执行。
 
 ## 3. 推荐开发流程
 
@@ -78,8 +78,30 @@ npm run tauri:dev
   "runtime_version": 3,
   "capabilities": [
     "supports_file_picker",
-    "supports_mic"
+    "supports_mic",
+    "supports_world_storage"
   ],
+  "storage": {
+    "kv_namespaces": ["preferences"],
+    "collections": {
+      "journal.entries": {
+        "schema": {
+          "type": "object",
+          "required": ["date", "content"],
+          "properties": {
+            "date": { "type": "string", "maxLength": 10 },
+            "content": { "type": "string", "maxLength": 4000 }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  },
+  "logic": {
+    "runtime": "sandbox-js-v1",
+    "source": "<导入后保存的 logic.js 源码>",
+    "timeout_ms": 1000
+  },
   "assets": {
     "background_source_mode": "local-first",
     "portrait_source_mode": "local-first",
@@ -117,6 +139,8 @@ npm run tauri:dev
 | `supports_file_picker` | 需要父页面提供图片选择 |
 | `supports_mic` | 需要父页面提供麦克风和录音 |
 | `supports_hover` | UI 存在桌面 hover 交互 |
+| `supports_world_records` | 需要宿主提供按当前世界隔离的结构化记录存储；仅 runtime v3 可用 |
+| `supports_world_storage` | 需要通用 `records` / `kv` 存储桥或沙箱逻辑运行时 |
 
 声明不受支持的能力会导致 bundle 校验失败。运行时仍会根据设备实际能力提供 `capabilities` 数据，声明本身不会绕过系统权限。
 
@@ -135,7 +159,7 @@ npm run tauri:dev
 
 ## 5. 导出包目录结构
 
-当前世界包格式为 `dream-world-package` version 6。应用导出的 ZIP 结构如下：
+当前世界包格式为 `dream-world-package` version 7。应用导出的 ZIP 结构如下：
 
 ```text
 manifest.json
@@ -145,30 +169,32 @@ world/
   ui.mobile.jsonc
   ui.desktop.css
   ui.mobile.css
+  logic.js              # 可选
 characters/
   <角色目录>/character.json
 assets/
   <世界与角色资源>
 ```
 
-空 stylesheet 可能不会写入 ZIP，但 manifest 中仍会保留入口路径。导入器兼容 version 5 世界包，并将旧的 `desktop_file` / `mobile_file` 归一化为双入口。
+空 stylesheet 可能不会写入 ZIP，但 manifest 中仍会保留入口路径。导入器兼容 version 5、6 世界包，并将旧的 `desktop_file` / `mobile_file` 归一化为双入口。
 
 manifest 中与 UI 有关的字段：
 
 ```json
 {
   "format": "dream-world-package",
-  "version": 6,
+  "version": 7,
   "world_file": "world/world.json",
   "desktop_ui_file": "world/ui.desktop.jsonc",
   "mobile_ui_file": "world/ui.mobile.jsonc",
   "ui_runtime_version": 3,
   "desktop_ui_stylesheet_file": "world/ui.desktop.css",
-  "mobile_ui_stylesheet_file": "world/ui.mobile.css"
+  "mobile_ui_stylesheet_file": "world/ui.mobile.css",
+  "logic_file": "world/logic.js"
 }
 ```
 
-`world/world.json` 保存世界设定、导演配置、资源配置、`ui_runtime_version` 和 `ui_capabilities`。角色数据与资源路径通过 manifest 管理，导入时会重新映射为本机资源路径。
+`world/world.json` 保存世界设定、导演配置、资源配置、`ui_runtime_version`、`ui_capabilities`、`storage` 和不含源码的 `logic` 配置。逻辑源码由 `manifest.logic_file` 指向；角色数据与资源路径通过 manifest 管理，导入时会重新映射为本机资源路径。
 
 ## 6. UI 文档顶层字段
 
@@ -447,6 +473,23 @@ Props：`show_back`、`show_debug`、`show_settings`、`back_label`、`debug_lab
 
 `layout`：`row`、`column` 或 `wrap`。
 
+### `ledger_book`
+
+无模型记账工具。组件由应用提供可信实现，负责账单录入、编辑、删除、日/月/年明细和统计；世界包只控制布局、样式与受限 props。
+
+Props：
+
+| Prop | 用途 |
+|---|---|
+| `title` | 账本标题 |
+| `collection` | 当前世界内的记录集合名，默认 `ledger.entries`；只允许 1-64 位 ASCII 字母、数字、点、短横线和下划线 |
+| `currency` | 金额前缀，默认 `¥` |
+| `default_view` | 首屏：`overview`、`transactions` 或 `stats` |
+| `income_categories` | 收入分类字符串数组 |
+| `expense_categories` | 支出分类字符串数组 |
+
+使用要求：UI runtime 必须为 `3`，世界必须显式声明 `supports_world_records`；新包还应声明 `supports_world_storage` 和组件 `collection` 对应的 `storage.collections`。独立记账界面不需要 `input_composer`，所有操作都不会进入模型回合。
+
 ## 9. 运行时数据与绑定
 
 直接绑定使用 `$路径`，内嵌文本使用 `{{ 路径 }}`。
@@ -482,7 +525,7 @@ Props：`show_back`、`show_debug`、`show_settings`、`back_label`、`debug_lab
 | `attribute_items` | 属性条目数组 |
 | `messages` | 当前渲染消息数组 |
 | `visible_characters` | 在场角色名称数组 |
-| `capabilities` | `platform`、`supports_mic`、`supports_file_picker`、`supports_hover` |
+| `capabilities` | `platform`、`supports_mic`、`supports_file_picker`、`supports_hover`、`supports_world_records`、`supports_world_storage` |
 | `ui_state` | 加载、提交、流式、分支、切换和重试状态 |
 | `errors` | 当前 action 错误 |
 | `side_tabs` | 可用侧栏标签 |
@@ -519,6 +562,15 @@ Props：`show_back`、`show_debug`、`show_settings`、`back_label`、`debug_lab
 | `start_recording` | 无 | 请求录音 |
 | `stop_recording` | 无 | 停止录音并附加文件 |
 | `remove_audio` | `index` | 移除草稿录音 |
+| `storage.records.list` | `collection` | 读取已声明集合 |
+| `storage.records.create` | `collection`、`data` | 创建结构化记录 |
+| `storage.records.update` | `collection`、`record_id`、`data` | 更新结构化记录 |
+| `storage.records.delete` | `collection`、`record_id` | 删除结构化记录 |
+| `storage.kv.list` | `namespace` | 列出命名空间条目 |
+| `storage.kv.get` | `namespace`、`key` | 读取一个 KV 值 |
+| `storage.kv.set` | `namespace`、`key`、`value` | 写入一个 KV 值 |
+| `storage.kv.delete` | `namespace`、`key` | 删除一个 KV 值 |
+| `logic.run` | `handler`、`input` | 在受限 Worker 中执行已注册逻辑 |
 
 动作参数支持 `$binding` 和 `{{ }}` 模板：
 
@@ -534,6 +586,149 @@ Props：`show_back`、`show_debug`、`show_settings`、`back_label`、`debug_lab
   }
 }
 ```
+
+动作还支持三个宿主管理的 UI state 字段：
+
+| 字段 | 用途 |
+|---|---|
+| `result_state` | 成功后把返回值写入 `$state.<名称>` |
+| `error_state` | 失败后把错误文本写入 `$state.<名称>`；声明后错误不会成为未处理异常 |
+| `pending_state` | 执行期间自动设为 `true`，结束后恢复 `false` |
+
+```jsonc
+{
+  "type": "button",
+  "label": "读取日记",
+  "action": {
+    "id": "storage.records.list",
+    "args": { "collection": "journal.entries" },
+    "result_state": "entries",
+    "error_state": "storage_error",
+    "pending_state": "loading_entries"
+  }
+}
+```
+
+### 通用世界存储
+
+世界包作者不获得 SQLite、任意 SQL、文件系统或通用 Tauri command 权限。低风险的世界私有存储不触发系统权限弹窗，但必须在 `world/world.json` 中预先声明。
+
+```json
+{
+  "storage": {
+    "kv_namespaces": ["preferences"],
+    "collections": {
+      "journal.entries": {
+        "schema": {
+          "type": "object",
+          "required": ["date", "content"],
+          "properties": {
+            "date": { "type": "string", "maxLength": 10 },
+            "content": { "type": "string", "maxLength": 4000 },
+            "favorite": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
+        "indexes": ["date", "favorite"]
+      }
+    }
+  }
+}
+```
+
+当前 schema 子集支持 `type`、`required`、`properties`、`additionalProperties`、`enum`、`minLength`、`maxLength`、`minimum` 和 `maximum`。`indexes` 是为后续宿主查询优化保留的提示；当前 `api.records.query` 读取集合后在 Worker 内筛选，不会创建物理数据库索引。
+
+- `records`：用于账单、任务、日记、商品等多条同构记录，按 `world_id + collection` 隔离。
+- `kv`：用于设置、偏好和少量聚合状态，按 `world_id + namespace + key` 隔离。
+- UI 文档自己的 `state` 只存在于当前页面，不属于持久化存储。
+- 单条值、JSON 深度、字段数、条目数、集合容量和世界总容量均有限额。
+- 更新和删除记录必须匹配宿主生成的 UUID；iframe 和逻辑脚本不能提交其他 `world_id`。
+- 删除整个世界会级联删除记录和 KV。导出世界包不会包含用户数据。
+- `supports_world_records` 为旧版 `ledger_book` 兼容标记；新通用存储同时声明 `supports_world_storage` 和具体 `storage` 结构。
+
+### 沙箱 JavaScript
+
+需要计算、字段转换或多步存储操作时，可以在包中增加 `world/logic.js`：
+
+```js
+world.register("journal.save", async (input, api) => {
+  const content = String(input.content || "").trim();
+  if (!content) {
+    throw new Error("内容不能为空");
+  }
+
+  return api.records.create("journal.entries", {
+    date: String(input.date),
+    content,
+    favorite: Boolean(input.favorite)
+  });
+});
+
+world.register("journal.monthSummary", async (input, api) => {
+  const rows = await api.records.query("journal.entries", {
+    where: { date: { gte: input.month + "-01", lte: input.month + "-31" } },
+    orderBy: ["date", "desc"],
+    limit: 500
+  });
+  return { count: rows.length, favorites: rows.filter(row => row.data.favorite).length };
+});
+```
+
+`world.register(name, handler)` 注册动作。handler 的第二个参数提供：
+
+| API | 返回值 |
+|---|---|
+| `api.records.list(collection)` | 集合记录数组 |
+| `api.records.query(collection, options)` | 支持 `where`、`orderBy`、`offset`、`limit` 的内存查询结果 |
+| `api.records.create(collection, data)` | 新记录 |
+| `api.records.update(collection, recordId, data)` | 更新后的记录 |
+| `api.records.remove(collection, recordId)` | 无 |
+| `api.kv.list(namespace)` | KV 条目数组 |
+| `api.kv.get(namespace, key, fallback?)` | 保存的值或 fallback |
+| `api.kv.set(namespace, key, value)` | 更新后的 KV 条目 |
+| `api.kv.remove(namespace, key)` | 无 |
+
+`logic` 配置示例：
+
+```json
+{
+  "logic": {
+    "runtime": "sandbox-js-v1",
+    "timeout_ms": 1000
+  }
+}
+```
+
+每次 `logic.run` 都创建独立 Worker，结束或超时后销毁。超时范围为 100-5000 ms，默认 1000 ms；输入、输出和逻辑源码都有大小限制。Worker CSP 禁止网络，且没有 DOM、父页面、Tauri、Node、文件系统、模型 API 和数据库对象。脚本只能通过上表 SDK 请求宿主操作，宿主和 Rust 后端都会重新检查 collection/namespace 声明。
+
+调用示例：
+
+```jsonc
+{
+  "type": "button",
+  "label": "保存",
+  "action": {
+    "id": "logic.run",
+    "args": {
+      "handler": "journal.save",
+      "input": {
+        "date": "$state.date",
+        "content": "$state.content",
+        "favorite": "$state.favorite"
+      }
+    },
+    "result_state": "saved_entry",
+    "error_state": "save_error",
+    "pending_state": "saving"
+  }
+}
+```
+
+### 记账组件的数据语义
+
+- `ledger_book` 把金额保存为整数“分”，日期保存为 ISO `YYYY-MM-DD`，统计在可信组件内计算。
+- 账单属于世界，不属于某个游戏存档；存档分支不会复制账单，删除单个存档不会删除账单。
+- 示例包声明 `ledger.entries` schema；账单仍由可信 `ledger_book` 组件渲染，不需要调用模型或沙箱 JS。
 
 ## 11. v3 原始 CSS
 
@@ -696,7 +891,12 @@ v3 stylesheet 在世界 iframe 内原样注入，不做 selector 前缀改写。
 | `invalid_binding` | binding 不是简单点路径 | 使用 `$session.location` 形式 |
 | `unsafe_expression` | `when` 中出现函数、下标或脚本语法 | 改用安全表达式子集 |
 | `stylesheet_too_large` | 单份 stylesheet 超过 1 MiB | 拆减 CSS 和内嵌数据 |
-| `unsupported_declared_capability` | 声明未知能力 | 使用当前三种 capability |
+| `unsupported_declared_capability` | 声明未知能力 | 使用当前五种 capability |
+| `invalid_world_storage_config` | `storage` 不是合法对象或名称不合规 | 检查 collection/namespace 名称和结构 |
+| `invalid_world_logic_config` | logic runtime、源码或大小不合规 | 使用 `disabled` 或 `sandbox-js-v1` 并提供 `logic_file` |
+| `missing_world_storage_capability` | 使用通用存储或沙箱逻辑但未声明能力 | 在 `ui_capabilities` 中加入 `supports_world_storage` |
+| `world_records_require_runtime_v3` | 记录组件运行在 v2 | 将 `runtime_version` 改为 `3` |
+| `missing_world_records_capability` | 使用 `ledger_book` 但世界未声明存储能力 | 在 `ui_capabilities` 中加入 `supports_world_records` |
 | 一直显示“正在启动隔离界面” | 可信 frame bundle 未启动 | 查看 Tauri DevTools Console；世界 CSS 通常不是该错误来源 |
 
 开发时至少检查：
@@ -744,6 +944,11 @@ v2 数据不会被删除。当前迁移层会：
 - `src-tauri/src/db/seeds/assets/schedule-assistant-desktop-ui.jsonc`
 - `src-tauri/src/db/seeds/assets/schedule-assistant-mobile-ui.jsonc`
 - `src-tauri/src/db/seeds/schedule_assistant_world.rs`
+
+另有一个无模型、受控持久化的完整世界包示例：
+
+- [可编辑源码](../examples/world-packages/accounting-assistant/)
+- [可直接导入的 ZIP](../output/accounting-assistant-world.zip)
 
 `frontend/src/data/gameUi/migration.test.ts` 会逐字验证四份文档在迁移后未改变，并验证桌面与移动入口保持独立。Rust bundle 测试也会校验两套示例在 runtime v3 下仍受支持。
 

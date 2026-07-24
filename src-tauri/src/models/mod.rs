@@ -11,3 +11,5 @@ pub mod scheduled_notification;
 pub mod session;
 pub mod settings;
 pub mod world;
+pub mod world_record;
+pub mod world_kv;

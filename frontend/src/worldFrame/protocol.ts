@@ -28,7 +28,15 @@ export type WorldFrameAction =
   | { type: "start-recording" }
   | { type: "stop-recording"; send?: boolean }
   | { type: "voice-mode"; enabled: boolean }
-  | { type: "remove-audio"; index: number };
+  | { type: "remove-audio"; index: number }
+  | { type: "world-record-list"; collection: string }
+  | { type: "world-record-create"; collection: string; data: Record<string, unknown> }
+  | { type: "world-record-update"; collection: string; recordId: string; data: Record<string, unknown> }
+  | { type: "world-record-delete"; collection: string; recordId: string }
+  | { type: "world-kv-list"; namespace: string }
+  | { type: "world-kv-get"; namespace: string; key: string }
+  | { type: "world-kv-set"; namespace: string; key: string; value: unknown }
+  | { type: "world-kv-delete"; namespace: string; key: string };
 
 export type WorldFrameConnectMessage = {
   type: "world-frame/connect";
@@ -64,6 +72,7 @@ export type WorldFrameActionResultMessage = {
   requestId: string;
   ok: boolean;
   error?: string;
+  result?: unknown;
 };
 
 export type WorldFrameHostMessage =
@@ -142,7 +151,7 @@ function isWorldFrameAction(value: unknown): value is WorldFrameAction {
   if (!isRecord(value) || typeof value.type !== "string") {
     return false;
   }
-  return [
+  const known = [
     "clear-action-error",
     "set-draft-value",
     "set-auto-scroll",
@@ -164,6 +173,51 @@ function isWorldFrameAction(value: unknown): value is WorldFrameAction {
     "voice-mode",
     "remove-audio",
   ].includes(value.type);
+  if (known) {
+    return true;
+  }
+  if (value.type === "world-kv-list") {
+    return isWorldStorageName(value.namespace);
+  }
+  if (value.type === "world-kv-get" || value.type === "world-kv-delete") {
+    return isWorldStorageName(value.namespace) && isWorldStorageKey(value.key);
+  }
+  if (value.type === "world-kv-set") {
+    return isWorldStorageName(value.namespace)
+      && isWorldStorageKey(value.key)
+      && Object.prototype.hasOwnProperty.call(value, "value");
+  }
+  if (!isWorldRecordCollection(value.collection)) {
+    return false;
+  }
+  if (value.type === "world-record-list") {
+    return true;
+  }
+  if (value.type === "world-record-create") {
+    return isRecord(value.data);
+  }
+  if (value.type === "world-record-update") {
+    return typeof value.recordId === "string" && value.recordId.length > 0 && isRecord(value.data);
+  }
+  return value.type === "world-record-delete"
+    && typeof value.recordId === "string"
+    && value.recordId.length > 0;
+}
+
+function isWorldRecordCollection(value: unknown): value is string {
+  return isWorldStorageName(value);
+}
+
+function isWorldStorageName(value: unknown): value is string {
+  return typeof value === "string"
+    && /^[a-z0-9._-]{1,64}$/i.test(value.trim());
+}
+
+function isWorldStorageKey(value: unknown): value is string {
+  return typeof value === "string"
+    && value.trim().length > 0
+    && value.trim().length <= 128
+    && !/[\u0000-\u001f\u007f]/.test(value);
 }
 
 function isProtocolRecord(value: unknown): value is Record<string, unknown> {

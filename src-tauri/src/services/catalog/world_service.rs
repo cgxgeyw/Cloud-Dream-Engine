@@ -676,6 +676,8 @@ impl WorldService {
                 "mobile_file": mobile_ui_source,
                 "runtime_version": ui_runtime_version,
                 "capabilities": ui_capabilities,
+                "storage": imported_world.ui_storage_config.clone(),
+                "logic": imported_world.ui_logic_config.clone(),
                 "entries": {
                     "desktop": {
                         "document": desktop_ui_source,
@@ -1192,6 +1194,8 @@ mod tests {
                 ui_assets_config: serde_json::json!({}),
                 ui_runtime_version: Some(2),
                 ui_capabilities: Vec::new(),
+                ui_storage_config: serde_json::json!({}),
+                ui_logic_config: serde_json::json!({}),
                 opening_messages: Vec::new(),
                 opening_character_names: vec![
                     "Imported Good".to_string(),

@@ -1,0 +1,24 @@
+{
+  "schema_version": 2,
+  "meta": {
+    "name": "记账助手桌面界面",
+    "author": "Cloud Dream Engine",
+    "description": "无模型、本地持久化的桌面账本"
+  },
+  "layout": {
+    "root": {
+      "type": "component",
+      "component": "ledger_book",
+      "class_name": "accounting-ledger accounting-ledger--desktop",
+      "min_height": "100%",
+      "props": {
+        "title": "记账助手",
+        "collection": "ledger.entries",
+        "currency": "¥",
+        "default_view": "overview",
+        "income_categories": ["工资", "奖金", "理财", "兼职", "报销", "其他收入"],
+        "expense_categories": ["餐饮", "交通", "购物", "居住", "娱乐", "医疗", "教育", "人情", "其他支出"]
+      }
+    }
+  }
+}
