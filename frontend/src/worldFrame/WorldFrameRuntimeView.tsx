@@ -31,7 +31,7 @@ export function WorldFrameRuntimeView({ payload, sendAction }: Props) {
       <WorldFrameInputComposer runtime={runtime} actions={actions} node={node} />
     ),
     ledger_book: ({ node }: Parameters<NonNullable<ReturnType<typeof createGameUiComponentRenderers>[string]>>[0]) => (
-      <LedgerBook node={node} platform={payload.platform} sendAction={sendAction} />
+      <LedgerBook node={node} platform={payload.platform} sendAction={sendAction} onExit={actions.navigateBack} />
     ),
   }), [actions, payload.platform, runtime, sendAction]);
   const runtimeData = useMemo(() => ({

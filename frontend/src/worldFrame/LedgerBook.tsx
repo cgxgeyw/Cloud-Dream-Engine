@@ -9,6 +9,7 @@ import {
   CircleAlert,
   LayoutDashboard,
   LoaderCircle,
+  LogOut,
   Pencil,
   Plus,
   ReceiptText,
@@ -32,6 +33,7 @@ type LedgerBookProps = {
   node?: GameUiComponentNode;
   platform: GameUiPlatform;
   sendAction: (action: WorldFrameAction) => Promise<unknown>;
+  onExit: () => void;
 };
 
 type LedgerKind = "income" | "expense";
@@ -85,7 +87,7 @@ const DEFAULT_INCOME_CATEGORIES = ["工资", "奖金", "理财", "兼职", "报�
 const DEFAULT_EXPENSE_CATEGORIES = ["餐饮", "交通", "购物", "居住", "娱乐", "医疗", "教育", "人情", "其他支出"];
 const DEFAULT_ACCOUNTS = ["微信", "支付宝", "银行卡", "现金"];
 
-export function LedgerBook({ node, platform, sendAction }: LedgerBookProps) {
+export function LedgerBook({ node, platform, sendAction, onExit }: LedgerBookProps) {
   const title = readStringProp(node, "title", "记账助手");
   const collection = readCollectionProp(node, "collection", "ledger.entries");
   const currency = readStringProp(node, "currency", "¥").slice(0, 8);
@@ -286,10 +288,16 @@ export function LedgerBook({ node, platform, sendAction }: LedgerBookProps) {
             <p>{entries.length > 0 ? `${entries.length} 笔记录 · 数据保存在当前世界` : "本地账本 · 数据保存在当前世界"}</p>
           </div>
         </div>
-        <button type="button" className="ledger-primary-action" onClick={() => openCreateForm("expense")}>
-          <Plus size={17} />
-          <span>记一笔</span>
-        </button>
+        <div className="ledger-header-actions">
+          <button type="button" className="ledger-secondary-action ledger-exit-action" onClick={onExit}>
+            <LogOut size={17} />
+            <span>退出</span>
+          </button>
+          <button type="button" className="ledger-primary-action" onClick={() => openCreateForm("expense")}>
+            <Plus size={17} />
+            <span>记一笔</span>
+          </button>
+        </div>
       </header>
 
       <nav className="ledger-view-tabs" aria-label="账本页面">
@@ -351,6 +359,7 @@ export function LedgerBook({ node, platform, sendAction }: LedgerBookProps) {
       {!loading && view === "stats" ? (
         <StatisticsView
           entries={periodEntries}
+          trendEntries={entries}
           totals={totals}
           currency={currency}
           periodMode={periodMode}
@@ -661,18 +670,20 @@ function LedgerEntryRow({
 
 function StatisticsView({
   entries,
+  trendEntries,
   totals,
   currency,
   periodMode,
   periodValue,
 }: {
   entries: LedgerEntry[];
+  trendEntries: LedgerEntry[];
   totals: LedgerTotals;
   currency: string;
   periodMode: PeriodMode;
   periodValue: string;
 }) {
-  const trend = buildTrend(entries, periodMode, periodValue);
+  const trend = buildTrend(trendEntries, periodMode, periodValue);
   const maxTrend = Math.max(1, ...trend.flatMap((item) => [item.income, item.expense]));
   const expenses = buildCategoryBreakdown(entries, "expense").slice(0, 8);
   const incomes = buildCategoryBreakdown(entries, "income").slice(0, 8);
@@ -689,22 +700,20 @@ function StatisticsView({
 
       <section className="ledger-section ledger-trend-section">
         <div className="ledger-section-heading">
-          <div><span className="ledger-eyebrow">{formatPeriodLabel(periodMode, periodValue)}</span><h2>收支趋势</h2></div>
+          <div><span className="ledger-eyebrow">{formatTrendPeriodLabel(periodMode, periodValue)}</span><h2>收支趋势</h2></div>
           <div className="ledger-chart-legend"><span className="is-income">收入</span><span className="is-expense">支出</span></div>
         </div>
-        {trend.some((item) => item.income > 0 || item.expense > 0) ? (
-          <div className="ledger-trend-chart" role="img" aria-label="收支趋势柱状图">
-            {trend.map((item) => (
-              <div className="ledger-trend-column" key={item.key} title={`${item.label}：收入 ${formatMoney(item.income, currency)}，支出 ${formatMoney(item.expense, currency)}`}>
-                <div className="ledger-trend-bars">
-                  <span className="is-income" style={{ height: `${Math.max(item.income > 0 ? 4 : 0, (item.income / maxTrend) * 100)}%` }} />
-                  <span className="is-expense" style={{ height: `${Math.max(item.expense > 0 ? 4 : 0, (item.expense / maxTrend) * 100)}%` }} />
-                </div>
-                <span className="ledger-trend-label">{item.label}</span>
+        <div className="ledger-trend-chart" role="img" aria-label="收支趋势柱状图">
+          {trend.map((item) => (
+            <div className="ledger-trend-column" key={item.key} title={`${item.label}：收入 ${formatMoney(item.income, currency)}，支出 ${formatMoney(item.expense, currency)}`}>
+              <div className="ledger-trend-bars">
+                <span className="is-income" style={{ height: `${Math.max(item.income > 0 ? 4 : 0, (item.income / maxTrend) * 100)}%` }} />
+                <span className="is-expense" style={{ height: `${Math.max(item.expense > 0 ? 4 : 0, (item.expense / maxTrend) * 100)}%` }} />
               </div>
-            ))}
-          </div>
-        ) : <div className="ledger-quiet-empty">当前周期暂无可统计数据</div>}
+              <span className="ledger-trend-label">{item.label}</span>
+            </div>
+          ))}
+        </div>
       </section>
 
       <div className="ledger-stats-grid">
@@ -952,39 +961,37 @@ function buildCategoryBreakdown(entries: LedgerEntry[], kind: LedgerKind) {
     .sort((left, right) => right.amount - left.amount);
 }
 
-function buildTrend(entries: LedgerEntry[], mode: PeriodMode, value: string): TrendBucket[] {
+export function buildTrend(entries: LedgerEntry[], mode: PeriodMode, value: string): TrendBucket[] {
   let keys: Array<{ key: string; label: string }>;
-  if (mode === "month") {
-    const [year, month] = value.split("-").map(Number);
+  if (mode === "day") {
+    const monthValue = /^\d{4}-\d{2}/.test(value) ? value.slice(0, 7) : currentPeriodValue("month");
+    const [year, month] = monthValue.split("-").map(Number);
     const dayCount = Number.isFinite(year) && Number.isFinite(month)
       ? new Date(year, month, 0).getDate()
       : 31;
     keys = Array.from({ length: dayCount }, (_, index) => {
       const day = String(index + 1).padStart(2, "0");
-      return { key: `${value}-${day}`, label: String(index + 1) };
+      return { key: `${monthValue}-${day}`, label: String(index + 1) };
     });
-  } else if (mode === "year") {
+  } else if (mode === "month") {
+    const yearValue = /^\d{4}/.test(value) ? value.slice(0, 4) : currentPeriodValue("year");
     keys = Array.from({ length: 12 }, (_, index) => {
       const month = String(index + 1).padStart(2, "0");
-      return { key: `${value}-${month}`, label: `${index + 1}月` };
+      return { key: `${yearValue}-${month}`, label: `${index + 1}月` };
     });
-  } else if (mode === "day") {
-    const categories = Array.from(new Set(entries.map((entry) => entry.category))).slice(0, 12);
-    keys = categories.map((category) => ({ key: category, label: category }));
   } else {
     const years = Array.from(new Set(entries.map((entry) => entry.date.slice(0, 4)))).sort();
-    keys = years.map((year) => ({ key: year, label: year }));
+    keys = (years.length > 0 ? years : [currentPeriodValue("year")])
+      .map((year) => ({ key: year, label: year }));
   }
 
   const buckets = new Map(keys.map((item) => [item.key, { ...item, income: 0, expense: 0 }]));
   for (const entry of entries) {
-    const key = mode === "month"
+    const key = mode === "day"
       ? entry.date
-      : mode === "year"
+      : mode === "month"
         ? entry.date.slice(0, 7)
-        : mode === "day"
-          ? entry.category
-          : entry.date.slice(0, 4);
+        : entry.date.slice(0, 4);
     const bucket = buckets.get(key);
     if (bucket) {
       bucket[entry.kind] += entry.amountCents;
@@ -1065,6 +1072,17 @@ function formatPeriodLabel(mode: PeriodMode, value: string): string {
     return `${year} 年 ${Number(month)} 月`;
   }
   return formatFriendlyDate(value);
+}
+
+function formatTrendPeriodLabel(mode: PeriodMode, value: string): string {
+  if (mode === "day") {
+    const [year, month] = value.split("-");
+    return `${year} 年 ${Number(month)} 月 · 按日`;
+  }
+  if (mode === "month") {
+    return `${value.slice(0, 4)} 年 · 按月`;
+  }
+  return "全部年份 · 按年";
 }
 
 function formatFriendlyDate(value: string): string {

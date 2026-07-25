@@ -213,7 +213,7 @@ export function GameUiPreview({
     side_panel_tabs: () => mounts.side_panel ?? null,
     floating_actions: () => mounts.floating_actions ?? null,
     ledger_book: ({ node }) => (
-      <LedgerBook node={node} platform={platform} sendAction={handleLedgerPreviewAction} />
+      <LedgerBook node={node} platform={platform} sendAction={handleLedgerPreviewAction} onExit={() => undefined} />
     ),
   };
 

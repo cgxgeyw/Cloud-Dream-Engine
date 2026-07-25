@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildTrend,
   calculateTotals,
   decodeLedgerRecord,
   matchesPeriod,
@@ -88,5 +89,38 @@ describe("ledger period matching", () => {
     expect(matchesPeriod("2026-07-24", "month", "2026-07")).toBe(true);
     expect(matchesPeriod("2026-07-24", "year", "2026")).toBe(true);
     expect(matchesPeriod("2026-07-24", "all", "all")).toBe(true);
+  });
+
+  it("builds complete daily, monthly and yearly trend axes", () => {
+    const julyEntry = decodeLedgerRecord(storedRecord(
+      "6f12196a-a6e2-4d9e-9103-b9e328092b89",
+      "income",
+      120000,
+      "2026-07-24",
+    ));
+    const olderEntry = decodeLedgerRecord(storedRecord(
+      "f47708f8-ed7d-4d11-8f53-cc573bce9f20",
+      "expense",
+      3580,
+      "2024-01-02",
+    ));
+
+    expect(julyEntry).not.toBeNull();
+    expect(olderEntry).not.toBeNull();
+
+    const daily = buildTrend([julyEntry!, olderEntry!], "day", "2026-07-24");
+    expect(daily).toHaveLength(31);
+    expect(daily[0]?.key).toBe("2026-07-01");
+    expect(daily[30]?.key).toBe("2026-07-31");
+
+    const monthly = buildTrend([julyEntry!, olderEntry!], "month", "2026-07");
+    expect(monthly).toHaveLength(12);
+    expect(monthly.map((item) => item.label)).toEqual([
+      "1月", "2月", "3月", "4月", "5月", "6月",
+      "7月", "8月", "9月", "10月", "11月", "12月",
+    ]);
+
+    const yearly = buildTrend([julyEntry!, olderEntry!], "year", "2026");
+    expect(yearly.map((item) => item.label)).toEqual(["2024", "2026"]);
   });
 });

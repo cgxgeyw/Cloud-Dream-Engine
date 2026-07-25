@@ -34,6 +34,12 @@ function countMapNodes(value: WorldResponse["map_nodes"]): number {
   return count;
 }
 
+function isSingleAgentWorld(world: WorldResponse): boolean {
+  const serviceMode = world.director_config?.service_mode;
+  return typeof serviceMode === "string"
+    && serviceMode.trim().toLocaleLowerCase() === "agent_chat";
+}
+
 function useWorldList(preferredWorldId?: string | null) {
   const t = useT();
   const [worlds, setWorlds] = useState<WorldResponse[]>([]);
@@ -153,6 +159,7 @@ export function NewGameSetupPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const singleAgentWorld = world ? isSingleAgentWorld(world) : false;
 
   useEffect(() => {
     let cancelled = false;
@@ -168,7 +175,11 @@ export function NewGameSetupPage() {
         if (!cancelled) {
           setWorld(worldData);
           setCharacters(characterData);
-          setSelectedPlayerCharacterId(worldData.player_character_id ?? characterData[0]?.id ?? "");
+          setSelectedPlayerCharacterId(
+            isSingleAgentWorld(worldData)
+              ? ""
+              : worldData.player_character_id ?? characterData[0]?.id ?? "",
+          );
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -197,7 +208,7 @@ export function NewGameSetupPage() {
     if (!world) {
       return;
     }
-    if (!selectedPlayerCharacterId) {
+    if (!singleAgentWorld && !selectedPlayerCharacterId) {
       setError(t("newGame.selectPlayerFirst"));
       return;
     }
@@ -205,10 +216,12 @@ export function NewGameSetupPage() {
     try {
       setCreating(true);
       setError(null);
-      const session = await createSession({
-        world_id: world.id,
-        player_character_id: selectedPlayerCharacterId,
-      });
+      const session = await createSession(singleAgentWorld
+        ? { world_id: world.id }
+        : {
+            world_id: world.id,
+            player_character_id: selectedPlayerCharacterId,
+          });
       navigate(`/game/${session.id}`);
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : t("newGame.startSessionFailed"));
@@ -259,23 +272,25 @@ export function NewGameSetupPage() {
               </div>
             </div>
 
-            <div className="newgame-player-card">
-              <label className="editor-field">
-                <span className="editor-field-label">{t("newGame.selectYourCharacter")}</span>
-                <select
-                  value={selectedPlayerCharacterId}
-                  onChange={(event) => setSelectedPlayerCharacterId(event.target.value)}
-                  className="editor-field-input editor-field-select"
-                >
-                  {characters.map((character) => (
-                    <option key={character.id} value={character.id}>
-                      {character.name}
-                      {world.player_character_id === character.id ? t("newGame.defaultSuffix") : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
+            {!singleAgentWorld ? (
+              <div className="newgame-player-card">
+                <label className="editor-field">
+                  <span className="editor-field-label">{t("newGame.selectYourCharacter")}</span>
+                  <select
+                    value={selectedPlayerCharacterId}
+                    onChange={(event) => setSelectedPlayerCharacterId(event.target.value)}
+                    className="editor-field-input editor-field-select"
+                  >
+                    {characters.map((character) => (
+                      <option key={character.id} value={character.id}>
+                        {character.name}
+                        {world.player_character_id === character.id ? t("newGame.defaultSuffix") : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            ) : null}
 
             <div className="newgame-action-stack">
               <div className="newgame-secondary-actions">
@@ -293,7 +308,7 @@ export function NewGameSetupPage() {
               <button
                 type="button"
                 onClick={() => void handleCreateSession()}
-                disabled={creating || !selectedPlayerCharacterId}
+                disabled={creating || characters.length === 0 || (!singleAgentWorld && !selectedPlayerCharacterId)}
                 className="action-btn action-btn--primary newgame-start-btn"
               >
                 {creating ? t("newGame.starting") : t("newGame.enterWorld")}

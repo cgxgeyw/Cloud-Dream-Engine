@@ -377,7 +377,7 @@ mod tests {
     }
 
     #[test]
-    fn create_agent_chat_session_uses_virtual_player_when_no_player_is_configured() {
+    fn create_agent_chat_session_always_uses_virtual_player() {
         let conn = Connection::open_in_memory().expect("open in-memory db");
         schema::create_tables(&conn).expect("create schema");
         let world = WorldRepository::new(&conn)
@@ -441,13 +441,14 @@ mod tests {
                     ui_theme_config: None,
                     opening_messages: None,
                     opening_character_ids: None,
-                    player_character_id: Some(None),
+                    player_character_id: Some(Some(agent.id.clone())),
                 },
             )
             .expect("update world");
 
-        let session = SessionOrchestrator::create_session(&conn, &updated_world.id, None)
-            .expect("create session");
+        let session =
+            SessionOrchestrator::create_session(&conn, &updated_world.id, Some(&agent.id))
+                .expect("create session");
 
         assert_eq!(session.player_character_id, agent_chat_virtual_player_id());
         assert_eq!(
@@ -1339,14 +1340,7 @@ impl SessionOrchestrator {
         let characters = char_repo.list_by_world(world_id)?;
 
         let service_config = resolve_service_runtime_config(&world);
-        let use_agent_chat_virtual_player = service_config.service_mode == ServiceMode::AgentChat
-            && player_character_id.is_none()
-            && world
-                .player_character_id
-                .as_deref()
-                .map(str::trim)
-                .unwrap_or_default()
-                .is_empty();
+        let use_agent_chat_virtual_player = service_config.service_mode == ServiceMode::AgentChat;
         let agent_chat_default_agent = service_config
             .default_agent_id
             .as_deref()
