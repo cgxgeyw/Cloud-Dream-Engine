@@ -67,6 +67,9 @@ impl SessionOrchestrator {
                         .filter(|value| !value.is_empty())
                         .unwrap_or_else(|| speaker_name.clone());
                     messages.push(ChatMessage {
+                        message_id: ChatMessage::generate_id(),
+                        created_at: chrono::Utc::now().to_rfc3339(),
+                        parent_message_id: None,
                         role: "agent".to_string(),
                         content: MessageContent::Text(recovered_content),
                         speaker: Some(recovered_speaker),
@@ -200,6 +203,9 @@ impl SessionOrchestrator {
             if let Some(callback) = progress_callback.as_deref_mut() {
                 let mut progress_messages = messages.clone();
                 progress_messages.push(ChatMessage {
+                    message_id: ChatMessage::generate_id(),
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                    parent_message_id: None,
                     role: "agent".to_string(),
                     content: MessageContent::Text(String::new()),
                     speaker: Some(speaker_name.clone()),
@@ -250,6 +256,9 @@ impl SessionOrchestrator {
                                     let partial = streamed_partial.clone();
                                     let mut progress_messages = messages.clone();
                                     progress_messages.push(ChatMessage {
+                                        message_id: ChatMessage::generate_id(),
+                                        created_at: chrono::Utc::now().to_rfc3339(),
+                                        parent_message_id: None,
                                         role: "agent".to_string(),
                                         content: MessageContent::Text(
                                             partial
@@ -485,6 +494,9 @@ impl SessionOrchestrator {
                         runtime_payloads.push(raw_payload);
                     }
                     messages.push(ChatMessage {
+                        message_id: ChatMessage::generate_id(),
+                        created_at: chrono::Utc::now().to_rfc3339(),
+                        parent_message_id: None,
                         role: "agent".to_string(),
                         content: MessageContent::Text(parsed_response.content.clone()),
                         speaker: Some(parsed_response.speaker.clone()),

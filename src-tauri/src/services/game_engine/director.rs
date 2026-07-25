@@ -1910,6 +1910,9 @@ impl WorldDirectorService {
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| resolved_scene_name.clone());
         let message = ChatMessage {
+            message_id: ChatMessage::generate_id(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            parent_message_id: None,
             role: "system".to_string(),
             content: MessageContent::Text(
                 proposal
@@ -2428,6 +2431,9 @@ impl WorldDirectorService {
         for_switch_character: bool,
     ) -> ChatMessage {
         ChatMessage {
+            message_id: ChatMessage::generate_id(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            parent_message_id: None,
             role: "system".to_string(),
             content: MessageContent::Text(format!("New character joined: {}", character.name)),
             speaker: None,

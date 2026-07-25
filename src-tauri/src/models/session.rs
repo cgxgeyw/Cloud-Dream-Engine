@@ -141,13 +141,85 @@ pub struct InputAudio {
     pub duration_secs: Option<f64>,
 }
 
+fn new_message_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
+    /// 稳定消息 ID。写入时生成；旧数据反序列化缺省时补发（开发期允许清库重建，
+    /// 新协议数据从写入起就必须携带）。消息寻址用 session_id + message_id。
+    #[serde(default = "new_message_id")]
+    pub message_id: String,
     pub role: String,
     #[serde(default)]
     pub content: MessageContent,
     pub speaker: Option<String>,
     pub metadata: Option<serde_json::Value>,
+    /// RFC3339 写入时间；旧数据可能为空串。
+    #[serde(default)]
+    pub created_at: String,
+    /// 分支/重生成场景下来源消息的 ID；普通消息为 None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_message_id: Option<String>,
+}
+
+impl ChatMessage {
+    /// 生成新的稳定消息 ID。
+    pub fn generate_id() -> String {
+        new_message_id()
+    }
+
+    // new/with_metadata 目前由测试和第 2 项（重新生成）使用。
+    #[allow(dead_code)]
+    pub fn new(
+        role: impl Into<String>,
+        content: MessageContent,
+        speaker: Option<String>,
+    ) -> Self {
+        Self {
+            message_id: new_message_id(),
+            role: role.into(),
+            content,
+            speaker,
+            metadata: None,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            parent_message_id: None,
+        }
+    }
+
+    #[allow(dead_code)] // 同上，第 2 项使用
+    pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
+        self.metadata = Some(metadata);
+        self
+    }
+}
+
+impl SessionSnapshot {
+    /// 按稳定 ID 定位消息。
+    #[allow(dead_code)] // 由 load_message_runtime_proposals 和第 2 项（重新生成）使用
+    pub fn find_message(&self, message_id: &str) -> Option<&ChatMessage> {
+        self.messages
+            .iter()
+            .find(|message| message.message_id == message_id)
+    }
+
+    /// 按稳定 ID 编辑消息内容；消息不存在时返回 false。
+    pub fn edit_message_content(
+        &mut self,
+        message_id: &str,
+        new_content: MessageContent,
+    ) -> bool {
+        let Some(message) = self
+            .messages
+            .iter_mut()
+            .find(|message| message.message_id == message_id)
+        else {
+            return false;
+        };
+        message.content = new_content;
+        true
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

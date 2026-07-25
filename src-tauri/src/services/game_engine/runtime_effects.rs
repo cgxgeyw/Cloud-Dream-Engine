@@ -123,6 +123,9 @@ pub(crate) fn apply_director_runtime_effects(
                 .system_messages
                 .iter()
                 .map(|content| ChatMessage {
+                    message_id: ChatMessage::generate_id(),
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                    parent_message_id: None,
                     role: "system".to_string(),
                     content: MessageContent::Text(content.clone()),
                     speaker: None,
@@ -201,6 +204,9 @@ pub(crate) fn apply_director_runtime_effects(
                 .system_messages
                 .iter()
                 .map(|content| ChatMessage {
+                    message_id: ChatMessage::generate_id(),
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                    parent_message_id: None,
                     role: "system".to_string(),
                     content: MessageContent::Text(content.clone()),
                     speaker: None,
@@ -241,6 +247,9 @@ pub(crate) fn apply_director_runtime_effects(
                 .system_messages
                 .iter()
                 .map(|content| ChatMessage {
+                    message_id: ChatMessage::generate_id(),
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                    parent_message_id: None,
                     role: "system".to_string(),
                     content: MessageContent::Text(content.clone()),
                     speaker: None,
@@ -319,6 +328,9 @@ pub(crate) fn apply_director_runtime_effects(
                 .system_messages
                 .iter()
                 .map(|content| ChatMessage {
+                    message_id: ChatMessage::generate_id(),
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                    parent_message_id: None,
                     role: "system".to_string(),
                     content: MessageContent::Text(content.clone()),
                     speaker: None,
@@ -362,6 +374,9 @@ pub(crate) fn apply_director_runtime_effects(
                 .system_messages
                 .iter()
                 .map(|content| ChatMessage {
+                    message_id: ChatMessage::generate_id(),
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                    parent_message_id: None,
                     role: "system".to_string(),
                     content: MessageContent::Text(content.clone()),
                     speaker: None,
@@ -715,6 +730,9 @@ fn parse_tool_call_messages(
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty())?;
             Some(ChatMessage {
+                message_id: ChatMessage::generate_id(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                parent_message_id: None,
                 role: "system".to_string(),
                 content: MessageContent::Text(format!("主控请求工具：{}", tool_name)),
                 speaker: None,

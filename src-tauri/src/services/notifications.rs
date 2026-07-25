@@ -329,21 +329,19 @@ impl NotificationScheduler {
         data_dir: &Path,
         notification: &ScheduledNotification,
     ) -> Result<(), String> {
-        // 安卓行程提醒改为直接写入系统日历事件(见 workmanager_plugin.rs 与
-        // ScheduledNotificationReceiver.kt),由系统在应用未运行时也能可靠触发,
-        // 不再依赖 Tauri notification 插件的进程内 Schedule::At。
+        // 安卓行程提醒写入系统日历事件，由系统在应用未运行时也能可靠触发。
+        // 平台调用只经 Kotlin NativeBridge 中间件（tauri-plugin-native-bridge），
+        // Rust 不再直接发起 JNI 调用。
+        use tauri::Manager;
         let scheduled_at = parse_stored_notification_time(&notification.scheduled_at)?;
-        let delay_ms = (scheduled_at - Utc::now())
-            .num_milliseconds()
-            .max(0);
-        let result = crate::workmanager_plugin::schedule_notification_with_result(
-            app,
-            &notification.id,
-            &notification.title,
-            &notification.body,
-            ANDROID_REMINDER_CHANNEL_ID,
-            delay_ms,
-        )?;
+        let bridge = app.state::<tauri_plugin_native_bridge::NativeBridge<tauri::Wry>>();
+        let result = bridge.schedule_reminder(tauri_plugin_native_bridge::ScheduleReminderArgs {
+            notification_id: notification.id.clone(),
+            title: notification.title.clone(),
+            body: notification.body.clone(),
+            channel_id: ANDROID_REMINDER_CHANNEL_ID.to_string(),
+            trigger_at_ms: scheduled_at.timestamp_millis(),
+        })?;
         // H7/M9: 复用调用方已持有的主连接,不再 Database::new() 另开连接。
         // 保存日历 event id 到 metadata,供取消/调试使用。
         ScheduledNotificationRepository::new(conn)
@@ -441,7 +439,9 @@ impl NotificationScheduler {
         {
             // 按 notification id 删除对应的系统日历事件
             // (Kotlin 侧用 SharedPreferences 维护 id -> eventId 映射)。
-            crate::workmanager_plugin::cancel_notification(app, &notification.id)?;
+            use tauri::Manager;
+            let bridge = app.state::<tauri_plugin_native_bridge::NativeBridge<tauri::Wry>>();
+            bridge.cancel_reminder(&notification.id)?;
         }
         #[cfg(not(target_os = "android"))]
         {
@@ -511,6 +511,9 @@ fn append_fired_notification_message(
     session.current_speaker = speaker.clone();
     session.current_line = content.clone();
     session.messages.push(ChatMessage {
+        message_id: ChatMessage::generate_id(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        parent_message_id: None,
         role: "agent".to_string(),
         content: MessageContent::Text(content),
         speaker: Some(speaker.clone()),

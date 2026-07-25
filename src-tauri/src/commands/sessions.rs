@@ -854,6 +854,32 @@ pub async fn get_session_runtime_attributes(
         .get_session_runtime_attributes(db.conn(), &session_id)
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EditSessionMessageRequest {
+    pub session_id: String,
+    pub message_id: String,
+    pub content: String,
+}
+
+/// 按稳定消息 ID 编辑一条消息的内容。消息寻址：session_id + message_id。
+#[tauri::command]
+pub async fn edit_session_message(
+    state: State<'_, AppState>,
+    request: EditSessionMessageRequest,
+) -> Result<bool, String> {
+    let db = state.db.lock().await;
+    let conn = db.conn();
+    let repo = crate::db::repositories::session_repo::SessionRepository::new(conn);
+    let Some(mut session) = repo.get(&request.session_id)? else {
+        return Ok(false);
+    };
+    if !session.edit_message_content(&request.message_id, MessageContent::Text(request.content)) {
+        return Ok(false);
+    }
+    repo.upsert(&session)?;
+    Ok(true)
+}
+
 fn finalize_turn_snapshot(
     app: &AppHandle,
     data_dir: &std::path::Path,

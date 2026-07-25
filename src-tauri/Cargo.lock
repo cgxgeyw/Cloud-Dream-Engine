@@ -1058,8 +1058,8 @@ dependencies = [
  "candle-nn",
  "candle-transformers",
  "chrono",
+ "embed-resource",
  "futures",
- "jni",
  "json5",
  "notify-rust",
  "regex",
@@ -1070,6 +1070,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
+ "tauri-plugin-native-bridge",
  "tauri-plugin-notification",
  "tauri-plugin-shell",
  "thiserror 1.0.69",
@@ -4814,6 +4815,15 @@ dependencies = [
  "thiserror 2.0.18",
  "toml 1.1.2+spec-1.1.0",
  "url",
+]
+
+[[package]]
+name = "tauri-plugin-native-bridge"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
 ]
 
 [[package]]

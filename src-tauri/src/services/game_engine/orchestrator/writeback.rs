@@ -457,6 +457,9 @@ pub(crate) fn build_director_trace_chat_message(
     reasoning_expanded: bool,
 ) -> ChatMessage {
     ChatMessage {
+        message_id: ChatMessage::generate_id(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        parent_message_id: None,
         role: "system".to_string(),
         content: MessageContent::Text(trace_message.trace_text.clone()),
         speaker: None,
@@ -516,6 +519,9 @@ pub(crate) fn materialize_completed_speaker_messages(
     steps.sort_by(|left, right| left.0.cmp(&right.0));
     steps.into_iter()
         .map(|(_, speaker, content, llm_output)| ChatMessage {
+            message_id: ChatMessage::generate_id(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            parent_message_id: None,
             role: "agent".to_string(),
             content: MessageContent::Text(content),
             speaker: Some(speaker),
@@ -861,6 +867,42 @@ pub(crate) fn journal_has_completed_step(journal: &[serde_json::Value], step: &s
         entry.get("step").and_then(|value| value.as_str()) == Some(step)
             && entry.get("status").and_then(|value| value.as_str()) == Some("completed")
     })
+}
+
+/// 查一条消息在其创建回合关联的权威状态提议（runtime effects 写回 payload）。
+/// 链路：message → metadata.turn_index → turn_journal 中该回合的
+/// runtime_effects_applied 步骤。消息无 turn_index 或无对应步骤时返回 None。
+/// 供重新生成（第 2 项）回滚状态使用。
+#[allow(dead_code)] // 第 2 项（重新生成）使用
+pub(crate) fn load_message_runtime_proposals(
+    conn: &Connection,
+    session_id: &str,
+    message_id: &str,
+) -> Result<Option<serde_json::Value>, String> {
+    let Some(session) =
+        crate::db::repositories::session_repo::SessionRepository::new(conn).get(session_id)?
+    else {
+        return Ok(None);
+    };
+    let Some(message) = session.find_message(message_id) else {
+        return Ok(None);
+    };
+    let Some(turn_index) = message
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("turn_index"))
+        .and_then(|value| value.as_i64())
+    else {
+        return Ok(None);
+    };
+    let journal = load_turn_journal(conn, session_id, turn_index as i32)?;
+    Ok(journal.into_iter().find_map(|entry| {
+        if entry.get("step").and_then(|value| value.as_str()) == Some("runtime_effects_applied") {
+            entry.get("payload").cloned()
+        } else {
+            None
+        }
+    }))
 }
 
 pub(crate) fn unique_strings(values: Vec<String>) -> Vec<String> {

@@ -1338,6 +1338,9 @@ pub(crate) fn annotate_player_message_speakers(
                 .map(|speaker| speaker.trim().to_string())
                 .filter(|speaker| !speaker.is_empty() && speaker != "player");
             annotated.push(ChatMessage {
+                message_id: ChatMessage::generate_id(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                parent_message_id: None,
                 role: message.role.clone(),
                 content: message.content.clone(),
                 speaker: Some(raw_speaker.unwrap_or_else(|| resolved_player_speaker.clone())),

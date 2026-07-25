@@ -162,6 +162,9 @@ mod tests {
 
     fn agent_message(speaker: &str) -> ChatMessage {
         ChatMessage {
+            message_id: ChatMessage::generate_id(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            parent_message_id: None,
             role: "agent".to_string(),
             content: MessageContent::Text(String::new()),
             speaker: Some(speaker.to_string()),

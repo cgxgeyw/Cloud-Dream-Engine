@@ -1,0 +1,11 @@
+[package]
+name = "tauri-plugin-native-bridge"
+version = "0.1.0"
+edition = "2021"
+description = "Android 平台能力统一中间件：通知、权限等系统交互只经此插件进出"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = "2"

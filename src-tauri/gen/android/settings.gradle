@@ -19,3 +19,9 @@ dependencyResolutionManagement {
 include ':app'
 
 apply from: 'tauri.settings.gradle'
+
+// 安卓平台能力中间件（Kotlin NativeBridge）。源码在 src-tauri/plugins/native-bridge，
+// 独立于 gen/android，tauri android init 重新生成时不会覆盖；
+// 重新 init 后需确认本 include 仍存在。
+include ':nativebridge'
+project(':nativebridge').projectDir = new File('../../plugins/native-bridge/android')

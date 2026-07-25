@@ -250,6 +250,9 @@ impl WorldService {
             .iter()
             .filter(|message| !message.content.trim().is_empty())
             .map(|message| ChatMessage {
+                message_id: ChatMessage::generate_id(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                parent_message_id: None,
                 role: Self::normalize_message_role(&message.role),
                 content: MessageContent::Text(message.content.clone()),
                 speaker: message.speaker.clone(),

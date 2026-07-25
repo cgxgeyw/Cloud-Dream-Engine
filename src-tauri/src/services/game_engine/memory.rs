@@ -2077,12 +2077,18 @@ mod tests {
         let turn_index = 5;
         let messages = vec![
             ChatMessage {
+                message_id: ChatMessage::generate_id(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                parent_message_id: None,
                 role: "player".to_string(),
                 content: MessageContent::Text("Take the brass compass and hide it.".to_string()),
                 speaker: Some("Player".to_string()),
                 metadata: Some(serde_json::json!({ "turn_index": turn_index })),
             },
             ChatMessage {
+                message_id: ChatMessage::generate_id(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                parent_message_id: None,
                 role: "agent".to_string(),
                 content: MessageContent::Text("Alice pockets the brass compass and nods.".to_string()),
                 speaker: Some("Alice".to_string()),
@@ -2147,12 +2153,18 @@ mod tests {
         let turn_index = 7;
         let messages = vec![
             ChatMessage {
+                message_id: ChatMessage::generate_id(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                parent_message_id: None,
                 role: "player".to_string(),
                 content: MessageContent::Text("Tell Alice the passphrase is moon glass.".to_string()),
                 speaker: Some("Player".to_string()),
                 metadata: Some(serde_json::json!({ "turn_index": turn_index })),
             },
             ChatMessage {
+                message_id: ChatMessage::generate_id(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                parent_message_id: None,
                 role: "agent".to_string(),
                 content: MessageContent::Text("Alice memorizes the passphrase: moon glass.".to_string()),
                 speaker: Some("Alice".to_string()),

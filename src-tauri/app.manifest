@@ -1,0 +1,20 @@
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <!-- 与 tauri 默认应用 manifest 相同（comctl32 v6 声明）。
+       tauri-build 的 manifest 只嵌入 bin 目标（rustc-link-arg-bins），
+       cargo test 的 lib 测试二进制拿不到，会因 TaskDialogIndirect 入口缺失
+       （0xc0000139 STATUS_ENTRYPOINT_NOT_FOUND）在启动时崩溃。
+       因此 build.rs 改为：tauri-build 不内嵌 manifest，由本文件经
+       cargo:rustc-link-arg 链入全部产物（bin + 测试二进制）。 -->
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+        type="win32"
+        name="Microsoft.Windows.Common-Controls"
+        version="6.0.0.0"
+        processorArchitecture="*"
+        publicKeyToken="6595b64144ccf1df"
+        language="*"
+      />
+    </dependentAssembly>
+  </dependency>
+</assembly>

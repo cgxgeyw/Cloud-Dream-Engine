@@ -7,7 +7,6 @@ mod events;
 mod models;
 mod services;
 mod state;
-mod workmanager_plugin;
 
 use db::Database;
 use services::backend::BackendServices;
@@ -25,6 +24,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_native_bridge::init())
         .setup(|app| {
             let data_dir = get_data_dir(app)?;
             let db = Database::new(&data_dir)?;
@@ -91,6 +91,7 @@ pub fn run() {
             commands::sessions::switch_player_character,
             commands::sessions::resume_last_incomplete_turn,
             commands::sessions::get_session_runtime_attributes,
+            commands::sessions::edit_session_message,
             // 存档
             commands::saves::list_saves,
             commands::saves::branch_save,

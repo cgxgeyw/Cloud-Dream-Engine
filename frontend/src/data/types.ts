@@ -289,10 +289,16 @@ export type TextContentPart = {
 export type ContentPart = TextContentPart | ImageContentPart | AudioContentPart;
 
 export type ChatMessage = {
+  /** 稳定消息 ID（后端写入时生成；旧数据反序列化时补发） */
+  message_id?: string;
   role: string;
   content: string | ContentPart[];
   speaker?: string | null;
   metadata?: Record<string, unknown> | null;
+  /** RFC3339 写入时间；旧数据可能为空串 */
+  created_at?: string;
+  /** 分支/重生成场景下来源消息的 ID */
+  parent_message_id?: string | null;
 };
 
 export type ChatMessageResponse = ChatMessage;

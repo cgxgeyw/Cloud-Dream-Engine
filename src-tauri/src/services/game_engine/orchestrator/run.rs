@@ -271,6 +271,9 @@ pub fn build_streaming_director_trace_chat_message(
     turn_index: i32,
 ) -> ChatMessage {
     ChatMessage {
+        message_id: ChatMessage::generate_id(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        parent_message_id: None,
         role: "system".to_string(),
         content: MessageContent::Text(trace_message.trace_text.clone()),
         speaker: None,
@@ -546,36 +549,54 @@ mod tests {
         let mut session = sample_session();
         session.messages = vec![
             ChatMessage {
+                message_id: ChatMessage::generate_id(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                parent_message_id: None,
                 role: "player".to_string(),
                 content: MessageContent::Text("Check the code first.".to_string()),
                 speaker: Some("Player".to_string()),
                 metadata: Some(serde_json::json!({ "turn_index": 3 })),
             },
             ChatMessage {
+                message_id: ChatMessage::generate_id(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                parent_message_id: None,
                 role: "agent".to_string(),
                 content: MessageContent::Text("Alice pointed toward the warehouse.".to_string()),
                 speaker: Some("Alice".to_string()),
                 metadata: Some(serde_json::json!({ "turn_index": 3 })),
             },
             ChatMessage {
+                message_id: ChatMessage::generate_id(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                parent_message_id: None,
                 role: "player".to_string(),
                 content: MessageContent::Text("Was the door lock touched?".to_string()),
                 speaker: Some("Player".to_string()),
                 metadata: Some(serde_json::json!({ "turn_index": 4 })),
             },
             ChatMessage {
+                message_id: ChatMessage::generate_id(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                parent_message_id: None,
                 role: "agent".to_string(),
                 content: MessageContent::Text("Bob said the lock has new scratches.".to_string()),
                 speaker: Some("Bob".to_string()),
                 metadata: Some(serde_json::json!({ "turn_index": 4 })),
             },
             ChatMessage {
+                message_id: ChatMessage::generate_id(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                parent_message_id: None,
                 role: "player".to_string(),
                 content: MessageContent::Text("Continue tracking.".to_string()),
                 speaker: Some("Player".to_string()),
                 metadata: Some(serde_json::json!({ "turn_index": 5 })),
             },
             ChatMessage {
+                message_id: ChatMessage::generate_id(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                parent_message_id: None,
                 role: "agent".to_string(),
                 content: MessageContent::Text("Alice followed into the warehouse.".to_string()),
                 speaker: Some("Alice".to_string()),
@@ -1100,6 +1121,429 @@ mod tests {
             Some("structured_output_error")
         );
     }
+
+    // ---- 黄金测试：完整回合链路（生成 → 校验 → 落库）与校验拒绝 ----
+    // 用本地 mock HTTP server 替代真实 LLM，ModelConfig.base_url 指向 127.0.0.1，
+    // 走与生产完全相同的 openai provider 请求/解析/校验/写回代码路径。
+
+    fn sample_character(id: &str, name: &str) -> CharacterDefinition {
+        CharacterDefinition {
+            id: id.to_string(),
+            name: name.to_string(),
+            world_id: "world-1".to_string(),
+            role: "npc".to_string(),
+            background_prompt: String::new(),
+            model: String::new(),
+            memory_strategy: String::new(),
+            recent_dialogue_rounds: 5,
+            attributes: vec![],
+            portrait_assets: vec![],
+            avatar_asset: String::new(),
+            system_prompt_template: String::new(),
+            response_contract_prompt: String::new(),
+            narration_prompt: String::new(),
+            runtime_system_prompt: String::new(),
+        }
+    }
+
+    /// 最小 HTTP/1.1 mock：对任意请求返回固定的 OpenAI chat.completion 响应，
+    /// content 为调用方给定的字符串。容量 4 次请求，足够工具循环/重试使用。
+    fn spawn_mock_llm_server(response_content: String) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind mock llm");
+        let addr = listener.local_addr().expect("local addr");
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            for _ in 0..4 {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    break;
+                };
+                let mut buf = Vec::new();
+                let mut temp = [0u8; 8192];
+                loop {
+                    let read = stream.read(&mut temp).unwrap_or(0);
+                    if read == 0 {
+                        break;
+                    }
+                    buf.extend_from_slice(&temp[..read]);
+                    if let Some(head_end) = buf
+                        .windows(4)
+                        .position(|window| window == b"\r\n\r\n")
+                    {
+                        let headers = String::from_utf8_lossy(&buf[..head_end]);
+                        let content_length = headers
+                            .lines()
+                            .find_map(|line| {
+                                let lower = line.to_ascii_lowercase();
+                                lower
+                                    .strip_prefix("content-length:")
+                                    .and_then(|value| value.trim().parse::<usize>().ok())
+                            })
+                            .unwrap_or(0);
+                        if buf.len() >= head_end + 4 + content_length {
+                            break;
+                        }
+                    }
+                }
+                let body = serde_json::json!({
+                    "id": "chatcmpl-mock",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": "gpt-test",
+                    "choices": [{
+                        "index": 0,
+                        "message": { "role": "assistant", "content": response_content },
+                        "finish_reason": "stop"
+                    }],
+                    "usage": { "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2 }
+                });
+                let payload = serde_json::to_vec(&body).expect("serialize response");
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    payload.len()
+                );
+                if stream
+                    .write_all(head.as_bytes())
+                    .and_then(|_| stream.write_all(&payload))
+                    .and_then(|_| stream.flush())
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn mock_model(base_url: String) -> ModelConfig {
+        ModelConfig {
+            base_url,
+            streaming_enabled: false,
+            ..sample_model()
+        }
+    }
+
+    fn valid_director_content() -> String {
+        serde_json::json!({
+            "world_phase": "calm",
+            "next_location": "Dock",
+            "next_scene_name": "Dock",
+            "next_scene_background_hint": "rain",
+            "next_time_label": "Night",
+            "next_scene_tags": ["harbor"],
+            "scene_visible_characters": ["Alice", "Bob"],
+            "planned_speakers": ["Alice"],
+            "director_runtime": {
+                "world_phase": "calm",
+                "next_location": "Dock",
+                "next_scene_name": "Dock",
+                "next_scene_background_hint": "rain",
+                "next_time_label": "Night",
+                "next_scene_tags": ["harbor"],
+                "scene_visible_characters": ["Alice", "Bob"],
+                "planned_speakers": ["Alice"]
+            }
+        })
+        .to_string()
+    }
+
+    #[tokio::test]
+    async fn golden_full_turn_generates_validates_and_persists_journal() {
+        let base_url = spawn_mock_llm_server(valid_director_content());
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        schema::create_tables(&conn).expect("create schema");
+
+        let orchestrator = SessionOrchestrator;
+        let director = WorldDirectorService::new();
+        let llm = crate::services::llm::client::LlmClient::new();
+        let session = sample_session();
+        let world = sample_world();
+        let characters = vec![
+            sample_character("char-a", "Alice"),
+            sample_character("char-b", "Bob"),
+        ];
+
+        // 生成 + 校验：走真实 HTTP 请求 → openai 解析 → 导演 payload 校验。
+        let run = orchestrator
+            .run_director_turn(
+                &llm,
+                &director,
+                mock_model(base_url),
+                DirectorTurnRecovery {
+                    resume_incomplete_turn: false,
+                    recovered_completed_payload: None,
+                },
+                &session,
+                &world,
+                &characters,
+                1,
+                "继续巡查码头",
+                &[],
+                None,
+                None,
+            )
+            .await
+            .expect("director turn should succeed");
+
+        assert_eq!(run.runtime_payload.planned_speakers, vec!["Alice".to_string()]);
+        assert_eq!(run.runtime_payload.next_location, "Dock");
+        assert_eq!(run.traces.len(), 1, "无工具调用时工具循环应一次完成");
+
+        // 落库：用生成结果驱动写回，journal 必须包含导演完成与回合完成记录。
+        let mut updated = session.clone();
+        updated.location = run.runtime_payload.next_location.clone();
+        updated.current_speaker = "Alice".to_string();
+        updated.current_line = "雨下得更大了。".to_string();
+
+        let director_runtime = run
+            .parsed
+            .get("director_runtime")
+            .cloned()
+            .unwrap_or_default();
+        orchestrator
+            .writeback_turn_snapshot(TurnWritebackInput {
+                conn: &conn,
+                director_service: &director,
+                recovery_journal: &[],
+                session_id: &session.id,
+                turn_index: 1,
+                runtime_application: &DirectorRuntimeApplication::default(),
+                updated: &updated,
+                session: &session,
+                world: &world,
+                characters: &characters,
+                director_runtime: &director_runtime,
+                planned_speakers: &run.runtime_payload.planned_speakers,
+                scene_visible_characters: &run.runtime_payload.scene_visible_characters,
+                director_loop_traces: &run.traces,
+                director_provider: "openai",
+                director_model: &run.model,
+                player_input: "继续巡查码头",
+                director_tool_loop_limit: run.tool_loop_limit,
+            })
+            .expect("writeback");
+
+        let mut stmt = conn
+            .prepare("SELECT step, payload_json FROM turn_journal WHERE session_id = ?1 AND turn_index = 1 ORDER BY created_at, id")
+            .expect("prepare query");
+        let rows = stmt
+            .query_map(rusqlite::params![session.id.clone()], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .expect("query")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect");
+        let steps: Vec<&str> = rows.iter().map(|(step, _)| step.as_str()).collect();
+        assert!(steps.contains(&"finished"), "journal 缺少 finished: {steps:?}");
+
+        let director_payload = rows
+            .iter()
+            .find(|(step, _)| step == "director_completed")
+            .map(|(_, payload)| serde_json::from_str::<serde_json::Value>(payload).unwrap())
+            .expect("journal 缺少 director_completed");
+        // 关键断言：落库的导演 payload 必须就是 mock LLM 生成的那段内容，
+        // 证明 生成 → 校验 → 落库 是同一条链路。
+        assert_eq!(
+            director_payload
+                .get("director_runtime")
+                .and_then(|value| value.get("world_phase"))
+                .and_then(|value| value.as_str()),
+            Some("calm")
+        );
+    }
+
+    #[tokio::test]
+    async fn golden_turn_rejects_player_in_planned_speakers() {
+        let base_url = spawn_mock_llm_server(
+            serde_json::json!({
+                "planned_speakers": ["Player"],
+                "director_runtime": { "world_phase": "calm" }
+            })
+            .to_string(),
+        );
+        let orchestrator = SessionOrchestrator;
+        let director = WorldDirectorService::new();
+        let llm = crate::services::llm::client::LlmClient::new();
+        let session = sample_session();
+        let world = sample_world();
+        let characters = vec![sample_character("char-a", "Alice")];
+
+        let failure = match orchestrator
+            .run_director_turn(
+                &llm,
+                &director,
+                mock_model(base_url),
+                DirectorTurnRecovery {
+                    resume_incomplete_turn: false,
+                    recovered_completed_payload: None,
+                },
+                &session,
+                &world,
+                &characters,
+                1,
+                "轮到我了",
+                &[],
+                None,
+                None,
+            )
+            .await
+        {
+            Ok(_) => panic!("planned_speakers 含玩家必须被校验拒绝"),
+            Err(failure) => failure,
+        };
+
+        assert_eq!(failure.failure_code, "domain_validation_failed");
+    }
+
+    #[tokio::test]
+    async fn golden_turn_rejects_non_json_model_output() {
+        let base_url = spawn_mock_llm_server("这不是 JSON，模型跑偏了".to_string());
+        let orchestrator = SessionOrchestrator;
+        let director = WorldDirectorService::new();
+        let llm = crate::services::llm::client::LlmClient::new();
+        let session = sample_session();
+        let world = sample_world();
+        let characters = vec![sample_character("char-a", "Alice")];
+
+        let failure = match orchestrator
+            .run_director_turn(
+                &llm,
+                &director,
+                mock_model(base_url),
+                DirectorTurnRecovery {
+                    resume_incomplete_turn: false,
+                    recovered_completed_payload: None,
+                },
+                &session,
+                &world,
+                &characters,
+                1,
+                "随便说点什么",
+                &[],
+                None,
+                None,
+            )
+            .await
+        {
+            Ok(_) => panic!("非 JSON 输出必须被校验拒绝"),
+            Err(failure) => failure,
+        };
+
+        assert!(
+            failure.failure_code == "json_parse_failed"
+                || failure.failure_code == "json_repair_failed",
+            "unexpected failure_code: {}",
+            failure.failure_code
+        );
+    }
+
+    // ---- 消息稳定 ID（第 1 项）----
+
+    #[test]
+    fn message_ids_are_stable_unique_and_editable() {
+        let first = ChatMessage::new(
+            "player",
+            MessageContent::Text("第一条".to_string()),
+            Some("Player".to_string()),
+        );
+        let second = ChatMessage::new(
+            "agent",
+            MessageContent::Text("第二条".to_string()),
+            Some("Alice".to_string()),
+        );
+        assert!(!first.message_id.is_empty());
+        assert!(!first.created_at.is_empty());
+        assert_ne!(first.message_id, second.message_id);
+
+        let mut session = SessionSnapshot {
+            messages: vec![first.clone(), second.clone()],
+            ..sample_session()
+        };
+        let found = session.find_message(&second.message_id).expect("find by id");
+        assert_eq!(found.content.as_str(), "第二条");
+
+        assert!(session.edit_message_content(
+            &second.message_id,
+            MessageContent::Text("改过的第二条".to_string()),
+        ));
+        assert_eq!(
+            session.find_message(&second.message_id).unwrap().content.as_str(),
+            "改过的第二条"
+        );
+        // 不存在的 id 不得误伤其它消息
+        assert!(!session.edit_message_content("msg-not-exist", MessageContent::Text("x".into())));
+        assert_eq!(session.messages.len(), 2);
+    }
+
+    #[test]
+    fn legacy_message_without_id_gets_fresh_id_on_deserialize() {
+        // 旧数据没有 message_id/created_at 字段：反序列化时补发 id，created_at 留空。
+        let legacy: ChatMessage = serde_json::from_str(
+            r#"{"role":"agent","content":"旧消息","speaker":"Alice","metadata":null}"#,
+        )
+        .expect("deserialize legacy message");
+        assert!(!legacy.message_id.is_empty());
+        assert!(legacy.created_at.is_empty());
+        assert!(legacy.parent_message_id.is_none());
+    }
+
+    #[test]
+    fn message_runtime_proposals_follow_turn_index_linkage() {
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        schema::create_tables(&conn).expect("create schema");
+
+        let mut session = sample_session();
+        let message = ChatMessage::new(
+            "agent",
+            MessageContent::Text("这一回合属性变了".to_string()),
+            Some("Alice".to_string()),
+        )
+        .with_metadata(serde_json::json!({ "turn_index": 7 }));
+        let message_id = message.message_id.clone();
+        session.messages = vec![message];
+        crate::db::repositories::session_repo::SessionRepository::new(&conn)
+            .upsert(&session)
+            .expect("upsert session");
+
+        let proposals = serde_json::json!({
+            "state_phase": "escalation",
+            "state_tags": ["under_watch"]
+        });
+        append_turn_journal(
+            &conn,
+            &session.id,
+            7,
+            "runtime_effects_applied",
+            "completed",
+            proposals.clone(),
+        )
+        .expect("append journal");
+
+        let loaded = load_message_runtime_proposals(&conn, &session.id, &message_id)
+            .expect("load proposals")
+            .expect("proposals exist");
+        assert_eq!(loaded, proposals);
+
+        // 无 turn_index 的消息查不到提议；不存在的消息返回 None。
+        let plain = ChatMessage::new(
+            "player",
+            MessageContent::Text("没有回合标记".to_string()),
+            Some("Player".to_string()),
+        );
+        session.messages.push(plain.clone());
+        crate::db::repositories::session_repo::SessionRepository::new(&conn)
+            .upsert(&session)
+            .expect("upsert session 2");
+        assert!(
+            load_message_runtime_proposals(&conn, &session.id, &plain.message_id)
+                .expect("load ok")
+                .is_none()
+        );
+        assert!(
+            load_message_runtime_proposals(&conn, &session.id, "msg-not-exist")
+                .expect("load ok")
+                .is_none()
+        );
+    }
 }
 
 impl SessionOrchestrator {
@@ -1383,6 +1827,9 @@ impl SessionOrchestrator {
         let mut messages = Vec::new();
         for msg in &world.opening_messages {
             messages.push(ChatMessage {
+                message_id: ChatMessage::generate_id(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                parent_message_id: None,
                 role: msg.role.clone(),
                 content: MessageContent::Text(msg.content.clone()),
                 speaker: msg.speaker.clone(),
@@ -1655,6 +2102,9 @@ impl SessionOrchestrator {
             }
         }
         ChatMessage {
+            message_id: ChatMessage::generate_id(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            parent_message_id: None,
             role: "system".to_string(),
             content: MessageContent::Text(failure.display_content()),
             speaker: None,
@@ -1689,6 +2139,9 @@ impl SessionOrchestrator {
             .unwrap_or_default();
         if !player_input.trim().is_empty() {
             messages.push(ChatMessage {
+                message_id: ChatMessage::generate_id(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                parent_message_id: None,
                 role: "player".to_string(),
                 content: MessageContent::Text(player_input),
                 speaker: Some(session.player_character_name.clone()),
@@ -1948,6 +2401,9 @@ impl SessionOrchestrator {
         };
         let mut messages = session.messages.clone();
         messages.push(ChatMessage {
+            message_id: ChatMessage::generate_id(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            parent_message_id: None,
             role: "player".to_string(),
             content: request.content.clone(),
             speaker: Some(session.player_character_name.clone()),
@@ -2193,6 +2649,9 @@ impl SessionOrchestrator {
                     created_character_ids_this_turn.push(created.id.clone());
                 }
                 pre_runtime_system_messages.push(ChatMessage {
+                    message_id: ChatMessage::generate_id(),
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                    parent_message_id: None,
                     role: "system".to_string(),
                     content: MessageContent::Text(format!("character created: {}", created.name)),
                     speaker: None,
