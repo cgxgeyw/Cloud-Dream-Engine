@@ -39,18 +39,18 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_world_records_scope
             ON world_records(world_id, collection, updated_at);
 
-        CREATE TABLE IF NOT EXISTS world_kv (
-            world_id TEXT NOT NULL,
+        CREATE TABLE IF NOT EXISTS scoped_kv (
+            owner_type TEXT NOT NULL,
+            owner_id TEXT NOT NULL,
             namespace TEXT NOT NULL,
             key TEXT NOT NULL,
             value_json TEXT NOT NULL DEFAULT 'null',
             updated_at TEXT NOT NULL DEFAULT '',
-            PRIMARY KEY (world_id, namespace, key),
-            FOREIGN KEY (world_id) REFERENCES worlds(id) ON DELETE CASCADE
+            PRIMARY KEY (owner_type, owner_id, namespace, key)
         );
 
-        CREATE INDEX IF NOT EXISTS idx_world_kv_scope
-            ON world_kv(world_id, namespace, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_scoped_kv_scope
+            ON scoped_kv(owner_type, owner_id, namespace, updated_at);
 
         CREATE TABLE IF NOT EXISTS characters (
             id TEXT PRIMARY KEY,

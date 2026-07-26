@@ -27,6 +27,18 @@ pub fn purge_session_data(conn: &Connection, session_id: &str) -> Result<(), Str
         "DELETE FROM attribute_values WHERE owner_type = 'session' AND owner_id = ?1",
         params![session_id],
     )?;
+    // 会话级变量(scoped_kv)
+    exec(
+        conn,
+        "DELETE FROM scoped_kv WHERE owner_type = 'session' AND owner_id = ?1",
+        params![session_id],
+    )?;
+    // 会话内角色变量,owner_id 形如 "{session_id}:{character_id}"
+    exec(
+        conn,
+        "DELETE FROM scoped_kv WHERE owner_type = 'character' AND owner_id LIKE ?1 ESCAPE '\'",
+        params![format!("{}:%", escape_like(session_id))],
+    )?;
     // 会话内角色属性,owner_id 形如 "{session_id}:{character_id}"
     exec(
         conn,
@@ -121,6 +133,11 @@ pub fn purge_world_attributes(conn: &Connection, world_id: &str) -> Result<(), S
         "DELETE FROM attribute_values WHERE owner_type = 'world' AND owner_id = ?1",
         params![world_id],
     )?;
+    exec(
+        conn,
+        "DELETE FROM scoped_kv WHERE owner_type = 'world' AND owner_id = ?1",
+        params![world_id],
+    )?;
     Ok(())
 }
 
@@ -129,6 +146,7 @@ pub fn purge_all_session_scoped_data(conn: &Connection) -> Result<(), String> {
     for sql in [
         "DELETE FROM memories",
         "DELETE FROM attribute_values WHERE owner_type IN ('session', 'session_character', 'character', 'world')",
+        "DELETE FROM scoped_kv",
         "DELETE FROM turn_journal",
         "DELETE FROM prompt_call_traces",
         "DELETE FROM llm_call_traces",

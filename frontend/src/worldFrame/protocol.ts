@@ -1,3 +1,4 @@
+import type { KvScope } from "../data/types";
 import type { GameUiPreviewProps } from "../components/GameUiPreview";
 import type { SubmitActionOptions, SwitchProposalView } from "../game/utils";
 import type { WorldFrameRuntimePayload } from "./runtimeSnapshot";
@@ -33,10 +34,11 @@ export type WorldFrameAction =
   | { type: "world-record-create"; collection: string; data: Record<string, unknown> }
   | { type: "world-record-update"; collection: string; recordId: string; data: Record<string, unknown> }
   | { type: "world-record-delete"; collection: string; recordId: string }
-  | { type: "world-kv-list"; namespace: string }
-  | { type: "world-kv-get"; namespace: string; key: string }
-  | { type: "world-kv-set"; namespace: string; key: string; value: unknown }
-  | { type: "world-kv-delete"; namespace: string; key: string };
+  | { type: "world-kv-list"; namespace: string; scope?: KvScope }
+  | { type: "world-kv-get"; namespace: string; key: string; scope?: KvScope }
+  | { type: "world-kv-set"; namespace: string; key: string; value: unknown; scope?: KvScope }
+  | { type: "world-kv-delete"; namespace: string; key: string; scope?: KvScope }
+  | { type: "answer-interaction"; messageId: string; interactionId: string; answer: unknown };
 
 export type WorldFrameConnectMessage = {
   type: "world-frame/connect";

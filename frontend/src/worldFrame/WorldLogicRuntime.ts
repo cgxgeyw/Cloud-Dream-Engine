@@ -213,14 +213,26 @@ const __worldRecords = Object.freeze({
   },
 });
 
+// 作用域参数（可选）：{ scope: "world" | "session" | "character", characterId?: string }
+// 缺省为 world（跨存档共享）；session 为世界存档级；character 需带 characterId。
+const __kvScopeArgs = (options) => {
+  if (!options || typeof options !== "object") return {};
+  const scope = {};
+  if (typeof options.scope === "string") scope.scope = options.scope;
+  if (typeof options.characterId === "string") scope.character_id = options.characterId;
+  return Object.keys(scope).length > 0 ? { scope } : {};
+};
+
 const __worldKv = Object.freeze({
-  list: (namespace) => __worldRequest("kv.list", { namespace }),
-  get: async (namespace, key, fallback = null) => {
-    const entry = await __worldRequest("kv.get", { namespace, key });
+  list: (namespace, options) => __worldRequest("kv.list", { namespace, ...__kvScopeArgs(options) }),
+  get: async (namespace, key, fallback = null, options) => {
+    const entry = await __worldRequest("kv.get", { namespace, key, ...__kvScopeArgs(options) });
     return entry ? entry.value : fallback;
   },
-  set: (namespace, key, value) => __worldRequest("kv.set", { namespace, key, value }),
-  remove: (namespace, key) => __worldRequest("kv.delete", { namespace, key }),
+  set: (namespace, key, value, options) =>
+    __worldRequest("kv.set", { namespace, key, value, ...__kvScopeArgs(options) }),
+  remove: (namespace, key, options) =>
+    __worldRequest("kv.delete", { namespace, key, ...__kvScopeArgs(options) }),
 });
 
 const __worldApi = Object.freeze({ records: __worldRecords, kv: __worldKv });

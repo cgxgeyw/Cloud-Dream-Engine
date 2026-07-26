@@ -148,6 +148,28 @@ pub fn validate_logic_config(logic: &Value) -> Result<(), String> {
     if !matches!(runtime, "disabled" | "sandbox-js-v1") {
         return Err(format!("Unsupported world logic runtime `{runtime}`"));
     }
+    if let Some(events) = object.get("events") {
+        let events = events
+            .as_object()
+            .ok_or_else(|| "logic.events must be an object".to_string())?;
+        const KNOWN_EVENTS: [&str; 3] = ["session_start", "turn_completed", "interaction_answered"];
+        for (name, handler) in events {
+            if !KNOWN_EVENTS.contains(&name.as_str()) {
+                return Err(format!("Unknown world logic event `{name}`"));
+            }
+            let handler = handler
+                .as_str()
+                .ok_or_else(|| format!("logic.events.{name} must be a handler name string"))?;
+            if !handler
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+                || handler.is_empty()
+                || handler.len() > 128
+            {
+                return Err(format!("logic.events.{name} handler name is invalid"));
+            }
+        }
+    }
     if runtime == "sandbox-js-v1" {
         let source = object.get("source").and_then(Value::as_str).unwrap_or_default();
         if source.trim().is_empty() {

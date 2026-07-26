@@ -14,6 +14,7 @@ export type GameUiRuntimeActions = {
   setDraftValue: (value: string) => void;
   setAutoScrollEnabled: (enabled: boolean) => void;
   submitMessage: (options?: SubmitActionOptions) => Promise<void>;
+  answerInteraction: (messageId: string, interactionId: string, answer: unknown) => Promise<void>;
   startEditingTurn: (content: string, turnIndex: number) => void;
   cancelEditingTurn: () => void;
   branchFromCurrent: () => Promise<void>;
@@ -48,6 +49,9 @@ export function createGameUiRuntimeActions(
     setDraftValue: bag.setInputValue,
     setAutoScrollEnabled: bag.setChatAutoScrollEnabled,
     submitMessage: (options = {}) => bag.handleSubmitAction(options),
+    answerInteraction: async (messageId, interactionId, answer) => {
+      await bag.handleAnswerInteraction(messageId, interactionId, answer);
+    },
     startEditingTurn: bag.startEditingTurn,
     cancelEditingTurn: bag.cancelEditingTurn,
     branchFromCurrent: bag.handleBranch,

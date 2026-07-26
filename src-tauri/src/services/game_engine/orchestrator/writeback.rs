@@ -1178,12 +1178,217 @@ pub(crate) fn rollback_session_to_turn(
         &session.id,
         snapshot_payload.get("attribute_values").cloned(),
     )?;
+    restore_turn_memory_state(conn, &session.id, turn_index, &snapshot_payload)?;
     for character_id in collect_created_character_ids_from_turns(conn, &session.id, turn_index)? {
         crate::db::repositories::character_repo::CharacterRepository::new(conn)
             .delete(&character_id)?;
     }
     delete_turn_traces(conn, &session.id, turn_index)?;
+    // 归档被覆盖回合的消息（必须在 delete_turn_traces 之后：journal >= turn_index
+    // 会被清空，先写归档会被一并删掉）。回滚后这些消息从会话消失，但保留在 journal 可追溯。
+    archive_replayed_turn_messages(conn, session, turn_index)?;
     Ok(restored_session)
+}
+
+/// 归档 turn_index >= from_turn_index 的会话消息到 journal（turn_regenerated 步骤）。
+fn archive_replayed_turn_messages(
+    conn: &Connection,
+    session: &SessionSnapshot,
+    from_turn_index: i32,
+) -> Result<(), String> {
+    let archived: Vec<_> = session
+        .messages
+        .iter()
+        .filter(|message| {
+            message
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata.get("turn_index"))
+                .and_then(|value| value.as_i64())
+                .map(|turn| turn >= from_turn_index as i64)
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect();
+    if archived.is_empty() {
+        return Ok(());
+    }
+    append_turn_journal(
+        conn,
+        &session.id,
+        from_turn_index,
+        "turn_regenerated",
+        "completed",
+        serde_json::json!({ "archived_messages": archived }),
+    )
+}
+
+/// 回滚记忆状态：删除 from_turn_index 起新增的记忆（含 embedding），
+/// 并把记忆实体/关系还原到快照内容（旧快照没有这两节时只删新增记忆）。
+fn restore_turn_memory_state(
+    conn: &Connection,
+    session_id: &str,
+    from_turn_index: i32,
+    snapshot_payload: &serde_json::Value,
+) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM memory_embeddings WHERE memory_id IN (SELECT id FROM memories WHERE session_id = ?1 AND turn_index >= ?2)",
+        params![session_id, from_turn_index],
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM memories WHERE session_id = ?1 AND turn_index >= ?2",
+        params![session_id, from_turn_index],
+    )
+    .map_err(|e| e.to_string())?;
+    let Some(entities) = snapshot_payload
+        .get("memory_entities")
+        .and_then(|value| value.as_array())
+    else {
+        return Ok(());
+    };
+    let empty: Vec<serde_json::Value> = Vec::new();
+    let relations = snapshot_payload
+        .get("memory_relations")
+        .and_then(|value| value.as_array())
+        .unwrap_or(&empty);
+    conn.execute(
+        "DELETE FROM memory_relations WHERE session_id = ?1",
+        params![session_id],
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM memory_entities WHERE session_id = ?1",
+        params![session_id],
+    )
+    .map_err(|e| e.to_string())?;
+    insert_rows(conn, "memory_entities", entities)?;
+    insert_rows(conn, "memory_relations", relations)?;
+    Ok(())
+}
+
+/// 最新已完成回合（journal 有 finished 步骤）的 turn_index；没有则 None。
+pub(crate) fn latest_finished_turn(
+    conn: &Connection,
+    session_id: &str,
+) -> Result<Option<i32>, String> {
+    let turn_index: i32 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(turn_index), 0) FROM turn_journal WHERE session_id = ?1",
+            params![session_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if turn_index <= 0 {
+        return Ok(None);
+    }
+    let journal = load_turn_journal(conn, session_id, turn_index)?;
+    if !journal_has_completed_step(&journal, "finished") {
+        return Ok(None);
+    }
+    Ok(Some(turn_index))
+}
+
+/// 某回合的玩家输入（journal created 步骤的 payload）。
+pub(crate) fn turn_player_input(
+    conn: &Connection,
+    session_id: &str,
+    turn_index: i32,
+) -> Result<Option<String>, String> {
+    let journal = load_turn_journal(conn, session_id, turn_index)?;
+    Ok(journal.iter().find_map(|entry| {
+        if entry.get("step").and_then(|v| v.as_str()) == Some("created") {
+            entry
+                .get("payload")
+                .and_then(|payload| payload.get("player_input"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        } else {
+            None
+        }
+    }))
+}
+
+/// 把查询结果按行转成 JSON 对象数组（列名 → 值），保证回滚时原样插回。
+pub(crate) fn query_rows_json(
+    conn: &Connection,
+    sql: &str,
+    sql_params: &[&dyn rusqlite::ToSql],
+) -> Result<Vec<serde_json::Value>, String> {
+    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+    let column_names: Vec<String> = stmt
+        .column_names()
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+    let rows = stmt
+        .query_map(sql_params, |row| {
+            let mut object = serde_json::Map::new();
+            for (index, name) in column_names.iter().enumerate() {
+                let value = row.get_ref(index)?;
+                let json = match value {
+                    rusqlite::types::ValueRef::Null => serde_json::Value::Null,
+                    rusqlite::types::ValueRef::Integer(v) => serde_json::json!(v),
+                    rusqlite::types::ValueRef::Real(v) => serde_json::json!(v),
+                    rusqlite::types::ValueRef::Text(v) => {
+                        serde_json::Value::String(String::from_utf8_lossy(v).into_owned())
+                    }
+                    rusqlite::types::ValueRef::Blob(v) => {
+                        use base64::Engine as _;
+                        serde_json::Value::String(
+                            base64::engine::general_purpose::STANDARD.encode(v),
+                        )
+                    }
+                };
+                object.insert(name.clone(), json);
+            }
+            Ok(serde_json::Value::Object(object))
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+/// 把 JSON 行数组按原列名插回表。调用方负责先清空目标行。
+fn insert_rows(
+    conn: &Connection,
+    table: &str,
+    rows: &[serde_json::Value],
+) -> Result<(), String> {
+    for row in rows {
+        let object = row
+            .as_object()
+            .ok_or_else(|| format!("快照行不是对象: {table}"))?;
+        let columns: Vec<&str> = object.keys().map(String::as_str).collect();
+        let placeholders: Vec<String> = (1..=columns.len()).map(|i| format!("?{i}")).collect();
+        let sql = format!(
+            "INSERT INTO {table} ({}) VALUES ({})",
+            columns.join(", "),
+            placeholders.join(", ")
+        );
+        let values: Vec<rusqlite::types::Value> = columns
+            .iter()
+            .map(|column| json_to_sql_value(&object[*column]))
+            .collect();
+        conn.execute(&sql, rusqlite::params_from_iter(values.iter()))
+            .map_err(|e| format!("快照还原失败 {table}: {e}"))?;
+    }
+    Ok(())
+}
+
+fn json_to_sql_value(value: &serde_json::Value) -> rusqlite::types::Value {
+    match value {
+        serde_json::Value::Null => rusqlite::types::Value::Null,
+        serde_json::Value::Bool(v) => rusqlite::types::Value::Integer(*v as i64),
+        serde_json::Value::Number(v) => {
+            if let Some(i) = v.as_i64() {
+                rusqlite::types::Value::Integer(i)
+            } else {
+                rusqlite::types::Value::Real(v.as_f64().unwrap_or(0.0))
+            }
+        }
+        serde_json::Value::String(v) => rusqlite::types::Value::Text(v.clone()),
+        other => rusqlite::types::Value::Text(other.to_string()),
+    }
 }
 
 pub(crate) fn ensure_agent_session(
@@ -1651,5 +1856,282 @@ mod tests {
 
         assert!(updated[0].current);
         assert!(!updated[1].current);
+    }
+}
+
+#[cfg(test)]
+mod rollback_tests {
+    //! 第 2 项（重新生成/重发）的回滚验收：snapshot_created + rollback_session_to_turn
+    //! 必须让 属性/记忆/事实关系/会话消息 回到"从没生成过被覆盖回合"的状态，
+    //! 被覆盖消息归档可追溯，连续回滚不漂移。
+    use super::*;
+    use crate::db::schema;
+    use crate::models::session::{
+        AssetSelection, ChatMessage, MessageContent, SceneRuntime, SessionState,
+    };
+
+    fn sample_session(id: &str) -> SessionSnapshot {
+        SessionSnapshot {
+            id: id.to_string(),
+            world_name: "World".to_string(),
+            location: "Dock".to_string(),
+            time_label: "Night".to_string(),
+            current_speaker: "Alice".to_string(),
+            current_line: "line".to_string(),
+            player_character_id: "char-player".to_string(),
+            player_character_name: "Player".to_string(),
+            visible_characters: vec!["Alice".to_string()],
+            messages: vec![],
+            player_stats: vec![],
+            map_graph_nodes: vec![],
+            map_graph_edges: vec![],
+            inventory_items: vec![],
+            system_log: vec![],
+            scene: SceneRuntime::default(),
+            assets: AssetSelection::default(),
+            state: SessionState::default(),
+        }
+    }
+
+    fn message(turn_index: i64, text: &str) -> ChatMessage {
+        ChatMessage::new(
+            "agent",
+            MessageContent::Text(text.to_string()),
+            Some("Alice".to_string()),
+        )
+        .with_metadata(serde_json::json!({ "turn_index": turn_index }))
+    }
+
+    fn setup() -> (Connection, SessionSnapshot) {
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        schema::create_tables(&conn).expect("create schema");
+        let session = sample_session("sess-1");
+        crate::db::repositories::session_repo::SessionRepository::new(&conn)
+            .upsert(&session)
+            .expect("upsert");
+        (conn, session)
+    }
+
+    fn insert_entity(conn: &Connection, id: &str, mention_count: i64) {
+        conn.execute(
+            "INSERT INTO memory_entities (id, world_id, session_id, name, name_normalized, entity_type, aliases_json, mention_count, first_seen_turn, last_seen_turn, created_at) VALUES (?1, 'world-1', 'sess-1', ?2, ?3, '', '[]', ?4, 1, 1, 'now')",
+            params![id, id, id.to_lowercase(), mention_count],
+        )
+        .expect("insert entity");
+    }
+
+    fn insert_relation(conn: &Connection, id: &str, subject: &str, invalid_at: Option<i64>) {
+        conn.execute(
+            "INSERT INTO memory_relations (id, world_id, session_id, subject_entity_id, predicate, object_entity_id, object_text, valid_from_turn, invalid_at_turn, source, confidence, created_at) VALUES (?1, 'world-1', 'sess-1', ?2, '持有', NULL, '银钥匙', 1, ?3, 'llm_extraction', 0.9, 'now')",
+            params![id, subject, invalid_at],
+        )
+        .expect("insert relation");
+    }
+
+    fn insert_memory(conn: &Connection, id: &str, turn_index: i64) {
+        conn.execute(
+            "INSERT INTO memories (id, world_id, session_id, character_id, content, turn_index) VALUES (?1, 'world-1', 'sess-1', 'char-a', ?2, ?3)",
+            params![id, format!("记忆-{id}"), turn_index],
+        )
+        .expect("insert memory");
+    }
+
+    fn upsert_attribute(conn: &Connection, id: &str, owner: &str, value: &str) {
+        conn.execute(
+            "INSERT INTO attribute_schemas (id, scope, key, label) VALUES (?1, 'session', ?2, ?3) ON CONFLICT(id) DO NOTHING",
+            params![format!("schema-{id}"), id, id],
+        )
+        .expect("insert schema");
+        conn.execute(
+            "INSERT INTO attribute_values (id, schema_id, owner_type, owner_id, value_json) VALUES (?1, ?2, 'session', ?3, ?4) ON CONFLICT(schema_id, owner_type, owner_id) DO UPDATE SET value_json = excluded.value_json",
+            params![
+                format!("value-{id}"),
+                format!("schema-{id}"),
+                owner,
+                format!("\"{value}\"")
+            ],
+        )
+        .expect("upsert attribute");
+    }
+
+    fn scalar<T: rusqlite::types::FromSql>(
+        conn: &Connection,
+        sql: &str,
+        p: &[&dyn rusqlite::ToSql],
+    ) -> T {
+        conn.query_row(sql, p, |row| row.get(0)).expect("scalar")
+    }
+
+    /// 按生产快照格式写入 snapshot_created（与 prepare_turn_context 一致）。
+    fn write_snapshot(conn: &Connection, session: &SessionSnapshot, turn_index: i32) {
+        append_turn_journal(
+            conn,
+            &session.id,
+            turn_index,
+            "snapshot_created",
+            "completed",
+            serde_json::json!({
+                "session_snapshot": session,
+                "attribute_values": collect_runtime_attribute_values(conn, &session.id).unwrap(),
+                "memory_entities": query_rows_json(
+                    conn,
+                    "SELECT * FROM memory_entities WHERE session_id = ?1",
+                    &[&session.id],
+                ).unwrap(),
+                "memory_relations": query_rows_json(
+                    conn,
+                    "SELECT * FROM memory_relations WHERE session_id = ?1",
+                    &[&session.id],
+                ).unwrap(),
+            }),
+        )
+        .expect("write snapshot");
+    }
+
+    #[test]
+    fn rollback_restores_attributes_memory_graph_and_archives_messages() {
+        let (conn, mut session) = setup();
+        // 回合前基线
+        upsert_attribute(&conn, "gold", "sess-1", "100");
+        insert_entity(&conn, "银钥匙", 1);
+        insert_relation(&conn, "rel-1", "银钥匙", None);
+        insert_memory(&conn, "mem-old", 3);
+        session.messages = vec![message(4, "旧回合消息")];
+        write_snapshot(&conn, &session, 5);
+
+        // 模拟回合 5 的全部变更
+        upsert_attribute(&conn, "gold", "sess-1", "42");
+        insert_entity(&conn, "新角色", 1);
+        conn.execute(
+            "UPDATE memory_entities SET mention_count = 7 WHERE id = '银钥匙'",
+            [],
+        )
+        .expect("bump mentions");
+        conn.execute(
+            "UPDATE memory_relations SET invalid_at_turn = 5 WHERE id = 'rel-1'",
+            [],
+        )
+        .expect("invalidate relation");
+        insert_relation(&conn, "rel-2", "新角色", None);
+        insert_memory(&conn, "mem-new", 5);
+        session.messages.push(message(5, "要被覆盖的回复"));
+        session.location = "Warehouse".to_string();
+
+        let restored = rollback_session_to_turn(&conn, &session, 5).expect("rollback");
+
+        // 会话快照内容还原
+        assert_eq!(restored.location, "Dock");
+        assert_eq!(restored.messages.len(), 1);
+        assert_eq!(restored.messages[0].content.as_str(), "旧回合消息");
+        // 属性回到 100
+        let gold: String = scalar(
+            &conn,
+            "SELECT value_json FROM attribute_values WHERE owner_id = 'sess-1' AND schema_id = 'schema-gold'",
+            &[],
+        );
+        assert_eq!(gold, "\"100\"");
+        // 实体：新角色消失，银钥匙 mention_count 还原为 1
+        let entity_count: i64 = scalar(
+            &conn,
+            "SELECT COUNT(*) FROM memory_entities WHERE session_id = 'sess-1'",
+            &[],
+        );
+        assert_eq!(entity_count, 1);
+        let mentions: i64 = scalar(
+            &conn,
+            "SELECT mention_count FROM memory_entities WHERE id = '银钥匙'",
+            &[],
+        );
+        assert_eq!(mentions, 1);
+        // 关系：rel-2 消失，rel-1 恢复为未作废
+        let rel_count: i64 = scalar(
+            &conn,
+            "SELECT COUNT(*) FROM memory_relations WHERE session_id = 'sess-1'",
+            &[],
+        );
+        assert_eq!(rel_count, 1);
+        let invalid_at: Option<i64> = scalar(
+            &conn,
+            "SELECT invalid_at_turn FROM memory_relations WHERE id = 'rel-1'",
+            &[],
+        );
+        assert_eq!(invalid_at, None);
+        // 记忆：回合 >= 5 的被删，旧记忆保留
+        let mem_ids: Vec<String> = {
+            let mut stmt = conn
+                .prepare("SELECT id FROM memories WHERE session_id = 'sess-1' ORDER BY id")
+                .unwrap();
+            stmt.query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        assert_eq!(mem_ids, vec!["mem-old".to_string()]);
+        // 旧回复归档可追溯
+        let journal = load_turn_journal(&conn, "sess-1", 5).expect("journal");
+        let archived_step = journal
+            .iter()
+            .find(|entry| {
+                entry.get("step").and_then(|v| v.as_str()) == Some("turn_regenerated")
+            })
+            .expect("archived step");
+        let archived_messages = archived_step
+            .get("payload")
+            .and_then(|p| p.get("archived_messages"))
+            .and_then(|v| v.as_array())
+            .expect("archived messages");
+        assert_eq!(archived_messages.len(), 1);
+        assert_eq!(
+            archived_messages[0].get("content").and_then(|v| v.as_str()),
+            Some("要被覆盖的回复")
+        );
+    }
+
+    #[test]
+    fn rollback_deletes_memories_from_all_replayed_turns() {
+        let (conn, session) = setup();
+        insert_memory(&conn, "mem-t3", 3);
+        write_snapshot(&conn, &session, 3);
+        insert_memory(&conn, "mem-t4", 4);
+        insert_memory(&conn, "mem-t5", 5);
+
+        rollback_session_to_turn(&conn, &session, 3).expect("rollback");
+        let remaining: i64 = scalar(
+            &conn,
+            "SELECT COUNT(*) FROM memories WHERE session_id = 'sess-1'",
+            &[],
+        );
+        assert_eq!(remaining, 0, "回合 >= 3 的记忆都应删除");
+    }
+
+    #[test]
+    fn repeated_rollbacks_do_not_drift() {
+        let (conn, session) = setup();
+        upsert_attribute(&conn, "gold", "sess-1", "100");
+        write_snapshot(&conn, &session, 5);
+
+        // 生产形态：每次重放都会删掉旧 journal（含旧快照）并写入新快照，
+        // 连续重生成 = 回滚 → 新快照 → 变更 → 再回滚，状态不得漂移。
+        for value in ["42", "7", "999"] {
+            upsert_attribute(&conn, "gold", "sess-1", value);
+            rollback_session_to_turn(&conn, &session, 5).expect("rollback");
+            let gold: String = scalar(
+                &conn,
+                "SELECT value_json FROM attribute_values WHERE owner_id = 'sess-1' AND schema_id = 'schema-gold'",
+                &[],
+            );
+            assert_eq!(gold, "\"100\"", "第 {value} 次回滚后属性漂移");
+            write_snapshot(&conn, &session, 5);
+        }
+    }
+
+    #[test]
+    fn rollback_without_snapshot_is_a_clear_error() {
+        let (conn, session) = setup();
+        let error = rollback_session_to_turn(&conn, &session, 9).expect_err("should fail");
+        assert!(
+            error.contains("Missing rollback snapshot"),
+            "unexpected: {error}"
+        );
     }
 }

@@ -37,6 +37,7 @@ import {
   type SessionSnapshotResponse,
   type SwitchPlayerCharacterRequest,
   type WorldResponse,
+  answerInteraction,
 } from "../data/apiAdapter";
 import type { ContentPart } from "../data/types";
 import {
@@ -183,6 +184,14 @@ export interface GameSessionStateBag {
 
   handleBranch: () => Promise<void>;
   handleSubmitAction: (options: SubmitActionOptions) => Promise<void>;
+  /** 回答消息交互；newlyAnswered=false 表示重复提交（幂等返回首次结果） */
+  handleAnswerInteraction: (
+    messageId: string,
+    interactionId: string,
+    answer: unknown,
+  ) => Promise<{ answer: unknown; newlyAnswered: boolean } | null>;
+  /** 最近一次完成回合的信号（世界包事件 turn_completed 的触发源） */
+  lastCompletedTurn: { sessionId: string; turnIndex: number; seq: number } | null;
 
   optimisticPlayerMessage: RenderChatMessage | null;
 
@@ -253,6 +262,13 @@ export function useGameSession(
   const [branching, setBranching] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [editingTurn, setEditingTurn] = useState<EditingTurnState | null>(null);
+  // 回合完成信号：每次成功提交（含重发/编辑/重新生成）seq 自增，
+  // 供世界包事件（turn_completed）在沙箱层消费。
+  const [lastCompletedTurn, setLastCompletedTurn] = useState<{
+    sessionId: string;
+    turnIndex: number;
+    seq: number;
+  } | null>(null);
   const [sideTab, setSideTab] = useState<SideTab>("map");
   const [switching, setSwitching] = useState(false);
   const [retryingToken, setRetryingToken] = useState<string | null>(null);
@@ -1028,6 +1044,23 @@ export function useGameSession(
     [themeWorld],
   );
 
+  // 回答消息交互（第 5 项）：命令幂等，返回最新快照直接应用；
+  // 返回值供沙箱层决定是否触发 interaction_answered 世界事件。
+  const handleAnswerInteraction = useCallback(
+    async (messageId: string, interactionId: string, answer: unknown) => {
+      if (!sessionId) return null;
+      try {
+        const response = await answerInteraction(sessionId, messageId, interactionId, answer);
+        applySessionSnapshot(response.session);
+        return { answer: response.answer, newlyAnswered: response.newly_answered };
+      } catch (error) {
+        setActionError(error instanceof Error ? error.message : String(error));
+        return null;
+      }
+    },
+    [sessionId, applySessionSnapshot],
+  );
+
   const handleSubmitAction = useCallback(
     async (options: SubmitActionOptions = {}) => {
       const mode: PlayerActionMode = options.mode ?? (editingTurn ? "edit" : "submit");
@@ -1164,6 +1197,18 @@ export function useGameSession(
 
         if (snapshot) {
           applySessionSnapshot(snapshot);
+          const completedTurnIndex = (snapshot.messages ?? []).reduce((max, message) => {
+            const raw = message.metadata && (message.metadata as Record<string, unknown>).turn_index;
+            const value = typeof raw === "number" ? raw : Number(raw);
+            return Number.isFinite(value) && value > max ? value : max;
+          }, 0);
+          if (completedTurnIndex > 0) {
+            setLastCompletedTurn((prev) => ({
+              sessionId,
+              turnIndex: completedTurnIndex,
+              seq: (prev?.seq ?? 0) + 1,
+            }));
+          }
         }
 
         setOptimisticPlayerMessage(null);
@@ -1409,6 +1454,8 @@ export function useGameSession(
     handleRetryFailedStep,
     handleBranch,
     handleSubmitAction,
+    handleAnswerInteraction,
+    lastCompletedTurn,
     optimisticPlayerMessage,
     worldUiEnvelope,
     themeStyle,

@@ -1,3 +1,4 @@
+import type { KvScope } from "../data/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -13,7 +14,8 @@ import {
   setWorldKv,
   updateWorldRecord,
 } from "../data/apiAdapter";
-import type { GameUiPlatform } from "../data/gameUi";
+import type { GameUiPlatform
+} from "../data/gameUi";
 import type { GameSessionStateBag } from "../game/useGameSession";
 import type { WorldFrameAction } from "../worldFrame/protocol";
 import {
@@ -22,6 +24,7 @@ import {
   type WorldFrameViewportSnapshot,
 } from "../worldFrame/runtimeSnapshot";
 import { WorldFrameHost } from "./GameUiSandboxPreview";
+import { invokeWorldLogic } from "../worldFrame/WorldLogicRuntime";
 
 export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateBag; platform: GameUiPlatform }) {
   const navigate = useNavigate();
@@ -206,6 +209,19 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
       case "set-draft-value": bag.setInputValue(action.value); return;
       case "set-auto-scroll": bag.setChatAutoScrollEnabled(action.enabled); return;
       case "submit-message": await bag.handleSubmitAction(action.options); return;
+      case "answer-interaction": {
+        const result = await bag.handleAnswerInteraction(action.messageId, action.interactionId, action.answer);
+        // 第 4 项事件接线：仅首次回答触发，重复提交（幂等）不重复计分。
+        if (result?.newlyAnswered) {
+          void dispatchWorldEvent("interaction_answered", {
+            session_id: bag.session?.id ?? "",
+            message_id: action.messageId,
+            interaction_id: action.interactionId,
+            answer: result.answer,
+          });
+        }
+        return;
+      }
       case "start-editing-turn": bag.startEditingTurn(action.content, action.turnIndex); return;
       case "cancel-editing-turn": bag.cancelEditingTurn(); return;
       case "branch-from-current": await bag.handleBranch(); return;
@@ -242,19 +258,19 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
       }
       case "world-kv-list": {
         const worldId = requireWorldKvScope(bag, action.namespace);
-        return listWorldKv(worldId, action.namespace);
+        return listWorldKv(worldId, action.namespace, resolveKvScope(bag, action.scope));
       }
       case "world-kv-get": {
         const worldId = requireWorldKvScope(bag, action.namespace);
-        return getWorldKv(worldId, action.namespace, action.key);
+        return getWorldKv(worldId, action.namespace, action.key, resolveKvScope(bag, action.scope));
       }
       case "world-kv-set": {
         const worldId = requireWorldKvScope(bag, action.namespace);
-        return setWorldKv(worldId, action.namespace, action.key, action.value);
+        return setWorldKv(worldId, action.namespace, action.key, action.value, resolveKvScope(bag, action.scope));
       }
       case "world-kv-delete": {
         const worldId = requireWorldKvScope(bag, action.namespace);
-        return deleteWorldKv(worldId, action.namespace, action.key);
+        return deleteWorldKv(worldId, action.namespace, action.key, resolveKvScope(bag, action.scope));
       }
       case "navigate":
         if (action.target === "back") navigate(-1);
@@ -263,6 +279,54 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
         else if (bag.session?.id) navigate(`/debug/${bag.session.id}`);
     }
   }, [bag, navigate, startRecording, stopRecording]);
+
+  // ---- 世界包事件派发（第 4 项）----
+  // 世界包在 logic.events 中声明 "事件 → logic.js 处理函数"，
+  // 事件发生时按次调用 Worker（沿用按次创建、超时销毁模式），失败只记日志不打断游戏。
+  const firedSessionStartRef = useRef<string | null>(null);
+  const dispatchWorldEvent = useCallback(async (event: string, payload: Record<string, unknown>) => {
+    const logic = bag.worldUiEnvelope.logic;
+    const handler = logic.events?.[event as keyof NonNullable<typeof logic.events>];
+    if (!handler || logic.runtime !== "sandbox-js-v1") return;
+    try {
+      await invokeWorldLogic(logic, handler, { event, ...payload }, handleAction);
+    } catch (error) {
+      console.warn(`[world-event] ${event} handler ${handler} failed:`, error);
+    }
+  }, [bag.worldUiEnvelope.logic, handleAction]);
+
+  // session_start：每个会话只触发一次。
+  useEffect(() => {
+    const sessionId = bag.session?.id?.trim();
+    if (!sessionId || firedSessionStartRef.current === sessionId) return;
+    firedSessionStartRef.current = sessionId;
+    void dispatchWorldEvent("session_start", {
+      session_id: sessionId,
+      world_id: bag.themeWorld?.id ?? "",
+    });
+  }, [bag.session?.id, bag.themeWorld?.id, dispatchWorldEvent]);
+
+  // turn_completed：回合成功提交（含重发/编辑/重新生成）后触发，
+  // 负载含该回合新增消息，便于计分类 handler 直接消费。
+  const firedTurnSeqRef = useRef<string | null>(null);
+  useEffect(() => {
+    const completed = bag.lastCompletedTurn;
+    const sessionId = bag.session?.id;
+    if (!completed || !sessionId || completed.sessionId !== sessionId) return;
+    const fireKey = `${completed.sessionId}:${completed.seq}`;
+    if (firedTurnSeqRef.current === fireKey) return;
+    firedTurnSeqRef.current = fireKey;
+    const turnMessages = (bag.session?.messages ?? []).filter((message) => {
+      const raw = message.metadata && (message.metadata as Record<string, unknown>).turn_index;
+      return Number(raw) === completed.turnIndex;
+    });
+    void dispatchWorldEvent("turn_completed", {
+      session_id: sessionId,
+      turn_index: completed.turnIndex,
+      messages: turnMessages,
+    });
+    // seq 单调递增，重发同一回合也会重新触发；只依赖信号本体。
+  }, [bag.lastCompletedTurn, bag.session, dispatchWorldEvent]);
 
   return (
     <div className="world-ui-runtime-host">
@@ -311,6 +375,16 @@ function requireWorldKvScope(bag: GameSessionStateBag, namespace: string): strin
     throw new Error(`This world package did not declare KV namespace: ${normalized}`);
   }
   return requireWorldId(bag);
+}
+
+/** session/character 作用域由宿主注入当前会话 id，世界包不能伪造其它存档。 */
+function resolveKvScope(bag: GameSessionStateBag, scope?: KvScope): KvScope | undefined {
+  if (!scope?.scope || scope.scope === "world") return undefined;
+  const sessionId = bag.session?.id?.trim();
+  if (!sessionId) {
+    throw new Error("当前没有进行中的存档，无法使用 session/character 作用域。");
+  }
+  return { scope: scope.scope, session_id: sessionId, character_id: scope.character_id };
 }
 
 function requireWorldId(bag: GameSessionStateBag): string {

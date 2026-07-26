@@ -10,7 +10,8 @@ const MIGRATION_BUILTIN_DESKTOP_UI_REPAIR: i64 = 3;
 const MIGRATION_SCHEDULE_ATTRIBUTE_REPAIR: i64 = 4;
 const MIGRATION_EMBEDDING_MODEL_NAME_REPAIR: i64 = 5;
 const MIGRATION_MEMORY_LAYER_DEDUP: i64 = 6;
-const CURRENT_SCHEMA_VERSION: i64 = MIGRATION_MEMORY_LAYER_DEDUP;
+const MIGRATION_SCOPED_KV: i64 = 7;
+const CURRENT_SCHEMA_VERSION: i64 = MIGRATION_SCOPED_KV;
 
 fn ensure_column(
     conn: &Connection,
@@ -298,6 +299,28 @@ fn set_schema_version(conn: &Connection, version: i64) -> Result<(), rusqlite::E
     conn.pragma_update(None, "user_version", version)
 }
 
+/// world_kv(世界级) → scoped_kv(owner_type/owner_id) 迁移：
+/// 旧行整体平移为 owner_type = 'world'，随后删除旧表。
+/// world_kv 可能不存在（全新库），IF EXISTS 保底。
+fn migrate_world_kv_to_scoped_kv(conn: &Connection) -> Result<(), rusqlite::Error> {
+    let legacy_exists: bool = conn.query_row(
+        "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = 'world_kv'",
+        [],
+        |row| row.get(0),
+    )?;
+    if !legacy_exists {
+        return Ok(());
+    }
+    conn.execute_batch(
+        "
+        INSERT OR IGNORE INTO scoped_kv (owner_type, owner_id, namespace, key, value_json, updated_at)
+            SELECT 'world', world_id, namespace, key, value_json, updated_at FROM world_kv;
+        DROP TABLE IF EXISTS world_kv;
+        ",
+    )?;
+    Ok(())
+}
+
 pub(crate) fn run(conn: &Connection) -> Result<(), rusqlite::Error> {
     if schema_version(conn)? >= CURRENT_SCHEMA_VERSION {
         return Ok(());
@@ -333,6 +356,10 @@ pub(crate) fn run(conn: &Connection) -> Result<(), rusqlite::Error> {
     if version < MIGRATION_MEMORY_LAYER_DEDUP {
         dedup_memory_layer_copies(&tx)?;
         set_schema_version(&tx, MIGRATION_MEMORY_LAYER_DEDUP)?;
+    }
+    if version < MIGRATION_SCOPED_KV {
+        migrate_world_kv_to_scoped_kv(&tx)?;
+        set_schema_version(&tx, MIGRATION_SCOPED_KV)?;
     }
 
     tx.commit()

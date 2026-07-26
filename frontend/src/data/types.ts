@@ -79,11 +79,36 @@ export type WorldRecordWriteRequest = {
 };
 
 export type WorldKvEntry = {
-  world_id: string;
+  owner_type: string;
+  owner_id: string;
   namespace: string;
   key: string;
   value: unknown;
   updated_at: string;
+};
+
+/** 消息中的交互（第 5 项）：选项/多选/表单/确认/滑条 */
+export type MessageInteraction = {
+  interaction_id: string;
+  kind: "choice" | "multi_choice" | "form" | "confirm" | "slider";
+  prompt: string;
+  config: Record<string, unknown>;
+  status: "pending" | "answered" | string;
+  answer?: unknown;
+  answered_at?: string;
+};
+
+export type AnswerInteractionResponse = {
+  session: SessionSnapshot;
+  answer: unknown;
+  newly_answered: boolean;
+};
+
+/** 变量作用域：world（跨存档共享）/ session（世界存档）/ character（存档内角色） */
+export type KvScope = {
+  scope?: "world" | "session" | "character";
+  session_id?: string;
+  character_id?: string;
 };
 
 export type AiWorldCreateMode = "single_agent" | "multi_agent";

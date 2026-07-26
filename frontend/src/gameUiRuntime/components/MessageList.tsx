@@ -21,8 +21,19 @@ import {
   resolveDialogueSpeakerLabel,
   shouldHidePinnedNarrationMessage,
 } from "../../game/utils";
+import type { MessageInteraction } from "../../data/types";
 import type { GameUiRuntimeActions } from "../actions";
 import type { GameUiRuntimeContext } from "../runtimeContext";
+import { InteractionBlock } from "./InteractionBlock";
+
+/** 从消息 metadata 解析交互（第 5 项）。 */
+function parseMessageInteraction(message: { metadata?: Record<string, unknown> | null }): MessageInteraction | null {
+  const raw = (message.metadata ?? {}).interaction;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  if (typeof record.interaction_id !== "string" || typeof record.kind !== "string") return null;
+  return record as unknown as MessageInteraction;
+}
 
 function MobileErrorNotice({
   speakerName,
@@ -331,6 +342,9 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
           || (!!runtime.editing && !isEditingThisTurn);
         const speakerLabel = resolveDialogueSpeakerLabel(message, runtime.world_characters);
         const isMobile = runtime.capabilities.platform === "mobile";
+        const messageInteraction = message.role === "agent" && !message.pending
+          ? parseMessageInteraction(message)
+          : null;
 
         return (
           <React.Fragment
@@ -362,6 +376,15 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
                 </div>
               )}
             </div>
+
+            {messageInteraction ? (
+              <InteractionBlock
+                messageId={message.message_id}
+                interaction={messageInteraction}
+                locked={runtime.ui_state.submitting}
+                actions={actions}
+              />
+            ) : null}
 
             {!message.pending && isMobile && (message.role === "agent" || message.role === "player") ? (
               <div className={`game-message-inline-actions${message.role === "player" ? " game-message-inline-actions--player" : ""}${message.role === "agent" ? " game-message-inline-actions--agent" : ""}`}>

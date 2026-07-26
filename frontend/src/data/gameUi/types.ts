@@ -62,11 +62,16 @@ export type WorldStorageConfig = {
   collections: Record<string, WorldStorageCollectionConfig>;
 };
 
+/** 世界包可订阅的事件。interaction_answered 随交互消息（第 5 项）落地。 */
+export type WorldLogicEventName = "session_start" | "turn_completed" | "interaction_answered";
+
 export type WorldLogicConfig = {
   runtime: "disabled" | "sandbox-js-v1";
   source: string;
   entry?: string;
   timeout_ms: number;
+  /** 事件 → logic.js 中的处理函数名。事件发生时宿主按次调用 Worker。 */
+  events?: Partial<Record<WorldLogicEventName, string>>;
 };
 
 export type WorldUiEnvelope = {

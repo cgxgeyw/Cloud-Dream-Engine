@@ -133,6 +133,13 @@ async fn submit_player_action_inner(
         messages,
         director_completed_payload,
     } = prepared;
+    // 重放（重发/编辑）会回滚到目标回合之前：取消被覆盖回合调度的未触发通知，避免重复提醒。
+    if request.action_mode.requires_replay() {
+        if let Some(from_turn_index) = request.resend_from_turn_index {
+            let db = state.db.lock().await;
+            cancel_notifications_for_turns(db.conn(), &app, &session_id, from_turn_index)?;
+        }
+    }
     let service_config = resolve_service_runtime_config(&world);
     if service_config.service_mode == ServiceMode::AgentChat {
         return run_agent_chat_player_action(
@@ -878,6 +885,142 @@ pub async fn edit_session_message(
     }
     repo.upsert(&session)?;
     Ok(true)
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AnswerInteractionRequest {
+    pub session_id: String,
+    pub message_id: String,
+    pub interaction_id: String,
+    pub answer: serde_json::Value,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AnswerInteractionResponse {
+    pub session: SessionSnapshot,
+    pub answer: serde_json::Value,
+    /// false 表示该交互此前已被回答，本次返回的是首次结果（幂等，不覆盖）。
+    pub newly_answered: bool,
+}
+
+/// 玩家回答消息中的交互（第 5 项）。幂等：重复提交返回首次结果，不重复生效。
+#[tauri::command]
+pub async fn answer_interaction(
+    state: State<'_, AppState>,
+    request: AnswerInteractionRequest,
+) -> Result<AnswerInteractionResponse, String> {
+    use crate::models::interaction::{
+        validate_interaction_answer, MessageInteraction, INTERACTION_STATUS_ANSWERED,
+    };
+    let db = state.db.lock().await;
+    let conn = db.conn();
+    let repo = crate::db::repositories::session_repo::SessionRepository::new(conn);
+    let mut session = repo
+        .get(&request.session_id)?
+        .ok_or_else(|| "会话不存在".to_string())?;
+    let message = session
+        .messages
+        .iter_mut()
+        .find(|message| message.message_id == request.message_id)
+        .ok_or_else(|| "消息不存在".to_string())?;
+    let metadata = message
+        .metadata
+        .as_mut()
+        .ok_or_else(|| "该消息没有交互".to_string())?;
+    let mut interaction: MessageInteraction = serde_json::from_value(
+        metadata
+            .get("interaction")
+            .cloned()
+            .ok_or_else(|| "该消息没有交互".to_string())?,
+    )
+    .map_err(|error| format!("交互数据损坏: {error}"))?;
+    if interaction.interaction_id != request.interaction_id {
+        return Err("交互 id 不匹配".to_string());
+    }
+    if interaction.status == INTERACTION_STATUS_ANSWERED {
+        return Ok(AnswerInteractionResponse {
+            session,
+            answer: interaction.answer.unwrap_or(serde_json::Value::Null),
+            newly_answered: false,
+        });
+    }
+    let answer = validate_interaction_answer(&interaction, &request.answer)?;
+    interaction.status = INTERACTION_STATUS_ANSWERED.to_string();
+    interaction.answer = Some(answer.clone());
+    interaction.answered_at = Some(chrono::Utc::now().to_rfc3339());
+    metadata["interaction"] =
+        serde_json::to_value(&interaction).map_err(|error| error.to_string())?;
+    repo.upsert(&session)?;
+    Ok(AnswerInteractionResponse {
+        session,
+        answer,
+        newly_answered: true,
+    })
+}
+
+/// 重新生成最新回合（第 2 项）：回滚到该回合的回合前状态，
+/// 用同一玩家输入重跑标准回合流程。旧回合消息归档在 turn_journal 可追溯。
+#[tauri::command]
+pub async fn regenerate_last_turn(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<SessionSnapshot, String> {
+    let _mutation_permit = state.session_mutations.try_acquire(&session_id)?;
+    let (turn_index, player_input) = {
+        let db = state.db.lock().await;
+        let conn = db.conn();
+        let turn_index =
+            crate::services::game_engine::orchestrator::writeback::latest_finished_turn(conn, &session_id)?
+                .ok_or_else(|| "没有已完成的回合可以重新生成".to_string())?;
+        let player_input =
+            crate::services::game_engine::orchestrator::writeback::turn_player_input(
+                conn,
+                &session_id,
+                turn_index,
+            )?
+            .ok_or_else(|| "找不到该回合的玩家输入，无法重新生成".to_string())?;
+        (turn_index, player_input)
+    };
+    submit_player_action_inner(
+        app,
+        state,
+        session_id,
+        PlayerActionRequest {
+            content: MessageContent::Text(player_input),
+            action_mode: PlayerActionMode::Resend,
+            resend_from_turn_index: Some(turn_index),
+        },
+    )
+    .await
+}
+
+/// 取消 session 中 turn_index >= from_turn_index 回合调度的未触发通知。
+pub(crate) fn cancel_notifications_for_turns(
+    conn: &rusqlite::Connection,
+    app: &AppHandle,
+    session_id: &str,
+    from_turn_index: i32,
+) -> Result<(), String> {
+    let repo =
+        crate::db::repositories::scheduled_notification_repo::ScheduledNotificationRepository::new(
+            conn,
+        );
+    let notifications = repo.list_for_session(session_id, Some("scheduled"), 500)?;
+    for notification in notifications {
+        let created_in_turn = notification
+            .metadata
+            .get("turn_index")
+            .and_then(|value| value.as_i64());
+        if created_in_turn
+            .map(|turn| turn >= from_turn_index as i64)
+            .unwrap_or(false)
+        {
+            let _ = NotificationScheduler::cancel_delivery(app, &notification);
+            let _ = repo.cancel(&notification.id, "turn_regenerated");
+        }
+    }
+    Ok(())
 }
 
 fn finalize_turn_snapshot(

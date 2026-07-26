@@ -92,6 +92,8 @@ pub fn run() {
             commands::sessions::resume_last_incomplete_turn,
             commands::sessions::get_session_runtime_attributes,
             commands::sessions::edit_session_message,
+            commands::sessions::answer_interaction,
+            commands::sessions::regenerate_last_turn,
             // 存档
             commands::saves::list_saves,
             commands::saves::branch_save,

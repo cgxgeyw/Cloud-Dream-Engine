@@ -36,6 +36,8 @@ import type {
   WorldRecord,
   WorldRecordWriteRequest,
   WorldKvEntry,
+  KvScope,
+  AnswerInteractionResponse,
 } from "./types";
 
 async function detectTauri(): Promise<boolean> {
@@ -250,22 +252,23 @@ export async function deleteWorldRecord(
   return (await getTauri()).deleteWorldRecord(worldId, collection, recordId);
 }
 
-export async function listWorldKv(worldId: string, namespace: string): Promise<WorldKvEntry[]> {
+export async function listWorldKv(worldId: string, namespace: string, scope?: KvScope): Promise<WorldKvEntry[]> {
   if (!isTauri) {
     throw new Error("World KV storage is only available in the local application.");
   }
-  return (await getTauri()).listWorldKv(worldId, namespace);
+  return (await getTauri()).listWorldKv(worldId, namespace, scope);
 }
 
 export async function getWorldKv(
   worldId: string,
   namespace: string,
   key: string,
+  scope?: KvScope,
 ): Promise<WorldKvEntry | null> {
   if (!isTauri) {
     throw new Error("World KV storage is only available in the local application.");
   }
-  return (await getTauri()).getWorldKv(worldId, namespace, key);
+  return (await getTauri()).getWorldKv(worldId, namespace, key, scope);
 }
 
 export async function setWorldKv(
@@ -273,18 +276,31 @@ export async function setWorldKv(
   namespace: string,
   key: string,
   value: unknown,
+  scope?: KvScope,
 ): Promise<WorldKvEntry> {
   if (!isTauri) {
     throw new Error("World KV storage is only available in the local application.");
   }
-  return (await getTauri()).setWorldKv(worldId, namespace, key, value);
+  return (await getTauri()).setWorldKv(worldId, namespace, key, value, scope);
 }
 
-export async function deleteWorldKv(worldId: string, namespace: string, key: string): Promise<void> {
+export async function deleteWorldKv(worldId: string, namespace: string, key: string, scope?: KvScope): Promise<void> {
   if (!isTauri) {
     throw new Error("World KV storage is only available in the local application.");
   }
-  return (await getTauri()).deleteWorldKv(worldId, namespace, key);
+  return (await getTauri()).deleteWorldKv(worldId, namespace, key, scope);
+}
+
+export async function answerInteraction(
+  sessionId: string,
+  messageId: string,
+  interactionId: string,
+  answer: unknown,
+): Promise<AnswerInteractionResponse> {
+  if (!isTauri) {
+    throw new Error("Interactions are only available in the local application.");
+  }
+  return (await getTauri()).answerInteraction(sessionId, messageId, interactionId, answer);
 }
 
 export async function deleteWorld(worldId: string) {

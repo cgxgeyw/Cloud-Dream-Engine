@@ -1,7 +1,9 @@
+import type { KvScope } from "../data/types";
 import { useMemo, useRef } from "react";
 
 import { GameUiRenderer, type GameUiRenderContext } from "../components/GameUiRenderer";
-import type { GameUiActionReference, GameUiPropValue, WorldLogicConfig } from "../data/gameUi";
+import type { GameUiActionReference, GameUiPropValue, WorldLogicConfig
+} from "../data/gameUi";
 import { parseSwitchProposal, resolvePlayerActionMode } from "../game/utils";
 import type { GameUiRuntimeActions } from "../gameUiRuntime/actions";
 import { evaluateGameUiExpression } from "../gameUiRuntime/expression";
@@ -175,12 +177,17 @@ async function dispatchDslAction(
         recordId: readStringArg(args, "record_id"),
       });
     case "storage.kv.list":
-      return sendAction({ type: "world-kv-list", namespace: readStringArg(args, "namespace") });
+      return sendAction({
+        type: "world-kv-list",
+        namespace: readStringArg(args, "namespace"),
+        scope: readKvScopeArg(args),
+      });
     case "storage.kv.get":
       return sendAction({
         type: "world-kv-get",
         namespace: readStringArg(args, "namespace"),
         key: readStringArg(args, "key"),
+        scope: readKvScopeArg(args),
       });
     case "storage.kv.set":
       return sendAction({
@@ -188,12 +195,14 @@ async function dispatchDslAction(
         namespace: readStringArg(args, "namespace"),
         key: readStringArg(args, "key"),
         value: args.value,
+        scope: readKvScopeArg(args),
       });
     case "storage.kv.delete":
       return sendAction({
         type: "world-kv-delete",
         namespace: readStringArg(args, "namespace"),
         key: readStringArg(args, "key"),
+        scope: readKvScopeArg(args),
       });
     case "logic.run":
       return invokeWorldLogic(
@@ -212,6 +221,8 @@ function createFrameActions(send: (action: WorldFrameAction) => Promise<unknown>
     setDraftValue: (value) => void send({ type: "set-draft-value", value }),
     setAutoScrollEnabled: (enabled) => void send({ type: "set-auto-scroll", enabled }),
     submitMessage: (options = {}) => send({ type: "submit-message", options }).then(() => undefined),
+    answerInteraction: (messageId, interactionId, answer) =>
+      send({ type: "answer-interaction", messageId, interactionId, answer }).then(() => undefined),
     startEditingTurn: (content, turnIndex) => void send({ type: "start-editing-turn", content, turnIndex }),
     cancelEditingTurn: () => void send({ type: "cancel-editing-turn" }),
     branchFromCurrent: () => send({ type: "branch-from-current" }).then(() => undefined),
@@ -273,6 +284,16 @@ function resolveActionValue(value: GameUiPropValue, context: GameUiRenderContext
 function readStringArg(args: Record<string, unknown>, key: string): string {
   const value = args[key];
   return value == null ? "" : String(value);
+}
+
+function readKvScopeArg(args: Record<string, unknown>): KvScope | undefined {
+  const raw = args.scope;
+  if (!raw || typeof raw !== "object") return undefined;
+  const obj = raw as Record<string, unknown>;
+  const scope = typeof obj.scope === "string" ? obj.scope : undefined;
+  const characterId = typeof obj.character_id === "string" ? obj.character_id : undefined;
+  if (!scope && !characterId) return undefined;
+  return { scope: scope as KvScope["scope"], character_id: characterId };
 }
 
 function readNumberArg(args: Record<string, unknown>, key: string): number | undefined {

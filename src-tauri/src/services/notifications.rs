@@ -431,7 +431,7 @@ impl NotificationScheduler {
         });
     }
 
-    fn cancel_delivery(
+    pub(crate) fn cancel_delivery(
         app: &AppHandle,
         notification: &ScheduledNotification,
     ) -> Result<(), String> {

@@ -2363,6 +2363,16 @@ impl SessionOrchestrator {
                 serde_json::json!({
                     "session_snapshot": session.clone(),
                     "attribute_values": collect_runtime_attribute_values(conn, &session.id)?,
+                    "memory_entities": query_rows_json(
+                        conn,
+                        "SELECT * FROM memory_entities WHERE session_id = ?1",
+                        &[&session.id],
+                    )?,
+                    "memory_relations": query_rows_json(
+                        conn,
+                        "SELECT * FROM memory_relations WHERE session_id = ?1",
+                        &[&session.id],
+                    )?,
                 }),
             )?;
         }

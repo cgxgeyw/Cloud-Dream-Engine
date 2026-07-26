@@ -70,6 +70,8 @@ import type {
   WorldUiDocumentValidationResult,
   WorldUpsertRequest,
   WorldPermissionStatus,
+  KvScope,
+  AnswerInteractionResponse,
 } from "./types";
 
 // 类型定义
@@ -295,16 +297,17 @@ export function deleteWorldRecord(
   return tauriCommand("delete_world_record", { worldId, collection, id: recordId });
 }
 
-export function listWorldKv(worldId: string, namespace: string): Promise<WorldKvEntry[]> {
-  return tauriCommand("list_world_kv", { worldId, namespace });
+export function listWorldKv(worldId: string, namespace: string, scope?: KvScope): Promise<WorldKvEntry[]> {
+  return tauriCommand("list_world_kv", { worldId, namespace, scope });
 }
 
 export function getWorldKv(
   worldId: string,
   namespace: string,
   key: string,
+  scope?: KvScope,
 ): Promise<WorldKvEntry | null> {
-  return tauriCommand("get_world_kv", { worldId, namespace, key });
+  return tauriCommand("get_world_kv", { worldId, namespace, key, scope });
 }
 
 export function setWorldKv(
@@ -312,16 +315,28 @@ export function setWorldKv(
   namespace: string,
   key: string,
   value: unknown,
+  scope?: KvScope,
 ): Promise<WorldKvEntry> {
-  return tauriCommand("set_world_kv", { worldId, namespace, key, value });
+  return tauriCommand("set_world_kv", { worldId, namespace, key, value, scope });
 }
 
-export function deleteWorldKv(worldId: string, namespace: string, key: string): Promise<void> {
-  return tauriCommand("delete_world_kv", { worldId, namespace, key });
+export function deleteWorldKv(worldId: string, namespace: string, key: string, scope?: KvScope): Promise<void> {
+  return tauriCommand("delete_world_kv", { worldId, namespace, key, scope });
 }
 
 export function deleteWorld(worldId: string): Promise<void> {
   return tauriCommand("delete_world", { id: worldId });
+}
+
+export function answerInteraction(
+  sessionId: string,
+  messageId: string,
+  interactionId: string,
+  answer: unknown,
+): Promise<AnswerInteractionResponse> {
+  return tauriCommand("answer_interaction", {
+    request: { session_id: sessionId, message_id: messageId, interaction_id: interactionId, answer },
+  });
 }
 
 export function deleteAllWorlds(): Promise<{ ok: boolean; deleted_count: number }> {

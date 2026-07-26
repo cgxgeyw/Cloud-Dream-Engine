@@ -1,5 +1,6 @@
 pub mod attribute;
 pub mod character;
+pub mod interaction;
 pub mod mcp_tool;
 pub mod memory;
 pub mod model_config;

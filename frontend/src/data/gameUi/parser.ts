@@ -121,6 +121,20 @@ function normalizeWorldStorageConfig(raw: unknown): WorldStorageConfig {
   return { kv_namespaces: kvNamespaces, collections };
 }
 
+const WORLD_LOGIC_EVENT_NAMES = new Set(["session_start", "turn_completed", "interaction_answered"]);
+const LOGIC_HANDLER_NAME = /^[a-zA-Z0-9._-]{1,128}$/;
+
+function normalizeWorldLogicEvents(raw: unknown): WorldLogicConfig["events"] {
+  if (!isPlainObject(raw)) return undefined;
+  const events: NonNullable<WorldLogicConfig["events"]> = {};
+  for (const [name, handler] of Object.entries(raw)) {
+    if (!WORLD_LOGIC_EVENT_NAMES.has(name)) continue;
+    if (typeof handler !== "string" || !LOGIC_HANDLER_NAME.test(handler.trim())) continue;
+    events[name as keyof typeof events] = handler.trim();
+  }
+  return Object.keys(events).length > 0 ? events : undefined;
+}
+
 function normalizeWorldLogicConfig(raw: unknown): WorldLogicConfig {
   const value = isPlainObject(raw) ? raw : {};
   const source = typeof value.source === "string" ? value.source : "";
@@ -136,6 +150,7 @@ function normalizeWorldLogicConfig(raw: unknown): WorldLogicConfig {
     source,
     entry: typeof value.entry === "string" && value.entry.trim() ? value.entry.trim() : undefined,
     timeout_ms: timeoutMs,
+    events: normalizeWorldLogicEvents(value.events),
   };
 }
 
