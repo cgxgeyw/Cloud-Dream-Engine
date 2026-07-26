@@ -15,7 +15,7 @@ impl<'a> McpToolRepository<'a> {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, name, description, server_name, tool_name, enabled, exposure_policy_json, risk_level, trigger_keywords_json, input_schema_json FROM mcp_tools ORDER BY name",
+                "SELECT id, name, description, server_name, tool_name, enabled, exposure_policy_json, risk_level, trigger_keywords_json, input_schema_json, server_id FROM mcp_tools ORDER BY name",
             )
             .map_err(|e| e.to_string())?;
 
@@ -38,6 +38,7 @@ impl<'a> McpToolRepository<'a> {
                             default_input_schema()
                         }),
                     ),
+                    server_id: row.get(10)?,
                 })
             })
             .map_err(|e| e.to_string())?
@@ -62,7 +63,7 @@ impl<'a> McpToolRepository<'a> {
         let trigger_keywords = normalize_keywords(&req.trigger_keywords);
         let input_schema = normalize_input_schema(req.input_schema.clone());
         self.conn.execute(
-            "INSERT INTO mcp_tools (id, name, description, server_name, tool_name, enabled, exposure_policy_json, risk_level, trigger_keywords_json, input_schema_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO mcp_tools (id, name, description, server_name, tool_name, enabled, exposure_policy_json, risk_level, trigger_keywords_json, input_schema_json, server_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 id,
                 req.name.trim(),
@@ -76,6 +77,7 @@ impl<'a> McpToolRepository<'a> {
                 serde_json::to_string(&input_schema).unwrap_or_else(|_| {
                     serde_json::to_string(&default_input_schema()).unwrap_or_default()
                 }),
+                req.server_id.trim(),
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -91,6 +93,7 @@ impl<'a> McpToolRepository<'a> {
             risk_level: risk_level.to_string(),
             trigger_keywords,
             input_schema,
+            server_id: req.server_id.trim().to_string(),
         })
     }
 
@@ -104,7 +107,7 @@ impl<'a> McpToolRepository<'a> {
         let trigger_keywords = normalize_keywords(&req.trigger_keywords);
         let input_schema = normalize_input_schema(req.input_schema.clone());
         self.conn.execute(
-            "UPDATE mcp_tools SET name = ?1, description = ?2, server_name = ?3, tool_name = ?4, enabled = ?5, exposure_policy_json = ?6, risk_level = ?7, trigger_keywords_json = ?8, input_schema_json = ?9 WHERE id = ?10",
+            "UPDATE mcp_tools SET name = ?1, description = ?2, server_name = ?3, tool_name = ?4, enabled = ?5, exposure_policy_json = ?6, risk_level = ?7, trigger_keywords_json = ?8, input_schema_json = ?9, server_id = ?10 WHERE id = ?11",
             params![
                 req.name.trim(),
                 req.description.trim(),
@@ -117,6 +120,7 @@ impl<'a> McpToolRepository<'a> {
                 serde_json::to_string(&input_schema).unwrap_or_else(|_| {
                     serde_json::to_string(&default_input_schema()).unwrap_or_default()
                 }),
+                req.server_id.trim(),
                 id,
             ],
         )
@@ -125,7 +129,7 @@ impl<'a> McpToolRepository<'a> {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, name, description, server_name, tool_name, enabled, exposure_policy_json, risk_level, trigger_keywords_json, input_schema_json FROM mcp_tools WHERE id = ?1",
+                "SELECT id, name, description, server_name, tool_name, enabled, exposure_policy_json, risk_level, trigger_keywords_json, input_schema_json, server_id FROM mcp_tools WHERE id = ?1",
             )
             .map_err(|e| e.to_string())?;
         let mut rows = stmt
@@ -147,6 +151,7 @@ impl<'a> McpToolRepository<'a> {
                             default_input_schema()
                         }),
                     ),
+                    server_id: row.get(10)?,
                 })
             })
             .map_err(|e| e.to_string())?;

@@ -158,6 +158,10 @@ pub struct WorldPackageWorldData {
     pub ui_runtime_version: Option<u32>,
     #[serde(default)]
     pub ui_capabilities: Vec<String>,
+    /// 第 12 项：包声明要用的平台能力（file.pick/file.read/file.write/file.share）。
+    /// 导入时校验并落入 worlds.ui_theme_config.platform_features。
+    #[serde(default)]
+    pub platform_features: Vec<String>,
     #[serde(default, rename = "storage")]
     pub ui_storage_config: serde_json::Value,
     #[serde(default, rename = "logic")]

@@ -7,6 +7,7 @@ import {
   deleteWorldKv,
   deleteWorldRecord,
   getWorldKv,
+  invokeWorldPlatformFeature,
   isTauriEnvironment,
   listWorldKv,
   listWorldRecords,
@@ -271,6 +272,11 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
       case "world-kv-delete": {
         const worldId = requireWorldKvScope(bag, action.namespace);
         return deleteWorldKv(worldId, action.namespace, action.key, resolveKvScope(bag, action.scope));
+      }
+      case "world-platform-invoke": {
+        // 第 12 项：world_id 由宿主注入，世界包无法伪造其它世界的身份；
+        // 声明与用户授权在后端命令内统一校验。
+        return invokeWorldPlatformFeature(requireWorldId(bag), action.feature, action.params ?? {});
       }
       case "navigate":
         if (action.target === "back") navigate(-1);

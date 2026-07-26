@@ -361,6 +361,7 @@ mod tests {
             },
             assets: AssetSelection::default(),
             state: SessionState::default(),
+            generation_params: Default::default(),
         }
     }
 
@@ -376,6 +377,7 @@ mod tests {
             max_tokens: 1200,
             streaming_enabled: true,
             is_default: true,
+            input_modalities: Vec::new(),
         }
     }
 
@@ -1214,6 +1216,79 @@ mod tests {
         format!("http://{addr}")
     }
 
+    /// 同上，但把收到的第一个请求体交出来——用于断言「参数真的发出去了 / 真的被过滤了」，
+    /// 而不是只断言我们在内存里算对了。
+    fn spawn_capturing_mock_llm_server(
+        response_content: String,
+    ) -> (String, std::sync::mpsc::Receiver<serde_json::Value>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind mock llm");
+        let addr = listener.local_addr().expect("local addr");
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            for _ in 0..4 {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    break;
+                };
+                let mut buf = Vec::new();
+                let mut temp = [0u8; 8192];
+                let mut body_start = 0usize;
+                loop {
+                    let read = stream.read(&mut temp).unwrap_or(0);
+                    if read == 0 {
+                        break;
+                    }
+                    buf.extend_from_slice(&temp[..read]);
+                    if let Some(head_end) = buf.windows(4).position(|window| window == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&buf[..head_end]);
+                        let content_length = headers
+                            .lines()
+                            .find_map(|line| {
+                                let lower = line.to_ascii_lowercase();
+                                lower
+                                    .strip_prefix("content-length:")
+                                    .and_then(|value| value.trim().parse::<usize>().ok())
+                            })
+                            .unwrap_or(0);
+                        body_start = head_end + 4;
+                        if buf.len() >= body_start + content_length {
+                            break;
+                        }
+                    }
+                }
+                if let Ok(request) = serde_json::from_slice::<serde_json::Value>(&buf[body_start..]) {
+                    let _ = sender.send(request);
+                }
+                let body = serde_json::json!({
+                    "id": "chatcmpl-mock",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": "gpt-test",
+                    "choices": [{
+                        "index": 0,
+                        "message": { "role": "assistant", "content": response_content },
+                        "finish_reason": "stop"
+                    }],
+                    "usage": { "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2 }
+                });
+                let payload = serde_json::to_vec(&body).expect("serialize response");
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    payload.len()
+                );
+                if stream
+                    .write_all(head.as_bytes())
+                    .and_then(|_| stream.write_all(&payload))
+                    .and_then(|_| stream.flush())
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        (format!("http://{addr}"), receiver)
+    }
+
     fn mock_model(base_url: String) -> ModelConfig {
         ModelConfig {
             base_url,
@@ -1278,6 +1353,12 @@ mod tests {
                 1,
                 "继续巡查码头",
                 &[],
+                &[],
+                &[],
+                &std::collections::HashMap::new(),
+                &crate::models::generation_params::GenerationParams::builtin_default_for_role(
+                    crate::models::generation_params::GENERATION_ROLE_DIRECTOR,
+                ),
                 None,
                 None,
             )
@@ -1382,6 +1463,12 @@ mod tests {
                 1,
                 "轮到我了",
                 &[],
+                &[],
+                &[],
+                &std::collections::HashMap::new(),
+                &crate::models::generation_params::GenerationParams::builtin_default_for_role(
+                    crate::models::generation_params::GENERATION_ROLE_DIRECTOR,
+                ),
                 None,
                 None,
             )
@@ -1419,6 +1506,12 @@ mod tests {
                 1,
                 "随便说点什么",
                 &[],
+                &[],
+                &[],
+                &std::collections::HashMap::new(),
+                &crate::models::generation_params::GenerationParams::builtin_default_for_role(
+                    crate::models::generation_params::GENERATION_ROLE_DIRECTOR,
+                ),
                 None,
                 None,
             )
@@ -1434,6 +1527,229 @@ mod tests {
             "unexpected failure_code: {}",
             failure.failure_code
         );
+    }
+
+    // ---- 生成参数三级覆盖（第 8 项）----
+
+    #[tokio::test]
+    async fn resolved_generation_params_reach_the_wire_and_unsupported_ones_are_filtered() {
+        let (base_url, requests) = spawn_capturing_mock_llm_server(valid_director_content());
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        schema::create_tables(&conn).expect("create schema");
+
+        let orchestrator = SessionOrchestrator;
+        let director = WorldDirectorService::new();
+        let llm = crate::services::llm::client::LlmClient::new();
+        let session = sample_session();
+        let mut world = sample_world();
+        // 世界包配一组参数，其中 top_k 是 OpenAI 兼容端点不支持的。
+        world.director_config = serde_json::json!({
+            "generation_params": {
+                "temperature": 0.15,
+                "top_p": 0.8,
+                "top_k": 40,
+                "max_tokens": 777,
+                "stop": ["【完】"],
+                "seed": 1234
+            }
+        });
+        let characters = vec![sample_character("char-a", "Alice")];
+        let settings = crate::models::settings::AppSettings::default();
+        let model = mock_model(base_url);
+        let generation = resolve_generation_params_with_model(
+            crate::models::generation_params::GENERATION_ROLE_DIRECTOR,
+            &settings,
+            &world,
+            &session,
+            &model,
+        );
+
+        orchestrator
+            .run_director_turn(
+                &llm,
+                &director,
+                model,
+                DirectorTurnRecovery {
+                    resume_incomplete_turn: false,
+                    recovered_completed_payload: None,
+                },
+                &session,
+                &world,
+                &characters,
+                1,
+                "继续巡查码头",
+                &[],
+                &[],
+                &[],
+                &std::collections::HashMap::new(),
+                &generation,
+                None,
+                None,
+            )
+            .await
+            .expect("director turn should succeed");
+
+        let sent = requests
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("mock server should capture the request body");
+
+        // 世界层配置直达请求体，且盖住了导演内置默认的 0.7。
+        assert_eq!(sent["temperature"], 0.15);
+        assert_eq!(sent["top_p"], 0.8);
+        assert_eq!(sent["seed"], 1234);
+        assert_eq!(sent["stop"], serde_json::json!(["【完】"]));
+        // 世界配的 max_tokens 优先于模型连接配置的上限。
+        assert_eq!(sent["max_tokens"], 777);
+        // 不支持的参数被摘掉，而不是原样发出去让服务端报错。
+        assert!(
+            sent.get("top_k").is_none(),
+            "OpenAI 兼容端点不支持 top_k，不该出现在请求体里"
+        );
+    }
+
+    #[tokio::test]
+    async fn player_media_reaches_the_wire_as_openai_multipart() {
+        let (base_url, requests) = spawn_capturing_mock_llm_server(valid_director_content());
+        let orchestrator = SessionOrchestrator;
+        let director = WorldDirectorService::new();
+        let llm = crate::services::llm::client::LlmClient::new();
+        let session = sample_session();
+        let world = sample_world();
+        let characters = vec![sample_character("char-a", "Alice")];
+        let model = ModelConfig {
+            input_modalities: vec!["image".to_string(), "audio".to_string()],
+            ..mock_model(base_url)
+        };
+        let media = vec![
+            crate::models::session::ContentPart {
+                part_type: "image_url".to_string(),
+                text: None,
+                image_url: Some(crate::models::session::ImageUrl {
+                    url: "data:image/png;base64,QUJD".to_string(),
+                }),
+                input_audio: None,
+            },
+            crate::models::session::ContentPart {
+                part_type: "input_audio".to_string(),
+                text: None,
+                image_url: None,
+                input_audio: Some(crate::models::session::InputAudio {
+                    data: "data:audio/wav;base64,QUJD".to_string(),
+                    format: "wav".to_string(),
+                    duration_secs: Some(4.0),
+                }),
+            },
+        ];
+
+        orchestrator
+            .run_director_turn(
+                &llm,
+                &director,
+                model,
+                DirectorTurnRecovery {
+                    resume_incomplete_turn: false,
+                    recovered_completed_payload: None,
+                },
+                &session,
+                &world,
+                &characters,
+                1,
+                "看看这张图",
+                &media,
+                &[],
+                &[],
+                &std::collections::HashMap::new(),
+                &crate::models::generation_params::GenerationParams::builtin_default_for_role(
+                    crate::models::generation_params::GENERATION_ROLE_DIRECTOR,
+                ),
+                None,
+                None,
+            )
+            .await
+            .expect("director turn should succeed");
+
+        let sent = requests
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("mock server should capture the request body");
+        let messages = sent["messages"].as_array().expect("messages array");
+        let user_message = messages
+            .iter()
+            .find(|message| message["role"] == "user")
+            .expect("user message");
+        let parts = user_message["content"]
+            .as_array()
+            .expect("multipart user content");
+        // 第一段是原 payload 文本，媒体 parts 紧随其后、OpenAI 格式直达 wire。
+        assert_eq!(parts[0]["type"], "text");
+        assert!(
+            parts[0]["text"].as_str().unwrap_or("").contains("看看这张图"),
+            "文本段应携带本回合输入"
+        );
+        assert_eq!(
+            parts[1].pointer("/image_url/url").and_then(|v| v.as_str()),
+            Some("data:image/png;base64,QUJD")
+        );
+        let audio = &parts[2]["input_audio"];
+        assert_eq!(audio["data"].as_str(), Some("QUJD"), "data URL 前缀应被剥掉");
+        assert!(audio.get("duration_secs").is_none(), "内部字段不应落线");
+    }
+
+    #[tokio::test]
+    async fn session_layer_overrides_world_layer_on_the_wire() {
+        let (base_url, requests) = spawn_capturing_mock_llm_server(valid_director_content());
+        let orchestrator = SessionOrchestrator;
+        let director = WorldDirectorService::new();
+        let llm = crate::services::llm::client::LlmClient::new();
+        let mut world = sample_world();
+        world.director_config =
+            serde_json::json!({ "generation_params": { "temperature": 1.4, "top_p": 0.7 } });
+        let mut session = sample_session();
+        // 玩家在本存档里把随机度调低：只覆盖 temperature，top_p 仍走世界层。
+        session.generation_params = crate::models::generation_params::GenerationParams {
+            temperature: Some(0.05),
+            ..Default::default()
+        };
+        let characters = vec![sample_character("char-a", "Alice")];
+        let model = mock_model(base_url);
+        let generation = resolve_generation_params_with_model(
+            crate::models::generation_params::GENERATION_ROLE_DIRECTOR,
+            &crate::models::settings::AppSettings::default(),
+            &world,
+            &session,
+            &model,
+        );
+
+        orchestrator
+            .run_director_turn(
+                &llm,
+                &director,
+                model,
+                DirectorTurnRecovery {
+                    resume_incomplete_turn: false,
+                    recovered_completed_payload: None,
+                },
+                &session,
+                &world,
+                &characters,
+                1,
+                "继续巡查码头",
+                &[],
+                &[],
+                &[],
+                &std::collections::HashMap::new(),
+                &generation,
+                None,
+                None,
+            )
+            .await
+            .expect("director turn should succeed");
+
+        let sent = requests
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("mock server should capture the request body");
+
+        assert_eq!(sent["temperature"], 0.05, "存档层优先级最高");
+        assert_eq!(sent["top_p"], 0.7, "存档没配的项仍用世界层");
     }
 
     // ---- 消息稳定 ID（第 1 项）----
@@ -1558,7 +1874,11 @@ impl SessionOrchestrator {
         characters: &[CharacterDefinition],
         turn_index: i32,
         player_input: &str,
+        player_media: &[crate::models::session::ContentPart],
         mcp_tools: &[McpToolDefinition],
+        mcp_servers: &[crate::models::mcp_server::McpServerConfig],
+        kv_vars: &std::collections::HashMap<String, String>,
+        generation: &crate::models::generation_params::GenerationParams,
         notification_runtime: Option<NotificationToolRuntime<'_>>,
         mut progress_callback: Option<&mut (dyn FnMut(DirectorLoopStreamProgress) + Send)>,
     ) -> Result<DirectorTurnRun, StructuredOutputFailure> {
@@ -1577,11 +1897,13 @@ impl SessionOrchestrator {
                     "director_decision",
                     None,
                     mcp_tools,
+                kv_vars,
+                    player_media,
                 );
                 let request = world_director.build_chat_request_from_prompt_call(
                     &prompt_call,
                     &model.model_id,
-                    model.max_tokens,
+                    generation,
                     model.streaming_enabled,
                 );
                 if let Some(callback) = progress_callback.as_deref_mut() {
@@ -1596,6 +1918,8 @@ impl SessionOrchestrator {
                             request,
                             tool_loop_limit,
                             turn_index,
+                            mcp_tools,
+                            mcp_servers,
                             notification_runtime,
                             Some(callback),
                         )
@@ -1622,6 +1946,8 @@ impl SessionOrchestrator {
                             request,
                             tool_loop_limit,
                             turn_index,
+                            mcp_tools,
+                            mcp_servers,
                             notification_runtime,
                             None,
                         )
@@ -1647,11 +1973,13 @@ impl SessionOrchestrator {
                 "director_decision",
                 None,
                 mcp_tools,
+            kv_vars,
+                player_media,
             );
             let request = world_director.build_chat_request_from_prompt_call(
                 &prompt_call,
                 &model.model_id,
-                model.max_tokens,
+                generation,
                 model.streaming_enabled,
             );
             let loop_result = if let Some(callback) = progress_callback.as_deref_mut() {
@@ -1666,6 +1994,8 @@ impl SessionOrchestrator {
                         request,
                         tool_loop_limit,
                         turn_index,
+                        mcp_tools,
+                        mcp_servers,
                         notification_runtime,
                         Some(callback),
                     )
@@ -1691,6 +2021,8 @@ impl SessionOrchestrator {
                         request,
                         tool_loop_limit,
                         turn_index,
+                        mcp_tools,
+                        mcp_servers,
                         notification_runtime,
                         None,
                     )
@@ -1868,6 +2200,8 @@ impl SessionOrchestrator {
             },
             assets: AssetSelection::default(),
             state: SessionState::default(),
+            // 新存档不覆盖任何采样参数：走世界与应用两层。
+            generation_params: Default::default(),
         };
 
         let session_repo = crate::db::repositories::session_repo::SessionRepository::new(conn);

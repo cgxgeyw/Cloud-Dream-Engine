@@ -71,8 +71,10 @@ pub struct ChatToolCall {
 pub struct ChatRequest {
     pub model: String,
     pub messages: Vec<ChatMessage>,
-    pub temperature: Option<f64>,
-    pub max_tokens: Option<i32>,
+    /// 生成参数（第 8 项）。与连接配置分离，由应用/世界/会话三级覆盖解析而来；
+    /// 真正发出前还会按 provider 过滤掉不支持的项。
+    #[serde(default)]
+    pub generation: crate::models::generation_params::GenerationParams,
     pub stream: Option<bool>,
     pub json_mode: Option<bool>,
     pub response_schema: Option<serde_json::Value>,
@@ -133,6 +135,7 @@ impl LlmClient {
         api_key: &str,
         request: &ChatRequest,
     ) -> Result<ChatResponse, String> {
+        let request = &apply_provider_param_filter(provider, request);
         match normalize_provider(provider).as_str() {
             "openai" | "ollama" | "lmstudio" => {
                 openai::chat_completion(&self.http_client, base_url, api_key, request).await
@@ -155,6 +158,7 @@ impl LlmClient {
     where
         F: FnMut(ChatStreamChunk) + Send,
     {
+        let request = &apply_provider_param_filter(provider, request);
         match normalize_provider(provider).as_str() {
             "openai" | "ollama" | "lmstudio" => {
                 // openai 流式路径已支持原生工具调用增量累积，工具世界也走流式。
@@ -198,6 +202,19 @@ impl LlmClient {
                 provider
             )),
         }
+    }
+}
+
+/// 发送前按 provider 过滤生成参数（第 8 项）：不支持的参数在这里被摘掉，
+/// 而不是原样发出去让服务端报错或静默忽略。过滤是纯函数，调试视图重算一次即得同样结果。
+fn apply_provider_param_filter(provider: &str, request: &ChatRequest) -> ChatRequest {
+    let filtered = super::param_support::filter_for_provider(provider, &request.generation);
+    if filtered.effective == request.generation {
+        return request.clone();
+    }
+    ChatRequest {
+        generation: filtered.effective,
+        ..request.clone()
     }
 }
 

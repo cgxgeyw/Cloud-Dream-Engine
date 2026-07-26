@@ -264,6 +264,10 @@ impl WorldPackageService {
         crate::services::world_storage::validate_logic_config(
             &package_world.ui_logic_config,
         )?;
+        // 第 12 项：manifest 声明的平台能力必须都在当前目录内，未知 action 导入即拦。
+        crate::services::platform_features::validate_declared_features(&serde_json::json!({
+            "platform_features": package_world.platform_features,
+        }))?;
         let desktop_ui_file = manifest
             .desktop_ui_file
             .clone()
@@ -605,6 +609,9 @@ fn to_world_package_data(
             .and_then(|value| value.as_array())
             .map(|items| items.iter().filter_map(|item| item.as_str().map(str::to_string)).collect())
             .unwrap_or_default(),
+        platform_features: crate::services::platform_features::declared_features(
+            &world.ui_theme_config,
+        ),
         ui_storage_config: world
             .ui_theme_config
             .get("storage")

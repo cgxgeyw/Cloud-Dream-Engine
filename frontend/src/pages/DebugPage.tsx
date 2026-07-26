@@ -3,8 +3,25 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useIsMobile } from "../components/ResponsiveLayout";
 import { PromptCallCard, TraceBlock } from "../components/PromptTraceView";
 import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
-import { fetchMemoryEntities, fetchMemoryRelations, fetchSessionDebug, type SessionDebugResponse } from "../data/apiAdapter";
-import type { MemoryEntity, MemoryRelation } from "../data/types";
+import {
+  fetchMemoryEntities,
+  fetchMemoryRelations,
+  fetchSessionDebug,
+  fetchSessionGenerationParams,
+  updateSessionGenerationParams,
+  type SessionDebugResponse,
+} from "../data/apiAdapter";
+import {
+  GenerationParamsEditor,
+  GenerationParamsSummary,
+} from "../components/GenerationParamsEditor";
+import { showToast } from "../components/Toast";
+import type {
+  GenerationParams,
+  MemoryEntity,
+  MemoryRelation,
+  SessionGenerationParamsResponse,
+} from "../data/types";
 
 const actionStyle = {
   display: "inline-flex",
@@ -157,6 +174,8 @@ export function DebugPage() {
 
         {!loading && !error && debugData ? (
           <div style={{ display: "grid", gap: 16 }}>
+            {sessionId ? <SessionGenerationParamsPanel sessionId={sessionId} /> : null}
+
             <SurfacePanel style={{ padding: 20 }}>
               <h3 style={{ marginTop: 0, fontSize: 22 }}>按回合查看 LLM 调用</h3>
               <div style={{ color: "rgba(255,255,255,0.70)", fontSize: 13, lineHeight: 1.6, marginBottom: 14 }}>
@@ -284,5 +303,121 @@ export function DebugPage() {
         </button>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * 本局生成参数（第 8 项）。放在调试面板而非游戏界面里：游戏界面由世界包的 UI 文档
+ * 渲染，宿主往里塞控件会改动世界包外观；调试面板是宿主自己的页面，且旁边就是
+ * 「本回合实际用了什么参数、什么被过滤掉」的记录，改完立刻能对照。
+ */
+function SessionGenerationParamsPanel({ sessionId }: { sessionId: string }) {
+  const [data, setData] = useState<SessionGenerationParamsResponse | null>(null);
+  const [draft, setDraft] = useState<GenerationParams>({});
+  const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const loaded = await fetchSessionGenerationParams(sessionId);
+        if (!cancelled) {
+          setData(loaded);
+          setDraft(loaded.session);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setLoadError(error instanceof Error ? error.message : String(error));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
+
+  async function save() {
+    setSaving(true);
+    try {
+      const saved = await updateSessionGenerationParams(sessionId, draft);
+      setData(saved);
+      // 后端会夹紧越界值，回填保存后的真实值而不是用户输入。
+      setDraft(saved.session);
+      showToast("本局生成参数已保存，下个回合生效", "success");
+    } catch (error) {
+      showToast(`保存失败：${String(error)}`, "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loadError) {
+    return (
+      <SurfacePanel style={{ padding: 20, color: "#fca5a5" }}>
+        生成参数加载失败：{loadError}
+      </SurfacePanel>
+    );
+  }
+  if (!data) {
+    return <SurfacePanel style={{ padding: 20 }}>正在加载生成参数...</SurfacePanel>;
+  }
+
+  // 不配会话层时实际生效的值 = 应用层叠世界层（角色路径的默认更高，取它做提示）。
+  const inheritedFromUpperLayers: GenerationParams = { ...data.app, ...data.world };
+
+  return (
+    <SurfacePanel style={{ padding: 20 }}>
+      <h3 style={{ marginTop: 0, fontSize: 22 }}>本局生成参数</h3>
+      <div style={{ color: "rgba(255,255,255,0.70)", fontSize: 13, lineHeight: 1.6, marginBottom: 14 }}>
+        采样参数按「应用设置 → 世界包 → 本局存档」三级覆盖，这里改的是优先级最高的本局一层。
+        留空即沿用上一级。改动只影响这个存档，下一个回合生效。所连服务不支持的参数会被过滤，
+        每回合的「采样/模式参数」卡片里能看到被过滤的项和原因。
+      </div>
+
+      <div style={{ display: "grid", gap: 16, gridTemplateColumns: "minmax(0, 1fr) minmax(0, 320px)" }}>
+        <div>
+          <GenerationParamsEditor
+            value={draft}
+            inherited={inheritedFromUpperLayers}
+            inheritedLabel="上级值"
+            disabled={saving}
+            onChange={setDraft}
+          />
+          <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+            <button type="button" style={actionStyle} disabled={saving} onClick={() => void save()}>
+              {saving ? "保存中..." : "保存本局参数"}
+            </button>
+            <button
+              type="button"
+              style={actionStyle}
+              disabled={saving || Object.keys(draft).length === 0}
+              onClick={() => setDraft({})}
+            >
+              清空本局覆盖
+            </button>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gap: 12, alignContent: "start" }}>
+          <div style={rawBlockStyle}>
+            <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 13 }}>应用设置这一层</div>
+            <GenerationParamsSummary params={data.app} />
+          </div>
+          <div style={rawBlockStyle}>
+            <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 13 }}>世界包这一层</div>
+            <GenerationParamsSummary params={data.world} />
+          </div>
+          <div style={rawBlockStyle}>
+            <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 13 }}>世界主控最终生效</div>
+            <GenerationParamsSummary params={data.effective_director} />
+          </div>
+          <div style={rawBlockStyle}>
+            <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 13 }}>角色最终生效</div>
+            <GenerationParamsSummary params={data.effective_character} />
+          </div>
+        </div>
+      </div>
+    </SurfacePanel>
   );
 }

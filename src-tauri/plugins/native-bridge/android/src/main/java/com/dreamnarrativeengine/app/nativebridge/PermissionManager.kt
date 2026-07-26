@@ -1,11 +1,12 @@
 package com.dreamnarrativeengine.app.nativebridge
 
 import android.Manifest
+import android.app.Activity
 import android.os.Build
+import androidx.core.app.ActivityCompat
 import app.tauri.PermissionState
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
-import app.tauri.plugin.PluginManager
 import org.json.JSONObject
 
 /**
@@ -13,7 +14,7 @@ import org.json.JSONObject
  * CompletableFuture 阻塞 60 秒"的实现：系统弹窗结果经 ActivityResult 回调返回，
  * Rust 侧异步等待，任何线程都不会被卡住。
  */
-class PermissionManager(private val plugin: NativeBridgePlugin) {
+class PermissionManager(private val plugin: NativeBridgePlugin, private val activity: Activity) {
 
   /** 应用启动时申请通知权限（Android 13+），结果无需消费。 */
   fun requestPostNotificationsOnLaunch() {
@@ -23,7 +24,13 @@ class PermissionManager(private val plugin: NativeBridgePlugin) {
     if (plugin.getPermissionState("notifications") == PermissionState.GRANTED) {
       return
     }
-    PluginManager.requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS)) { }
+    // 用 ActivityCompat 直接弹窗：tauri 的静态 PluginManager.requestPermissions
+    // 依赖仅在命令流里才初始化的内部 launcher，插件 load 阶段调用会闪退。
+    ActivityCompat.requestPermissions(
+      activity,
+      arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+      REQUEST_POST_NOTIFICATIONS
+    )
   }
 
   /**
@@ -42,7 +49,8 @@ class PermissionManager(private val plugin: NativeBridgePlugin) {
     }
     val strings = aliases.flatMap { aliasStrings(it) }.toTypedArray()
     if (strings.isNotEmpty()) {
-      PluginManager.requestPermissions(strings) { }
+      // 同上：fire-and-forget 场景走 ActivityCompat，不依赖 tauri 内部 launcher。
+      ActivityCompat.requestPermissions(activity, strings, REQUEST_WORLD_PERMISSIONS)
     }
     invoke.resolve(JSObject().put("granted", JSONObject.NULL))
   }
@@ -65,5 +73,10 @@ class PermissionManager(private val plugin: NativeBridgePlugin) {
     "microphone" -> listOf(Manifest.permission.RECORD_AUDIO)
     "notifications" -> listOf(Manifest.permission.POST_NOTIFICATIONS)
     else -> emptyList()
+  }
+
+  companion object {
+    private const val REQUEST_POST_NOTIFICATIONS = 4101
+    private const val REQUEST_WORLD_PERMISSIONS = 4102
   }
 }

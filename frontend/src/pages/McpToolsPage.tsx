@@ -6,9 +6,12 @@ import {
   deleteMcpTool,
   fetchMcpTools,
   updateMcpTool,
+  fetchMcpServers,
+  type McpServerConfig,
   type McpToolResponse,
   type McpToolUpsertRequest,
 } from "../data/apiAdapter";
+import { McpServersPanel } from "../components/McpServersPanel";
 import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
 import { showToast } from "../components/Toast";
 
@@ -27,6 +30,7 @@ const emptyDraft: McpToolUpsertRequest = {
   risk_level: "low",
   trigger_keywords: [],
   input_schema: defaultInputSchema,
+  server_id: "",
 };
 
 const defaultInputSchemaText = JSON.stringify(defaultInputSchema, null, 2);
@@ -122,6 +126,38 @@ export function McpToolsPage() {
 
   const activeCount = useMemo(() => tools.filter((tool) => tool.enabled).length, [tools]);
 
+  // 工具需要绑定一个 MCP server 才能真正执行（第 7 项）。
+  const [servers, setServers] = useState<McpServerConfig[]>([]);
+  async function loadServers() {
+    try {
+      setServers(await fetchMcpServers());
+    } catch {
+      setServers([]);
+    }
+  }
+  useEffect(() => {
+    void loadServers();
+  }, []);
+
+  function renderServerPicker() {
+    return (
+      <label className="editor-field">
+        <span className="editor-field-label">绑定 MCP server</span>
+        <select
+          value={draft.server_id}
+          onChange={(event) => setDraft({ ...draft, server_id: event.target.value })}
+        >
+          <option value="">未绑定（不会下发给模型）</option>
+          {servers.map((server) => (
+            <option key={server.id} value={server.id}>
+              {server.name}（{server.transport}）
+            </option>
+          ))}
+        </select>
+      </label>
+    );
+  }
+
   function openCreateEditor() {
     setEditingId(null);
     setDraft(emptyDraft);
@@ -143,6 +179,7 @@ export function McpToolsPage() {
       risk_level: tool.risk_level,
       trigger_keywords: tool.trigger_keywords,
       input_schema: tool.input_schema ?? defaultInputSchema,
+      server_id: tool.server_id ?? "",
     });
     setKeywordText(keywordsToText(tool.trigger_keywords));
     setSchemaText(schemaToText(tool.input_schema));
@@ -211,6 +248,9 @@ export function McpToolsPage() {
       toolbar={<button type="button" className="action-btn" onClick={() => navigate("/")}>返回首页</button>}
       maxWidth={1120}
     >
+      <div style={{ marginBottom: 16 }}>
+        <McpServersPanel onServersChanged={() => void loadServers()} />
+      </div>
       <div className="mcp-desktop-grid">
         <SurfacePanel className="surface-panel--pad-lg">
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 16 }}>
@@ -231,7 +271,7 @@ export function McpToolsPage() {
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
                   <div>
                     <strong>{tool.name}</strong>
-                    <div className="text-muted" style={{ marginTop: 4 }}>{tool.server_name} / {tool.tool_name}</div>
+                    <div className="text-muted" style={{ marginTop: 4 }}>{tool.server_name} / {tool.tool_name}{tool.server_id ? "" : " · 未绑定 server"}</div>
                   </div>
                   <span>{tool.enabled ? "启用" : "停用"} · {resolveExposurePolicyLabel(tool.exposure_policy)} · {resolveRiskLevelLabel(tool.risk_level)}</span>
                 </div>
@@ -250,7 +290,8 @@ export function McpToolsPage() {
           <strong style={{ fontSize: 20 }}>{editingId ? "编辑工具" : "新增工具"}</strong>
           <div className="grid grid--gap-sm" style={{ marginTop: 14 }}>
             <label className="editor-field"><span className="editor-field-label">显示名称</span><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></label>
-            <label className="editor-field"><span className="editor-field-label">MCP 服务</span><input value={draft.server_name} onChange={(e) => setDraft({ ...draft, server_name: e.target.value })} /></label>
+            <label className="editor-field"><span className="editor-field-label">MCP 服务（显示名）</span><input value={draft.server_name} onChange={(e) => setDraft({ ...draft, server_name: e.target.value })} /></label>
+            {renderServerPicker()}
             <label className="editor-field"><span className="editor-field-label">工具名</span><input value={draft.tool_name} onChange={(e) => setDraft({ ...draft, tool_name: e.target.value })} /></label>
             <label className="editor-field"><span className="editor-field-label">说明</span><textarea value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></label>
             <label className="editor-field"><span className="editor-field-label">参数 Schema</span><textarea value={schemaText} onChange={(e) => setSchemaText(e.target.value)} spellCheck={false} style={{ minHeight: 180, fontFamily: "Consolas, 'SFMono-Regular', monospace" }} /></label>
@@ -271,6 +312,11 @@ export function McpToolsPage() {
   // ===== Mobile Layout (列表/编辑器切换) =====
   const mobileLayout = (
     <ScreenLayout title="MCP 工具" compactHeader maxWidth={980}>
+      {editorOpen ? null : (
+        <div style={{ marginBottom: 12 }}>
+          <McpServersPanel onServersChanged={() => void loadServers()} />
+        </div>
+      )}
       {editorOpen ? (
         <div className="settings-page-shell">
           <div className="settings-detail-head">
@@ -304,6 +350,7 @@ export function McpToolsPage() {
                     className="field-input"
                   />
                 </label>
+                  {renderServerPicker()}
 
                 <label className="field-label">
                   <span className="field-label-text">工具名</span>

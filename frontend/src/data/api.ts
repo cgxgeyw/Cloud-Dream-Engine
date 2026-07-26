@@ -13,6 +13,7 @@ import type {
   ImageModelTestRequest, EmbeddingModelFileStatus, EmbeddingModelStatus,
   SettingsResponse, SettingsUpdateRequest, PluginResponse,
   McpToolResponse, McpToolUpsertRequest,
+  McpServerConfig, McpServerUpsertRequest, McpServerProbeResult,
   MemoryEntry, MemoryEntity, MemoryRelation,
   AttributeSchemaResponse, AttributeSchemaUpsertRequest,
   AttributeValueResponse, AttributeValueUpsertRequest,
@@ -83,7 +84,7 @@ export type CharacterUpsertRequest = {
 export type CharacterMemoryGroupResponse = { character_id: string; character_name: string; memories: MemoryEntryResponse[]; };
 export type ImageModelTestResponse = { ok: boolean; detail: string; debug_lines: string[]; asset_path?: string | null; image_url?: string | null; seed?: number | null; };
 export type MemoryEntryResponse = MemoryEntry;
-export type ModelConfigUpsertRequest = { name: string; model_type: string; provider: string; model_id: string; base_url: string; api_key: string; max_tokens: number; streaming_enabled: boolean; is_default: boolean; };
+export type ModelConfigUpsertRequest = { name: string; model_type: string; provider: string; model_id: string; base_url: string; api_key: string; max_tokens: number; streaming_enabled: boolean; is_default: boolean; input_modalities: string[]; };
 export type ModelEndpointDiscoveryRequest = { provider: string; base_url: string; api_key: string; };
 export type ModelEndpointDiscoveryResponse = { ok: boolean; detail: string; model_ids: string[]; debug_lines: string[]; };
 export type ModelTestResponse = { ok: boolean; detail: string; debug_lines: string[]; };
@@ -655,6 +656,28 @@ function normalizeAssetReference(path: string | null | undefined): string {
 
 export function fetchPlugins() {
   return fetchJson<PluginResponse[]>("/api/plugins");
+}
+
+export function fetchMcpServers() {
+  return fetchJson<McpServerConfig[]>("/api/mcp/servers");
+}
+
+export function createMcpServer(payload: McpServerUpsertRequest) {
+  return requestJson<McpServerConfig, McpServerUpsertRequest>("POST", "/api/mcp/servers", payload);
+}
+
+export function updateMcpServer(serverId: string, payload: McpServerUpsertRequest) {
+  return requestJson<McpServerConfig, McpServerUpsertRequest>("PUT", `/api/mcp/servers/${serverId}`, payload);
+}
+
+export function deleteMcpServer(serverId: string) {
+  return fetch(toApiUrl(`/api/mcp/servers/${serverId}`), { method: "DELETE" }).then((response) => {
+    if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+  });
+}
+
+export function probeMcpServer(serverId: string) {
+  return requestJson<McpServerProbeResult, undefined>("POST", `/api/mcp/servers/${serverId}/probe`, undefined);
 }
 
 export function fetchMcpTools() {

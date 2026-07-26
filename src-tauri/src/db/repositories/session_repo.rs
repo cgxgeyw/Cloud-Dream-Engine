@@ -44,6 +44,10 @@ impl<'a> SessionRepository<'a> {
                     scene: serde_json::from_str(&row.get::<_, String>(15)?).unwrap_or_default(),
                     assets: serde_json::from_str(&row.get::<_, String>(16)?).unwrap_or_default(),
                     state: serde_json::from_str(&row.get::<_, String>(17)?).unwrap_or_default(),
+                    generation_params: crate::models::generation_params::GenerationParams::from_json_text(
+                        &row.get::<_, String>(18)?,
+                    )
+                    .unwrap_or_default(),
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -63,7 +67,7 @@ impl<'a> SessionRepository<'a> {
         let player_stats = normalize_list(&session.player_stats);
         let system_log = normalize_list(&session.system_log);
         self.conn.execute(
-            "INSERT OR REPLACE INTO sessions (id, world_name, location, time_label, current_speaker, current_line, player_character_id, player_character_name, visible_characters_json, messages_json, player_stats_json, map_graph_nodes_json, map_graph_edges_json, inventory_items_json, system_log_json, scene_json, assets_json, state_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+            "INSERT OR REPLACE INTO sessions (id, world_name, location, time_label, current_speaker, current_line, player_character_id, player_character_name, visible_characters_json, messages_json, player_stats_json, map_graph_nodes_json, map_graph_edges_json, inventory_items_json, system_log_json, scene_json, assets_json, state_json, generation_params_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
                 session.id,
                 world_name,
@@ -83,6 +87,8 @@ impl<'a> SessionRepository<'a> {
                 serde_json::to_string(&session.scene).unwrap_or_default(),
                 serde_json::to_string(&session.assets).unwrap_or_default(),
                 serde_json::to_string(&session.state).unwrap_or_default(),
+                serde_json::to_string(&session.generation_params)
+                    .unwrap_or_else(|_| "{}".to_string()),
             ],
         )
         .map_err(|e| e.to_string())?;

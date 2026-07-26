@@ -63,6 +63,44 @@ struct RequestWorldPermissionsResult {
     granted: Option<bool>,
 }
 
+// ---- 第 12 项：世界包文件能力 ----
+
+/// Kotlin 文件 action 的统一返回形态（ok=false 时 error 带 `code: 说明`）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AndroidFileResult {
+    pub ok: bool,
+    pub size: Option<usize>,
+    pub data_base64: Option<String>,
+    pub error: Option<String>,
+}
+
+/// file.read 的结果（已解出 size 与 base64 内容）。
+pub struct FileReadOutput {
+    pub size: usize,
+    pub data_base64: String,
+}
+
+/// file.write 的结果。
+pub struct FileWriteOutput {
+    pub size: usize,
+}
+
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FilePathArgs {
+    path: String,
+}
+
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WriteFileArgs {
+    path: String,
+    data_base64: String,
+}
+
 const UNSUPPORTED: &str = "该平台能力仅在安卓可用（unsupported）";
 
 /// 托管在 AppState 中的中间件句柄。安卓上持有 Kotlin 插件引用；桌面为空壳。
@@ -150,6 +188,88 @@ impl<R: Runtime> NativeBridge<R> {
         {
             let _ = (permissions, wait);
             Err(UNSUPPORTED.to_string())
+        }
+    }
+
+    /// file.read：读取世界目录内文件的绝对路径（Rust 侧已做穿越防护）。
+    pub fn read_file(&self, path: &str) -> Result<FileReadOutput, String> {
+        #[cfg(target_os = "android")]
+        {
+            let result = self.run_file_command(
+                "readFile",
+                FilePathArgs {
+                    path: path.to_string(),
+                },
+            )?;
+            Ok(FileReadOutput {
+                size: result.size.unwrap_or(0),
+                data_base64: result.data_base64.unwrap_or_default(),
+            })
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            let _ = path;
+            Err(UNSUPPORTED.to_string())
+        }
+    }
+
+    /// file.write：把 base64 内容写入世界目录内的绝对路径（自动建父目录）。
+    pub fn write_file(&self, path: &str, data_base64: &str) -> Result<FileWriteOutput, String> {
+        #[cfg(target_os = "android")]
+        {
+            let result = self.run_file_command(
+                "writeFile",
+                WriteFileArgs {
+                    path: path.to_string(),
+                    data_base64: data_base64.to_string(),
+                },
+            )?;
+            Ok(FileWriteOutput {
+                size: result.size.unwrap_or(0),
+            })
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            let _ = (path, data_base64);
+            Err(UNSUPPORTED.to_string())
+        }
+    }
+
+    /// file.share：经系统分享面板发送世界目录内的文件。
+    pub fn share_file(&self, path: &str) -> Result<(), String> {
+        #[cfg(target_os = "android")]
+        {
+            self.run_file_command(
+                "shareFile",
+                FilePathArgs {
+                    path: path.to_string(),
+                },
+            )?;
+            Ok(())
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            let _ = path;
+            Err(UNSUPPORTED.to_string())
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    fn run_file_command(
+        &self,
+        command: &str,
+        args: impl serde::Serialize,
+    ) -> Result<AndroidFileResult, String> {
+        let result: AndroidFileResult = self
+            .handle
+            .run_mobile_plugin(command, args)
+            .map_err(|error| error.to_string())?;
+        if result.ok {
+            Ok(result)
+        } else {
+            Err(result
+                .error
+                .unwrap_or_else(|| "io: 安卓文件操作失败".to_string()))
         }
     }
 }

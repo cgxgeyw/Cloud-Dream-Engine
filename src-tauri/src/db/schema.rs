@@ -49,6 +49,14 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             PRIMARY KEY (owner_type, owner_id, namespace, key)
         );
 
+        CREATE TABLE IF NOT EXISTS world_feature_grants (
+            world_id TEXT NOT NULL,
+            feature TEXT NOT NULL,
+            granted INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (world_id, feature)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_scoped_kv_scope
             ON scoped_kv(owner_type, owner_id, namespace, updated_at);
 
@@ -89,7 +97,8 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             system_log_json TEXT NOT NULL DEFAULT '[]',
             scene_json TEXT NOT NULL DEFAULT '{}',
             assets_json TEXT NOT NULL DEFAULT '{}',
-            state_json TEXT NOT NULL DEFAULT '{}'
+            state_json TEXT NOT NULL DEFAULT '{}',
+            generation_params_json TEXT NOT NULL DEFAULT '{}'
         );
 
         CREATE TABLE IF NOT EXISTS saves (
@@ -217,7 +226,8 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             api_key TEXT NOT NULL DEFAULT '',
             max_tokens INTEGER NOT NULL DEFAULT 1200,
             streaming_enabled INTEGER NOT NULL DEFAULT 1,
-            is_default INTEGER NOT NULL DEFAULT 0
+            is_default INTEGER NOT NULL DEFAULT 0,
+            input_modalities TEXT NOT NULL DEFAULT '[]'
         );
 
         CREATE TABLE IF NOT EXISTS plugins (
@@ -238,7 +248,24 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             exposure_policy_json TEXT NOT NULL DEFAULT '{}',
             risk_level TEXT NOT NULL DEFAULT 'low',
             trigger_keywords_json TEXT NOT NULL DEFAULT '[]',
-            input_schema_json TEXT NOT NULL DEFAULT '{\"type\":\"object\",\"properties\":{}}'
+            input_schema_json TEXT NOT NULL DEFAULT '{\"type\":\"object\",\"properties\":{}}',
+            server_id TEXT NOT NULL DEFAULT ''
+        );
+
+        -- MCP server 连接配置（第 7 项）。stdio 仅桌面端可用，http 全平台可用。
+        CREATE TABLE IF NOT EXISTS mcp_servers (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            transport TEXT NOT NULL DEFAULT 'http',
+            command TEXT NOT NULL DEFAULT '',
+            args_json TEXT NOT NULL DEFAULT '[]',
+            env_json TEXT NOT NULL DEFAULT '{}',
+            url TEXT NOT NULL DEFAULT '',
+            headers_json TEXT NOT NULL DEFAULT '{}',
+            auth_token TEXT NOT NULL DEFAULT '',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            timeout_ms INTEGER NOT NULL DEFAULT 15000,
+            max_result_bytes INTEGER NOT NULL DEFAULT 32768
         );
 
         CREATE TABLE IF NOT EXISTS rules (
@@ -261,7 +288,8 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             embedding_enabled INTEGER NOT NULL DEFAULT 1,
             default_embedding_model TEXT NOT NULL DEFAULT 'BAAI/bge-small-zh-v1.5',
             home_background_strategy TEXT NOT NULL DEFAULT '',
-            export_directory TEXT NOT NULL DEFAULT ''
+            export_directory TEXT NOT NULL DEFAULT '',
+            generation_params_json TEXT NOT NULL DEFAULT '{}'
         );
 
         CREATE TABLE IF NOT EXISTS agent_sessions (

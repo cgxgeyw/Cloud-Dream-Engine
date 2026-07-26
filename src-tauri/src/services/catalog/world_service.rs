@@ -472,6 +472,13 @@ impl WorldService {
             .and_then(|value| value.as_array())
             .cloned()
             .unwrap_or_default();
+        // 第 8 项：世界级生成参数。结构不合法一律当「没配」，并夹到合法区间后落库，
+        // 免得一个手写坏了的世界包把整局游戏的采样参数带偏。
+        let generation_params = crate::models::generation_params::GenerationParams::from_json(
+            object.get("generation_params"),
+        )
+        .map(|params| params.sanitized().0)
+        .unwrap_or_default();
         let allowed_mcp_tool_ids = object
             .get("allowed_mcp_tool_ids")
             .and_then(|value| value.as_array())
@@ -510,6 +517,7 @@ impl WorldService {
             "prompt_presets": prompt_presets,
             "return_processing_rules": return_processing_rules,
             "allowed_mcp_tool_ids": allowed_mcp_tool_ids,
+            "generation_params": generation_params,
         })
     }
 
@@ -679,6 +687,7 @@ impl WorldService {
                 "mobile_file": mobile_ui_source,
                 "runtime_version": ui_runtime_version,
                 "capabilities": ui_capabilities,
+                "platform_features": imported_world.platform_features.clone(),
                 "storage": imported_world.ui_storage_config.clone(),
                 "logic": imported_world.ui_logic_config.clone(),
                 "entries": {
@@ -910,6 +919,8 @@ impl WorldService {
                 tags: Vec::new(),
                 phase: "opening".to_string(),
             },
+            // 新存档不覆盖任何采样参数：走世界与应用两层。
+            generation_params: Default::default(),
         }
     }
 
@@ -944,6 +955,8 @@ impl WorldService {
             &session.scene.name,
             &session.location,
             &session.visible_characters,
+        &std::collections::HashMap::new(),
+        &[],
         );
         CharacterPromptTracePreview {
             speaker: Some(character.name.clone()),
@@ -972,11 +985,20 @@ impl WorldService {
                     "visibility_context": artifacts.visibility_context,
                     // 真正随请求下发、但不在对话文本里的旁路字段，补进预览以便和实际发送一致。
                     "response_schema": build_character_response_schema(),
-                    "request_params": {
-                        "json_mode": true,
-                        "temperature": 0.8,
-                        "note": "通知工具(tools)仅在世界 director 配置允许时随请求下发；本预览不含具体工具定义。"
-                    },
+                    // 第 8 项：预览按「角色内置默认 + 世界覆盖」显示；应用级与会话级
+                    // 覆盖要到实际开局才有（此处没有存档），到时以回合 trace 为准。
+                    "request_params": crate::services::llm::param_support::describe_params_without_provider(
+                        &crate::models::generation_params::GenerationParams::resolve_for_role(
+                            crate::models::generation_params::GENERATION_ROLE_CHARACTER,
+                            &Default::default(),
+                            crate::services::game_engine::orchestrator::world_generation_params(world).as_ref(),
+                            None,
+                        ),
+                        serde_json::json!({
+                            "json_mode": true,
+                            "note": "预览只含角色默认与世界级参数；应用级/会话级覆盖与通知工具(tools)在实际回合中才下发。"
+                        }),
+                    ),
                 }),
             ),
         }
@@ -1197,6 +1219,7 @@ mod tests {
                 ui_assets_config: serde_json::json!({}),
                 ui_runtime_version: Some(2),
                 ui_capabilities: Vec::new(),
+                platform_features: Vec::new(),
                 ui_storage_config: serde_json::json!({}),
                 ui_logic_config: serde_json::json!({}),
                 opening_messages: Vec::new(),

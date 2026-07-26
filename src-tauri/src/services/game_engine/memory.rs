@@ -918,6 +918,7 @@ impl MemoryService {
                 max_tokens: 512,
                 streaming_enabled: false,
                 is_default: true,
+                input_modalities: Vec::new(),
             }));
         }
 
@@ -1884,6 +1885,7 @@ mod tests {
             },
             assets: AssetSelection::default(),
             state: SessionState::default(),
+            generation_params: Default::default(),
         }
     }
 

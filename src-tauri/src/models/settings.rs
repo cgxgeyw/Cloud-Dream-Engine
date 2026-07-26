@@ -1,3 +1,4 @@
+use crate::models::generation_params::GenerationParams;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -10,6 +11,9 @@ pub struct AppSettings {
     pub default_embedding_model: String,
     pub home_background_strategy: String,
     pub export_directory: String,
+    /// 应用级生成参数（第 8 项三级覆盖的第一层）。字段留空表示不覆盖内置默认。
+    #[serde(default)]
+    pub generation_params: GenerationParams,
 }
 
 impl Default for AppSettings {
@@ -23,6 +27,7 @@ impl Default for AppSettings {
             default_embedding_model: "BAAI/bge-small-zh-v1.5".to_string(),
             home_background_strategy: String::new(),
             export_directory: String::new(),
+            generation_params: GenerationParams::default(),
         }
     }
 }

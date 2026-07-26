@@ -4,6 +4,8 @@
 
 ## 相关文件
 
+- `shared/game-ui/catalog.json`（组件 / 动作 / 能力的唯一来源，前后端共用）
+- `frontend/src/gameUiRuntime/catalog.ts`
 - `frontend/src/game/useGameSession.ts`
 - `frontend/src/game/shells/DesktopGameShell.tsx`
 - `frontend/src/game/shells/MobileGameShell.tsx`
@@ -55,30 +57,22 @@
 - `character_bar`
 - `narration_card`
 
-这些组件都通过 `frontend/src/gameUiRuntime/registry.tsx` 注册。
+这些组件都通过 `frontend/src/gameUiRuntime/registry.tsx` 注册；组件 id、props、
+隐式动作 / 能力与插槽以 `shared/game-ui/catalog.json` 为准（`ledger_book`
+也在目录中，但只在世界框架内渲染）。
 
 ## 当前 action registry
 
-当前显式 action id 包括：
+action id、说明与输入参数的唯一来源是 `shared/game-ui/catalog.json`
+（前端 `actionSchemas.ts` 与后端 `game_ui.rs` 校验都从它生成）。当前分两组：
 
-- `submit_message`
-- `edit_turn_start`
-- `edit_turn_cancel`
-- `branch_from_current`
-- `retry_turn`
-- `accept_switch_proposal`
-- `dismiss_switch_proposal`
-- `dismiss_retry_card`
-- `copy_text`
-- `switch_side_tab`
-- `navigate_home`
-- `navigate_settings`
-- `navigate_debug`
-- `pick_image`
-- `remove_image`
-- `start_recording`
-- `stop_recording`
-- `remove_audio`
+- 会话 / 导航 / 附件动作：`submit_message`、`edit_turn_start`、`edit_turn_cancel`、
+  `branch_from_current`、`retry_turn`、`accept_switch_proposal`、`dismiss_switch_proposal`、
+  `dismiss_retry_card`、`copy_text`、`switch_side_tab`、`navigate_back`、`navigate_home`、
+  `navigate_settings`、`navigate_debug`、`pick_image`、`remove_image`、`start_recording`、
+  `stop_recording`、`remove_audio`
+- 存储 / 逻辑动作（隐含 `supports_world_storage` 能力）：`storage.records.*`、
+  `storage.kv.*`、`logic.run`
 
 其中附件与录音相关 action 仍然是前端浏览器能力适配，不依赖新增后端接口。
 

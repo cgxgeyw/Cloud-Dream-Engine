@@ -133,6 +133,28 @@ async fn submit_player_action_inner(
         messages,
         director_completed_payload,
     } = prepared;
+    // 第 10 项（校验点 A）：玩家附件只发给声明了对应输入模态的模型。
+    // 导演模式校验导演模型 + 全部角色模型（任一都可能被安排发言）；
+    // 不支持即提交即报错，不写回合数据、不发 HTTP。
+    let player_media = request.content.media_parts();
+    if !player_media.is_empty() {
+        let db = state.db.lock().await;
+        let mut checked_model_ids = std::collections::HashSet::new();
+        let mut check_model = |model: &crate::models::model_config::ModelConfig| -> Result<(), String> {
+            if checked_model_ids.insert(model.id.clone()) {
+                crate::models::model_config::ensure_media_supported(model, &player_media)?;
+            }
+            Ok(())
+        };
+        check_model(&director_model)?;
+        for character in &characters {
+            let model = crate::services::game_engine::orchestrator::resolve_text_model(
+                db.conn(),
+                Some(character.model.as_str()).filter(|value| !value.trim().is_empty()),
+            )?;
+            check_model(&model)?;
+        }
+    }
     // 重放（重发/编辑）会回滚到目标回合之前：取消被覆盖回合调度的未触发通知，避免重复提醒。
     if request.action_mode.requires_replay() {
         if let Some(from_turn_index) = request.resend_from_turn_index {
@@ -160,9 +182,32 @@ async fn submit_player_action_inner(
     }
 
     let director_service = &state.services.runtime.world_director;
-    let mcp_tools = {
+    // 第 7 项：只有绑定了「本平台可用」server 的自定义工具才下发给模型，
+    // 避免模型调用一个必然失败的工具（安卓上的 stdio 配置即属此类）。
+    let (mcp_tools, mcp_servers) = {
         let db = state.db.lock().await;
-        crate::db::repositories::mcp_tool_repo::McpToolRepository::new(db.conn()).list()?
+        let tools =
+            crate::db::repositories::mcp_tool_repo::McpToolRepository::new(db.conn()).list()?;
+        let servers =
+            crate::db::repositories::mcp_server_repo::McpServerRepository::new(db.conn()).list()?;
+        let executable = crate::services::mcp::executor::filter_executable_tools(&tools, &servers);
+        (executable, servers)
+    };
+    // 会话级 variables KV（第 6 项 {{var:key}} 占位符的数据源）
+    // 与导演的生成参数（第 8 项：应用→世界→会话三级覆盖）一起在同一次加锁内读出。
+    let (kv_vars, director_generation) = {
+        let db = state.db.lock().await;
+        let settings = crate::commands::settings::load_app_settings(db.conn())?;
+        (
+            crate::services::game_engine::prompting::load_prompt_kv_vars(db.conn(), &session_id)?,
+            crate::services::game_engine::orchestrator::resolve_generation_params_with_model(
+                crate::models::generation_params::GENERATION_ROLE_DIRECTOR,
+                &settings,
+                &world,
+                &session,
+                &director_model,
+            ),
+        )
     };
     let mut emit_director_progress =
         |progress: crate::services::game_engine::director::DirectorLoopStreamProgress| {
@@ -194,7 +239,11 @@ async fn submit_player_action_inner(
             &characters,
             turn_index,
             request.content.as_str(),
+            &player_media,
             &mcp_tools,
+            &mcp_servers,
+            &kv_vars,
+            &director_generation,
             Some(NotificationToolRuntime {
                 app: &app,
                 data_dir: &state.data_dir,
@@ -297,6 +346,7 @@ async fn submit_player_action_inner(
                 messages,
                 &runtime_preparation.planned_speakers,
                 request.content.as_str(),
+                &player_media,
                 &runtime_preparation.next_scene_name,
                 &runtime_preparation.next_location,
                 &runtime_preparation.visible_chars,
@@ -568,6 +618,7 @@ async fn run_agent_chat_player_action(
     image_model: Option<crate::models::model_config::ModelConfig>,
     messages: Vec<crate::models::session::ChatMessage>,
 ) -> Result<SessionSnapshot, String> {
+    let player_media = request.content.media_parts();
     let target = state
         .services
         .runtime
@@ -620,6 +671,7 @@ async fn run_agent_chat_player_action(
             messages,
             &target,
             request.content.as_str(),
+            &player_media,
             Some(NotificationToolRuntime {
                 app,
                 data_dir: &state.data_dir,
@@ -859,6 +911,91 @@ pub async fn get_session_runtime_attributes(
         .runtime
         .session_orchestrator
         .get_session_runtime_attributes(db.conn(), &session_id)
+}
+
+/// 本局生成参数的解析结果（第 8 项）：每层各自配了什么 + 最终生效值。
+/// 前端编辑界面靠 `session` 层做编辑，靠 `effective_*` 展示「实际用的是多少」。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SessionGenerationParamsResponse {
+    /// 应用设置里的覆盖（空对象表示这层不覆盖）。
+    pub app: crate::models::generation_params::GenerationParams,
+    /// 世界包 director_config.generation_params 里的覆盖。
+    pub world: crate::models::generation_params::GenerationParams,
+    /// 本存档自己的覆盖，唯一可在游戏内编辑的一层。
+    pub session: crate::models::generation_params::GenerationParams,
+    /// 导演调用最终生效的参数（含内置默认 temperature 0.7）。
+    pub effective_director: crate::models::generation_params::GenerationParams,
+    /// 角色调用最终生效的参数（含内置默认 temperature 0.8）。
+    pub effective_character: crate::models::generation_params::GenerationParams,
+}
+
+/// 读本局的三级生成参数与最终生效值。
+#[tauri::command]
+pub async fn get_session_generation_params(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<SessionGenerationParamsResponse, String> {
+    let db = state.db.lock().await;
+    let conn = db.conn();
+    let session = crate::db::repositories::session_repo::SessionRepository::new(conn)
+        .get(&session_id)?
+        .ok_or_else(|| "Session not found".to_string())?;
+    let world = crate::services::game_engine::orchestrator::resolve_world_for_session(conn, &session)?;
+    let settings = crate::commands::settings::load_app_settings(conn)?;
+    Ok(build_session_generation_params_response(
+        &settings, &world, &session,
+    ))
+}
+
+/// 写本局的会话级生成参数（三级覆盖里优先级最高的一层）。
+/// 只动会话层：应用层在设置页改，世界层在世界编辑器改。
+#[tauri::command]
+pub async fn update_session_generation_params(
+    state: State<'_, AppState>,
+    session_id: String,
+    params: crate::models::generation_params::GenerationParams,
+) -> Result<SessionGenerationParamsResponse, String> {
+    let db = state.db.lock().await;
+    let conn = db.conn();
+    let repo = crate::db::repositories::session_repo::SessionRepository::new(conn);
+    let mut session = repo
+        .get(&session_id)?
+        .ok_or_else(|| "Session not found".to_string())?;
+    // 入库前夹到合法区间，与应用/世界两层一致。
+    session.generation_params = params.sanitized().0;
+    repo.upsert(&session)?;
+    let world = crate::services::game_engine::orchestrator::resolve_world_for_session(conn, &session)?;
+    let settings = crate::commands::settings::load_app_settings(conn)?;
+    Ok(build_session_generation_params_response(
+        &settings, &world, &session,
+    ))
+}
+
+fn build_session_generation_params_response(
+    settings: &crate::models::settings::AppSettings,
+    world: &crate::models::world::WorldDefinition,
+    session: &SessionSnapshot,
+) -> SessionGenerationParamsResponse {
+    use crate::models::generation_params::{
+        GENERATION_ROLE_CHARACTER, GENERATION_ROLE_DIRECTOR,
+    };
+    use crate::services::game_engine::orchestrator::world_generation_params;
+    let resolve = |role: &str| {
+        // 这里不带模型连接配置，max_tokens 未配就留空（真实回合会用所选模型的上限兜底）。
+        crate::models::generation_params::GenerationParams::resolve_for_role(
+            role,
+            &settings.generation_params,
+            world_generation_params(world).as_ref(),
+            (!session.generation_params.is_empty()).then_some(&session.generation_params),
+        )
+    };
+    SessionGenerationParamsResponse {
+        app: settings.generation_params.clone(),
+        world: world_generation_params(world).unwrap_or_default(),
+        session: session.generation_params.clone(),
+        effective_director: resolve(GENERATION_ROLE_DIRECTOR),
+        effective_character: resolve(GENERATION_ROLE_CHARACTER),
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1227,6 +1364,7 @@ fn build_progress_snapshot(
         },
         assets,
         state: session.state.clone(),
+        generation_params: session.generation_params.clone(),
     }
 }
 
@@ -1264,6 +1402,7 @@ fn build_director_progress_snapshot(
         scene: session.scene.clone(),
         assets: session.assets.clone(),
         state: session.state.clone(),
+        generation_params: session.generation_params.clone(),
     }
 }
 
@@ -1335,6 +1474,7 @@ fn build_agent_chat_progress_snapshot(
         },
         assets,
         state: session.state.clone(),
+        generation_params: session.generation_params.clone(),
     }
 }
 

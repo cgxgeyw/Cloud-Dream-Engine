@@ -48,7 +48,7 @@ v3 的核心原则是：世界包拥有游戏页面的结构和视觉设计，�
 - iframe 外的 DOM、CSS、剪贴板、系统权限和导航历史。
 - 宿主页面 JavaScript、远程脚本、`eval`、网络请求或不受限的长驻脚本。
 
-世界包可以选择提供 `sandbox-js-v1` 逻辑文件。该文件只在独立 Worker 中运行，通过受控 SDK 访问本世界存储，不能访问 DOM、Tauri、文件系统和网络。图片选择、麦克风权限、录音、剪贴板、导航和游戏状态写入仍由父页面执行。
+世界包可以选择提供 `sandbox-js-v1` 逻辑文件。该文件只在独立 Worker 中运行，通过受控 SDK 访问本世界存储和已授权的平台能力，不能访问 DOM、Tauri、任意文件系统和网络。图片选择、麦克风权限、录音、剪贴板、导航和游戏状态写入仍由父页面执行；文件等平台能力经「manifest 声明 + 玩家允许」后由宿主（安卓上经 Kotlin 中间件）执行。
 
 ## 3. 推荐开发流程
 
@@ -81,6 +81,7 @@ npm run tauri:dev
     "supports_mic",
     "supports_world_storage"
   ],
+  "platform_features": ["file.pick", "file.read", "file.write"],
   "storage": {
     "kv_namespaces": ["preferences"],
     "collections": {
@@ -144,6 +145,12 @@ npm run tauri:dev
 
 声明不受支持的能力会导致 bundle 校验失败。运行时仍会根据设备实际能力提供 `capabilities` 数据，声明本身不会绕过系统权限。
 
+### `platform_features`
+
+用途：声明世界包要调用的平台能力（第 12 项）。当前目录：`file.pick`、`file.read`、`file.write`、`file.share`。声明了未知值会导致导入失败。
+
+声明只是"申请资格"：玩家还要在「设置 → 世界权限」里逐项允许（默认全关），世界包的 `api.platform.invoke` 才能真正执行。详见第 10 节「平台能力」。
+
 ### `entries.desktop` 与 `entries.mobile`
 
 用途：保存两套独立、完整的 UI 入口。
@@ -194,7 +201,7 @@ manifest 中与 UI 有关的字段：
 }
 ```
 
-`world/world.json` 保存世界设定、导演配置、资源配置、`ui_runtime_version`、`ui_capabilities`、`storage` 和不含源码的 `logic` 配置。逻辑源码由 `manifest.logic_file` 指向；角色数据与资源路径通过 manifest 管理，导入时会重新映射为本机资源路径。
+`world/world.json` 保存世界设定、导演配置（含交互消息、提示词模块、生成参数）、资源配置、`ui_runtime_version`、`ui_capabilities`、`platform_features`、`storage` 和不含源码的 `logic` 配置。逻辑源码由 `manifest.logic_file` 指向；角色数据与资源路径通过 manifest 管理，导入时会重新映射为本机资源路径。
 
 ## 6. UI 文档顶层字段
 
@@ -411,6 +418,8 @@ manifest 中与 UI 有关的字段：
 
 ## 8. 注册组件
 
+> 组件 / 动作 / 能力的唯一权威清单是仓库根的 `shared/game-ui/catalog.json`（前端注册表与后端校验都由此生成）。本节是面向作者的说明文字，如与本文件不一致，以 catalog.json 为准。
+
 ### `scene_header`
 
 场景标题、世界、地点、时间、玩家和在场角色。
@@ -566,10 +575,10 @@ Props：
 | `storage.records.create` | `collection`、`data` | 创建结构化记录 |
 | `storage.records.update` | `collection`、`record_id`、`data` | 更新结构化记录 |
 | `storage.records.delete` | `collection`、`record_id` | 删除结构化记录 |
-| `storage.kv.list` | `namespace` | 列出命名空间条目 |
-| `storage.kv.get` | `namespace`、`key` | 读取一个 KV 值 |
-| `storage.kv.set` | `namespace`、`key`、`value` | 写入一个 KV 值 |
-| `storage.kv.delete` | `namespace`、`key` | 删除一个 KV 值 |
+| `storage.kv.list` | `namespace`、`scope?` | 列出命名空间条目 |
+| `storage.kv.get` | `namespace`、`key`、`scope?` | 读取一个 KV 值 |
+| `storage.kv.set` | `namespace`、`key`、`value`、`scope?` | 写入一个 KV 值 |
+| `storage.kv.delete` | `namespace`、`key`、`scope?` | 删除一个 KV 值 |
 | `logic.run` | `handler`、`input` | 在受限 Worker 中执行已注册逻辑 |
 
 动作参数支持 `$binding` 和 `{{ }}` 模板：
@@ -639,7 +648,7 @@ Props：
 当前 schema 子集支持 `type`、`required`、`properties`、`additionalProperties`、`enum`、`minLength`、`maxLength`、`minimum` 和 `maximum`。`indexes` 是为后续宿主查询优化保留的提示；当前 `api.records.query` 读取集合后在 Worker 内筛选，不会创建物理数据库索引。
 
 - `records`：用于账单、任务、日记、商品等多条同构记录，按 `world_id + collection` 隔离。
-- `kv`：用于设置、偏好和少量聚合状态，按 `world_id + namespace + key` 隔离。
+- `kv`：用于设置、偏好和少量聚合状态，分三级作用域：**world**（跨存档共享，缺省）/ **session**（单个世界存档）/ **character**（存档内角色）。动作参数和 `api.kv.*` 末参都可带 `scope`：`{ "scope": "session" }` 或 `{ "scope": "character", "character_id": "角色ID" }`；session_id 由宿主注入，世界包无法读写其它存档。删除存档连带清 session 级和角色级变量，删除世界清 world 级。
 - UI 文档自己的 `state` 只存在于当前页面，不属于持久化存储。
 - 单条值、JSON 深度、字段数、条目数、集合容量和世界总容量均有限额。
 - 更新和删除记录必须匹配宿主生成的 UUID；iframe 和逻辑脚本不能提交其他 `world_id`。
@@ -683,10 +692,81 @@ world.register("journal.monthSummary", async (input, api) => {
 | `api.records.create(collection, data)` | 新记录 |
 | `api.records.update(collection, recordId, data)` | 更新后的记录 |
 | `api.records.remove(collection, recordId)` | 无 |
-| `api.kv.list(namespace)` | KV 条目数组 |
-| `api.kv.get(namespace, key, fallback?)` | 保存的值或 fallback |
-| `api.kv.set(namespace, key, value)` | 更新后的 KV 条目 |
-| `api.kv.remove(namespace, key)` | 无 |
+| `api.kv.list(namespace, options?)` | KV 条目数组 |
+| `api.kv.get(namespace, key, fallback?, options?)` | 保存的值或 fallback |
+| `api.kv.set(namespace, key, value, options?)` | 更新后的 KV 条目 |
+| `api.kv.remove(namespace, key, options?)` | 无 |
+
+`options` 即作用域参数：`{ scope: "world" | "session" | "character", characterId?: string }`，缺省 world；character 作用域需带 `characterId`。
+| `api.platform.invoke(feature, params)` | 平台能力调用的结构化结果（见「平台能力」节） |
+
+### 世界事件（logic.events）
+
+世界包可以让 logic.js 在特定时刻自动运行，而不必等玩家点按钮。在 `world/world.json` 的 `logic` 配置里声明「事件 → 处理函数名」：
+
+```json
+{
+  "logic": {
+    "runtime": "sandbox-js-v1",
+    "timeout_ms": 1000,
+    "events": {
+      "session_start": "onSessionStart",
+      "turn_completed": "onTurn",
+      "interaction_answered": "onAnswered"
+    }
+  }
+}
+```
+
+| 事件 | 触发时机 | 负载 |
+|---|---|---|
+| `session_start` | 每个会话一次 | `session_id` |
+| `turn_completed` | 回合成功提交（含重发/编辑/重新生成） | `session_id`、`turn_index`、该回合新增消息 |
+| `interaction_answered` | 玩家首次回答一条交互（重复提交不触发） | `session_id`、`message_id`、`interaction_id`、`answer` |
+
+handler 里可正常使用 `api.kv` / `api.records` / `api.platform`。handler 失败只记日志，不打断游戏；同一事件不会因界面刷新重复触发。
+
+```js
+world.register("onAnswered", async (input, api) => {
+  const score = (await api.kv.get("game", "score", 0, { scope: "session" })) || 0;
+  await api.kv.set("game", "score", score + 10, { scope: "session" });
+});
+```
+
+### 平台能力（第 12 项，第一批：文件）
+
+世界包可以调用目录内的平台 action。统一模式：**manifest 声明 → 玩家在「设置 → 世界权限」里允许 → 调用**。任一环不满足都会得到明确报错，不会静默失败。
+
+在 world.json（世界包 `world/world.json`）里声明：
+
+```json
+{
+  "platform_features": ["file.pick", "file.read", "file.write"]
+}
+```
+
+调用：
+
+```js
+world.register("import.ledger", async (input, api) => {
+  const files = await api.platform.invoke("file.pick", { multiple: false, extensions: ["json", "csv"] });
+  // files: [{ name, size, data_base64 }]
+  await api.platform.invoke("file.write", { path: "imports/last.json", data_base64: files[0].data_base64 });
+  const saved = await api.platform.invoke("file.read", { path: "imports/last.json" });
+  return { name: saved.name, size: saved.size };
+});
+```
+
+| action | 参数 | 结果 | 桌面 | 安卓 |
+|---|---|---|---|---|
+| `file.pick` | `multiple?`、`extensions?` | `[{ name, size, data_base64 }]` | ✅ 系统文件选择器 | `unsupported`（SAF 链路后续批次） |
+| `file.read` | `path` | `{ name, path, size, data_base64 }` | ✅ | ✅ |
+| `file.write` | `path` + `text` 或 `data_base64` | `{ path, size }` | ✅ | ✅ |
+| `file.share` | `path` | `{ shared: true }` | `unsupported`（桌面无系统分享面板） | ✅ 系统分享面板 |
+
+- `path` 是**该世界专属目录**内的相对路径（拒绝绝对路径与 `..` 穿越）；不同世界的文件互不可见。`file.pick` 选的是用户显式指定的文件，不受目录限制。
+- 单文件大小上限 10 MB。
+- 错误统一为 `code: 中文说明` 前缀字符串，可用前缀程序化判断：`unsupported`（当前平台不支持）、`not_declared`（包未声明）、`not_granted`（玩家未允许）、`invalid_params`、`io`、`cancelled`（用户取消选择）。
 
 `logic` 配置示例：
 
@@ -842,7 +922,87 @@ v3 stylesheet 在世界 iframe 内原样注入，不做 selector 前缀改写。
 - 角色消息下使用复制/分支，玩家消息下使用编辑/重发。
 - 不要用桌面 `transform: scale()` 模拟手机 UI。
 
-## 13. 资源配置
+## 13. 世界主控配置（director_config）
+
+以下字段都在 `world/world.json` 的 `director_config` 中，随世界包导出导入。
+
+### 交互消息（message_interaction_kinds）
+
+角色回复可以携带一条结构化交互（选项、表单、确认、滑条），宿主负责渲染控件，玩家作答结果随消息持久化。世界包必须显式声明允许的类型，未声明的类型一律丢弃：
+
+```json
+{
+  "director_config": {
+    "message_interaction_kinds": ["choice", "slider"]
+  }
+}
+```
+
+| 类型 | 说明 | config 关键字段 |
+|---|---|---|
+| `choice` | 单选 | `options: [{ "value", "label" }]` |
+| `multi_choice` | 多选 | `options`、`min`、`max` |
+| `form` | 表单 | `fields: [{ "key", "label", "type": "text" | "number" | "textarea", "required" }]` |
+| `confirm` | 确认 | `confirm_label`、`cancel_label` |
+| `slider` | 滑条 | `min`、`max`、`step`、`default` |
+
+模型在角色回复 JSON 里输出 `interaction` 字段（`{ "kind", "prompt", "config" }`，具体结构以校验器为准）；在角色契约提示词里告诉模型何时输出。回答**幂等**：重复提交返回首次结果，不会重复计分——配 `interaction_answered` 事件即可安全地在 logic.js 里计分。
+
+### 提示词模块（prompt_presets）
+
+世界包可以向指定位置注入设定/规则文本，支持关键词触发和占位符：
+
+```jsonc
+{
+  "director_config": {
+    "prompt_presets": [
+      {
+        "name": "背景设定",
+        "content": "本世界的背景是……",
+        "position": "system_prefix",
+        "scope": "both"
+      },
+      {
+        "name": "炼金术规则",
+        "content": "当玩家提到炼金时……{{var:alchemy_level}}",
+        "keywords": ["炼金", "药剂"],
+        "keyword_scan_depth": 10
+      }
+    ]
+  }
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `content` | 注入文本（单模块渲染后上限 4000 字符） |
+| `position` | `system_prefix`（核心系统提示之前）/ `system_suffix`（默认）/ `depth:N`（历史第 N 层） |
+| `scope` | `director` / `character` / `both` |
+| `keywords` | 命中近期消息才注入；不填则总是注入 |
+| `keyword_scan_depth` | 关键词扫描的近期消息条数（默认 10） |
+| `enabled`、`order` | 开关与注入顺序 |
+
+占位符（纯文本替换，最多 3 轮展开，未知占位符原样保留，无法注入代码）：`{{var:key}}`（session 级 KV）、`{{world:name|genre|summary|opening_scene}}`、`{{session:location|time}}`、`{{date}}`、`{{random:a,b,c}}`。
+
+每个模块是否实际注入及原因（总是注入 / 命中关键词 / 未命中 / 渲染后为空）都可在调试页的 Prompt 追踪里看到。
+
+### 生成参数（generation_params）
+
+世界层可以为采样参数给一组默认值（每个字段都可留空 = 本层不覆盖）：
+
+```json
+{
+  "director_config": {
+    "generation_params": { "temperature": 0.9, "max_tokens": 800 }
+  }
+}
+```
+
+可用字段：`temperature`、`top_p`、`top_k`、`max_tokens`、`stop`、`presence_penalty`、`frequency_penalty`、`seed`。实际生效值按「角色内置默认 → 应用设置 → 世界 → 会话存档」逐字段取最内层；模型/provider 不支持的参数会被过滤并在调试页留痕（`dropped` 带原因），越界值夹到合法区间。
+
+注意：玩家能否发图片/语音附件，取决于所用模型在「设置 → 模型」里是否开启了对应**输入模态**开关；未开启的模型收到附件会在提交时明确报错，不会静默丢弃。
+
+## 14. 资源配置
 
 ```jsonc
 {
@@ -871,7 +1031,7 @@ v3 stylesheet 在世界 iframe 内原样注入，不做 selector 前缀改写。
 
 推荐通过世界编辑器上传资源，避免手工构造内部路径。
 
-## 14. 校验与调试
+## 15. 校验与调试
 
 世界编辑器会同时运行：
 
@@ -894,6 +1054,8 @@ v3 stylesheet 在世界 iframe 内原样注入，不做 selector 前缀改写。
 | `unsupported_declared_capability` | 声明未知能力 | 使用当前五种 capability |
 | `invalid_world_storage_config` | `storage` 不是合法对象或名称不合规 | 检查 collection/namespace 名称和结构 |
 | `invalid_world_logic_config` | logic runtime、源码或大小不合规 | 使用 `disabled` 或 `sandbox-js-v1` 并提供 `logic_file` |
+| 导入报 `Unknown platform feature` | `platform_features` 含目录外的 action | 只用 `file.pick` / `file.read` / `file.write` / `file.share` |
+| 运行时 `not_declared:` / `not_granted:` / `unsupported:` 前缀错误 | 平台能力未声明 / 玩家未允许 / 当前平台不支持 | 见第 10 节「平台能力」的可用性表 |
 | `missing_world_storage_capability` | 使用通用存储或沙箱逻辑但未声明能力 | 在 `ui_capabilities` 中加入 `supports_world_storage` |
 | `world_records_require_runtime_v3` | 记录组件运行在 v2 | 将 `runtime_version` 改为 `3` |
 | `missing_world_records_capability` | 使用 `ledger_book` 但世界未声明存储能力 | 在 `ui_capabilities` 中加入 `supports_world_records` |
@@ -912,7 +1074,7 @@ cargo check --tests
 cargo test --lib
 ```
 
-## 15. 从 v2 迁移到 v3
+## 16. 从 v2 迁移到 v3
 
 v2 数据不会被删除。当前迁移层会：
 
@@ -952,7 +1114,7 @@ v2 数据不会被删除。当前迁移层会：
 
 `frontend/src/data/gameUi/migration.test.ts` 会逐字验证四份文档在迁移后未改变，并验证桌面与移动入口保持独立。Rust bundle 测试也会校验两套示例在 runtime v3 下仍受支持。
 
-## 16. 最小完整示例
+## 17. 最小完整示例
 
 桌面文档：
 
@@ -1051,7 +1213,7 @@ v2 数据不会被删除。当前迁移层会：
 }
 ```
 
-## 17. 发布前检查表
+## 18. 发布前检查表
 
 - `runtime_version` 为 `3`。
 - 两份 UI 文档都声明 `schema_version: 2`。
@@ -1062,4 +1224,7 @@ v2 数据不会被删除。当前迁移层会：
 - Android 状态栏、右侧把手和底部手势区没有遮挡内容。
 - 软键盘打开时消息区和输入区仍可用。
 - 图片、录音、复制、编辑、重发、分支和重试经过真实会话测试。
+- 声明的 `platform_features` 在真机上逐项允许后可用，未允许时得到 `not_granted:` 报错。
+- 交互消息（如使用）在真机上出题、作答、重复点击不重复计分。
+- 关键词触发的提示词模块（如使用）在调试页可见命中与否。
 - 导出后的 ZIP 可在另一份本地数据环境中重新导入。

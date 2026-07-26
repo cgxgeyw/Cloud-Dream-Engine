@@ -404,9 +404,45 @@ export type SessionSnapshot = {
   scene: SceneRuntime;
   assets: AssetSelection;
   state: SessionState;
+  /** 本存档的生成参数覆盖（三级覆盖里优先级最高的一层）。空对象表示不覆盖。 */
+  generation_params?: GenerationParams;
 };
 
 export type SessionSnapshotResponse = SessionSnapshot;
+
+// ==============================
+// 生成参数（采样参数）
+// ==============================
+
+/**
+ * 生成参数。每个字段可缺省，缺省表示「这一层不覆盖」，交给下一层或内置默认决定。
+ * 覆盖顺序：内置默认（导演 0.7 / 角色 0.8）→ 应用设置 → 世界 → 存档。
+ */
+export type GenerationParams = {
+  temperature?: number;
+  top_p?: number;
+  top_k?: number;
+  max_tokens?: number;
+  stop?: string[];
+  presence_penalty?: number;
+  frequency_penalty?: number;
+  seed?: number;
+};
+
+/** 某个生成参数被 provider 过滤掉的记录。 */
+export type DroppedGenerationParam = {
+  name: string;
+  reason: string;
+};
+
+/** 本存档的三级生成参数与最终生效值。 */
+export type SessionGenerationParamsResponse = {
+  app: GenerationParams;
+  world: GenerationParams;
+  session: GenerationParams;
+  effective_director: GenerationParams;
+  effective_character: GenerationParams;
+};
 
 export type SessionCreateRequest = {
   world_id: string;
@@ -478,9 +514,18 @@ export type ModelConfig = {
   max_tokens: number;
   streaming_enabled: boolean;
   is_default: boolean;
+  /** 声明支持的输入模态（"image" / "audio"），空 = 仅文本。 */
+  input_modalities: string[];
 };
 
 export type ModelConfigResponse = ModelConfig;
+
+/** 第 12 项：世界包平台能力的声明与授权状态（设置页「世界权限」区）。 */
+export type WorldFeatureGrantStatus = {
+  feature: string;
+  declared: boolean;
+  granted: boolean;
+};
 
 export type ConnectionTestResult = {
   ok: boolean;
@@ -538,6 +583,8 @@ export type AppSettings = {
   default_embedding_model: string;
   home_background_strategy: string;
   export_directory: string;
+  /** 应用级生成参数（三级覆盖的第一层）。缺省字段表示不覆盖内置默认。 */
+  generation_params?: GenerationParams;
 };
 
 export type SettingsResponse = AppSettings;
@@ -558,6 +605,33 @@ export type PluginResponse = {
 
 export type McpToolExposurePolicy = string | { mode?: string; [key: string]: unknown };
 
+/** MCP server 传输方式。stdio 仅桌面端可用，http 全平台可用。 */
+export type McpTransport = "stdio" | "http";
+
+export type McpServerConfig = {
+  id: string;
+  name: string;
+  transport: McpTransport;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  url: string;
+  headers: Record<string, string>;
+  auth_token: string;
+  enabled: boolean;
+  timeout_ms: number;
+  max_result_bytes: number;
+};
+
+export type McpServerUpsertRequest = Omit<McpServerConfig, "id">;
+
+export type McpServerProbeResult = {
+  ok: boolean;
+  error: string | null;
+  tools: Array<Record<string, unknown>>;
+  platform_supported: boolean;
+};
+
 export type McpToolResponse = {
   id: string;
   name: string;
@@ -569,6 +643,8 @@ export type McpToolResponse = {
   risk_level: string;
   trigger_keywords: string[];
   input_schema: Record<string, unknown>;
+  /** 绑定的 MCP server（mcp_servers.id）；为空表示未绑定，不会下发给模型 */
+  server_id: string;
 };
 
 export type McpToolCreateRequest = {
@@ -581,6 +657,8 @@ export type McpToolCreateRequest = {
   risk_level: string;
   trigger_keywords: string[];
   input_schema: Record<string, unknown>;
+  /** 绑定的 MCP server（mcp_servers.id）；为空表示未绑定，不会下发给模型 */
+  server_id: string;
 };
 
 export type McpToolUpsertRequest = McpToolCreateRequest;

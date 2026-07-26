@@ -152,6 +152,12 @@ async function handleStorageRequest(
         namespace: readString(payload.namespace, "namespace"),
         key: readString(payload.key, "key"),
       });
+    case "platform.invoke":
+      return sendAction({
+        type: "world-platform-invoke",
+        feature: readString(payload.feature, "feature"),
+        params: payload.params,
+      });
     default:
       throw new Error(`Unsupported world logic operation: ${request.operation}`);
   }
@@ -235,7 +241,14 @@ const __worldKv = Object.freeze({
     __worldRequest("kv.delete", { namespace, key, ...__kvScopeArgs(options) }),
 });
 
-const __worldApi = Object.freeze({ records: __worldRecords, kv: __worldKv });
+// 平台能力（第 12 项）：世界包调用目录内的平台 action（第一批为文件能力）。
+// 结果直接 resolve；失败 reject 带 'code: 中文说明' 的错误（unsupported / not_declared /
+// not_granted / invalid_params / io / cancelled），可用字符串前缀程序化判断。
+const __worldPlatform = Object.freeze({
+  invoke: (feature, params) => __worldRequest("platform.invoke", { feature, params: params ?? {} }),
+});
+
+const __worldApi = Object.freeze({ records: __worldRecords, kv: __worldKv, platform: __worldPlatform });
 const world = Object.freeze({
   register(name, handler) {
     if (typeof name !== "string" || typeof handler !== "function") {

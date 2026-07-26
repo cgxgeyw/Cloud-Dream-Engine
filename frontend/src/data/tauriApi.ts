@@ -20,6 +20,7 @@ import type {
   ConnectionTestResult,
   EmbeddingModelFileStatus,
   EmbeddingModelStatus,
+  GenerationParams,
   ImageModelTestRequest,
   ImageModelTestResult,
   InventoryItem,
@@ -42,6 +43,7 @@ import type {
   SaveResponse,
   SceneRuntime,
   SessionCreateRequest,
+  SessionGenerationParamsResponse,
   SessionMapEdge,
   SessionMapNode,
   SessionRuntimeAttributesResponse,
@@ -70,8 +72,10 @@ import type {
   WorldUiDocumentValidationResult,
   WorldUpsertRequest,
   WorldPermissionStatus,
+  WorldFeatureGrantStatus,
   KvScope,
   AnswerInteractionResponse,
+  McpServerConfig, McpServerUpsertRequest, McpServerProbeResult,
 } from "./types";
 
 // 类型定义
@@ -324,6 +328,26 @@ export function deleteWorldKv(worldId: string, namespace: string, key: string, s
   return tauriCommand("delete_world_kv", { worldId, namespace, key, scope });
 }
 
+// ---- 第 12 项：世界包平台能力 ----
+
+export function invokeWorldPlatformFeature(
+  worldId: string,
+  feature: string,
+  params: unknown,
+): Promise<unknown> {
+  return tauriCommand("invoke_world_platform_feature", {
+    request: { world_id: worldId, feature, params },
+  });
+}
+
+export function listWorldFeatureGrants(worldId: string): Promise<WorldFeatureGrantStatus[]> {
+  return tauriCommand("list_world_feature_grants", { worldId });
+}
+
+export function setWorldFeatureGrant(worldId: string, feature: string, granted: boolean): Promise<void> {
+  return tauriCommand("set_world_feature_grant", { worldId, feature, granted });
+}
+
 export function deleteWorld(worldId: string): Promise<void> {
   return tauriCommand("delete_world", { id: worldId });
 }
@@ -337,6 +361,19 @@ export function answerInteraction(
   return tauriCommand("answer_interaction", {
     request: { session_id: sessionId, message_id: messageId, interaction_id: interactionId, answer },
   });
+}
+
+export function fetchSessionGenerationParams(
+  sessionId: string,
+): Promise<SessionGenerationParamsResponse> {
+  return tauriCommand("get_session_generation_params", { sessionId });
+}
+
+export function updateSessionGenerationParams(
+  sessionId: string,
+  params: GenerationParams,
+): Promise<SessionGenerationParamsResponse> {
+  return tauriCommand("update_session_generation_params", { sessionId, params });
 }
 
 export function deleteAllWorlds(): Promise<{ ok: boolean; deleted_count: number }> {
@@ -546,6 +583,26 @@ export function getExportDirectorySuggestion(): Promise<string> {
 
 export function fetchPlugins(): Promise<PluginResponse[]> {
   return tauriCommand("list_plugins");
+}
+
+export function fetchMcpServers() {
+  return tauriCommand<McpServerConfig[]>("list_mcp_servers");
+}
+
+export function createMcpServer(payload: McpServerUpsertRequest) {
+  return tauriCommand<McpServerConfig>("create_mcp_server", { request: payload });
+}
+
+export function updateMcpServer(serverId: string, payload: McpServerUpsertRequest) {
+  return tauriCommand<McpServerConfig>("update_mcp_server", { id: serverId, request: payload });
+}
+
+export function deleteMcpServer(serverId: string) {
+  return tauriCommand<void>("delete_mcp_server", { id: serverId });
+}
+
+export function probeMcpServer(serverId: string) {
+  return tauriCommand<McpServerProbeResult>("probe_mcp_server", { id: serverId });
 }
 
 export function fetchMcpTools(): Promise<McpToolResponse[]> {

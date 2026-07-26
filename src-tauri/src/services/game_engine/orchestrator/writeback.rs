@@ -147,6 +147,8 @@ pub(crate) fn build_runtime_updated_session_snapshot(
                 input.runtime_application.state_phase.clone()
             },
         },
+        // 生成参数是玩家偏好，不由模型提议、也不随回合状态变化，原样带过。
+        generation_params: input.session.generation_params.clone(),
     }
 }
 
@@ -621,6 +623,8 @@ pub(crate) fn build_director_prompt_trace(
         player_input,
         loop_limit,
         &stage,
+        // 请求上带的就是本回合三级覆盖解析后的参数，直接复用，不重算。
+        &trace.request.generation,
     )
 }
 
@@ -1166,13 +1170,15 @@ pub(crate) fn rollback_session_to_turn(
 ) -> Result<SessionSnapshot, String> {
     let snapshot_payload = load_turn_snapshot_payload(conn, &session.id, turn_index)?
         .ok_or_else(|| "Missing rollback snapshot for requested turn".to_string())?;
-    let restored_session = serde_json::from_value::<SessionSnapshot>(
+    let mut restored_session = serde_json::from_value::<SessionSnapshot>(
         snapshot_payload
             .get("session_snapshot")
             .cloned()
             .ok_or_else(|| "Missing session snapshot payload".to_string())?,
     )
     .map_err(|e| e.to_string())?;
+    // 采样参数是玩家当前偏好，不是回合状态：重新生成不该把它退回旧快照里的值。
+    restored_session.generation_params = session.generation_params.clone();
     restore_runtime_attribute_values(
         conn,
         &session.id,
@@ -1890,6 +1896,7 @@ mod rollback_tests {
             scene: SceneRuntime::default(),
             assets: AssetSelection::default(),
             state: SessionState::default(),
+            generation_params: Default::default(),
         }
     }
 

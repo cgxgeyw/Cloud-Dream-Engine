@@ -23,6 +23,7 @@ import {
   type ModelConfigResponse,
   type SettingsResponse,
 } from "../data/apiAdapter";
+import { GenerationParamsEditor } from "../components/GenerationParamsEditor";
 import { ImageModelTestPanel } from "../components/ImageModelTestPanel";
 import { ConfirmDialog } from "../components/ModalDialog";
 import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
@@ -30,6 +31,7 @@ import { showToast } from "../components/Toast";
 import { useSettings } from "../data/SettingsContext";
 import { ArrowLeft, ChevronRight } from "lucide-react";
 import { ThemePicker } from "../components/ThemePicker";
+import { WorldPermissionsPanel } from "../components/WorldPermissionsPanel";
 import { useT } from "../data/i18n/context";
 
 const BUILTIN_EMBEDDING_MODEL_ID = "BAAI/bge-small-zh-v1.5";
@@ -38,6 +40,8 @@ const tabIds = [
   { id: "text-model", labelKey: "settings.tabTextModel" },
   { id: "image-model", labelKey: "settings.tabImageModel" },
   { id: "embedding-model", labelKey: "settings.tabEmbeddingModel" },
+  { id: "generation-params", labelKey: "settings.tabGenerationParams" },
+  { id: "world-permissions", labelKey: "settings.tabWorldPermissions" },
   { id: "background", labelKey: "settings.tabBackground" },
   { id: "theme", labelKey: "settings.tabTheme" },
   { id: "export", labelKey: "settings.tabExport" },
@@ -97,6 +101,8 @@ type ModelFormState = {
   api_key: string;
   max_tokens: string;
   streaming_enabled: boolean;
+  supports_image_input: boolean;
+  supports_audio_input: boolean;
 };
 
 const defaultModelForm: ModelFormState = {
@@ -107,6 +113,8 @@ const defaultModelForm: ModelFormState = {
   api_key: "",
   max_tokens: "1200",
   streaming_enabled: true,
+  supports_image_input: false,
+  supports_audio_input: false,
 };
 
 function isModelTab(tab: TabId): tab is ModelTabId {
@@ -263,6 +271,8 @@ export function SettingsPage() {
       api_key: model.api_key,
       max_tokens: String(model.max_tokens),
       streaming_enabled: model.streaming_enabled,
+      supports_image_input: (model.input_modalities ?? []).includes("image"),
+      supports_audio_input: (model.input_modalities ?? []).includes("audio"),
     });
     setCustomProviderMode(!providerOptions.some((option) => option.value === model.provider));
     setModelDiscovery(null);
@@ -377,6 +387,13 @@ export function SettingsPage() {
         max_tokens: maxTokens,
         streaming_enabled: modelType === "text" ? modelForm.streaming_enabled : false,
         is_default: editingModel?.is_default ?? false,
+        input_modalities:
+          modelType === "text"
+            ? [
+                ...(modelForm.supports_image_input ? ["image"] : []),
+                ...(modelForm.supports_audio_input ? ["audio"] : []),
+              ]
+            : [],
       };
 
       if (isNewModel) {
@@ -756,6 +773,33 @@ export function SettingsPage() {
                 </div>
               </label>
             ) : null}
+
+            {activeModelTab === "text-model" ? (
+              <div className="field-label">
+                <span className="field-label-text">{t("settings.inputModalities")}</span>
+                <label className="field-label field-label--inline">
+                  <span className="field-label-text">{t("settings.supportsImageInput")}</span>
+                  <div className="settings-inline-toggle">
+                    <input
+                      type="checkbox"
+                      checked={modelForm.supports_image_input}
+                      onChange={(event) => patchModelForm({ supports_image_input: event.target.checked })}
+                    />
+                  </div>
+                </label>
+                <label className="field-label field-label--inline">
+                  <span className="field-label-text">{t("settings.supportsAudioInput")}</span>
+                  <div className="settings-inline-toggle">
+                    <input
+                      type="checkbox"
+                      checked={modelForm.supports_audio_input}
+                      onChange={(event) => patchModelForm({ supports_audio_input: event.target.checked })}
+                    />
+                  </div>
+                </label>
+                <div className="text-muted">{t("settings.inputModalitiesHint")}</div>
+              </div>
+            ) : null}
           </div>
 
           {activeModelTab !== "image-model" && !isBuiltinLocalProvider ? (
@@ -975,6 +1019,38 @@ export function SettingsPage() {
     );
   }
 
+  function renderGenerationParamsSection() {
+    if (!settings) return null;
+
+    return (
+      <SurfacePanel className="surface-panel--pad-lg">
+        <div className="settings-section">
+          <h3 className="settings-section-title">{t("settings.tabGenerationParams")}</h3>
+          <div className="text-muted" style={{ marginBottom: 12, fontSize: 13, lineHeight: 1.6 }}>
+            这里是全局默认。世界包可以在世界编辑器里覆盖，单局游戏可以在存档里再覆盖；
+            留空的项交给下一级或内置默认决定。所连服务不支持的参数会被自动过滤，
+            并在游戏的调试视图里标出原因。
+          </div>
+          <GenerationParamsEditor
+            value={settings.generation_params ?? {}}
+            disabled={saving}
+            onChange={(next) => updateDraft({ generation_params: next })}
+          />
+          <div className="settings-form-actions">
+            <button
+              type="button"
+              onClick={() => void handleSave()}
+              disabled={saving}
+              className="action-btn action-btn--accent"
+            >
+              {saving ? t("settings.saving") : t("settings.save")}
+            </button>
+          </div>
+        </div>
+      </SurfacePanel>
+    );
+  }
+
   function renderThemeSection() {
     return (
       <SurfacePanel className="surface-panel--pad-lg">
@@ -1047,8 +1123,14 @@ export function SettingsPage() {
 
         {isModelTab(activeSection) ? (editingModel || isNewModel ? renderModelEditor() : renderModelList()) : null}
         {activeSection === "background" ? renderBackgroundSection() : null}
+        {activeSection === "generation-params" ? renderGenerationParamsSection() : null}
         {activeSection === "theme" ? renderThemeSection() : null}
         {activeSection === "export" ? renderExportSection() : null}
+        {activeSection === "world-permissions" ? (
+          <SurfacePanel className="surface-panel--pad-lg">
+            <WorldPermissionsPanel />
+          </SurfacePanel>
+        ) : null}
       </div>
     );
   }
@@ -1205,6 +1287,32 @@ export function SettingsPage() {
                         />
                       </div>
                     </label>
+                  ) : null}
+                  {activeTab === "text-model" ? (
+                    <div className="field-label">
+                      <span className="field-label-text">{t("settings.inputModalities")}</span>
+                      <label className="field-label">
+                        <span className="field-label-text">{t("settings.supportsImageInput")}</span>
+                        <div className="settings-inline-toggle">
+                          <input
+                            type="checkbox"
+                            checked={modelForm.supports_image_input}
+                            onChange={(event) => patchModelForm({ supports_image_input: event.target.checked })}
+                          />
+                        </div>
+                      </label>
+                      <label className="field-label">
+                        <span className="field-label-text">{t("settings.supportsAudioInput")}</span>
+                        <div className="settings-inline-toggle">
+                          <input
+                            type="checkbox"
+                            checked={modelForm.supports_audio_input}
+                            onChange={(event) => patchModelForm({ supports_audio_input: event.target.checked })}
+                          />
+                        </div>
+                      </label>
+                      <div className="text-muted">{t("settings.inputModalitiesHint")}</div>
+                    </div>
                   ) : null}
                 </div>
 
@@ -1404,6 +1512,8 @@ export function SettingsPage() {
           </SurfacePanel>
         ) : null}
 
+        {activeTab === "generation-params" ? renderGenerationParamsSection() : null}
+
         {activeTab === "theme" ? (
           <SurfacePanel className="surface-panel--pad-lg">
             <div className="settings-section">
@@ -1413,6 +1523,12 @@ export function SettingsPage() {
               </p>
               <ThemePicker />
             </div>
+          </SurfacePanel>
+        ) : null}
+
+        {activeTab === "world-permissions" ? (
+          <SurfacePanel className="surface-panel--pad-lg">
+            <WorldPermissionsPanel />
           </SurfacePanel>
         ) : null}
 

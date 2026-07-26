@@ -172,6 +172,7 @@ impl SessionOrchestrator {
             },
             assets: input.session.assets.clone(),
             state: input.session.state.clone(),
+            generation_params: input.session.generation_params.clone(),
         };
 
         self.resolve_session_assets(
@@ -370,6 +371,7 @@ pub(crate) async fn run_agent_chat_speaker_turn(
     messages: Vec<ChatMessage>,
     target: &AgentChatTarget,
     player_input: &str,
+    player_media: &[crate::models::session::ContentPart],
     notification_runtime: Option<NotificationToolRuntime<'_>>,
     progress_callback: Option<&mut (dyn FnMut(SpeakerTurnProgress) + Send)>,
 ) -> Result<SpeakerTurnRunResult, String> {
@@ -388,6 +390,7 @@ pub(crate) async fn run_agent_chat_speaker_turn(
             messages,
             &target.planned_speakers,
             player_input,
+            player_media,
             &target.next_scene_name,
             &target.next_location,
             &target.visible_chars,

@@ -33,18 +33,22 @@ pub async fn create_world_with_ai(
     state: State<'_, AppState>,
     request: AiWorldCreateRequest,
 ) -> Result<AiWorldCreateResponse, String> {
-    let model = {
+    let (model, app_generation) = {
         let db = state.db.lock().await;
         let repo = crate::db::repositories::model_repo::ModelRepository::new(db.conn());
         let models = repo.list(Some("text"))?;
-        models
+        let model = models
             .iter()
             .find(|model| model.is_default)
             .cloned()
             .or_else(|| models.first().cloned())
             .ok_or_else(|| {
                 "No text model configured. Please add a text model in Settings first.".to_string()
-            })?
+            })?;
+        // 世界生成器是宿主辅助调用，只吃应用级生成参数（还没有世界可覆盖）。
+        let app_generation =
+            crate::commands::settings::load_app_settings(db.conn())?.generation_params;
+        (model, app_generation)
     };
 
     // Emit live progress (accumulated character count) so the UI can show the
@@ -60,6 +64,7 @@ pub async fn create_world_with_ai(
         &state.services.llm_client,
         &model,
         request.clone(),
+        &app_generation,
         Some(&mut emit_progress),
     )
     .await?;

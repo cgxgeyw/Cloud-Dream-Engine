@@ -38,6 +38,7 @@ export type WorldFrameAction =
   | { type: "world-kv-get"; namespace: string; key: string; scope?: KvScope }
   | { type: "world-kv-set"; namespace: string; key: string; value: unknown; scope?: KvScope }
   | { type: "world-kv-delete"; namespace: string; key: string; scope?: KvScope }
+  | { type: "world-platform-invoke"; feature: string; params?: unknown }
   | { type: "answer-interaction"; messageId: string; interactionId: string; answer: unknown };
 
 export type WorldFrameConnectMessage = {
@@ -188,6 +189,10 @@ function isWorldFrameAction(value: unknown): value is WorldFrameAction {
     return isWorldStorageName(value.namespace)
       && isWorldStorageKey(value.key)
       && Object.prototype.hasOwnProperty.call(value, "value");
+  }
+  if (value.type === "world-platform-invoke") {
+    // feature 形如 file.read：小写字母/数字/点/下划线/中划线，最长 64。
+    return isWorldStorageName(value.feature);
   }
   if (!isWorldRecordCollection(value.collection)) {
     return false;

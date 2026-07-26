@@ -9,175 +9,16 @@ use crate::models::world::{
     WorldUiCompatibilityTarget, WorldUiCompileRequest, WorldUiCompileResult, WorldUiDiagnostic,
     WorldUiDocumentRequest, WorldUiDocumentValidationResult,
 };
+use crate::services::game_ui_catalog::{
+    capability_ids, find_action, find_component, game_ui_catalog, is_supported_capability,
+};
+
+// 组件 / 动作 / 能力的唯一来源是仓库根 `shared/game-ui/catalog.json`
+// （经 `game_ui_catalog` 模块加载）。本文件不再维护任何硬编码清单。
 
 const SUPPORTED_SCHEMA_VERSIONS: [u32; 1] = [2];
 const SUPPORTED_UI_RUNTIME_VERSIONS: [u32; 2] = [2, 3];
 const MAX_WORLD_STYLESHEET_BYTES: usize = 1024 * 1024;
-const SUPPORTED_CAPABILITIES: [&str; 5] = [
-    "supports_file_picker",
-    "supports_hover",
-    "supports_mic",
-    "supports_world_records",
-    "supports_world_storage",
-];
-const SUPPORTED_ACTION_IDS: [&str; 28] = [
-    "submit_message",
-    "edit_turn_start",
-    "edit_turn_cancel",
-    "branch_from_current",
-    "retry_turn",
-    "accept_switch_proposal",
-    "dismiss_switch_proposal",
-    "dismiss_retry_card",
-    "copy_text",
-    "switch_side_tab",
-    "navigate_back",
-    "navigate_home",
-    "navigate_settings",
-    "navigate_debug",
-    "pick_image",
-    "remove_image",
-    "start_recording",
-    "stop_recording",
-    "remove_audio",
-    "storage.records.list",
-    "storage.records.create",
-    "storage.records.update",
-    "storage.records.delete",
-    "storage.kv.list",
-    "storage.kv.get",
-    "storage.kv.set",
-    "storage.kv.delete",
-    "logic.run",
-];
-
-#[derive(Clone, Copy)]
-struct ComponentSupport {
-    props: &'static [&'static str],
-    implicit_actions: &'static [&'static str],
-    implicit_capabilities: &'static [&'static str],
-    allowed_slots: &'static [&'static str],
-}
-
-fn component_support(component_id: &str) -> Option<ComponentSupport> {
-    match component_id {
-        "scene_header" => Some(ComponentSupport {
-            props: &[
-                "show_world_name",
-                "show_location",
-                "show_time_label",
-                "show_player_identity",
-                "show_visible_characters",
-                "title_mode",
-                "player_identity_format",
-                "show_copy_button",
-            ],
-            implicit_actions: &["copy_text"],
-            implicit_capabilities: &[],
-            allowed_slots: &[],
-        }),
-        "scene_focus" => Some(ComponentSupport {
-            props: &["show_avatar", "show_line", "avatar_variant"],
-            implicit_actions: &[],
-            implicit_capabilities: &[],
-            allowed_slots: &[],
-        }),
-        "character_bar" => Some(ComponentSupport {
-            props: &["empty_text", "max_items", "show_player"],
-            implicit_actions: &[],
-            implicit_capabilities: &[],
-            allowed_slots: &[],
-        }),
-        "narration_card" => Some(ComponentSupport {
-            props: &["title", "show_copy_button", "empty_text"],
-            implicit_actions: &["copy_text"],
-            implicit_capabilities: &[],
-            allowed_slots: &[],
-        }),
-        "message_list" => Some(ComponentSupport {
-            props: &[
-                "auto_scroll",
-                "mobile_simple",
-                "show_pending_state",
-                "show_agent_reasoning",
-                "show_typing_indicator",
-            ],
-            implicit_actions: &[
-                "submit_message",
-                "edit_turn_start",
-                "branch_from_current",
-                "retry_turn",
-                "accept_switch_proposal",
-                "dismiss_switch_proposal",
-                "dismiss_retry_card",
-                "copy_text",
-            ],
-            implicit_capabilities: &[],
-            allowed_slots: &[],
-        }),
-        "input_composer" => Some(ComponentSupport {
-            props: &[
-                "placeholder",
-                "submit_label",
-                "editing_submit_label",
-                "show_image_button",
-                "show_audio_button",
-                "show_session_meta",
-                "enter_to_submit",
-            ],
-            implicit_actions: &[
-                "submit_message",
-                "edit_turn_cancel",
-                "pick_image",
-                "remove_image",
-                "start_recording",
-                "stop_recording",
-                "remove_audio",
-            ],
-            implicit_capabilities: &["supports_file_picker", "supports_mic"],
-            allowed_slots: &[],
-        }),
-        "side_panel_tabs" => Some(ComponentSupport {
-            props: &[
-                "show_map_tab",
-                "show_attribute_tabs",
-                "empty_text",
-                "drawer_label",
-            ],
-            implicit_actions: &["switch_side_tab"],
-            implicit_capabilities: &[],
-            allowed_slots: &["content"],
-        }),
-        "floating_actions" => Some(ComponentSupport {
-            props: &[
-                "show_back",
-                "show_debug",
-                "show_settings",
-                "back_label",
-                "debug_label",
-                "settings_label",
-                "layout",
-            ],
-            implicit_actions: &["navigate_back", "navigate_settings", "navigate_debug"],
-            implicit_capabilities: &[],
-            allowed_slots: &[],
-        }),
-        "ledger_book" => Some(ComponentSupport {
-            props: &[
-                "title",
-                "collection",
-                "currency",
-                "default_view",
-                "income_categories",
-                "expense_categories",
-            ],
-            implicit_actions: &[],
-            implicit_capabilities: &["supports_world_records"],
-            allowed_slots: &[],
-        }),
-        _ => None,
-    }
-}
 
 struct CompilationState {
     diagnostics: Vec<WorldUiDiagnostic>,
@@ -216,42 +57,16 @@ impl CompilationState {
 
     fn add_action(&mut self, action_id: &str) {
         self.actions.insert(action_id.to_string());
-        match action_id {
-            "submit_message" => {}
-            "edit_turn_start" => {}
-            "edit_turn_cancel" => {}
-            "branch_from_current" => {}
-            "retry_turn" => {}
-            "accept_switch_proposal" => {}
-            "dismiss_switch_proposal" => {}
-            "dismiss_retry_card" => {}
-            "copy_text" => {}
-            "switch_side_tab" => {}
-            "navigate_back" => {}
-            "navigate_home" => {}
-            "navigate_settings" => {}
-            "navigate_debug" => {}
-            "pick_image" => {}
-            "remove_image" => {}
-            "start_recording" => {}
-            "stop_recording" => {}
-            "remove_audio" => {}
-            "storage.records.list"
-            | "storage.records.create"
-            | "storage.records.update"
-            | "storage.records.delete"
-            | "storage.kv.list"
-            | "storage.kv.get"
-            | "storage.kv.set"
-            | "storage.kv.delete"
-            | "logic.run" => {
-                self.capabilities
-                    .insert("supports_world_storage".to_string());
+        match find_action(action_id) {
+            Some(action) => {
+                for capability in &action.implies_capabilities {
+                    self.capabilities.insert(capability.clone());
+                }
             }
-            other => {
+            None => {
                 self.error(
                     "unknown_action",
-                    format!("Unknown action id `{other}`."),
+                    format!("Unknown action id `{action_id}`."),
                     "action",
                 );
             }
@@ -333,7 +148,7 @@ impl GameUiService {
             }
         }
         for capability in &request.capabilities {
-            if !SUPPORTED_CAPABILITIES.contains(&capability.as_str()) {
+            if !is_supported_capability(capability.as_str()) {
                 diagnostics.push(WorldUiDiagnostic {
                     severity: "error".to_string(),
                     code: "unsupported_declared_capability".to_string(),
@@ -913,12 +728,12 @@ impl GameUiService {
         };
 
         state.components.insert(component_id.clone());
-        if let Some(support) = component_support(&component_id) {
-            for action in support.implicit_actions {
+        if let Some(support) = find_component(&component_id) {
+            for action in &support.implicit_actions {
                 state.add_action(action);
             }
-            for capability in support.implicit_capabilities {
-                state.capabilities.insert((*capability).to_string());
+            for capability in &support.implicit_capabilities {
+                state.capabilities.insert(capability.clone());
             }
 
             if let Some(props) = object.get("props") {
@@ -931,9 +746,8 @@ impl GameUiService {
                     return;
                 };
 
-                let allowed_props = support.props.iter().copied().collect::<BTreeSet<_>>();
                 for (prop_key, prop_value) in props_object {
-                    if !allowed_props.contains(prop_key.as_str()) {
+                    if !support.props.contains_key(prop_key.as_str()) {
                         state.error(
                             "unknown_component_prop",
                             format!(
@@ -964,7 +778,7 @@ impl GameUiService {
                 let allowed_slots = support
                     .allowed_slots
                     .iter()
-                    .copied()
+                    .map(String::as_str)
                     .collect::<BTreeSet<_>>();
                 for (slot_name, slot_value) in slots_object {
                     if !allowed_slots.contains(slot_name.as_str()) {
@@ -1500,7 +1314,7 @@ fn infer_dependencies_from_value(value: &Value, path: &str, state: &mut Compilat
                 validate_binding(trimmed, path, state);
             }
 
-            for capability in SUPPORTED_CAPABILITIES {
+            for capability in capability_ids() {
                 let binding_token = format!("$capabilities.{capability}");
                 let expr_token = format!("capabilities.{capability}");
                 if trimmed == binding_token || trimmed.contains(&expr_token) {
@@ -1546,7 +1360,7 @@ fn validate_expression(expr: &str, path: &str, state: &mut CompilationState) {
         );
     }
 
-    for capability in SUPPORTED_CAPABILITIES {
+    for capability in capability_ids() {
         if trimmed.contains(&format!("capabilities.{capability}")) {
             state.capabilities.insert(capability.to_string());
         }
@@ -1566,30 +1380,24 @@ fn validate_binding(binding: &str, path: &str, state: &mut CompilationState) {
 }
 
 fn current_compatibility_target() -> WorldUiCompatibilityTarget {
+    let catalog = game_ui_catalog();
     WorldUiCompatibilityTarget {
         name: "current-client".to_string(),
         supported_schema_versions: SUPPORTED_SCHEMA_VERSIONS.to_vec(),
-        supported_components: [
-            "scene_header",
-            "scene_focus",
-            "character_bar",
-            "narration_card",
-            "message_list",
-            "input_composer",
-            "side_panel_tabs",
-            "floating_actions",
-            "ledger_book",
-        ]
-        .iter()
-        .map(|value| value.to_string())
-        .collect(),
-        supported_actions: SUPPORTED_ACTION_IDS
+        supported_components: catalog
+            .components
             .iter()
-            .map(|value| value.to_string())
+            .map(|component| component.id.clone())
             .collect(),
-        supported_capabilities: SUPPORTED_CAPABILITIES
+        supported_actions: catalog
+            .actions
             .iter()
-            .map(|value| value.to_string())
+            .map(|action| action.id.clone())
+            .collect(),
+        supported_capabilities: catalog
+            .capabilities
+            .iter()
+            .map(|capability| capability.id.clone())
             .collect(),
     }
 }

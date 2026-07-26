@@ -105,6 +105,41 @@ function getAudioParts(content: string | ContentPart[]): AudioContentPart[] {
   return content.filter((part): part is AudioContentPart => part.type === "input_audio");
 }
 
+type ImageContentPart = Extract<ContentPart, { type: "image_url" }>;
+
+function getImageParts(content: string | ContentPart[]): ImageContentPart[] {
+  if (typeof content === "string") {
+    return [];
+  }
+  return content.filter((part): part is ImageContentPart => part.type === "image_url");
+}
+
+// 消息里的图片附件缩略图。内联样式保证在宿主与 iframe 里都可用（与语音气泡一致）。
+function ImageMessageThumbnail({ part }: { part: ImageContentPart }) {
+  return (
+    <a
+      href={part.image_url.url}
+      target="_blank"
+      rel="noreferrer"
+      title="查看原图"
+      style={{ display: "inline-block", marginTop: 6, marginRight: 6 }}
+    >
+      <img
+        src={part.image_url.url}
+        alt="图片附件"
+        style={{
+          maxWidth: 220,
+          maxHeight: 160,
+          borderRadius: 10,
+          border: "1px solid rgba(127,127,127,0.35)",
+          objectFit: "cover",
+          display: "block",
+        }}
+      />
+    </a>
+  );
+}
+
 // 微信式语音消息气泡：显示秒数，点击播放/停止。内联样式保证在宿主与 iframe 里都可用。
 function VoiceMessageBubble({ part }: { part: AudioContentPart }) {
   const [playing, setPlaying] = useState(false);
@@ -370,6 +405,9 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
               ) : (
                 <div className={`game-message-content ${message.role === "system" ? "game-message-content--system" : "game-message-content--default"}`}>
                   {getMessageText(message.content)}
+                  {getImageParts(message.content).map((part, partIndex) => (
+                    <ImageMessageThumbnail key={`image-${partIndex}`} part={part} />
+                  ))}
                   {getAudioParts(message.content).map((part, partIndex) => (
                     <VoiceMessageBubble key={`audio-${partIndex}`} part={part} />
                   ))}

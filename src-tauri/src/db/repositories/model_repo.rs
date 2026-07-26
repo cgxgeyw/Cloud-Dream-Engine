@@ -11,7 +11,7 @@ impl<'a> ModelRepository<'a> {
     }
 
     pub fn list(&self, model_type: Option<&str>) -> Result<Vec<ModelConfig>, String> {
-        let mut sql = "SELECT id, name, model_type, provider, model_id, base_url, api_key, max_tokens, streaming_enabled, is_default FROM model_configs".to_string();
+        let mut sql = "SELECT id, name, model_type, provider, model_id, base_url, api_key, max_tokens, streaming_enabled, is_default, input_modalities FROM model_configs".to_string();
         if model_type.is_some() {
             sql.push_str(" WHERE model_type = ?1");
         }
@@ -31,6 +31,7 @@ impl<'a> ModelRepository<'a> {
                 max_tokens: row.get(7)?,
                 streaming_enabled: row.get::<_, i32>(8)? != 0,
                 is_default: row.get::<_, i32>(9)? != 0,
+                input_modalities: parse_input_modalities(&row.get::<_, String>(10)?),
             })
         };
 
@@ -60,7 +61,7 @@ impl<'a> ModelRepository<'a> {
     pub fn get(&self, id: &str) -> Result<Option<ModelConfig>, String> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, name, model_type, provider, model_id, base_url, api_key, max_tokens, streaming_enabled, is_default FROM model_configs WHERE id = ?1")
+            .prepare("SELECT id, name, model_type, provider, model_id, base_url, api_key, max_tokens, streaming_enabled, is_default, input_modalities FROM model_configs WHERE id = ?1")
             .map_err(|e| e.to_string())?;
 
         let mut rows = stmt
@@ -76,6 +77,7 @@ impl<'a> ModelRepository<'a> {
                     max_tokens: row.get(7)?,
                     streaming_enabled: row.get::<_, i32>(8)? != 0,
                     is_default: row.get::<_, i32>(9)? != 0,
+                    input_modalities: parse_input_modalities(&row.get::<_, String>(10)?),
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -114,7 +116,7 @@ impl<'a> ModelRepository<'a> {
                 .map_err(|e| e.to_string())?;
         }
         self.conn.execute(
-            "INSERT INTO model_configs (id, name, model_type, provider, model_id, base_url, api_key, max_tokens, streaming_enabled, is_default) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO model_configs (id, name, model_type, provider, model_id, base_url, api_key, max_tokens, streaming_enabled, is_default, input_modalities) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 id,
                 name,
@@ -126,6 +128,7 @@ impl<'a> ModelRepository<'a> {
                 max_tokens,
                 if streaming_enabled { 1 } else { 0 },
                 if is_default { 1 } else { 0 },
+                format_input_modalities(&req.input_modalities),
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -168,6 +171,11 @@ impl<'a> ModelRepository<'a> {
             .to_string();
         let max_tokens = normalize_max_tokens(req.max_tokens.unwrap_or(existing.max_tokens));
         let streaming_enabled = req.streaming_enabled.unwrap_or(existing.streaming_enabled);
+        let input_modalities = normalize_input_modalities(
+            req.input_modalities
+                .clone()
+                .unwrap_or(existing.input_modalities),
+        );
         let updated = ModelConfig {
             id: existing.id.clone(),
             name,
@@ -179,12 +187,13 @@ impl<'a> ModelRepository<'a> {
             max_tokens,
             streaming_enabled,
             is_default: req.is_default.unwrap_or(existing.is_default),
+            input_modalities,
         };
 
         // L6: 主 UPDATE 不直接写 is_default=1,否则在 set_default 清理同类默认之前
         // 会出现"多个默认"的中间态。这里先写 0,默认标志统一交给 set_default 落定。
         self.conn.execute(
-            "UPDATE model_configs SET name = ?1, model_type = ?2, provider = ?3, model_id = ?4, base_url = ?5, api_key = ?6, max_tokens = ?7, streaming_enabled = ?8, is_default = ?9 WHERE id = ?10",
+            "UPDATE model_configs SET name = ?1, model_type = ?2, provider = ?3, model_id = ?4, base_url = ?5, api_key = ?6, max_tokens = ?7, streaming_enabled = ?8, is_default = ?9, input_modalities = ?10 WHERE id = ?11",
             params![
                 updated.name,
                 updated.model_type,
@@ -195,6 +204,7 @@ impl<'a> ModelRepository<'a> {
                 updated.max_tokens,
                 if updated.streaming_enabled { 1 } else { 0 },
                 0,
+                format_input_modalities(&updated.input_modalities),
                 id,
             ],
         )
@@ -294,5 +304,80 @@ fn normalize_max_tokens(max_tokens: i32) -> i32 {
         1200
     } else {
         max_tokens.clamp(1, 32768)
+    }
+}
+
+/// input_modalities 只保留已知模态（image/audio），去重后按字典序返回。
+pub(crate) fn normalize_input_modalities(values: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::BTreeSet::new();
+    for value in values {
+        let normalized = value.trim().to_ascii_lowercase();
+        if matches!(normalized.as_str(), "image" | "audio") {
+            seen.insert(normalized);
+        }
+    }
+    seen.into_iter().collect()
+}
+
+/// input_modalities 以 JSON 数组文本存库。
+fn format_input_modalities(values: &[String]) -> String {
+    serde_json::to_string(&normalize_input_modalities(values.to_vec()))
+        .unwrap_or_else(|_| "[]".to_string())
+}
+
+fn parse_input_modalities(raw: &str) -> Vec<String> {
+    let parsed: Vec<String> = serde_json::from_str(raw).unwrap_or_default();
+    normalize_input_modalities(parsed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_request(modalities: &[&str]) -> ModelConfigCreateRequest {
+        ModelConfigCreateRequest {
+            name: "多模态模型".to_string(),
+            model_type: "text".to_string(),
+            provider: "openai".to_string(),
+            model_id: "gpt-test".to_string(),
+            base_url: "http://localhost".to_string(),
+            api_key: String::new(),
+            max_tokens: 1200,
+            streaming_enabled: true,
+            is_default: false,
+            input_modalities: modalities.iter().map(|value| value.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn input_modalities_survive_a_db_round_trip() {
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        crate::db::schema::create_tables(&conn).expect("create schema");
+        let repo = ModelRepository::new(&conn);
+
+        // 默认（未声明任何模态）→ 空数组
+        let plain = repo.create(&create_request(&[])).expect("create model");
+        assert!(plain.input_modalities.is_empty());
+
+        // 声明后写读一致；未知模态被过滤、去重
+        let declared = repo
+            .create(&create_request(&["image", "audio", "image", "hologram"]))
+            .expect("create model");
+        assert_eq!(declared.input_modalities, vec!["audio", "image"]);
+        let fetched = repo.get(&declared.id).expect("get").expect("exists");
+        assert_eq!(fetched.input_modalities, vec!["audio", "image"]);
+
+        // update 只改模态，不动其它字段
+        let updated = repo
+            .update(
+                &declared.id,
+                &ModelConfigUpdateRequest {
+                    input_modalities: Some(vec!["image".to_string()]),
+                    ..Default::default()
+                },
+            )
+            .expect("update");
+        assert_eq!(updated.input_modalities, vec!["image"]);
+        assert_eq!(updated.model_id, "gpt-test");
     }
 }

@@ -15,6 +15,7 @@ import type {
   CharacterCreateFromTemplateRequest,
   CharacterCreateRequest,
   ImageModelTestRequest,
+  McpServerUpsertRequest,
   McpToolCreateRequest,
   ModelConfig,
   PlayerActionRequest,
@@ -32,12 +33,15 @@ import type {
   WorldUiDocumentRequest,
   WorldUiDocumentValidationResult,
   WorldPermissionStatus,
+  WorldFeatureGrantStatus,
   WorldUpsertRequest,
   WorldRecord,
   WorldRecordWriteRequest,
   WorldKvEntry,
   KvScope,
   AnswerInteractionResponse,
+  GenerationParams,
+  SessionGenerationParamsResponse,
 } from "./types";
 
 async function detectTauri(): Promise<boolean> {
@@ -162,6 +166,10 @@ export type {
   McpToolResponse,
   McpToolCreateRequest,
   McpToolUpsertRequest,
+  McpServerConfig,
+  McpServerUpsertRequest,
+  McpServerProbeResult,
+  McpTransport,
   AttributeValueType,
   AttributeSchemaResponse,
   AttributeSchemaUpsertRequest,
@@ -291,6 +299,37 @@ export async function deleteWorldKv(worldId: string, namespace: string, key: str
   return (await getTauri()).deleteWorldKv(worldId, namespace, key, scope);
 }
 
+// ---- 第 12 项：世界包平台能力 ----
+
+export async function invokeWorldPlatformFeature(
+  worldId: string,
+  feature: string,
+  params: unknown,
+): Promise<unknown> {
+  if (!isTauri) {
+    throw new Error("World platform features are only available in the local application.");
+  }
+  return (await getTauri()).invokeWorldPlatformFeature(worldId, feature, params);
+}
+
+export async function listWorldFeatureGrants(worldId: string): Promise<WorldFeatureGrantStatus[]> {
+  if (!isTauri) {
+    throw new Error("World platform features are only available in the local application.");
+  }
+  return (await getTauri()).listWorldFeatureGrants(worldId);
+}
+
+export async function setWorldFeatureGrant(
+  worldId: string,
+  feature: string,
+  granted: boolean,
+): Promise<void> {
+  if (!isTauri) {
+    throw new Error("World platform features are only available in the local application.");
+  }
+  return (await getTauri()).setWorldFeatureGrant(worldId, feature, granted);
+}
+
 export async function answerInteraction(
   sessionId: string,
   messageId: string,
@@ -301,6 +340,25 @@ export async function answerInteraction(
     throw new Error("Interactions are only available in the local application.");
   }
   return (await getTauri()).answerInteraction(sessionId, messageId, interactionId, answer);
+}
+
+export async function fetchSessionGenerationParams(
+  sessionId: string,
+): Promise<SessionGenerationParamsResponse> {
+  if (!isTauri) {
+    throw new Error("生成参数设置仅在本地应用中可用。");
+  }
+  return (await getTauri()).fetchSessionGenerationParams(sessionId);
+}
+
+export async function updateSessionGenerationParams(
+  sessionId: string,
+  params: GenerationParams,
+): Promise<SessionGenerationParamsResponse> {
+  if (!isTauri) {
+    throw new Error("生成参数设置仅在本地应用中可用。");
+  }
+  return (await getTauri()).updateSessionGenerationParams(sessionId, params);
 }
 
 export async function deleteWorld(worldId: string) {
@@ -549,6 +607,28 @@ export async function getExportDirectorySuggestion() {
 
 export async function fetchPlugins() {
   return isTauri ? (await getTauri()).fetchPlugins() : (await getHttp()).fetchPlugins();
+}
+
+export async function fetchMcpServers() {
+  return isTauri ? (await getTauri()).fetchMcpServers() : (await getHttp()).fetchMcpServers();
+}
+
+export async function createMcpServer(payload: McpServerUpsertRequest) {
+  return isTauri ? (await getTauri()).createMcpServer(payload) : (await getHttp()).createMcpServer(payload);
+}
+
+export async function updateMcpServer(serverId: string, payload: McpServerUpsertRequest) {
+  return isTauri
+    ? (await getTauri()).updateMcpServer(serverId, payload)
+    : (await getHttp()).updateMcpServer(serverId, payload);
+}
+
+export async function deleteMcpServer(serverId: string) {
+  return isTauri ? (await getTauri()).deleteMcpServer(serverId) : (await getHttp()).deleteMcpServer(serverId);
+}
+
+export async function probeMcpServer(serverId: string) {
+  return isTauri ? (await getTauri()).probeMcpServer(serverId) : (await getHttp()).probeMcpServer(serverId);
 }
 
 export async function fetchMcpTools() {

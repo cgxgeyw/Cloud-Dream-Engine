@@ -1,4 +1,5 @@
 use crate::models::character::CharacterDefinition;
+use crate::models::generation_params::GENERATION_ROLE_CHARACTER;
 use crate::models::mcp_tool::MCP_TOOL_SCHEDULE_NOTIFICATION_ID;
 use crate::models::session::*;
 use crate::models::world::WorldDefinition;
@@ -15,6 +16,7 @@ use crate::services::notifications::{
 use super::run::*;
 use super::turn_context::*;
 use super::writeback::*;
+use crate::services::game_engine::prompting::load_prompt_kv_vars;
 
 impl SessionOrchestrator {
     pub async fn run_speaker_turns(
@@ -32,6 +34,7 @@ impl SessionOrchestrator {
         mut messages: Vec<ChatMessage>,
         planned_speakers: &[String],
         player_input: &str,
+        player_media: &[ContentPart],
         next_scene_name: &str,
         next_location: &str,
         visible_chars: &[String],
@@ -39,6 +42,15 @@ impl SessionOrchestrator {
         mut progress_callback: Option<&mut (dyn FnMut(SpeakerTurnProgress) + Send)>,
     ) -> Result<SpeakerTurnRunResult, String> {
         let completed_speaker_steps = completed_speaker_steps_from_journal(recovery_journal);
+        // 会话级 variables KV（第 6 项 {{var:key}} 占位符的数据源）
+        // 与应用级生成参数（第 8 项三级覆盖的第一层）一起在同一次加锁内读出。
+        let (kv_vars, app_settings) = {
+            let guard = db.lock().await;
+            (
+                load_prompt_kv_vars(guard.conn(), session_id)?,
+                resolve_settings(guard.conn())?,
+            )
+        };
         let mut pending_notifications = Vec::new();
         let mut runtime_payloads = Vec::<serde_json::Value>::new();
         let mut speaker_step_index = 0;
@@ -105,6 +117,9 @@ impl SessionOrchestrator {
                         .map(|character| character.model.as_str())
                         .filter(|value| !value.trim().is_empty()),
                 )?;
+                // 第 10 项（校验点 B）：附件只发给声明了对应输入模态的模型，
+                // 不支持即明确报错（中文文案），不静默丢弃。
+                crate::models::model_config::ensure_media_supported(&speaker_model, player_media)?;
                 let speaker_character_id = speaker_char.map(|character| character.id.as_str());
                 let visible_attribute_lines =
                     load_character_visible_attribute_lines(conn, session, speaker_character_id)?;
@@ -181,6 +196,15 @@ impl SessionOrchestrator {
                     &visible_attribute_lines,
                     &visible_inventory_items,
                     &public_scene_state_lines,
+                    &kv_vars,
+                    &resolve_generation_params_with_model(
+                        GENERATION_ROLE_CHARACTER,
+                        &app_settings,
+                        world,
+                        session,
+                        &speaker_model,
+                    ),
+                    player_media,
                 );
                 speaker_request.stream = Some(
                     speaker_model.streaming_enabled
@@ -191,7 +215,8 @@ impl SessionOrchestrator {
                     "provider": speaker_provider,
                     "base_url": speaker_model.base_url,
                     "model_id": speaker_model.model_id,
-                    "request": serde_json::to_value(&speaker_request).unwrap_or_default(),
+                    // 第 10 项：multipart 消息中的媒体 base64 在 trace 里只留摘要。
+                    "request": crate::services::game_engine::prompting::redact_request_value_for_trace(&speaker_request),
                 });
                 (
                     recalled_memories,
@@ -440,6 +465,9 @@ impl SessionOrchestrator {
                             "content": parsed_response.content.clone(),
                             "narration": parsed_response.narration.clone(),
                         }),
+                        &kv_vars,
+                        &speaker_request.generation,
+                        player_media,
                     );
                     let raw_response = if response.content.trim().is_empty() {
                         streamed_raw_response.clone()
@@ -601,6 +629,9 @@ impl SessionOrchestrator {
                         String::new(),
                         serde_json::json!({ "error": e.clone() }),
                         serde_json::json!({ "error": e.clone() }),
+                        &kv_vars,
+                        &speaker_request.generation,
+                        player_media,
                     );
                     let _ = record_prompt_call(
                         conn,

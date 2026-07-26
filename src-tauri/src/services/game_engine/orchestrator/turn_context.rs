@@ -1,4 +1,5 @@
 use crate::models::character::{resolve_character_narration_prompt, CharacterDefinition};
+use crate::models::generation_params::GenerationParams;
 use crate::models::memory::MemoryEntry;
 use crate::models::mcp_tool::{
     director_config_allows_mcp_tool, MCP_TOOL_SCHEDULE_NOTIFICATION_ID,
@@ -9,7 +10,7 @@ use crate::models::settings::AppSettings;
 use crate::models::world::WorldDefinition;
 use crate::services::game_engine::dialogue::DialoguePipeline;
 use crate::services::game_engine::prompting::{
-    build_prompt_call, collect_prompt_preset_contents, llm_chat_messages_to_values,
+    build_prompt_call, llm_chat_messages_to_values, recent_messages_text, resolve_prompt_modules,
     render_prompt_variables, resolve_runtime_context_prompt,
 };
 use crate::services::game_engine::structured_output::StructuredOutputFailure;
@@ -18,22 +19,48 @@ use rusqlite::{params, Connection};
 use std::collections::HashMap;
 
 pub(crate) fn resolve_settings(conn: &Connection) -> Result<AppSettings, String> {
-    let mut stmt = conn
-        .prepare("SELECT text_model_provider, default_text_model, image_model_provider, default_image_workflow, embedding_enabled, default_embedding_model, home_background_strategy, export_directory FROM settings WHERE id = 1")
-        .map_err(|e| e.to_string())?;
-    stmt.query_row([], |row| {
-        Ok(AppSettings {
-            text_model_provider: row.get(0)?,
-            default_text_model: row.get(1)?,
-            image_model_provider: row.get(2)?,
-            default_image_workflow: row.get(3)?,
-            embedding_enabled: row.get::<_, i64>(4)? != 0,
-            default_embedding_model: row.get(5)?,
-            home_background_strategy: row.get(6)?,
-            export_directory: row.get(7)?,
-        })
-    })
-    .map_err(|e| e.to_string())
+    crate::commands::settings::load_app_settings(conn)
+}
+
+/// 世界级生成参数：写在 `director_config.generation_params`，随世界包导入导出。
+pub fn world_generation_params(world: &WorldDefinition) -> Option<GenerationParams> {
+    GenerationParams::from_json(world.director_config.get("generation_params"))
+}
+
+/// 解析某次调用最终使用的生成参数（第 8 项）：
+/// 角色内置默认 → 应用设置 → 世界 → 会话，逐层覆盖，只有本层显式给了值才生效。
+fn resolve_generation_params(
+    role: &str,
+    settings: &AppSettings,
+    world: &WorldDefinition,
+    session: &SessionSnapshot,
+) -> GenerationParams {
+    let world_params = world_generation_params(world);
+    let session_params = (!session.generation_params.is_empty())
+        .then(|| session.generation_params.clone());
+    GenerationParams::resolve_for_role(
+        role,
+        &settings.generation_params,
+        world_params.as_ref(),
+        session_params.as_ref(),
+    )
+}
+
+/// 生成参数解析结果 + 模型连接配置里的 max_tokens 兜底。
+/// 连接配置的 max_tokens 是「这个模型最多能出多少」，生成参数没显式配时沿用它，
+/// 与改造前行为一致。
+pub fn resolve_generation_params_with_model(
+    role: &str,
+    settings: &AppSettings,
+    world: &WorldDefinition,
+    session: &SessionSnapshot,
+    model: &ModelConfig,
+) -> GenerationParams {
+    let mut resolved = resolve_generation_params(role, settings, world, session);
+    if resolved.max_tokens.is_none() {
+        resolved.max_tokens = Some(model.max_tokens);
+    }
+    resolved
 }
 
 pub(crate) fn resolve_text_model(
@@ -111,6 +138,8 @@ pub(crate) fn build_character_prompt_artifacts(
     next_scene_name: &str,
     next_location: &str,
     visible_characters: &[String],
+    kv_vars: &std::collections::HashMap<String, String>,
+    player_media: &[ContentPart],
 ) -> CharacterPromptArtifacts {
     let speaker_character_id = speaker_profile.map(|profile| profile.id.as_str());
     let visibility_context = build_character_visibility_context_payload(
@@ -152,7 +181,13 @@ pub(crate) fn build_character_prompt_artifacts(
         vars.insert("time".to_string(), session.time_label.clone());
         vars
     };
-    let preset_contents = collect_prompt_preset_contents(world, "character", &preset_variables);
+    let module_resolution = resolve_prompt_modules(
+        world,
+        "character",
+        &preset_variables,
+        kv_vars,
+        &recent_messages_text(&session.messages, 10),
+    );
     let init_payload = build_character_init_payload(world, speaker_name, speaker_profile, session);
     let turn_payload = build_character_turn_payload(
         world,
@@ -270,30 +305,32 @@ pub(crate) fn build_character_prompt_artifacts(
             }),
         );
     }
-    for (offset, content) in preset_contents.iter().enumerate() {
-        modules.insert(
-            1 + offset,
-            serde_json::json!({
-                "name": format!("Prompt preset #{}", offset + 1),
-                "source": "World design / prompt preset (scope: character)",
-                "content": content,
-                "editable": true,
-                "sent": true
-            }),
-        );
+    for (offset, trace) in module_resolution.traces.iter().enumerate() {
+        modules.insert(1 + offset, trace.clone());
     }
-    let mut messages = vec![
-        crate::services::llm::client::ChatMessage {
+    let mut messages: Vec<crate::services::llm::client::ChatMessage> = module_resolution
+        .prefix
+        .iter()
+        .map(|content| crate::services::llm::client::ChatMessage {
             role: "system".to_string(),
-            content: serde_json::Value::String(system_prompt.clone()),
+            content: serde_json::Value::String(content.clone()),
             reasoning_content: None,
             speaker: None,
             tool_call_id: None,
             tool_calls: None,
             metadata: None,
-        },
-    ];
-    for content in &preset_contents {
+        })
+        .collect();
+    messages.push(crate::services::llm::client::ChatMessage {
+        role: "system".to_string(),
+        content: serde_json::Value::String(system_prompt.clone()),
+        reasoning_content: None,
+        speaker: None,
+        tool_call_id: None,
+        tool_calls: None,
+        metadata: None,
+    });
+    for content in &module_resolution.suffix {
         messages.push(crate::services::llm::client::ChatMessage {
             role: "system".to_string(),
             content: serde_json::Value::String(content.clone()),
@@ -349,7 +386,8 @@ pub(crate) fn build_character_prompt_artifacts(
         },
         crate::services::llm::client::ChatMessage {
             role: "user".to_string(),
-            content: serde_json::Value::String(turn_payload.clone()),
+            // 第 10 项：当前回合玩家附件以 multipart 随本条消息下发（仅当前回合）。
+            content: crate::models::session::build_wire_content(&turn_payload, player_media),
             reasoning_content: None,
             speaker: Some(player_character_name.to_string()),
             tool_call_id: None,
@@ -358,6 +396,25 @@ pub(crate) fn build_character_prompt_artifacts(
         },
     ]);
 
+    // 历史深度插入（第 6 项）：depth:N = 距末尾 N 条处插入系统消息。
+    for (depth, content) in &module_resolution.depth_insertions {
+        if content.trim().is_empty() {
+            continue;
+        }
+        let index = messages.len().saturating_sub(*depth);
+        messages.insert(
+            index,
+            crate::services::llm::client::ChatMessage {
+                role: "system".to_string(),
+                content: serde_json::Value::String(content.clone()),
+                reasoning_content: None,
+                speaker: None,
+                tool_call_id: None,
+                tool_calls: None,
+                metadata: None,
+            },
+        );
+    }
     CharacterPromptArtifacts {
         system_prompt,
         narration_prompt,
@@ -398,6 +455,9 @@ pub(crate) fn build_character_prompt_trace(
     raw_model_return: String,
     processed_model_return: serde_json::Value,
     written_result: serde_json::Value,
+    kv_vars: &std::collections::HashMap<String, String>,
+    generation: &GenerationParams,
+    player_media: &[ContentPart],
 ) -> serde_json::Value {
     let artifacts = build_character_prompt_artifacts(
         dialogue_pipeline,
@@ -418,6 +478,8 @@ pub(crate) fn build_character_prompt_trace(
         next_scene_name,
         next_location,
         visible_characters,
+        kv_vars,
+        player_media,
     );
     let prompt_call = build_prompt_call(
         "prompt_call_v2",
@@ -441,6 +503,12 @@ pub(crate) fn build_character_prompt_trace(
             "turn_payload": artifacts.turn_payload,
             "scene_state": artifacts.scene_state,
             "visibility_context": artifacts.visibility_context,
+            // 第 8 项：本次实际使用的采样参数与被 provider 过滤掉的项。
+            "request_params": crate::services::llm::param_support::describe_params_for_trace(
+                speaker_provider,
+                generation,
+                serde_json::json!({ "json_mode": true }),
+            ),
         }),
     );
     let mut prompt_call = prompt_call;
@@ -476,6 +544,9 @@ pub(crate) fn build_character_chat_request(
     visible_attribute_lines: &[String],
     visible_inventory_items: &[InventoryItem],
     public_scene_state_lines: &[String],
+    kv_vars: &std::collections::HashMap<String, String>,
+    generation: &GenerationParams,
+    player_media: &[ContentPart],
 ) -> crate::services::llm::client::ChatRequest {
     let artifacts = build_character_prompt_artifacts(
         dialogue_pipeline,
@@ -496,6 +567,8 @@ pub(crate) fn build_character_chat_request(
         scene_name,
         location,
         &session.visible_characters,
+        kv_vars,
+        player_media,
     );
     let notification_tool_allowed = director_config_allows_mcp_tool(
         &world.director_config,
@@ -509,8 +582,7 @@ pub(crate) fn build_character_chat_request(
     crate::services::llm::client::ChatRequest {
         model: model.model_id.to_string(),
         messages: artifacts.messages,
-        temperature: Some(0.8),
-        max_tokens: Some(model.max_tokens),
+        generation: generation.clone(),
         stream: Some(model.streaming_enabled && !native_tool_calling),
         json_mode: Some(true),
         response_schema: Some(build_character_response_schema()),
@@ -680,7 +752,8 @@ pub(crate) fn build_recent_dialogue_payload(
             serde_json::json!({
                 "role": message.role,
                 "speaker": resolve_history_speaker(message, Some(player_character_name)),
-                "content": message.content,
+                // 第 10 项：历史消息中的媒体渲染为占位文本，不重复下发 base64。
+                "content": message.content.as_prompt_text(),
             })
         })
         .collect()
@@ -1622,6 +1695,265 @@ mod tests {
         assert_eq!(
             resolve_character_memory_recall_limit(Some(&profile_with_strategy("无记忆"))),
             0
+        );
+    }
+
+    // ---- 第 8 项：生成参数三级覆盖（走真实 DB 读写，验收「不改代码即可调整」）----
+
+    fn params_test_world(generation_params: serde_json::Value) -> WorldDefinition {
+        WorldDefinition {
+            id: "world-params".to_string(),
+            name: "参数世界".to_string(),
+            genre: String::new(),
+            background_prompt: String::new(),
+            opening_scene: "开场".to_string(),
+            summary: String::new(),
+            time_system: String::new(),
+            map_nodes: serde_json::json!({ "version": 1, "nodes": [] }),
+            triggers: Vec::new(),
+            time_config: serde_json::json!({}),
+            director_config: serde_json::json!({ "generation_params": generation_params }),
+            ui_theme_config: serde_json::json!({}),
+            director_system_prompt_base: String::new(),
+            director_runtime_system_prompt: String::new(),
+            opening_messages: Vec::new(),
+            opening_character_ids: Vec::new(),
+            player_character_id: None,
+        }
+    }
+
+    fn params_test_session(id: &str, world_name: &str) -> SessionSnapshot {
+        SessionSnapshot {
+            id: id.to_string(),
+            world_name: world_name.to_string(),
+            location: "开场".to_string(),
+            time_label: String::new(),
+            current_speaker: String::new(),
+            current_line: String::new(),
+            player_character_id: String::new(),
+            player_character_name: "玩家".to_string(),
+            visible_characters: Vec::new(),
+            messages: Vec::new(),
+            player_stats: Vec::new(),
+            map_graph_nodes: Vec::new(),
+            map_graph_edges: Vec::new(),
+            inventory_items: Vec::new(),
+            system_log: Vec::new(),
+            scene: Default::default(),
+            assets: Default::default(),
+            state: Default::default(),
+            generation_params: Default::default(),
+        }
+    }
+
+    #[test]
+    fn character_request_carries_player_media_as_multipart() {
+        let world = params_test_world(serde_json::json!({}));
+        let session = params_test_session("session-media", "参数世界");
+        let character = profile_with_strategy("");
+        let pipeline = DialoguePipeline::new();
+        let media = vec![crate::models::session::ContentPart {
+            part_type: "image_url".to_string(),
+            text: None,
+            image_url: Some(crate::models::session::ImageUrl {
+                url: "data:image/png;base64,QUJD".to_string(),
+            }),
+            input_audio: None,
+        }];
+
+        let request = build_character_chat_request(
+            &pipeline,
+            &world,
+            &params_test_model(),
+            "Alice",
+            Some(&character),
+            &session,
+            "玩家",
+            "开场",
+            "开场",
+            "看图说话",
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &std::collections::HashMap::new(),
+            &GenerationParams::default(),
+            &media,
+        );
+
+        let user_message = request
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == "user")
+            .expect("user message");
+        let parts = user_message
+            .content
+            .as_array()
+            .expect("multipart user content");
+        assert_eq!(parts[0]["type"], "text");
+        assert!(parts[0]["text"]
+            .as_str()
+            .unwrap_or("")
+            .contains("看图说话"));
+        assert_eq!(
+            parts[1].pointer("/image_url/url").and_then(|v| v.as_str()),
+            Some("data:image/png;base64,QUJD")
+        );
+
+        // 无媒体时 content 仍是字符串（纯文本时代行为不变）
+        let plain_request = build_character_chat_request(
+            &pipeline,
+            &world,
+            &params_test_model(),
+            "Alice",
+            Some(&character),
+            &session,
+            "玩家",
+            "开场",
+            "开场",
+            "纯文本",
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &std::collections::HashMap::new(),
+            &GenerationParams::default(),
+            &[],
+        );
+        let plain_user = plain_request
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == "user")
+            .expect("user message");
+        assert!(plain_user.content.is_string());
+    }
+
+    fn params_test_model() -> ModelConfig {
+        ModelConfig {
+            id: "m-params".to_string(),
+            name: "test".to_string(),
+            model_type: "text".to_string(),
+            provider: "openai".to_string(),
+            model_id: "gpt-test".to_string(),
+            base_url: "http://localhost".to_string(),
+            api_key: String::new(),
+            max_tokens: 1234,
+            streaming_enabled: false,
+            is_default: true,
+            input_modalities: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn session_generation_params_survive_a_db_round_trip() {
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        crate::db::schema::create_tables(&conn).expect("create schema");
+        let repo = crate::db::repositories::session_repo::SessionRepository::new(&conn);
+        let mut session = params_test_session("sess-params", "参数世界");
+        session.generation_params = GenerationParams {
+            temperature: Some(1.25),
+            stop: Some(vec!["【完】".to_string()]),
+            ..Default::default()
+        };
+        repo.upsert(&session).expect("upsert session");
+
+        let loaded = repo
+            .get("sess-params")
+            .expect("load session")
+            .expect("session exists");
+
+        assert_eq!(loaded.generation_params.temperature, Some(1.25));
+        assert_eq!(
+            loaded.generation_params.stop,
+            Some(vec!["【完】".to_string()])
+        );
+        assert!(
+            loaded.generation_params.top_p.is_none(),
+            "没配的参数读回来仍是没配"
+        );
+    }
+
+    #[test]
+    fn world_and_session_layers_override_app_settings_without_code_changes() {
+        let mut settings = AppSettings::default();
+        settings.generation_params = GenerationParams {
+            temperature: Some(0.4),
+            top_p: Some(0.95),
+            ..Default::default()
+        };
+        let world = params_test_world(serde_json::json!({ "temperature": 1.15, "seed": 99 }));
+        let mut session = params_test_session("sess-1", &world.name);
+
+        // 只有应用 + 世界两层时：世界层的 temperature 生效，应用层的 top_p 仍在。
+        let world_level = resolve_generation_params(
+            crate::models::generation_params::GENERATION_ROLE_CHARACTER,
+            &settings,
+            &world,
+            &session,
+        );
+        assert_eq!(world_level.temperature, Some(1.15));
+        assert_eq!(world_level.top_p, Some(0.95));
+        assert_eq!(world_level.seed, Some(99));
+
+        // 存档自己再覆盖一层：会话层最高优先，其余层不受影响。
+        session.generation_params = GenerationParams {
+            temperature: Some(0.1),
+            ..Default::default()
+        };
+        let session_level = resolve_generation_params(
+            crate::models::generation_params::GENERATION_ROLE_CHARACTER,
+            &settings,
+            &world,
+            &session,
+        );
+        assert_eq!(session_level.temperature, Some(0.1));
+        assert_eq!(session_level.top_p, Some(0.95));
+        assert_eq!(session_level.seed, Some(99));
+    }
+
+    #[test]
+    fn max_tokens_falls_back_to_the_model_connection_config() {
+        // 连接配置的 max_tokens 是「这个模型最多出多少」，生成参数没配时必须沿用它，
+        // 否则改造后请求会丢掉 max_tokens、与改造前行为不一致。
+        let settings = AppSettings::default();
+        let world = params_test_world(serde_json::json!({}));
+        let session = params_test_session("sess-1", &world.name);
+
+        let resolved = resolve_generation_params_with_model(
+            crate::models::generation_params::GENERATION_ROLE_DIRECTOR,
+            &settings,
+            &world,
+            &session,
+            &params_test_model(),
+        );
+
+        assert_eq!(resolved.max_tokens, Some(1234));
+        assert_eq!(resolved.temperature, Some(0.7), "导演内置默认不变");
+    }
+
+    #[test]
+    fn world_layer_ignores_a_malformed_generation_params_block() {
+        let settings = AppSettings::default();
+        let world = params_test_world(serde_json::json!("温度高一点"));
+        let session = params_test_session("sess-1", &world.name);
+
+        let resolved = resolve_generation_params(
+            crate::models::generation_params::GENERATION_ROLE_CHARACTER,
+            &settings,
+            &world,
+            &session,
+        );
+
+        assert_eq!(
+            resolved.temperature,
+            Some(0.8),
+            "世界包写坏了就当没配，回落到内置默认而不是报错"
         );
     }
 }

@@ -29,7 +29,9 @@ import {
   type WorldResponse,
 } from "../data/apiAdapter";
 import { AttributePanel } from "../components/AttributePanel";
+import { GenerationParamsEditor } from "../components/GenerationParamsEditor";
 import { ConfirmDialog } from "../components/ModalDialog";
+import type { GenerationParams } from "../data/types";
 import { useIsMobile } from "../components/ResponsiveLayout";
 import { useSectionParam } from "../hooks/useSectionParam";
 import { useWorldPromptPreview } from "../hooks/useWorldPromptPreview";
@@ -112,6 +114,8 @@ type DirectorConfig = {
   prompt_presets: PromptPreset[];
   return_processing_rules: ReturnProcessingRule[];
   allowed_mcp_tool_ids: string[];
+  /** 世界级生成参数（第 8 项）。留空的项交给应用默认，玩家还能在存档里再覆盖。 */
+  generation_params: GenerationParams;
 };
 
 type PromptPreset = {
@@ -185,6 +189,7 @@ const defaultDirectorConfig: DirectorConfig = {
   prompt_presets: [],
   return_processing_rules: [],
   allowed_mcp_tool_ids: [],
+  generation_params: {},
 };
 
 const defaultTimeConfig: TimeConfig = {
@@ -485,7 +490,39 @@ function normalizeDirectorConfig(raw: Record<string, unknown> | undefined): Dire
     allowed_mcp_tool_ids: Array.isArray(raw?.allowed_mcp_tool_ids)
       ? Array.from(new Set(raw.allowed_mcp_tool_ids.map((item) => String(item).trim()).filter(Boolean)))
       : defaultDirectorConfig.allowed_mcp_tool_ids,
+    generation_params: normalizeGenerationParams(raw?.generation_params),
   };
+}
+
+/** 只收数字/字符串数组类型的参数项，其余（手写坏了的世界包）按「没配」处理。 */
+function normalizeGenerationParams(raw: unknown): GenerationParams {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return {};
+  }
+  const row = raw as Record<string, unknown>;
+  const result: GenerationParams = {};
+  const numericKeys = [
+    "temperature",
+    "top_p",
+    "top_k",
+    "max_tokens",
+    "presence_penalty",
+    "frequency_penalty",
+    "seed",
+  ] as const;
+  for (const key of numericKeys) {
+    const value = row[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      result[key] = value;
+    }
+  }
+  if (Array.isArray(row.stop)) {
+    const stop = row.stop.map((item) => String(item).trim()).filter(Boolean);
+    if (stop.length > 0) {
+      result.stop = stop;
+    }
+  }
+  return result;
 }
 
 function normalizeTimeConfig(raw: Record<string, unknown> | undefined): TimeConfig {
@@ -2081,6 +2118,16 @@ export function WorldEditorPage() {
                   </div>
                 </FoldableEditorSection>
               ) : null}
+
+              <FoldableEditorSection
+                title="生成参数"
+                description="本世界的采样参数。留空的项用应用设置里的全局默认；玩家还能在自己的存档里再覆盖。所连服务不支持的参数会被自动过滤。"
+              >
+                <GenerationParamsEditor
+                  value={directorConfig.generation_params}
+                  onChange={(next) => updateDirectorPatch({ generation_params: next })}
+                />
+              </FoldableEditorSection>
 
               <FoldableEditorSection title="角色记忆">
                 <div className="settings-form-grid">

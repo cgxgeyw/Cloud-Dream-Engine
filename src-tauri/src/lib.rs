@@ -69,6 +69,9 @@ pub fn run() {
             commands::world_kv::get_world_kv,
             commands::world_kv::set_world_kv,
             commands::world_kv::delete_world_kv,
+            commands::platform_features::invoke_world_platform_feature,
+            commands::platform_features::list_world_feature_grants,
+            commands::platform_features::set_world_feature_grant,
             commands::game_ui::validate_world_ui_document,
             commands::game_ui::validate_world_ui_bundle,
             commands::game_ui::compile_world_ui_document,
@@ -93,6 +96,8 @@ pub fn run() {
             commands::sessions::get_session_runtime_attributes,
             commands::sessions::edit_session_message,
             commands::sessions::answer_interaction,
+            commands::sessions::get_session_generation_params,
+            commands::sessions::update_session_generation_params,
             commands::sessions::regenerate_last_turn,
             // 存档
             commands::saves::list_saves,
@@ -135,6 +140,11 @@ pub fn run() {
             // 插件
             commands::plugins::list_plugins,
             // MCP 工具
+            commands::mcp_servers::list_mcp_servers,
+            commands::mcp_servers::create_mcp_server,
+            commands::mcp_servers::update_mcp_server,
+            commands::mcp_servers::delete_mcp_server,
+            commands::mcp_servers::probe_mcp_server,
             commands::mcp_tools::list_mcp_tools,
             commands::mcp_tools::create_mcp_tool,
             commands::mcp_tools::update_mcp_tool,

@@ -10,8 +10,20 @@ use super::client::{
 struct OpenAIRequest {
     model: String,
     messages: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stop: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    presence_penalty: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    frequency_penalty: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    seed: Option<i64>,
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     stream_options: Option<serde_json::Value>,
@@ -119,11 +131,18 @@ fn build_openai_request(
         }
     };
 
+    // 参数已在 LlmClient 层按 provider 过滤过，这里只做序列化落位。
+    let params = &request.generation;
     OpenAIRequest {
         model: request.model.clone(),
         messages: request.messages.iter().map(build_openai_message).collect(),
-        temperature: request.temperature,
-        max_tokens: request.max_tokens,
+        temperature: params.temperature,
+        max_tokens: params.max_tokens,
+        top_p: params.top_p,
+        stop: params.stop.clone(),
+        presence_penalty: params.presence_penalty,
+        frequency_penalty: params.frequency_penalty,
+        seed: params.seed,
         stream: false,
         stream_options: None,
         response_format,
@@ -733,8 +752,11 @@ mod tests {
         let request = ChatRequest {
             model: "test-model".to_string(),
             messages: vec![],
-            temperature: Some(0.1),
-            max_tokens: Some(32),
+            generation: crate::models::generation_params::GenerationParams {
+                temperature: Some(0.1),
+                max_tokens: Some(32),
+                ..Default::default()
+            },
             stream: Some(false),
             json_mode: Some(true),
             response_schema: None,
@@ -756,8 +778,11 @@ mod tests {
         let request = ChatRequest {
             model: "test-model".to_string(),
             messages: vec![],
-            temperature: Some(0.1),
-            max_tokens: Some(32),
+            generation: crate::models::generation_params::GenerationParams {
+                temperature: Some(0.1),
+                max_tokens: Some(32),
+                ..Default::default()
+            },
             stream: Some(true),
             json_mode: Some(true),
             response_schema: None,
@@ -778,8 +803,11 @@ mod tests {
         let request = ChatRequest {
             model: "test-model".to_string(),
             messages: vec![],
-            temperature: Some(0.1),
-            max_tokens: Some(32),
+            generation: crate::models::generation_params::GenerationParams {
+                temperature: Some(0.1),
+                max_tokens: Some(32),
+                ..Default::default()
+            },
             stream: Some(false),
             json_mode: Some(false),
             response_schema: None,
@@ -800,8 +828,11 @@ mod tests {
         let request = ChatRequest {
             model: "test-model".to_string(),
             messages: vec![],
-            temperature: Some(0.1),
-            max_tokens: Some(32),
+            generation: crate::models::generation_params::GenerationParams {
+                temperature: Some(0.1),
+                max_tokens: Some(32),
+                ..Default::default()
+            },
             stream: Some(false),
             json_mode: Some(true),
             response_schema: None,
@@ -823,8 +854,11 @@ mod tests {
         let request = ChatRequest {
             model: "test-model".to_string(),
             messages: vec![],
-            temperature: Some(0.1),
-            max_tokens: Some(32),
+            generation: crate::models::generation_params::GenerationParams {
+                temperature: Some(0.1),
+                max_tokens: Some(32),
+                ..Default::default()
+            },
             stream: Some(false),
             json_mode: Some(true),
             response_schema: None,
@@ -951,8 +985,11 @@ mod tests {
         let request = ChatRequest {
             model: "test-model".to_string(),
             messages: vec![],
-            temperature: Some(0.1),
-            max_tokens: Some(32),
+            generation: crate::models::generation_params::GenerationParams {
+                temperature: Some(0.1),
+                max_tokens: Some(32),
+                ..Default::default()
+            },
             stream: Some(false),
             json_mode: Some(true),
             response_schema: None,

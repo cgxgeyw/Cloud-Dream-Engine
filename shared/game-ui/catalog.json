@@ -1,0 +1,241 @@
+{
+  "schema_version": 1,
+  "comment": "世界包 UI 组件目录（唯一来源）。前端渲染注册表、结构编辑器与后端校验清单都从本文件生成；新增组件/动作/能力只改这里。组件集合变更不影响现有世界包。",
+  "capabilities": [
+    { "id": "supports_file_picker", "description": "文件选择器（图片 / 附件选择）" },
+    { "id": "supports_hover", "description": "悬停交互（仅桌面端为真）" },
+    { "id": "supports_mic", "description": "麦克风录音" },
+    { "id": "supports_world_records", "description": "世界记录存储（records，UI runtime v3 起）" },
+    { "id": "supports_world_storage", "description": "世界变量存储与沙箱逻辑（kv / logic.js）" }
+  ],
+  "actions": [
+    { "id": "submit_message", "description": "提交当前输入草稿", "input": { "mode": "submit|edit|resend", "content": "string?", "turn_index": "number?" } },
+    { "id": "edit_turn_start", "description": "开始编辑某个玩家回合", "input": { "content": "string", "turn_index": "number" } },
+    { "id": "edit_turn_cancel", "description": "取消当前编辑状态", "input": {} },
+    { "id": "branch_from_current", "description": "从当前状态创建分支存档", "input": {} },
+    { "id": "retry_turn", "description": "重试失败的模型步骤", "input": { "retry_token": "string" } },
+    { "id": "accept_switch_proposal", "description": "接受角色切换提议", "input": { "proposal_key": "string" } },
+    { "id": "dismiss_switch_proposal", "description": "忽略角色切换提议", "input": { "proposal_key": "string" } },
+    { "id": "dismiss_retry_card", "description": "关闭重试卡片", "input": { "card_key": "string" } },
+    { "id": "copy_text", "description": "复制任意文本", "input": { "text": "string" } },
+    { "id": "switch_side_tab", "description": "切换侧边标签页", "input": { "tab_key": "string" } },
+    { "id": "navigate_back", "description": "返回上一个应用页面", "input": {} },
+    { "id": "navigate_home", "description": "返回首页", "input": {} },
+    { "id": "navigate_settings", "description": "前往设置页", "input": {} },
+    { "id": "navigate_debug", "description": "前往当前会话调试页", "input": {} },
+    { "id": "pick_image", "description": "打开图片选择器，或把所选图片加入当前草稿", "input": { "files": "File[]?" } },
+    { "id": "remove_image", "description": "从当前草稿移除一张图片附件", "input": { "index": "number" } },
+    { "id": "start_recording", "description": "开始为当前草稿录音", "input": {} },
+    { "id": "stop_recording", "description": "停止录音并把音频加入当前草稿", "input": {} },
+    { "id": "remove_audio", "description": "从当前草稿移除一段音频附件", "input": { "index": "number" } },
+    {
+      "id": "storage.records.list",
+      "description": "列出世界记录集合",
+      "input": { "collection": "string" },
+      "implies_capabilities": ["supports_world_storage"]
+    },
+    {
+      "id": "storage.records.create",
+      "description": "在世界记录集合中新建一条记录",
+      "input": { "collection": "string", "data": "object" },
+      "implies_capabilities": ["supports_world_storage"]
+    },
+    {
+      "id": "storage.records.update",
+      "description": "更新一条世界记录",
+      "input": { "collection": "string", "record_id": "string", "data": "object" },
+      "implies_capabilities": ["supports_world_storage"]
+    },
+    {
+      "id": "storage.records.delete",
+      "description": "删除一条世界记录",
+      "input": { "collection": "string", "record_id": "string" },
+      "implies_capabilities": ["supports_world_storage"]
+    },
+    {
+      "id": "storage.kv.list",
+      "description": "列出命名空间下的变量键",
+      "input": { "namespace": "string", "scope": "object?" },
+      "implies_capabilities": ["supports_world_storage"]
+    },
+    {
+      "id": "storage.kv.get",
+      "description": "读取一个变量",
+      "input": { "namespace": "string", "key": "string", "scope": "object?" },
+      "implies_capabilities": ["supports_world_storage"]
+    },
+    {
+      "id": "storage.kv.set",
+      "description": "写入一个变量",
+      "input": { "namespace": "string", "key": "string", "value": "any", "scope": "object?" },
+      "implies_capabilities": ["supports_world_storage"]
+    },
+    {
+      "id": "storage.kv.delete",
+      "description": "删除一个变量",
+      "input": { "namespace": "string", "key": "string", "scope": "object?" },
+      "implies_capabilities": ["supports_world_storage"]
+    },
+    {
+      "id": "logic.run",
+      "description": "调用世界包 logic.js 中的指定处理函数",
+      "input": { "handler": "string", "input": "any?" },
+      "implies_capabilities": ["supports_world_storage"]
+    }
+  ],
+  "components": [
+    {
+      "id": "scene_header",
+      "label": "顶栏",
+      "description": "页面顶部信息条：世界名、地点、时间、当前玩家等。",
+      "props": {
+        "show_world_name": "boolean",
+        "show_location": "boolean",
+        "show_time_label": "boolean",
+        "show_player_identity": "boolean",
+        "player_identity_format": "label|action_phrase",
+        "show_visible_characters": "boolean",
+        "show_copy_button": "boolean",
+        "title_mode": "desktop|mobile"
+      },
+      "implicit_actions": ["copy_text"],
+      "implicit_capabilities": [],
+      "allowed_slots": []
+    },
+    {
+      "id": "scene_focus",
+      "label": "立绘焦点",
+      "description": "当前发言者的立绘与台词展示区。",
+      "props": {
+        "show_avatar": "boolean",
+        "show_line": "boolean",
+        "avatar_variant": "string"
+      },
+      "implicit_actions": [],
+      "implicit_capabilities": [],
+      "allowed_slots": []
+    },
+    {
+      "id": "character_bar",
+      "label": "在场角色",
+      "description": "显示当前场景在场角色的列表。",
+      "props": {
+        "empty_text": "string",
+        "max_items": "number",
+        "show_player": "boolean"
+      },
+      "implicit_actions": [],
+      "implicit_capabilities": [],
+      "allowed_slots": []
+    },
+    {
+      "id": "narration_card",
+      "label": "旁白卡",
+      "description": "展示旁白 / 场景描述文本。",
+      "props": {
+        "title": "string",
+        "show_copy_button": "boolean",
+        "empty_text": "string"
+      },
+      "implicit_actions": ["copy_text"],
+      "implicit_capabilities": [],
+      "allowed_slots": []
+    },
+    {
+      "id": "message_list",
+      "label": "对话列表",
+      "description": "滚动显示对话消息流。",
+      "props": {
+        "auto_scroll": "boolean",
+        "show_pending_state": "boolean",
+        "show_agent_reasoning": "boolean",
+        "show_typing_indicator": "boolean",
+        "mobile_simple": "boolean"
+      },
+      "implicit_actions": [
+        "submit_message",
+        "edit_turn_start",
+        "branch_from_current",
+        "retry_turn",
+        "accept_switch_proposal",
+        "dismiss_switch_proposal",
+        "dismiss_retry_card",
+        "copy_text"
+      ],
+      "implicit_capabilities": [],
+      "allowed_slots": []
+    },
+    {
+      "id": "input_composer",
+      "label": "输入框",
+      "description": "玩家发言输入区与发送按钮。",
+      "props": {
+        "placeholder": "string",
+        "submit_label": "string",
+        "editing_submit_label": "string",
+        "show_image_button": "boolean",
+        "show_audio_button": "boolean",
+        "show_session_meta": "boolean",
+        "enter_to_submit": "boolean"
+      },
+      "implicit_actions": [
+        "submit_message",
+        "edit_turn_cancel",
+        "pick_image",
+        "remove_image",
+        "start_recording",
+        "stop_recording",
+        "remove_audio"
+      ],
+      "implicit_capabilities": ["supports_file_picker", "supports_mic"],
+      "allowed_slots": []
+    },
+    {
+      "id": "side_panel_tabs",
+      "label": "侧边栏",
+      "description": "侧边状态面板，含地图 / 属性等标签页。",
+      "props": {
+        "show_map_tab": "boolean",
+        "show_attribute_tabs": "boolean",
+        "empty_text": "string",
+        "drawer_label": "string"
+      },
+      "implicit_actions": ["switch_side_tab"],
+      "implicit_capabilities": [],
+      "allowed_slots": ["content"]
+    },
+    {
+      "id": "floating_actions",
+      "label": "悬浮按钮",
+      "description": "返回 / 调试 / 设置等悬浮操作按钮。",
+      "props": {
+        "show_back": "boolean",
+        "show_debug": "boolean",
+        "show_settings": "boolean",
+        "back_label": "string",
+        "debug_label": "string",
+        "settings_label": "string",
+        "layout": "row|column|wrap"
+      },
+      "implicit_actions": ["navigate_back", "navigate_settings", "navigate_debug"],
+      "implicit_capabilities": [],
+      "allowed_slots": []
+    },
+    {
+      "id": "ledger_book",
+      "label": "账本",
+      "description": "独立账本页：收支记录、统计与分类管理（仅世界框架内渲染）。",
+      "props": {
+        "title": "string",
+        "collection": "string",
+        "currency": "string",
+        "default_view": "overview|transactions|stats",
+        "income_categories": "string[]",
+        "expense_categories": "string[]"
+      },
+      "implicit_actions": [],
+      "implicit_capabilities": ["supports_world_records"],
+      "allowed_slots": []
+    }
+  ]
+}

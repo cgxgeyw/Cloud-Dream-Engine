@@ -11,7 +11,11 @@ const MIGRATION_SCHEDULE_ATTRIBUTE_REPAIR: i64 = 4;
 const MIGRATION_EMBEDDING_MODEL_NAME_REPAIR: i64 = 5;
 const MIGRATION_MEMORY_LAYER_DEDUP: i64 = 6;
 const MIGRATION_SCOPED_KV: i64 = 7;
-const CURRENT_SCHEMA_VERSION: i64 = MIGRATION_SCOPED_KV;
+const MIGRATION_MCP_SERVERS: i64 = 8;
+const MIGRATION_GENERATION_PARAMS: i64 = 9;
+const MIGRATION_MODEL_INPUT_MODALITIES: i64 = 10;
+const MIGRATION_WORLD_FEATURE_GRANTS: i64 = 11;
+const CURRENT_SCHEMA_VERSION: i64 = MIGRATION_WORLD_FEATURE_GRANTS;
 
 fn ensure_column(
     conn: &Connection,
@@ -321,6 +325,59 @@ fn migrate_world_kv_to_scoped_kv(conn: &Connection) -> Result<(), rusqlite::Erro
     Ok(())
 }
 
+/// v8：新增 mcp_servers 连接配置表，并给 mcp_tools 补 server_id 外键列（第 7 项）。
+/// 旧库里的自定义工具 server_id 为空，配置页需重新指定 server 后才会下发给模型。
+fn migrate_mcp_servers(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS mcp_servers (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            transport TEXT NOT NULL DEFAULT 'http',
+            command TEXT NOT NULL DEFAULT '',
+            args_json TEXT NOT NULL DEFAULT '[]',
+            env_json TEXT NOT NULL DEFAULT '{}',
+            url TEXT NOT NULL DEFAULT '',
+            headers_json TEXT NOT NULL DEFAULT '{}',
+            auth_token TEXT NOT NULL DEFAULT '',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            timeout_ms INTEGER NOT NULL DEFAULT 15000,
+            max_result_bytes INTEGER NOT NULL DEFAULT 32768
+        );
+        ",
+    )?;
+    let has_server_id: bool = conn.query_row(
+        "SELECT COUNT(*) > 0 FROM pragma_table_info('mcp_tools') WHERE name = 'server_id'",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_server_id {
+        conn.execute_batch(
+            "ALTER TABLE mcp_tools ADD COLUMN server_id TEXT NOT NULL DEFAULT '';",
+        )?;
+    }
+    Ok(())
+}
+
+/// v9：生成参数（第 8 项）的应用级与会话级存储列。世界级存在
+/// `worlds.director_config_json` 的 `generation_params` 字段里，随世界包走，不需要新列。
+/// 两列都默认 `{}`（本层不覆盖任何参数），旧库升级后行为与改造前一致。
+fn migrate_generation_params(conn: &Connection) -> Result<(), rusqlite::Error> {
+    ensure_column(
+        conn,
+        "settings",
+        "generation_params_json",
+        "TEXT NOT NULL DEFAULT '{}'",
+    )?;
+    ensure_column(
+        conn,
+        "sessions",
+        "generation_params_json",
+        "TEXT NOT NULL DEFAULT '{}'",
+    )?;
+    Ok(())
+}
+
 pub(crate) fn run(conn: &Connection) -> Result<(), rusqlite::Error> {
     if schema_version(conn)? >= CURRENT_SCHEMA_VERSION {
         return Ok(());
@@ -361,6 +418,38 @@ pub(crate) fn run(conn: &Connection) -> Result<(), rusqlite::Error> {
         migrate_world_kv_to_scoped_kv(&tx)?;
         set_schema_version(&tx, MIGRATION_SCOPED_KV)?;
     }
+    if version < MIGRATION_MCP_SERVERS {
+        migrate_mcp_servers(&tx)?;
+        set_schema_version(&tx, MIGRATION_MCP_SERVERS)?;
+    }
+    if version < MIGRATION_GENERATION_PARAMS {
+        migrate_generation_params(&tx)?;
+        set_schema_version(&tx, MIGRATION_GENERATION_PARAMS)?;
+    }
+    if version < MIGRATION_MODEL_INPUT_MODALITIES {
+        // 第 10 项：模型声明支持的输入模态（JSON 数组，空 = 仅文本）。
+        ensure_column(
+            &tx,
+            "model_configs",
+            "input_modalities",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )?;
+        set_schema_version(&tx, MIGRATION_MODEL_INPUT_MODALITIES)?;
+    }
+    if version < MIGRATION_WORLD_FEATURE_GRANTS {
+        // 第 12 项：世界包平台能力的用户授权（宿主控制，世界包不可写）。
+        // granted 只有 1（允许）一行；未授权 = 无记录，拒绝即默认。
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS world_feature_grants (
+                world_id TEXT NOT NULL,
+                feature TEXT NOT NULL,
+                granted INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY (world_id, feature)
+            );",
+        )?;
+        set_schema_version(&tx, MIGRATION_WORLD_FEATURE_GRANTS)?;
+    }
 
     tx.commit()
 }
@@ -384,6 +473,7 @@ mod tests {
             );
             CREATE TABLE llm_call_traces (id TEXT PRIMARY KEY);
             CREATE TABLE saves (id TEXT PRIMARY KEY);
+            CREATE TABLE sessions (id TEXT PRIMARY KEY);
             CREATE TABLE mcp_tools (id TEXT PRIMARY KEY);
             CREATE TABLE worlds (
                 id TEXT PRIMARY KEY,
@@ -486,6 +576,19 @@ mod tests {
         assert!(column_exists(&conn, "characters", "system_prompt_template"));
         assert!(column_exists(&conn, "settings", "embedding_enabled"));
         assert!(column_exists(&conn, "mcp_tools", "input_schema_json"));
+        // v9：生成参数的应用级与会话级列（第 8 项）。
+        assert!(column_exists(&conn, "settings", "generation_params_json"));
+        assert!(column_exists(&conn, "sessions", "generation_params_json"));
+        assert_eq!(
+            conn.query_row(
+                "SELECT generation_params_json FROM settings WHERE id = 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("app generation params"),
+            "{}",
+            "旧库升级后应用级参数默认为空，行为与改造前一致"
+        );
         assert_eq!(
             conn.query_row(
                 "SELECT home_background_strategy FROM settings WHERE id = 1",

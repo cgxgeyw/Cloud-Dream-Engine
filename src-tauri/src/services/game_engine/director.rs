@@ -1,11 +1,12 @@
 ﻿use crate::models::character::CharacterCreateRequest;
 use crate::models::character::CharacterDefinition;
-use crate::models::mcp_tool::{McpToolDefinition, MCP_TOOL_SCHEDULE_NOTIFICATION_ID};
+use crate::models::generation_params::GenerationParams;
+use crate::models::mcp_tool::{McpToolDefinition, MCP_TOOL_SCHEDULE_NOTIFICATION_ID, is_builtin_mcp_tool_id};
 use crate::models::model_config::ModelConfig;
 use crate::models::session::{ChatMessage, InventoryItem, MessageContent, SessionSnapshot};
 use crate::models::world::WorldDefinition;
 use crate::services::game_engine::prompting::{
-    build_prompt_call, collect_prompt_preset_contents, llm_chat_messages_to_values,
+    build_prompt_call, llm_chat_messages_to_values, recent_messages_text, resolve_prompt_modules,
     render_prompt_variables, resolve_runtime_context_prompt,
 };
 use crate::services::llm::client::{
@@ -89,6 +90,8 @@ impl WorldDirectorService {
             stage,
             tool_loop_messages,
             &[],
+            &std::collections::HashMap::new(),
+            &[],
         )
     }
 
@@ -101,6 +104,8 @@ impl WorldDirectorService {
         stage: &str,
         tool_loop_messages: Option<Vec<serde_json::Value>>,
         mcp_tools: &[McpToolDefinition],
+        kv_vars: &std::collections::HashMap<String, String>,
+        player_media: &[crate::models::session::ContentPart],
     ) -> serde_json::Value {
         let history_rounds = self.resolve_director_history_rounds(world);
         let chat_history = self.build_history_dialogue(
@@ -118,15 +123,17 @@ impl WorldDirectorService {
         );
         let system_prompt = self.resolve_director_system_prompt(world);
         let runtime_context_prompt = resolve_runtime_context_prompt(world);
-        let preset_contents = collect_prompt_preset_contents(
+        let module_resolution = resolve_prompt_modules(
             world,
             "director",
             &self.template_variables(world, session, ""),
+            kv_vars,
+            &recent_messages_text(&session.messages, 10),
         );
         let payload_text =
             serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string());
         let tool_loop_messages = tool_loop_messages.unwrap_or_default();
-        return build_prompt_call(
+        let mut prompt_call = build_prompt_call(
             "prompt_call_v2",
             "director",
             "world_director",
@@ -137,11 +144,14 @@ impl WorldDirectorService {
             self.build_runtime_prompt_messages(
                 &system_prompt,
                 &runtime_context_prompt,
-                &preset_contents,
+                &module_resolution.prefix,
+                &module_resolution.suffix,
                 &payload_text,
                 tool_loop_messages.clone(),
+                player_media,
             ),
             self.build_director_prompt_modules(
+                &module_resolution.traces,
                 world,
                 session,
                 characters,
@@ -158,6 +168,17 @@ impl WorldDirectorService {
                 "tool_loop_messages": tool_loop_messages,
             }),
         );
+        // 历史深度插入（第 6 项）：由 build_chat_request_from_prompt_call 在实际请求中落位。
+        if !module_resolution.depth_insertions.is_empty() {
+            prompt_call["depth_insertions"] = serde_json::json!(
+                module_resolution
+                    .depth_insertions
+                    .iter()
+                    .map(|(depth, content)| serde_json::json!({ "depth": depth, "content": content }))
+                    .collect::<Vec<_>>()
+            );
+        }
+        prompt_call
     }
 
     pub fn attach_prompt_call_result(
@@ -193,17 +214,22 @@ impl WorldDirectorService {
         &self,
         system_prompt: &str,
         runtime_context_prompt: &str,
-        preset_contents: &[String],
+        prefix_contents: &[String],
+        suffix_contents: &[String],
         user_prompt: &str,
         tool_loop_messages: Vec<serde_json::Value>,
+        player_media: &[crate::models::session::ContentPart],
     ) -> Vec<serde_json::Value> {
-        let mut messages = vec![
-            serde_json::json!({
-                "role": "system",
-                "content": system_prompt,
-            }),
-        ];
-        for content in preset_contents {
+        // system_prefix 模块在核心系统提示之前，system_suffix 在其后。
+        let mut messages: Vec<serde_json::Value> = prefix_contents
+            .iter()
+            .map(|content| serde_json::json!({ "role": "system", "content": content }))
+            .collect();
+        messages.push(serde_json::json!({
+            "role": "system",
+            "content": system_prompt,
+        }));
+        for content in suffix_contents {
             messages.push(serde_json::json!({
                 "role": "system",
                 "content": content,
@@ -218,7 +244,9 @@ impl WorldDirectorService {
         messages.push(
             serde_json::json!({
                 "role": "user",
-                "content": user_prompt,
+                // 第 10 项：当前回合玩家附件以 multipart 随本条消息下发（仅当前回合）；
+                // 无附件时 content 保持字符串，行为与纯文本时代一致。
+                "content": crate::models::session::build_wire_content(user_prompt, player_media),
             }),
         );
         messages.extend(tool_loop_messages);
@@ -227,14 +255,15 @@ impl WorldDirectorService {
 
     fn build_director_prompt_modules(
         &self,
-        world: &WorldDefinition,
-        session: &SessionSnapshot,
-        characters: &[CharacterDefinition],
+        module_traces: &[serde_json::Value],
+        _world: &WorldDefinition,
+        _session: &SessionSnapshot,
+        _characters: &[CharacterDefinition],
         payload: &serde_json::Value,
         system_prompt: &str,
         runtime_context_prompt: &str,
     ) -> Vec<serde_json::Value> {
-        let mut modules = self.build_prompt_presets(world, session, characters);
+        let mut modules = module_traces.to_vec();
         modules.push(serde_json::json!({
             "name": "world_director_prompt",
             "source": "world.director_runtime_system_prompt",
@@ -575,10 +604,10 @@ impl WorldDirectorService {
         &self,
         prompt_call: &serde_json::Value,
         model_id: &str,
-        max_tokens: i32,
+        generation: &GenerationParams,
         stream_enabled: bool,
     ) -> ChatRequest {
-        let messages = prompt_call
+        let mut messages: Vec<crate::services::llm::client::ChatMessage> = prompt_call
             .get("messages")
             .and_then(|value| value.as_array())
             .cloned()
@@ -599,6 +628,40 @@ impl WorldDirectorService {
                 })
             })
             .collect::<Vec<_>>();
+        // 历史深度插入（第 6 项）：depth:N 表示插到距末尾 N 条的位置。
+        if let Some(insertions) = prompt_call
+            .get("depth_insertions")
+            .and_then(|value| value.as_array())
+        {
+            for insertion in insertions {
+                let depth = insertion
+                    .get("depth")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(0) as usize;
+                let content = insertion
+                    .get("content")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+                if content.is_empty() {
+                    continue;
+                }
+                let index = messages.len().saturating_sub(depth);
+                messages.insert(
+                    index,
+                    crate::services::llm::client::ChatMessage {
+                        role: "system".to_string(),
+                        content: serde_json::Value::String(content),
+                        reasoning_content: None,
+                        speaker: None,
+                        tool_call_id: None,
+                        tool_calls: None,
+                        metadata: None,
+                    },
+                );
+            }
+        }
         let tools = prompt_call
             .get("raw_debug")
             .and_then(|value| value.get("payload"))
@@ -638,8 +701,7 @@ impl WorldDirectorService {
         ChatRequest {
             model: model_id.to_string(),
             messages,
-            temperature: Some(0.7),
-            max_tokens: Some(max_tokens),
+            generation: generation.clone(),
             stream: Some(stream_enabled),
             json_mode: Some(true),
             response_schema: Some(self.build_director_response_schema()),
@@ -665,6 +727,7 @@ impl WorldDirectorService {
         player_input: &str,
         loop_limit: usize,
         stage: &str,
+        generation: &GenerationParams,
     ) -> serde_json::Value {
         let system_prompt = request_messages
             .first()
@@ -724,6 +787,14 @@ impl WorldDirectorService {
             &user_prompt,
             llm_chat_messages_to_values(request_messages),
             self.build_director_prompt_modules(
+                &resolve_prompt_modules(
+                    world,
+                    "director",
+                    &self.template_variables(world, session, ""),
+                    &std::collections::HashMap::new(),
+                    &recent_messages_text(&session.messages, 10),
+                )
+                .traces,
                 world,
                 session,
                 characters,
@@ -743,6 +814,12 @@ impl WorldDirectorService {
                 "model_id": model.model_id,
                 "request": request_value,
                 "response": response_value,
+                // 第 8 项：本次实际使用的采样参数与被 provider 过滤掉的项。
+                "request_params": crate::services::llm::param_support::describe_params_for_trace(
+                    provider,
+                    generation,
+                    serde_json::json!({ "json_mode": true }),
+                ),
                 "loop_limit": loop_limit,
                 "loop_iterations": iteration,
                 "tool_calls": parsed.get("tool_calls").cloned().unwrap_or_else(|| serde_json::Value::Array(vec![])),
@@ -869,6 +946,8 @@ impl WorldDirectorService {
         initial_request: ChatRequest,
         _loop_limit: usize,
         turn_index: i32,
+        mcp_tools: &[McpToolDefinition],
+        mcp_servers: &[crate::models::mcp_server::McpServerConfig],
         notification_runtime: Option<NotificationToolRuntime<'_>>,
         mut progress_callback: Option<&mut (dyn FnMut(DirectorLoopStreamProgress) + Send)>,
     ) -> Result<DirectorLoopRunResult, String> {
@@ -895,6 +974,7 @@ impl WorldDirectorService {
                             }
                             if let Some(callback) = progress_callback.as_deref_mut() {
                                 let parsed = self.parse_loose_json(&streamed_raw_response);
+                                // 流式局部解析仅用于 UI 预览，不触发 MCP 副作用。
                                 let tool_enriched = self
                                     .apply_tool_call_effects(&parsed, session, world, characters);
                                 callback(DirectorLoopStreamProgress {
@@ -946,7 +1026,8 @@ impl WorldDirectorService {
                 "provider": provider,
                 "base_url": model.base_url,
                 "model_id": model.model_id,
-                "request": serde_json::to_value(&request_used).unwrap_or_default(),
+                // 第 10 项：multipart 消息中的媒体 base64 在 trace 里只留摘要。
+                "request": crate::services::game_engine::prompting::redact_request_value_for_trace(&request_used),
             });
             let response_value = serde_json::json!({
                 "provider": provider,
@@ -971,6 +1052,10 @@ impl WorldDirectorService {
                     data_dir: runtime.data_dir,
                 }
             });
+            // 第 7 项：自定义 MCP 工具需要 await，先在此异步层执行，再把结果交给同步效果函数。
+            let mcp_results = self
+                .execute_pending_mcp_tool_calls(&parsed, world, mcp_tools, mcp_servers)
+                .await;
             let tool_enriched = self.apply_tool_call_effects_with_notifications(
                 &parsed,
                 session,
@@ -979,6 +1064,7 @@ impl WorldDirectorService {
                 runtime_for_iter,
                 notification_db_guard.as_ref().map(|guard| guard.conn()),
                 turn_index,
+                &mcp_results,
             );
             drop(notification_db_guard);
             let iteration = traces.len() + 1;
@@ -1018,8 +1104,95 @@ impl WorldDirectorService {
         characters: &[CharacterDefinition],
     ) -> serde_json::Value {
         self.apply_tool_call_effects_with_notifications(
-            parsed, session, world, characters, None, None, 0,
+            parsed,
+            session,
+            world,
+            characters,
+            None,
+            None,
+            0,
+            &std::collections::HashMap::new(),
         )
+    }
+
+    /// 自定义 MCP 工具的异步预执行（第 7 项）。
+    ///
+    /// 同步的效果处理函数无法 await，因此在这里先按世界白名单把自定义工具真正调用一遍，
+    /// 结果按 tool_calls 下标回填（与效果函数使用同一套 extract_tool_calls + limit，下标对齐）。
+    pub async fn execute_pending_mcp_tool_calls(
+        &self,
+        parsed: &serde_json::Value,
+        world: &WorldDefinition,
+        mcp_tools: &[McpToolDefinition],
+        servers: &[crate::models::mcp_server::McpServerConfig],
+    ) -> std::collections::HashMap<usize, serde_json::Value> {
+        let mut results = std::collections::HashMap::new();
+        let tool_calls = self.extract_tool_calls(parsed, Some(self.resolve_tool_call_limit(world)));
+        if tool_calls.is_empty() {
+            return results;
+        }
+        let allowed = self
+            .resolve_world_allowed_tool_ids(world)
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        for (index, tool_call) in tool_calls.iter().enumerate() {
+            let Some(tool_name) = tool_call
+                .get("tool_name")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            else {
+                continue;
+            };
+            if is_builtin_tool_name(tool_name) {
+                continue;
+            }
+            let arguments = tool_call
+                .get("arguments")
+                .or_else(|| tool_call.get("args"))
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            // 只允许世界包已授权、且已绑定可用 server 的工具。
+            let matched = mcp_tools.iter().find(|tool| {
+                tool.tool_name.trim() == tool_name
+                    && allowed.contains(&tool.id)
+                    && !is_builtin_mcp_tool_id(&tool.id)
+            });
+            let Some(tool) = matched else {
+                results.insert(
+                    index,
+                    serde_json::json!({
+                        "ok": false,
+                        "error": format!("工具未在本世界授权或未配置：{tool_name}"),
+                    }),
+                );
+                continue;
+            };
+            let server = servers.iter().find(|server| server.id == tool.server_id);
+            let Some(server) = server else {
+                results.insert(
+                    index,
+                    serde_json::json!({
+                        "ok": false,
+                        "error": format!("工具 {tool_name} 未绑定 MCP server，无法执行"),
+                    }),
+                );
+                continue;
+            };
+            let outcome =
+                crate::services::mcp::execute_mcp_tool_call(tool, server, arguments).await;
+            results.insert(
+                index,
+                serde_json::json!({
+                    "ok": outcome.ok,
+                    "result": outcome.result,
+                    "error": outcome.error,
+                    "truncated": outcome.truncated,
+                    "server_name": server.name.clone(),
+                }),
+            );
+        }
+        results
     }
 
     fn apply_tool_call_effects_with_notifications(
@@ -1031,6 +1204,8 @@ impl WorldDirectorService {
         notification_runtime: Option<NotificationToolRuntime<'_>>,
         notification_conn: Option<&rusqlite::Connection>,
         turn_index: i32,
+        // execute_pending_mcp_tool_calls 的产物，按 tool_calls 下标对齐。
+        mcp_results: &std::collections::HashMap<usize, serde_json::Value>,
     ) -> serde_json::Value {
         let tool_calls = self.extract_tool_calls(parsed, Some(self.resolve_tool_call_limit(world)));
         if tool_calls.is_empty() {
@@ -1049,7 +1224,7 @@ impl WorldDirectorService {
             .resolve_world_allowed_tool_ids(world)
             .iter()
             .any(|id| id == MCP_TOOL_SCHEDULE_NOTIFICATION_ID);
-        for tool_call in &tool_calls {
+        for (tool_call_index, tool_call) in tool_calls.iter().enumerate() {
             let Some(tool_call_obj) = tool_call.as_object() else {
                 continue;
             };
@@ -1305,12 +1480,27 @@ impl WorldDirectorService {
                     }
                 }
                 _ => {
-                    tool_results.push(serde_json::json!({
-                        "id": call_id,
-                        "tool_name": tool_name,
-                        "ok": false,
-                        "error": format!("Tool execution is not implemented for custom MCP tool: {tool_name}"),
-                    }));
+                    // 自定义 MCP 工具：结果来自 execute_pending_mcp_tool_calls 的异步预执行。
+                    match mcp_results.get(&tool_call_index) {
+                        Some(outcome) => {
+                            let mut entry = outcome.as_object().cloned().unwrap_or_default();
+                            entry.insert("id".to_string(), serde_json::Value::String(call_id));
+                            entry.insert(
+                                "tool_name".to_string(),
+                                serde_json::Value::String(tool_name.clone()),
+                            );
+                            entry.insert("arguments".to_string(), serde_json::json!(arguments));
+                            tool_results.push(serde_json::Value::Object(entry));
+                        }
+                        None => {
+                            tool_results.push(serde_json::json!({
+                                "id": call_id,
+                                "tool_name": tool_name,
+                                "ok": false,
+                                "error": format!("未找到工具 {tool_name} 的执行结果：该工具未配置 MCP server 或未在本世界授权"),
+                            }));
+                        }
+                    }
                 }
             }
         }
@@ -1473,8 +1663,7 @@ impl WorldDirectorService {
             return Ok(crate::services::llm::client::ChatRequest {
                 model: previous_request.model.clone(),
                 messages,
-                temperature: previous_request.temperature,
-                max_tokens: previous_request.max_tokens,
+                generation: previous_request.generation.clone(),
                 stream: previous_request.stream,
                 json_mode: previous_request.json_mode,
                 response_schema: previous_request.response_schema.clone(),
@@ -2086,90 +2275,6 @@ impl WorldDirectorService {
         serde_json::Value::Object(capabilities)
     }
 
-    fn build_prompt_presets(
-        &self,
-        world: &WorldDefinition,
-        session: &SessionSnapshot,
-        _characters: &[CharacterDefinition],
-    ) -> Vec<serde_json::Value> {
-        let variables = self.template_variables(world, session, "");
-        let mut presets = world
-            .director_config
-            .get("prompt_presets")
-            .and_then(|value| value.as_array())
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|item| {
-                let object = item.as_object()?;
-                let enabled = object
-                    .get("enabled")
-                    .and_then(|value| value.as_bool())
-                    .unwrap_or(true);
-                let scope = object
-                    .get("scope")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("both")
-                    .trim()
-                    .to_string();
-                if !enabled || !(scope == "both" || scope == "director") {
-                    return None;
-                }
-                let content = self.render_template(
-                    object
-                        .get("content")
-                        .and_then(|value| value.as_str())
-                        .unwrap_or(""),
-                    &variables,
-                );
-                if content.trim().is_empty() {
-                    return None;
-                }
-                let name = object
-                    .get("name")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("unnamed preset")
-                    .trim()
-                    .to_string();
-                let order = object
-                    .get("order")
-                    .and_then(|value| value.as_i64())
-                    .unwrap_or(0);
-                Some(serde_json::json!({
-                    "name": format!("Prompt preset {name}"),
-                    "source": "World design / prompt preset",
-                    "content": content,
-                    "editable": true,
-                    "sent": true,
-                    "order": order,
-                }))
-            })
-            .collect::<Vec<_>>();
-        presets.sort_by_key(|item| {
-            item.get("order")
-                .and_then(|value| value.as_i64())
-                .unwrap_or(0)
-        });
-        for item in &mut presets {
-            if let Some(obj) = item.as_object_mut() {
-                obj.remove("order");
-            }
-        }
-        if !world.director_runtime_system_prompt.trim().is_empty() {
-            presets.insert(
-                0,
-                serde_json::json!({
-                    "name": "World director prompt",
-                    "source": "World design / world director prompt",
-                    "content": world.director_runtime_system_prompt.trim(),
-                    "editable": true,
-                    "sent": true
-                }),
-            );
-        }
-        presets
-    }
-
     fn template_variables(
         &self,
         world: &WorldDefinition,
@@ -2195,18 +2300,6 @@ impl WorldDirectorService {
         vars
     }
 
-    fn render_template(
-        &self,
-        text: &str,
-        variables: &std::collections::HashMap<String, String>,
-    ) -> String {
-        let mut rendered = text.to_string();
-        for (key, value) in variables {
-            rendered = rendered.replace(&format!("{{{{{key}}}}}"), value);
-        }
-        rendered
-    }
-
     fn build_history_dialogue(
         &self,
         messages: &[ChatMessage],
@@ -2221,8 +2314,9 @@ impl WorldDirectorService {
             .into_iter()
             .map(|message| {
                 let role = message.role.trim().to_string();
-                // 保留原始 content(可能是字符串或多媒体数组)
-                let content = message.content.clone();
+                // 第 10 项：历史消息中的媒体不重复下发（base64 会随每轮膨胀），
+                // 统一渲染成 [图片] / [音频 N 秒] 占位文本。
+                let content = message.content.as_prompt_text();
                 let speaker = self.resolve_history_speaker(&message, current_player_name);
                 let mut payload = serde_json::json!({
                     "role": role,
@@ -2871,15 +2965,17 @@ fn arg_string_list(value: Option<&serde_json::Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn is_builtin_mcp_tool_id(id: &str) -> bool {
+/// 内置工具的模型侧调用名。这些由同步效果函数处理，不走 MCP 执行器。
+fn is_builtin_tool_name(tool_name: &str) -> bool {
     matches!(
-        id,
-        "mcp-tool-list-scenes"
-            | "mcp-tool-list-characters"
-            | "mcp-tool-change-scene"
-            | "mcp-tool-switch-player-character"
-            | "mcp-tool-image-generation"
-    ) || id == MCP_TOOL_SCHEDULE_NOTIFICATION_ID
+        tool_name,
+        "list_scenes"
+            | "list_characters"
+            | "change_scene"
+            | "switch_player_character"
+            | "generate_image"
+            | "schedule_notification"
+    )
 }
 
 fn mcp_tool_exposure_mode(policy: &serde_json::Value) -> &str {
@@ -2948,6 +3044,7 @@ mod tests {
             },
             assets: AssetSelection::default(),
             state: SessionState::default(),
+            generation_params: Default::default(),
         }
     }
 
@@ -3014,8 +3111,11 @@ mod tests {
                 tool_calls: None,
                 metadata: None,
             }],
-            temperature: Some(0.7),
-            max_tokens: Some(500),
+            generation: GenerationParams {
+                temperature: Some(0.7),
+                max_tokens: Some(500),
+                ..Default::default()
+            },
             stream: Some(false),
             json_mode: Some(true),
             response_schema: None,
@@ -3055,8 +3155,11 @@ mod tests {
                 tool_calls: None,
                 metadata: None,
             }],
-            temperature: Some(0.7),
-            max_tokens: Some(500),
+            generation: GenerationParams {
+                temperature: Some(0.7),
+                max_tokens: Some(500),
+                ..Default::default()
+            },
             stream: Some(false),
             json_mode: Some(true),
             response_schema: None,

@@ -28,100 +28,19 @@ import type {
   GameUiStyleRecord,
   GameUiWhenNode,
 } from "../../data/gameUi";
+import { GAME_UI_CATALOG } from "../../gameUiRuntime/catalog";
 import "./GameUiStructureEditor.css";
 
 type NodeFamily = "content" | "layout" | "logic";
 
-const COMPONENT_LIBRARY = [
-  {
-    id: "scene_header",
-    label: "顶栏 scene_header",
-    description: "页面顶部信息条：世界名、地点、时间、当前玩家等。",
-    propsSchema: {
-      show_world_name: "boolean",
-      show_location: "boolean",
-      show_time_label: "boolean",
-      show_player_identity: "boolean",
-      show_visible_characters: "boolean",
-      show_copy_button: "boolean",
-      title_mode: "desktop|mobile",
-    },
-  },
-  {
-    id: "scene_focus",
-    label: "立绘焦点 scene_focus",
-    description: "当前发言者的立绘与台词展示区。",
-    propsSchema: {
-      show_avatar: "boolean",
-      show_line: "boolean",
-      avatar_variant: "string",
-    },
-  },
-  {
-    id: "character_bar",
-    label: "在场角色 character_bar",
-    description: "显示当前场景在场角色的列表。",
-    propsSchema: {
-      empty_text: "string",
-      max_items: "number",
-    },
-  },
-  {
-    id: "narration_card",
-    label: "旁白卡 narration_card",
-    description: "展示旁白 / 场景描述文本。",
-    propsSchema: {
-      title: "string",
-      show_copy_button: "boolean",
-      empty_text: "string",
-    },
-  },
-  {
-    id: "message_list",
-    label: "对话列表 message_list",
-    description: "滚动显示对话消息流。",
-    propsSchema: {
-      auto_scroll: "boolean",
-      show_pending_state: "boolean",
-      show_agent_reasoning: "boolean",
-    },
-  },
-  {
-    id: "input_composer",
-    label: "输入框 input_composer",
-    description: "玩家发言输入区与发送按钮。",
-    propsSchema: {
-      placeholder: "string",
-      submit_label: "string",
-      editing_submit_label: "string",
-      show_image_button: "boolean",
-      show_audio_button: "boolean",
-      show_session_meta: "boolean",
-      enter_to_submit: "boolean",
-    },
-  },
-  {
-    id: "side_panel_tabs",
-    label: "侧边栏 side_panel_tabs",
-    description: "侧边状态面板，含地图 / 属性等标签页。",
-    propsSchema: {
-      show_map_tab: "boolean",
-      show_attribute_tabs: "boolean",
-      empty_text: "string",
-    },
-  },
-  {
-    id: "floating_actions",
-    label: "悬浮按钮 floating_actions",
-    description: "返回 / 调试 / 设置等悬浮操作按钮。",
-    propsSchema: {
-      show_back: "boolean",
-      show_debug: "boolean",
-      show_settings: "boolean",
-      layout: "row|column|wrap",
-    },
-  },
-] as const;
+// 组件库的唯一来源是 shared/game-ui/catalog.json（经 gameUiRuntime/catalog 导入），
+// 与运行时注册表、后端校验清单保持一致；新增组件只需改 catalog 文件。
+const COMPONENT_LIBRARY = GAME_UI_CATALOG.components.map((component) => ({
+  id: component.id,
+  label: `${component.label} ${component.id}`,
+  description: component.description,
+  propsSchema: component.props,
+}));
 
 // 节点类型的中文名、说明、配色族与图标，供树、下拉框与检查器复用。
 // 仅覆盖编辑器可创建的类型；其余类型（text/image/badge 等）回退到原始类型名。

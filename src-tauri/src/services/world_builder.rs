@@ -3,6 +3,7 @@ use serde::Deserialize;
 
 use crate::db::repositories::character_repo::CharacterRepository;
 use crate::models::character::CharacterCreateRequest;
+use crate::models::generation_params::{GenerationParams, GENERATION_ROLE_UTILITY};
 use crate::models::model_config::ModelConfig;
 use crate::models::world::{
     AiWorldCreateRequest, AiWorldCreateResponse, WorldCreateRequest, WorldOpeningMessage,
@@ -67,6 +68,7 @@ impl AiWorldBuilderService {
         llm: &LlmClient,
         model: &ModelConfig,
         request: AiWorldCreateRequest,
+        app_generation: &GenerationParams,
         on_progress: Option<&mut (dyn FnMut(usize) + Send)>,
     ) -> Result<AiWorldDraft, String> {
         let concept = request.concept.trim();
@@ -78,6 +80,7 @@ impl AiWorldBuilderService {
             model,
             normalize_mode(&request.mode),
             concept,
+            app_generation,
             on_progress,
         )
         .await
@@ -102,6 +105,7 @@ async fn generate_world_draft(
     model: &ModelConfig,
     mode: &str,
     concept: &str,
+    app_generation: &GenerationParams,
     mut on_progress: Option<&mut (dyn FnMut(usize) + Send)>,
 ) -> Result<AiWorldDraft, String> {
     let target = if mode == "single_agent" {
@@ -180,8 +184,13 @@ JSON shape:
                 metadata: None,
             },
         ],
-        temperature: Some(0.7),
-        max_tokens: Some(max_output_tokens),
+        // 世界生成器吃应用级生成参数（第 8 项：宿主辅助调用没有世界/会话上下文），
+        // 但 max_tokens 由上面按模式算出的输出预算说话——配小了会把 JSON 截断成解析失败。
+        generation: GenerationParams {
+            max_tokens: Some(max_output_tokens),
+            ..GenerationParams::builtin_default_for_role(GENERATION_ROLE_UTILITY)
+                .merge(app_generation)
+        },
         stream: Some(model.streaming_enabled),
         json_mode: Some(true),
         response_schema: None,

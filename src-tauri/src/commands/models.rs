@@ -58,27 +58,7 @@ pub async fn set_default_model(state: State<'_, AppState>, id: String) -> Result
         .ok_or_else(|| "Model not found".to_string())?;
     repo.set_default(&id)?;
     if model.model_type == "text" || model.model_type == "image" {
-        let settings = {
-            let mut stmt = db
-                .conn()
-                .prepare(
-                    "SELECT text_model_provider, default_text_model, image_model_provider, default_image_workflow, embedding_enabled, default_embedding_model, home_background_strategy, export_directory FROM settings WHERE id = 1",
-                )
-                .map_err(|e| e.to_string())?;
-            stmt.query_row([], |row| {
-                Ok(crate::models::settings::AppSettings {
-                    text_model_provider: row.get(0)?,
-                    default_text_model: row.get(1)?,
-                    image_model_provider: row.get(2)?,
-                    default_image_workflow: row.get(3)?,
-                    embedding_enabled: row.get::<_, i64>(4)? != 0,
-                    default_embedding_model: row.get(5)?,
-                    home_background_strategy: row.get(6)?,
-                    export_directory: row.get(7)?,
-                })
-            })
-            .map_err(|e| e.to_string())?
-        };
+        let settings = crate::commands::settings::load_app_settings(db.conn())?;
         if model.model_type == "text" {
             db.conn().execute(
                 "UPDATE settings SET text_model_provider = ?1, default_text_model = ?2 WHERE id = 1",
@@ -138,8 +118,12 @@ pub async fn test_model(
             tool_calls: None,
             metadata: None,
         }],
-        temperature: Some(0.7),
-        max_tokens: Some(10),
+        // 连通性测试只要一句话，参数写死即可，不吃三级覆盖。
+        generation: crate::models::generation_params::GenerationParams {
+            temperature: Some(0.7),
+            max_tokens: Some(10),
+            ..Default::default()
+        },
         stream: Some(false),
         json_mode: None,
         response_schema: None,

@@ -293,13 +293,6 @@ export function WorldsPage() {
       maxWidth={980}
       toolbar={
         <div className="worlds-toolbar">
-          <input
-            ref={importInputRef}
-            type="file"
-            accept=".zip,application/zip"
-            style={{ display: "none" }}
-            onChange={(event) => void handleImport(event)}
-          />
           <button type="button" onClick={() => navigate("/")} className="action-btn">
             {t("common.back")}
           </button>
@@ -340,10 +333,25 @@ export function WorldsPage() {
         </div>
       }
     >
+      <input
+        ref={importInputRef}
+        type="file"
+        accept=".zip,application/zip"
+        style={{ display: "none" }}
+        onChange={(event) => void handleImport(event)}
+      />
       {isMobile ? (
         <div className="worlds-mobile-header">
           <h1 className="worlds-mobile-title">{t("worlds.mobileTitle")}</h1>
           <div className="worlds-mobile-actions">
+            <button
+              type="button"
+              onClick={() => importInputRef.current?.click()}
+              disabled={importing || aiCreating || deletingAll || Boolean(deleting) || Boolean(duplicating) || Boolean(exporting)}
+              className="action-btn"
+            >
+              {importing ? t("worlds.importing") : t("worlds.import")}
+            </button>
             <button
               type="button"
               onClick={() => navigate("/worlds/new")}

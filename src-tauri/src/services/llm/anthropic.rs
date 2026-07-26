@@ -12,7 +12,14 @@ struct AnthropicRequest {
     messages: Vec<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     system: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_k: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stop_sequences: Option<Vec<String>>,
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<serde_json::Value>>,
@@ -76,12 +83,18 @@ fn build_anthropic_request_with_stream(
         }
     }
 
+    // 参数已在 LlmClient 层按 provider 过滤过，这里只做序列化落位。
+    let params = &request.generation;
     AnthropicRequest {
         model: request.model.clone(),
-        max_tokens: request.max_tokens.unwrap_or(4096),
+        // Anthropic 的 max_tokens 是必填字段，没配时给一个足够大的兜底值。
+        max_tokens: params.max_tokens.unwrap_or(4096),
         messages,
         system: (!system_parts.is_empty()).then(|| system_parts.join("\n\n")),
-        temperature: request.temperature,
+        temperature: params.temperature,
+        top_p: params.top_p,
+        top_k: params.top_k,
+        stop_sequences: params.stop.clone(),
         stream,
         tools: include_tools.then(|| {
             request

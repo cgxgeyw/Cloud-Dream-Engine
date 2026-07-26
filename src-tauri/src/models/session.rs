@@ -21,6 +21,10 @@ pub struct SessionSnapshot {
     pub scene: SceneRuntime,
     pub assets: AssetSelection,
     pub state: SessionState,
+    /// 会话级生成参数（第 8 项三级覆盖的最后一层，优先级最高）。
+    /// 这是玩家偏好而非游戏状态：回滚/重新生成不还原它（见 rollback_session_to_turn）。
+    #[serde(default)]
+    pub generation_params: crate::models::generation_params::GenerationParams,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,6 +61,51 @@ impl MessageContent {
 
     pub fn is_empty(&self) -> bool {
         self.as_str().is_empty()
+    }
+
+    /// 当前内容携带的媒体 parts（图片/音频等非文本部分），纯文本时为空。
+    pub fn media_parts(&self) -> Vec<ContentPart> {
+        match self {
+            Self::Text(_) => Vec::new(),
+            Self::Multipart(parts) => parts
+                .iter()
+                .filter(|part| part.part_type != "text")
+                .cloned()
+                .collect(),
+        }
+    }
+
+    /// 给 prompt 用的文本形态：文本原样，媒体 parts 变成简短占位（[图片] / [音频 N 秒]）。
+    /// 历史消息渲染用——媒体 base64 只随当前回合发送，历史里不重复携带（第 10 项）。
+    pub fn as_prompt_text(&self) -> String {
+        match self {
+            Self::Text(s) => s.clone(),
+            Self::Multipart(parts) => {
+                let mut out = String::new();
+                for part in parts {
+                    match part.part_type.as_str() {
+                        "text" => {
+                            if let Some(text) = &part.text {
+                                out.push_str(text);
+                            }
+                        }
+                        "image_url" => out.push_str(" [图片]"),
+                        "input_audio" => {
+                            let placeholder = part
+                                .input_audio
+                                .as_ref()
+                                .and_then(|audio| audio.duration_secs)
+                                .filter(|secs| secs.is_finite() && *secs > 0.0)
+                                .map(|secs| format!(" [音频 {} 秒]", secs.round().max(1.0) as u64))
+                                .unwrap_or_else(|| " [音频]".to_string());
+                            out.push_str(&placeholder);
+                        }
+                        _ => {}
+                    }
+                }
+                out
+            }
+        }
     }
 
     pub fn trim(&self) -> String {
@@ -144,6 +193,51 @@ pub struct InputAudio {
 fn new_message_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
+
+/// 把「文本 + 媒体 parts」组装成发往 OpenAI 兼容端点的 message content：
+/// 无媒体时保持字符串（行为与纯文本时代完全一致）；有媒体时为
+/// `[{type:"text",...}, {type:"image_url",...}, {type:"input_audio",...}]` 数组。
+/// 落线前做两件归一化：剥掉 input_audio.data 的 data URL 前缀（OpenAI 要裸 base64）、
+/// 摘掉内部字段 duration_secs（端点不认）。
+pub fn build_wire_content(text: &str, media: &[ContentPart]) -> serde_json::Value {
+    if media.is_empty() {
+        return serde_json::Value::String(text.to_string());
+    }
+    let mut parts = Vec::with_capacity(media.len() + 1);
+    parts.push(serde_json::json!({ "type": "text", "text": text }));
+    for part in media {
+        let mut value = serde_json::to_value(part).unwrap_or(serde_json::Value::Null);
+        if part.part_type == "input_audio" {
+            if let Some(audio) = value.get_mut("input_audio").and_then(|v| v.as_object_mut()) {
+                audio.remove("duration_secs");
+                if let Some(data) = audio.get("data").and_then(|v| v.as_str()) {
+                    let stripped = strip_data_url_prefix(data);
+                    if stripped != data {
+                        audio.insert(
+                            "data".to_string(),
+                            serde_json::Value::String(stripped.to_string()),
+                        );
+                    }
+                }
+            }
+        }
+        parts.push(value);
+    }
+    serde_json::Value::Array(parts)
+}
+
+/// "data:audio/wav;base64,AAAA..." → "AAAA..."；非 data URL 原样返回。
+fn strip_data_url_prefix(value: &str) -> &str {
+    let trimmed = value.trim();
+    if !trimmed.starts_with("data:") {
+        return trimmed;
+    }
+    match trimmed.find(",") {
+        Some(index) => &trimmed[index + 1..],
+        None => trimmed,
+    }
+}
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
@@ -369,4 +463,95 @@ pub struct RuntimeAttributeItem {
     pub source: String,
     pub display_policy: serde_json::Value,
     pub influence_policy: serde_json::Value,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn image_part() -> ContentPart {
+        ContentPart {
+            part_type: "image_url".to_string(),
+            text: None,
+            image_url: Some(ImageUrl {
+                url: "data:image/png;base64,QUJD".to_string(),
+            }),
+            input_audio: None,
+        }
+    }
+
+    fn audio_part(duration: Option<f64>) -> ContentPart {
+        ContentPart {
+            part_type: "input_audio".to_string(),
+            text: None,
+            image_url: None,
+            input_audio: Some(InputAudio {
+                data: "data:audio/wav;base64,QUJD".to_string(),
+                format: "wav".to_string(),
+                duration_secs: duration,
+            }),
+        }
+    }
+
+    #[test]
+    fn media_parts_returns_only_non_text_parts() {
+        let content = MessageContent::Multipart(vec![
+            image_part(),
+            audio_part(None),
+            ContentPart {
+                part_type: "text".to_string(),
+                text: Some("看图".to_string()),
+                image_url: None,
+                input_audio: None,
+            },
+        ]);
+        let media = content.media_parts();
+        assert_eq!(media.len(), 2);
+        assert!(media.iter().all(|part| part.part_type != "text"));
+        assert!(MessageContent::Text("纯文本".to_string())
+            .media_parts()
+            .is_empty());
+    }
+
+    #[test]
+    fn prompt_text_renders_media_placeholders() {
+        let content = MessageContent::Multipart(vec![
+            ContentPart {
+                part_type: "text".to_string(),
+                text: Some("看这个".to_string()),
+                image_url: None,
+                input_audio: None,
+            },
+            image_part(),
+            audio_part(Some(7.6)),
+            audio_part(None),
+        ]);
+        assert_eq!(content.as_prompt_text(), "看这个 [图片] [音频 8 秒] [音频]");
+        assert_eq!(
+            MessageContent::Text("纯文本".to_string()).as_prompt_text(),
+            "纯文本"
+        );
+    }
+
+    #[test]
+    fn wire_content_stays_a_plain_string_without_media() {
+        let value = build_wire_content("hello", &[]);
+        assert_eq!(value, serde_json::json!("hello"));
+    }
+
+    #[test]
+    fn wire_content_normalizes_media_parts_for_openai() {
+        let value = build_wire_content(" payload ", &[image_part(), audio_part(Some(3.0))]);
+        let parts = value.as_array().expect("multipart content");
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0], serde_json::json!({ "type": "text", "text": " payload " }));
+        assert_eq!(
+            parts[1].pointer("/image_url/url").and_then(|v| v.as_str()),
+            Some("data:image/png;base64,QUJD")
+        );
+        // OpenAI 的 input_audio.data 要裸 base64，且不带内部字段 duration_secs。
+        let audio = parts[2].get("input_audio").expect("audio part");
+        assert_eq!(audio.get("data").and_then(|v| v.as_str()), Some("QUJD"));
+        assert!(audio.get("duration_secs").is_none());
+    }
 }

@@ -168,6 +168,8 @@ impl<'a> SaveRepository<'a> {
             scene: source_session.scene.clone(),
             assets: source_session.assets.clone(),
             state: source_session.state.clone(),
+            // 分支继承源存档的会话级采样参数（玩家已调好的偏好不该在分支后丢掉）。
+            generation_params: source_session.generation_params.clone(),
         };
 
         // M2: 分支涉及 sessions + memories + memory_embeddings + attribute_values + saves
@@ -175,7 +177,7 @@ impl<'a> SaveRepository<'a> {
         let tx = self.conn.unchecked_transaction().map_err(|e| e.to_string())?;
 
         self.conn.execute(
-            "INSERT INTO sessions (id, world_name, location, time_label, current_speaker, current_line, player_character_id, player_character_name, visible_characters_json, messages_json, player_stats_json, map_graph_nodes_json, map_graph_edges_json, inventory_items_json, system_log_json, scene_json, assets_json, state_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+            "INSERT INTO sessions (id, world_name, location, time_label, current_speaker, current_line, player_character_id, player_character_name, visible_characters_json, messages_json, player_stats_json, map_graph_nodes_json, map_graph_edges_json, inventory_items_json, system_log_json, scene_json, assets_json, state_json, generation_params_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
                 branched_session.id,
                 branched_session.world_name,
@@ -195,6 +197,8 @@ impl<'a> SaveRepository<'a> {
                 serde_json::to_string(&branched_session.scene).unwrap_or_default(),
                 serde_json::to_string(&branched_session.assets).unwrap_or_default(),
                 serde_json::to_string(&branched_session.state).unwrap_or_default(),
+                serde_json::to_string(&branched_session.generation_params)
+                    .unwrap_or_else(|_| "{}".to_string()),
             ],
         )
         .map_err(|e| e.to_string())?;
