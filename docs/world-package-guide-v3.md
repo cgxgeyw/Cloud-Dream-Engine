@@ -203,6 +203,100 @@ manifest 中与 UI 有关的字段：
 
 `world/world.json` 保存世界设定、导演配置（含交互消息、提示词模块、生成参数）、资源配置、`ui_runtime_version`、`ui_capabilities`、`platform_features`、`storage` 和不含源码的 `logic` 配置。逻辑源码由 `manifest.logic_file` 指向；角色数据与资源路径通过 manifest 管理，导入时会重新映射为本机资源路径。
 
+### manifest 完整字段
+
+导入器对 manifest 做严格 schema 校验：**未知字段静默忽略，必填字段缺失即拒绝导入**。角色清单必须写在 `character_files` 里——写 `characters` 之类的自创字段会被忽略，然后报"缺少角色文件"。
+
+```json
+{
+  "format": "dream-world-package",
+  "version": 7,
+  "world_file": "world/world.json",
+  "desktop_ui_file": "world/ui.desktop.jsonc",
+  "mobile_ui_file": "world/ui.mobile.jsonc",
+  "ui_runtime_version": 3,
+  "desktop_ui_stylesheet_file": "world/ui.desktop.css",
+  "mobile_ui_stylesheet_file": "world/ui.mobile.css",
+  "logic_file": "world/logic.js",
+  "character_files": [
+    {
+      "source_character_id": "han-li",
+      "character_name": "韩立",
+      "file_path": "characters/han-li/character.json"
+    }
+  ],
+  "assets": [
+    {
+      "source_path": "assets/bg-main.webp",
+      "archive_path": "assets/bg-main.webp",
+      "owner_type": null,
+      "owner_id": null
+    }
+  ]
+}
+```
+
+| 字段 | 必需 | 说明 |
+|---|---|---|
+| `format` | 是 | 必须为 `dream-world-package` |
+| `version` | 是 | 当前为 `7`；兼容旧版 `5`、`6` |
+| `world_file` | 是 | 世界数据 JSON 的路径 |
+| `desktop_ui_file` / `mobile_ui_file` | 是 | 两份 UI 文档路径 |
+| `ui_runtime_version` | 否 | `2` 或 `3`，缺省 `2`；新世界写 `3` |
+| `desktop_ui_stylesheet_file` / `mobile_ui_stylesheet_file` | 否 | 样式表路径，空内容可不打包但保留入口 |
+| `logic_file` | 否 | 沙箱逻辑源码路径（≤ 256 KB），无逻辑则省略 |
+| `character_files` | 是 | **至少一个角色**。每条：`source_character_id`（包内角色 ID）、`character_name`（显示名）、`file_path`（指向 **character.json 文件**，不是目录） |
+| `assets` | 否 | 资源条目：`source_path`（导出前的原始路径）、`archive_path`（ZIP 内路径）、`owner_type` / `owner_id`（可空） |
+
+### world.json 必填字段
+
+`world/world.json` 反序列化时以下字段**必须存在**（没有默认值，缺一个就报 `missing field`）；允许为**空值**（空字符串、空数组、空对象）但不能缺键：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `name` | string | 世界名 |
+| `genre` | string | 题材，可空串 |
+| `background_prompt` | string | 世界背景提示词，可空串 |
+| `opening_scene` | string | 开场场景名 |
+| `summary` | string | 简介，可空串 |
+| `time_system` | string | 时间制度说明，可空串 |
+| `map_nodes` | object | 地图拓扑 `{ "version": 1, "nodes": [] }` |
+| `triggers` | string[] | 触发器，可空数组 |
+| `time_config` | object | 时间配置，可空对象 |
+| `director_config` | object | 世界主控配置（见第 13 节），可空对象 |
+| `ui_assets_config` | object | 资源配置（见第 14 节），可空对象。**注意键名是 `ui_assets_config`，不是 `assets`** |
+| `opening_messages` | object[] | 开场消息 `[{ "role", "content", "speaker"? }]`，可空数组 |
+| `opening_character_names` | string[] | 开场在场角色名，可空数组 |
+| `player_character_name` | string \| null | 玩家角色名 |
+| `opening_character_source_ids` | string[] | 开场角色的 `source_character_id` 列表，可空数组 |
+| `player_character_source_id` | string \| null | 玩家角色的 `source_character_id` |
+
+以下字段有默认值，缺省即可：`ui_runtime_version`（2）、`ui_capabilities`（[]）、`platform_features`（[]）、`storage`（{}）、`logic`（{}）。
+
+### character.json 必填字段
+
+每个角色文件的 schema（同样：必填字段必须存在，可以为空值；未知字段被忽略）：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `source_character_id` | string | 包内角色 ID（与 manifest 条目一致） |
+| `name` | string | 角色名 |
+| `role` | string | 定位（如"主角""引导者"），可空串 |
+| `background_prompt` | string | 角色背景提示词，可空串 |
+| `model` | string | 指定模型引用（按 id / model_id / 名称匹配），空串 = 用默认模型 |
+| `memory_strategy` | string | 记忆策略描述，空串 = 默认 |
+| `recent_dialogue_rounds` | number | 发言时携带的近期对话轮数（如 `8`） |
+| `attributes` | string[] | **字符串数组**（如 `["修为: 炼气三层", "灵石: 0"]`），不是对象 |
+| `portrait_assets` | string[] | 立绘资源路径（导出时由应用填，手写可空数组） |
+| `system_prompt_template` | string | 系统提示模板，可空串 |
+| `response_contract_prompt` | string | 回复契约提示，可空串 |
+| `narration_prompt` | string | 旁白风格提示，可空串 |
+| `runtime_system_prompt` | string | 运行时追加提示，可空串 |
+
+可选字段：`avatar_asset`（头像资源，缺省空串）。
+
+玩家角色与 NPC 的区别由世界配置决定（`player_character_source_id`），角色文件里不需要 `is_player` 之类的字段。
+
 ## 6. UI 文档顶层字段
 
 ```jsonc
@@ -1044,6 +1138,8 @@ v3 stylesheet 在世界 iframe 内原样注入，不做 selector 前缀改写。
 
 | 错误 | 原因 | 修复 |
 |---|---|---|
+| 导入报 `Invalid world data: missing field ...` | world.json 缺必填字段或键名不对（如把 `ui_assets_config` 写成 `assets`） | 对照第 5 节「world.json 必填字段」补齐 |
+| 导入报 `World package is missing character files` | manifest 用了 `characters` 等自创字段，或 `character_files` 为空 | 按第 5 节写 `character_files`，`file_path` 指向 character.json 文件 |
 | `unsupported_schema_version` | UI 文档不是 schema 2 | 改为 `schema_version: 2` |
 | `unknown_component` | 使用未注册组件 | 使用本文组件表中的名称 |
 | `unknown_component_prop` | prop 名称不受支持 | 检查组件 props 表 |
