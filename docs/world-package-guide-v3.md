@@ -267,7 +267,7 @@ manifest 中与 UI 有关的字段：
 | `opening_scene` | string | 开场场景名 |
 | `summary` | string | 简介，可空串 |
 | `time_system` | string | 时间制度说明，可空串 |
-| `map_nodes` | object | 地图拓扑 `{ "version": 1, "nodes": [] }` |
+| `map_nodes` | object | 地图拓扑，格式见下方「map_nodes 拓扑格式」 |
 | `triggers` | string[] | 触发器，可空数组 |
 | `time_config` | object | 时间配置，可空对象 |
 | `director_config` | object | 世界主控配置（见第 13 节），可空对象 |
@@ -279,6 +279,45 @@ manifest 中与 UI 有关的字段：
 | `player_character_source_id` | string \| null | 玩家角色的 `source_character_id` |
 
 以下字段有默认值，缺省即可：`ui_runtime_version`（2）、`ui_capabilities`（[]）、`platform_features`（[]）、`storage`（{}）、`logic`（{}）。
+
+### map_nodes 拓扑格式
+
+两种形态（选一种）；**连线只能写在顶层 `edges` 数组里**，节点内的 `links`、`neighbors` 之类自创字段一律被忽略——写了地图就只有孤点没有连线。
+
+```jsonc
+{
+  "version": 1,
+  // 形态 A：层级树（父子自动生成连线）
+  "root": {
+    "id": "tiannan",
+    "label": "天南",
+    "children": [
+      { "id": "qixuanmen", "label": "七玄门" },
+      { "id": "huangfenggu", "label": "黄枫谷" }
+    ]
+  },
+  // 形态 A/B 通用：显式连线，source/target 填节点 label
+  "edges": [
+    { "source": "七玄门", "target": "黄枫谷" }
+  ]
+}
+```
+
+```jsonc
+// 形态 B：平铺 nodes 数组 + 顶层 edges
+{
+  "version": 1,
+  "nodes": [
+    { "id": "qixuanmen", "label": "七玄门" },
+    { "id": "huangfenggu", "label": "黄枫谷" }
+  ],
+  "edges": [
+    { "source": "七玄门", "target": "黄枫谷" }
+  ]
+}
+```
+
+节点只识别 `id` 和 `label`（`label` 缺省时兼容读 `name`）；`edges` 的端点填节点 **label**，兼容键名 `from`/`to`。`type`、`region`、`desc` 等额外字段不参与地图渲染。地图在 UI 里由 `side_panel_tabs` 的地图页签展示（见第 8 节）。
 
 ### character.json 必填字段
 
@@ -571,6 +610,8 @@ Props：`placeholder`、`submit_label`、`editing_submit_label`、`show_image_bu
 
 地图和自定义属性标签。移动端会作为状态抽屉呈现。
 
+**这是移动端唯一的地图/属性入口**：mobile 文档不含本组件时，玩家在手机上完全看不到地图和属性（校验器只给警告、不拦导入，作者需自查）。两份文档都应包含它。
+
 Props：`show_map_tab`、`show_attribute_tabs`、`empty_text`、`drawer_label`。
 
 支持 `content` slot，用于自定义当前标签内容。
@@ -578,6 +619,8 @@ Props：`show_map_tab`、`show_attribute_tabs`、`empty_text`、`drawer_label`�
 ### `floating_actions`
 
 返回、调试和设置入口。
+
+**请始终在布局里放它（至少 `show_back`）**：没有它玩家进入世界后无法退出到应用页面，只能杀进程。这是世界包 UI 最常漏的组件。
 
 Props：`show_back`、`show_debug`、`show_settings`、`back_label`、`debug_label`、`settings_label`、`layout`。
 
@@ -1018,6 +1061,8 @@ v3 stylesheet 在世界 iframe 内原样注入，不做 selector 前缀改写。
 - 使用独立 mobile document 和 stylesheet。
 - 顶部必须预留 safe area，标题文字应截断，不得进入右侧状态/抽屉把手区域。
 - 自定义属性放入状态抽屉，不要挤在聊天列顶部。
+- **必须包含 `side_panel_tabs`**：它是移动端唯一的地图/属性入口，缺了玩家在手机上看不到地图。
+- **必须包含 `floating_actions`（至少 `show_back`）**：玩家需要能退出世界返回应用。
 - 输入区采用两行：textarea 独占一行，图片、录音和发送按钮位于下一行。
 - 聊天流聚焦叙事、角色/玩家发言和折叠思维链。
 - 角色消息下使用复制/分支，玩家消息下使用编辑/重发。
@@ -1241,7 +1286,8 @@ v2 数据不会被删除。当前迁移层会：
         { "type": "component", "component": "scene_header", "area": "header" },
         { "type": "component", "component": "message_list", "area": "chat" },
         { "type": "component", "component": "input_composer", "area": "input" },
-        { "type": "component", "component": "side_panel_tabs", "area": "side" }
+        { "type": "component", "component": "side_panel_tabs", "area": "side" },
+        { "type": "component", "component": "floating_actions" }
       ]
     }
   }
@@ -1328,6 +1374,8 @@ v2 数据不会被删除。当前迁移层会：
 - Android 状态栏、右侧把手和底部手势区没有遮挡内容。
 - 软键盘打开时消息区和输入区仍可用。
 - 图片、录音、复制、编辑、重发、分支和重试经过真实会话测试。
+- 两份文档都包含 `floating_actions`（返回）和 `side_panel_tabs`（移动端地图/属性入口）。
+- 地图有连线：`map_nodes` 的连接写在顶层 `edges`，不是节点内的自创字段。
 - 声明的 `platform_features` 在真机上逐项允许后可用，未允许时得到 `not_granted:` 报错。
 - 交互消息（如使用）在真机上出题、作答、重复点击不重复计分。
 - 关键词触发的提示词模块（如使用）在调试页可见命中与否。
