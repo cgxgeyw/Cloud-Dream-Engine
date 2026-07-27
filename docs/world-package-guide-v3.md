@@ -185,6 +185,13 @@ assets/
 
 空 stylesheet 可能不会写入 ZIP，但 manifest 中仍会保留入口路径。导入器兼容 version 5、6 世界包，并将旧的 `desktop_file` / `mobile_file` 归一化为双入口。
 
+> **打包最常见的失败**：`manifest.json` 必须在 ZIP **根目录**。不要右键压缩外层文件夹——那会让所有条目多套一层 `<包名>/` 前缀，导入器按精确路径在根目录找 `manifest.json`，找不到就报 `Invalid manifest: specified file not found in archive`。正确做法是进入包目录、压缩里面的内容：
+>
+> ```powershell
+> cd my-world-package
+> tar -a -c -f ..\my-world-package.zip *   # 条目为 manifest.json、world/...、characters/...
+> ```
+
 manifest 中与 UI 有关的字段：
 
 ```json
@@ -1138,6 +1145,7 @@ v3 stylesheet 在世界 iframe 内原样注入，不做 selector 前缀改写。
 
 | 错误 | 原因 | 修复 |
 |---|---|---|
+| 导入报 `Invalid manifest: specified file not found in archive` | 压缩了外层文件夹，条目多套一层前缀 | 进入包目录压缩**内容**，让 `manifest.json` 在 ZIP 根（第 5 节） |
 | 导入报 `Invalid world data: missing field ...` | world.json 缺必填字段或键名不对（如把 `ui_assets_config` 写成 `assets`） | 对照第 5 节「world.json 必填字段」补齐 |
 | 导入报 `World package is missing character files` | manifest 用了 `characters` 等自创字段，或 `character_files` 为空 | 按第 5 节写 `character_files`，`file_path` 指向 character.json 文件 |
 | `unsupported_schema_version` | UI 文档不是 schema 2 | 改为 `schema_version: 2` |
