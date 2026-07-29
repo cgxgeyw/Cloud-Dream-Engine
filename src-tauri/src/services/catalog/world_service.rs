@@ -467,6 +467,7 @@ impl WorldService {
             .and_then(|value| value.as_array())
             .cloned()
             .unwrap_or_default();
+        let message_interaction_kinds = crate::models::interaction::declared_interaction_kinds(raw);
         let return_processing_rules = object
             .get("return_processing_rules")
             .and_then(|value| value.as_array())
@@ -515,6 +516,7 @@ impl WorldService {
             "director_model": director_model,
             "world_director_prompt": world_director_prompt,
             "prompt_presets": prompt_presets,
+            "message_interaction_kinds": message_interaction_kinds,
             "return_processing_rules": return_processing_rules,
             "allowed_mcp_tool_ids": allowed_mcp_tool_ids,
             "generation_params": generation_params,
@@ -553,19 +555,30 @@ impl WorldService {
             .and_then(|value| value.get("desktop"))
             .and_then(|value| value.get("stylesheet"))
             .and_then(|value| value.as_str())
-            .or_else(|| object.get("desktop_stylesheet").and_then(|value| value.as_str()))
+            .or_else(|| {
+                object
+                    .get("desktop_stylesheet")
+                    .and_then(|value| value.as_str())
+            })
             .unwrap_or_default()
             .to_string();
         let mobile_stylesheet = entries
             .and_then(|value| value.get("mobile"))
             .and_then(|value| value.get("stylesheet"))
             .and_then(|value| value.as_str())
-            .or_else(|| object.get("mobile_stylesheet").and_then(|value| value.as_str()))
+            .or_else(|| {
+                object
+                    .get("mobile_stylesheet")
+                    .and_then(|value| value.as_str())
+            })
             .unwrap_or_default()
             .to_string();
 
         object.insert("assets".to_string(), assets);
-        object.insert("runtime_version".to_string(), serde_json::json!(runtime_version));
+        object.insert(
+            "runtime_version".to_string(),
+            serde_json::json!(runtime_version),
+        );
         object.insert(
             "entries".to_string(),
             serde_json::json!({
@@ -955,8 +968,8 @@ impl WorldService {
             &session.scene.name,
             &session.location,
             &session.visible_characters,
-        &std::collections::HashMap::new(),
-        &[],
+            &std::collections::HashMap::new(),
+            &[],
         );
         CharacterPromptTracePreview {
             speaker: Some(character.name.clone()),
@@ -984,7 +997,7 @@ impl WorldService {
                     "scene_state": artifacts.scene_state,
                     "visibility_context": artifacts.visibility_context,
                     // 真正随请求下发、但不在对话文本里的旁路字段，补进预览以便和实际发送一致。
-                    "response_schema": build_character_response_schema(),
+                    "response_schema": build_character_response_schema(world),
                     // 第 8 项：预览按「角色内置默认 + 世界覆盖」显示；应用级与会话级
                     // 覆盖要到实际开局才有（此处没有存档），到时以回合 trace 为准。
                     "request_params": crate::services::llm::param_support::describe_params_without_provider(

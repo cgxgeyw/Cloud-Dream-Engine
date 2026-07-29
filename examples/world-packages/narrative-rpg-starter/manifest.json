@@ -1,0 +1,29 @@
+{
+  "format": "dream-world-package",
+  "version": 7,
+  "world_file": "world/world.json",
+  "desktop_ui_file": "world/ui.desktop.jsonc",
+  "mobile_ui_file": "world/ui.mobile.jsonc",
+  "ui_runtime_version": 3,
+  "desktop_ui_stylesheet_file": "world/ui.desktop.css",
+  "mobile_ui_stylesheet_file": "world/ui.mobile.css",
+  "logic_file": "world/logic.js",
+  "character_files": [
+    {
+      "source_character_id": "player-aning",
+      "character_name": "阿宁",
+      "file_path": "characters/player-aning/character.json"
+    },
+    {
+      "source_character_id": "guide-he-shan",
+      "character_name": "何山",
+      "file_path": "characters/guide-he-shan/character.json"
+    },
+    {
+      "source_character_id": "clerk-lu-zhao",
+      "character_name": "陆昭",
+      "file_path": "characters/clerk-lu-zhao/character.json"
+    }
+  ],
+  "assets": []
+}

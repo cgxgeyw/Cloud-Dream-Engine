@@ -2,6 +2,8 @@
 
 本文面向世界包设计者，说明如何为 Cloud Dream Engine 制作可导入、可导出、同时支持桌面与 Android 的世界包和游戏 UI。
 
+如果目标是模型驱动的剧情、冒险或角色扮演世界，请先按[叙事 RPG 世界包制作手册](world-package-rpg-cookbook.md)完成玩法闭环，再回到本文查字段。可复制的工程模板位于 [`examples/world-packages/narrative-rpg-starter`](../examples/world-packages/narrative-rpg-starter/)。
+
 v3 的核心原则是：世界包拥有游戏页面的结构和视觉设计，应用拥有可信能力与数据写入。世界包可以提供 JSONC、CSS、资源和可选的受限 Worker 逻辑，但不能在宿主页面执行 JavaScript。
 
 ## 1. 先理解两个版本号
@@ -268,7 +270,7 @@ manifest 中与 UI 有关的字段：
 | `summary` | string | 简介，可空串 |
 | `time_system` | string | 时间制度说明，可空串 |
 | `map_nodes` | object | 地图拓扑，格式见下方「map_nodes 拓扑格式」 |
-| `triggers` | string[] | 触发器，可空数组 |
+| `triggers` | string[] | 预留元数据，可空数组。**当前运行时不会执行它，也不能用它驱动剧情**；自动逻辑必须使用 `logic.events` |
 | `time_config` | object | 时间配置，可空对象 |
 | `director_config` | object | 世界主控配置（见第 13 节），可空对象 |
 | `ui_assets_config` | object | 资源配置（见第 14 节），可空对象。**注意键名是 `ui_assets_config`，不是 `assets`** |
@@ -1074,7 +1076,7 @@ v3 stylesheet 在世界 iframe 内原样注入，不做 selector 前缀改写。
 
 ### 交互消息（message_interaction_kinds）
 
-角色回复可以携带一条结构化交互（选项、表单、确认、滑条），宿主负责渲染控件，玩家作答结果随消息持久化。世界包必须显式声明允许的类型，未声明的类型一律丢弃：
+角色回复可以携带一条结构化交互（选项、表单、确认、滑条），宿主负责渲染控件，玩家作答结果随消息持久化。世界包必须显式声明允许的类型，未声明的类型一律丢弃。声明会同时扩展角色可见的回复格式说明和请求 `response_schema`：
 
 ```json
 {
@@ -1084,15 +1086,37 @@ v3 stylesheet 在世界 iframe 内原样注入，不做 selector 前缀改写。
 }
 ```
 
-| 类型 | 说明 | config 关键字段 |
+所有交互统一放在角色回复 JSON 顶层的 `interaction` 字段中，结构固定为 `{ "kind", "prompt", "config" }`。`config` 的字段如下：
+
+| 类型 | 说明 | `config` 关键字段 |
 |---|---|---|
-| `choice` | 单选 | `options: [{ "value", "label" }]` |
+| `choice` | 单选 | `options: [{ "id", "label" }]` |
 | `multi_choice` | 多选 | `options`、`min`、`max` |
-| `form` | 表单 | `fields: [{ "key", "label", "type": "text" | "number" | "textarea", "required" }]` |
+| `form` | 表单 | `fields: [{ "id", "label", "input": "text" | "number" | "textarea", "required" }]` |
 | `confirm` | 确认 | `confirm_label`、`cancel_label` |
 | `slider` | 滑条 | `min`、`max`、`step`、`default` |
 
-模型在角色回复 JSON 里输出 `interaction` 字段（`{ "kind", "prompt", "config" }`，具体结构以校验器为准）；在角色契约提示词里告诉模型何时输出。回答**幂等**：重复提交返回首次结果，不会重复计分——配 `interaction_answered` 事件即可安全地在 logic.js 里计分。
+单选示例：
+
+```json
+{
+  "speaker": "军中向导",
+  "content": "三条路都能走，但只能选一条。",
+  "narration": "远处鼓声越来越近。",
+  "interaction": {
+    "kind": "choice",
+    "prompt": "你准备走哪条路？",
+    "config": {
+      "options": [
+        { "id": "mountain", "label": "翻山绕行" },
+        { "id": "river", "label": "沿河疾行" }
+      ]
+    }
+  }
+}
+```
+
+在角色的 `response_contract_prompt` 里只需说明**何时**出题和选项语义；宿主会按世界声明自动补充精确 JSON 格式。回答**幂等**：重复提交返回首次结果，不会重复计分。要让回答改变后续剧情，还必须绑定 `interaction_answered` 事件并把结果写入 session KV、记录或其它宿主状态；只声明 `message_interaction_kinds` 不会自动产生玩法。
 
 ### 提示词模块（prompt_presets）
 
@@ -1177,6 +1201,8 @@ v3 stylesheet 在世界 iframe 内原样注入，不做 selector 前缀改写。
 
 推荐通过世界编辑器上传资源，避免手工构造内部路径。
 
+手工制作 ZIP 时，`ui_assets_config`、`portrait_assets` 和 `avatar_asset` 中每个以 `assets/` 开头的路径都必须同时出现在 `manifest.assets` 的 `source_path` 或 `archive_path` 中，并且 ZIP 内必须存在对应文件。导入器会拒绝只有引用、没有文件的“假资源”。
+
 ## 15. 校验与调试
 
 世界编辑器会同时运行：
@@ -1196,6 +1222,7 @@ v3 stylesheet 在世界 iframe 内原样注入，不做 selector 前缀改写。
 | `unsupported_schema_version` | UI 文档不是 schema 2 | 改为 `schema_version: 2` |
 | `unknown_component` | 使用未注册组件 | 使用本文组件表中的名称 |
 | `unknown_component_prop` | prop 名称不受支持 | 检查组件 props 表 |
+| `misplaced_component_prop` | 把组件 prop 写在节点顶层 | 将字段移入同一节点的 `props` 对象 |
 | `unknown_action` | action ID 不存在 | 检查动作表 |
 | `invalid_binding` | binding 不是简单点路径 | 使用 `$session.location` 形式 |
 | `unsafe_expression` | `when` 中出现函数、下标或脚本语法 | 改用安全表达式子集 |
@@ -1203,6 +1230,9 @@ v3 stylesheet 在世界 iframe 内原样注入，不做 selector 前缀改写。
 | `unsupported_declared_capability` | 声明未知能力 | 使用当前五种 capability |
 | `invalid_world_storage_config` | `storage` 不是合法对象或名称不合规 | 检查 collection/namespace 名称和结构 |
 | `invalid_world_logic_config` | logic runtime、源码或大小不合规 | 使用 `disabled` 或 `sandbox-js-v1` 并提供 `logic_file` |
+| `World logic has no reachable entry point` | logic.js 注册了处理器，但 UI 和事件都不会调用 | 增加 `logic.events`，或由 UI action 调用 `logic.run` |
+| `Invalid prompt scope` | 使用了 `always`、`keyword` 等不存在的 scope | scope 只填 `director`、`character`、`both`；常驻模块不填 keywords |
+| `references assets that are not declared` | world/character 引用了 ZIP 中未声明的资源 | 把真实文件加入 ZIP，并在 `manifest.assets` 中逐项声明 |
 | 导入报 `Unknown platform feature` | `platform_features` 含目录外的 action | 只用 `file.pick` / `file.read` / `file.write` / `file.share` |
 | 运行时 `not_declared:` / `not_granted:` / `unsupported:` 前缀错误 | 平台能力未声明 / 玩家未允许 / 当前平台不支持 | 见第 10 节「平台能力」的可用性表 |
 | `missing_world_storage_capability` | 使用通用存储或沙箱逻辑但未声明能力 | 在 `ui_capabilities` 中加入 `supports_world_storage` |
@@ -1260,6 +1290,12 @@ v2 数据不会被删除。当前迁移层会：
 
 - [可编辑源码](../examples/world-packages/accounting-assistant/)
 - [可直接导入的 ZIP](../output/accounting-assistant-world.zip)
+
+模型驱动叙事世界的结构化起步包：
+
+- [制作手册](world-package-rpg-cookbook.md)
+- [可编辑起步包](../examples/world-packages/narrative-rpg-starter/)
+- 演示链路：角色选择题 → `interaction_answered` → session KV → `{{var:route}}` 注入后续 Prompt
 
 `frontend/src/data/gameUi/migration.test.ts` 会逐字验证四份文档在迁移后未改变，并验证桌面与移动入口保持独立。Rust bundle 测试也会校验两套示例在 runtime v3 下仍受支持。
 
@@ -1378,5 +1414,7 @@ v2 数据不会被删除。当前迁移层会：
 - 地图有连线：`map_nodes` 的连接写在顶层 `edges`，不是节点内的自创字段。
 - 声明的 `platform_features` 在真机上逐项允许后可用，未允许时得到 `not_granted:` 报错。
 - 交互消息（如使用）在真机上出题、作答、重复点击不重复计分。
+- 每个 `logic.js` 处理器至少能从 `logic.events` 或 UI `logic.run` 到达，事件中的 handler 名与 `world.register` 完全一致。
+- `triggers` 只作为元数据；没有把它误当作剧情事件系统。
 - 关键词触发的提示词模块（如使用）在调试页可见命中与否。
 - 导出后的 ZIP 可在另一份本地数据环境中重新导入。

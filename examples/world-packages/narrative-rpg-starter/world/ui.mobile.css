@@ -1,0 +1,60 @@
+:root {
+  --jiazi-ink: #1d2321;
+  --jiazi-paper: #f3efe4;
+  --jiazi-red: #9c2f2f;
+  --jiazi-border: rgba(62, 55, 42, 0.24);
+}
+
+.game-root--mobile-session {
+  height: var(--game-visual-viewport-height, 100dvh);
+  min-height: var(--game-visual-viewport-height, 100dvh);
+  overflow: hidden;
+  color: var(--jiazi-ink);
+  background: #d8d1bf;
+}
+
+.jiazi-mobile {
+  box-sizing: border-box;
+  padding-top: max(calc(env(safe-area-inset-top, 0px) + 10px), 20px);
+  padding-right: 10px;
+  padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px);
+  padding-left: 10px;
+}
+
+.jiazi-mobile-header {
+  min-width: 0;
+  padding-right: 72px;
+}
+
+.jiazi-mobile-header .game-simple-world,
+.jiazi-mobile-header .game-simple-place {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jiazi-mobile-chat,
+.jiazi-mobile-input {
+  min-width: 0;
+  min-height: 0;
+}
+
+.jiazi-mobile-chat .game-chat-messages,
+.jiazi-mobile-input .game-input-area {
+  border: 1px solid var(--jiazi-border);
+  border-radius: 6px;
+  background: var(--jiazi-paper);
+}
+
+.jiazi-mobile-chat .game-message--agent {
+  border-left: 3px solid var(--jiazi-red);
+}
+
+.jiazi-mobile-input .game-submit-btn {
+  background: var(--jiazi-red);
+  color: #fffaf0;
+}
+
+.jiazi-mobile-actions {
+  flex: 0 0 auto;
+}

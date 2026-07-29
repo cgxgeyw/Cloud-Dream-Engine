@@ -134,19 +134,24 @@ pub fn validate_interaction_candidate(
     if prompt.len() > 500 {
         return Err("interaction prompt exceeds the 500 character limit".to_string());
     }
+    let nested_config = object.get("config").and_then(|value| value.as_object());
+    let config_value = |key: &str| {
+        nested_config
+            .and_then(|config| config.get(key))
+            .or_else(|| object.get(key))
+    };
     match kind.as_str() {
         INTERACTION_KIND_CHOICE | INTERACTION_KIND_MULTI_CHOICE => {
             let options = normalize_options(
-                object
-                    .get("options")
+                config_value("options")
                     .ok_or_else(|| "choice interaction requires options".to_string())?,
             )?;
             let mut config = serde_json::json!({ "options": options });
             if kind == INTERACTION_KIND_MULTI_CHOICE {
-                if let Some(min) = object.get("min").and_then(|v| v.as_i64()) {
+                if let Some(min) = config_value("min").and_then(|v| v.as_i64()) {
                     config["min"] = serde_json::json!(min.max(0));
                 }
-                if let Some(max) = object.get("max").and_then(|v| v.as_i64()) {
+                if let Some(max) = config_value("max").and_then(|v| v.as_i64()) {
                     config["max"] = serde_json::json!(max.max(1));
                 }
             }
@@ -154,20 +159,17 @@ pub fn validate_interaction_candidate(
         }
         INTERACTION_KIND_FORM => {
             let fields = normalize_fields(
-                object
-                    .get("fields")
+                config_value("fields")
                     .ok_or_else(|| "form interaction requires fields".to_string())?,
             )?;
             Ok((kind, prompt, serde_json::json!({ "fields": fields })))
         }
         INTERACTION_KIND_CONFIRM => {
-            let confirm_label = object
-                .get("confirm_label")
+            let confirm_label = config_value("confirm_label")
                 .map(clean_text)
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "确认".to_string());
-            let cancel_label = object
-                .get("cancel_label")
+            let cancel_label = config_value("cancel_label")
                 .map(clean_text)
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "取消".to_string());
@@ -178,24 +180,20 @@ pub fn validate_interaction_candidate(
             ))
         }
         INTERACTION_KIND_SLIDER => {
-            let min = object
-                .get("min")
+            let min = config_value("min")
                 .and_then(|value| value.as_f64())
                 .ok_or_else(|| "slider interaction requires a numeric min".to_string())?;
-            let max = object
-                .get("max")
+            let max = config_value("max")
                 .and_then(|value| value.as_f64())
                 .ok_or_else(|| "slider interaction requires a numeric max".to_string())?;
             if !(min < max) {
                 return Err("slider min must be less than max".to_string());
             }
-            let step = object
-                .get("step")
+            let step = config_value("step")
                 .and_then(|value| value.as_f64())
                 .filter(|value| *value > 0.0)
                 .unwrap_or(1.0);
-            let default = object
-                .get("default")
+            let default = config_value("default")
                 .and_then(|value| value.as_f64())
                 .map(|value| value.clamp(min, max))
                 .unwrap_or(min);
@@ -258,7 +256,9 @@ pub fn validate_interaction_answer(
                     .iter()
                     .any(|option| option.get("id").and_then(|v| v.as_str()) == Some(id))
                 {
-                    return Err(format!("multi_choice answer `{id}` is not one of the options"));
+                    return Err(format!(
+                        "multi_choice answer `{id}` is not one of the options"
+                    ));
                 }
                 if !ids.iter().any(|known| known == id) {
                     ids.push(id.to_string());
@@ -300,14 +300,13 @@ pub fn validate_interaction_answer(
                     .unwrap_or(false);
                 let value = object.get(id).map(clean_text).unwrap_or_default();
                 if required && value.is_empty() {
-                    let label = field
-                        .get("label")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or(id);
+                    let label = field.get("label").and_then(|v| v.as_str()).unwrap_or(id);
                     return Err(format!("form field `{label}` is required"));
                 }
                 if value.len() > 2000 {
-                    return Err(format!("form field `{id}` exceeds the 2000 character limit"));
+                    return Err(format!(
+                        "form field `{id}` exceeds the 2000 character limit"
+                    ));
                 }
                 normalized.insert(id.to_string(), serde_json::Value::String(value));
             }
@@ -358,4 +357,42 @@ pub fn declared_interaction_kinds(director_config: &serde_json::Value) -> Vec<St
                 .collect()
         })
         .unwrap_or_default()
+}
+
+pub fn build_interaction_response_contract(director_config: &serde_json::Value) -> Option<String> {
+    let kinds = declared_interaction_kinds(director_config);
+    if kinds.is_empty() {
+        return None;
+    }
+
+    let mut examples = Vec::new();
+    for kind in &kinds {
+        let example = match kind.as_str() {
+            INTERACTION_KIND_CHOICE => Some(
+                r#"choice: {"kind":"choice","prompt":"请选择","config":{"options":[{"id":"a","label":"选项 A"},{"id":"b","label":"选项 B"}]}}"#,
+            ),
+            INTERACTION_KIND_MULTI_CHOICE => Some(
+                r#"multi_choice: {"kind":"multi_choice","prompt":"可多选","config":{"options":[{"id":"a","label":"选项 A"},{"id":"b","label":"选项 B"}],"min":1,"max":2}}"#,
+            ),
+            INTERACTION_KIND_FORM => Some(
+                r#"form: {"kind":"form","prompt":"请填写","config":{"fields":[{"id":"name","label":"姓名","input":"text","required":true}]}}"#,
+            ),
+            INTERACTION_KIND_CONFIRM => Some(
+                r#"confirm: {"kind":"confirm","prompt":"是否继续？","config":{"confirm_label":"继续","cancel_label":"取消"}}"#,
+            ),
+            INTERACTION_KIND_SLIDER => Some(
+                r#"slider: {"kind":"slider","prompt":"请选择数值","config":{"min":0,"max":100,"step":1,"default":50}}"#,
+            ),
+            _ => None,
+        };
+        if let Some(example) = example {
+            examples.push(format!("- {example}"));
+        }
+    }
+
+    Some(format!(
+        "【可选交互】本世界允许 interaction 类型：{}。需要玩家点击或填写时，在回复 JSON 顶层增加 \"interaction\" 字段；不需要交互时省略。interaction 必须严格使用以下结构之一：\n{}\n不要把选项只写进 content。",
+        kinds.join(", "),
+        examples.join("\n")
+    ))
 }

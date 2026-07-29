@@ -1,0 +1,87 @@
+{
+  "schema_version": 2,
+  "meta": {
+    "name": "甲子风云桌面界面",
+    "author": "Cloud Dream Engine"
+  },
+  "layout": {
+    "root": {
+      "type": "grid",
+      "class_name": "jiazi-desktop",
+      "columns": ["minmax(0, 1fr)", "320px"],
+      "rows": ["auto", "minmax(0, 1fr)", "auto"],
+      "areas": [
+        ["header", "actions"],
+        ["chat", "side"],
+        ["input", "side"]
+      ],
+      "gap": "12px",
+      "padding": "16px",
+      "style": { "height": "100%", "min_height": "0" },
+      "children": [
+        {
+          "type": "component",
+          "component": "scene_header",
+          "area": "header",
+          "class_name": "jiazi-header",
+          "props": {
+            "show_world_name": true,
+            "show_location": true,
+            "show_time_label": true,
+            "show_player_identity": true,
+            "show_visible_characters": true,
+            "title_mode": "desktop"
+          }
+        },
+        {
+          "type": "component",
+          "component": "floating_actions",
+          "area": "actions",
+          "props": {
+            "show_back": true,
+            "show_debug": true,
+            "show_settings": true,
+            "layout": "row"
+          }
+        },
+        {
+          "type": "component",
+          "component": "message_list",
+          "area": "chat",
+          "class_name": "jiazi-chat",
+          "style": { "min_height": "0" },
+          "props": {
+            "auto_scroll": true,
+            "show_pending_state": true,
+            "show_agent_reasoning": true,
+            "show_typing_indicator": true
+          }
+        },
+        {
+          "type": "component",
+          "component": "input_composer",
+          "area": "input",
+          "class_name": "jiazi-input",
+          "props": {
+            "placeholder": "说出你的决定或行动……",
+            "submit_label": "行动",
+            "show_image_button": false,
+            "show_audio_button": false,
+            "enter_to_submit": true
+          }
+        },
+        {
+          "type": "component",
+          "component": "side_panel_tabs",
+          "area": "side",
+          "class_name": "jiazi-side",
+          "props": {
+            "show_map_tab": true,
+            "show_attribute_tabs": true,
+            "drawer_label": "局势"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -167,8 +167,7 @@ impl GameUiService {
                 path: Some("bundle.storage".to_string()),
             });
         }
-        if let Err(message) =
-            crate::services::world_storage::validate_logic_config(&request.logic)
+        if let Err(message) = crate::services::world_storage::validate_logic_config(&request.logic)
         {
             diagnostics.push(WorldUiDiagnostic {
                 severity: "error".to_string(),
@@ -194,11 +193,7 @@ impl GameUiService {
                 .and_then(Value::as_array)
                 .map(|namespaces| !namespaces.is_empty())
                 .unwrap_or(false)
-            || request
-                .logic
-                .get("runtime")
-                .and_then(Value::as_str)
-                == Some("sandbox-js-v1");
+            || request.logic.get("runtime").and_then(Value::as_str) == Some("sandbox-js-v1");
         if uses_world_storage
             && !request
                 .capabilities
@@ -208,8 +203,9 @@ impl GameUiService {
             diagnostics.push(WorldUiDiagnostic {
                 severity: "error".to_string(),
                 code: "missing_world_storage_capability".to_string(),
-                message: "Worlds using storage or sandbox logic must declare supports_world_storage."
-                    .to_string(),
+                message:
+                    "Worlds using storage or sandbox logic must declare supports_world_storage."
+                        .to_string(),
                 path: Some("bundle.capabilities".to_string()),
             });
         }
@@ -645,7 +641,11 @@ impl GameUiService {
                 read_required_string(object, "src", path, state);
                 if let Some(alt) = object.get("alt") {
                     if !alt.is_string() {
-                        state.error("invalid_alt", "alt must be a string.", format!("{path}.alt"));
+                        state.error(
+                            "invalid_alt",
+                            "alt must be a string.",
+                            format!("{path}.alt"),
+                        );
                     }
                 }
                 if let Some(fit) = object.get("fit").and_then(Value::as_str) {
@@ -734,6 +734,18 @@ impl GameUiService {
             }
             for capability in &support.implicit_capabilities {
                 state.capabilities.insert(capability.clone());
+            }
+
+            for prop_key in support.props.keys() {
+                if object.contains_key(prop_key.as_str()) {
+                    state.error(
+                        "misplaced_component_prop",
+                        format!(
+                            "Component prop `{prop_key}` must be nested inside the `props` object."
+                        ),
+                        format!("{path}.{prop_key}"),
+                    );
+                }
             }
 
             if let Some(props) = object.get("props") {
@@ -1529,16 +1541,17 @@ mod tests {
                 runtime_version: Some(3),
                 desktop_stylesheet: ".desktop-entry { min-width: 0; }".to_string(),
                 mobile_stylesheet: ".mobile-entry { min-width: 0; }".to_string(),
-                capabilities: vec!["supports_file_picker".to_string(), "supports_mic".to_string()],
+                capabilities: vec![
+                    "supports_file_picker".to_string(),
+                    "supports_mic".to_string(),
+                ],
                 storage: serde_json::json!({}),
                 logic: serde_json::json!({}),
             });
             assert!(
                 result.ok,
                 "desktop: {:?}; mobile: {:?}; bundle: {:?}",
-                result.desktop.errors,
-                result.mobile.errors,
-                result.errors,
+                result.desktop.errors, result.mobile.errors, result.errors,
             );
         }
     }
@@ -1546,10 +1559,12 @@ mod tests {
     #[test]
     fn validates_accounting_assistant_world_package_ui() {
         let service = GameUiService::new();
-        let desktop =
-            include_str!("../../../examples/world-packages/accounting-assistant/world/ui.desktop.jsonc");
-        let mobile =
-            include_str!("../../../examples/world-packages/accounting-assistant/world/ui.mobile.jsonc");
+        let desktop = include_str!(
+            "../../../examples/world-packages/accounting-assistant/world/ui.desktop.jsonc"
+        );
+        let mobile = include_str!(
+            "../../../examples/world-packages/accounting-assistant/world/ui.mobile.jsonc"
+        );
 
         let result = service.validate_world_ui_bundle(WorldUiBundleValidationRequest {
             desktop_file: desktop.to_string(),

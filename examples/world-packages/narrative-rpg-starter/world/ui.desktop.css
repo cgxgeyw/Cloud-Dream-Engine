@@ -1,0 +1,52 @@
+:root {
+  --jiazi-ink: #1d2321;
+  --jiazi-paper: #f3efe4;
+  --jiazi-red: #9c2f2f;
+  --jiazi-brass: #ad8438;
+  --jiazi-border: rgba(62, 55, 42, 0.24);
+}
+
+.game-root--desktop-session {
+  color: var(--jiazi-ink);
+  background: #d8d1bf;
+}
+
+.jiazi-desktop {
+  height: 100%;
+  min-height: 0;
+}
+
+.jiazi-header,
+.jiazi-chat,
+.jiazi-input,
+.jiazi-side {
+  min-width: 0;
+  min-height: 0;
+}
+
+.jiazi-chat .game-chat-messages,
+.jiazi-side .game-status,
+.jiazi-input .game-input-area {
+  border: 1px solid var(--jiazi-border);
+  border-radius: 6px;
+  background: var(--jiazi-paper);
+  box-shadow: 0 10px 28px rgba(40, 35, 26, 0.12);
+}
+
+.jiazi-chat .game-message--agent {
+  border-left: 3px solid var(--jiazi-red);
+}
+
+.jiazi-chat .game-message--player {
+  background: #e8dcc2;
+}
+
+.jiazi-input .game-submit-btn,
+.jiazi-side .game-tab[data-variant="primary"] {
+  background: var(--jiazi-red);
+  color: #fffaf0;
+}
+
+.game-map-flow-node--current {
+  border-color: var(--jiazi-brass);
+}

@@ -42,6 +42,7 @@ World packs are portable, declarative content bundles rather than native plugins
 - World pack import/export
 - World package version 7 with declared `records` / `kv` storage and optional `sandbox-js-v1` logic
 - A ready-to-import, no-model [accounting assistant package](output/accounting-assistant-world.zip) with [editable source](examples/world-packages/accounting-assistant/)
+- A task-oriented [narrative RPG authoring cookbook](docs/world-package-rpg-cookbook.md) and [copyable starter package](examples/world-packages/narrative-rpg-starter/)
 - Light/dark mode, multiple visual styles, and a platform language toggle (中文 / English)
 
 ## Tech stack
@@ -134,6 +135,7 @@ No license file yet — all rights reserved until one is added.
 - 世界包导入/导出
 - 世界包 version 7：声明式 `records` / `kv` 存储与可选 `sandbox-js-v1` 逻辑
 - 可直接导入、无需模型的[记账助手世界包](output/accounting-assistant-world.zip)及其[可编辑源码](examples/world-packages/accounting-assistant/)
+- 面向剧情世界的[叙事 RPG 制作手册](docs/world-package-rpg-cookbook.md)与[可复制起步包](examples/world-packages/narrative-rpg-starter/)
 - 明暗模式、多种视觉风格、平台语言切换（中文 / English）
 
 ### 快速开始

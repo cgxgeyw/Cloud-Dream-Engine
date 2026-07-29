@@ -1,17 +1,15 @@
 use crate::models::character::{resolve_character_narration_prompt, CharacterDefinition};
 use crate::models::generation_params::GenerationParams;
+use crate::models::mcp_tool::{director_config_allows_mcp_tool, MCP_TOOL_SCHEDULE_NOTIFICATION_ID};
 use crate::models::memory::MemoryEntry;
-use crate::models::mcp_tool::{
-    director_config_allows_mcp_tool, MCP_TOOL_SCHEDULE_NOTIFICATION_ID,
-};
 use crate::models::model_config::ModelConfig;
 use crate::models::session::*;
 use crate::models::settings::AppSettings;
 use crate::models::world::WorldDefinition;
 use crate::services::game_engine::dialogue::DialoguePipeline;
 use crate::services::game_engine::prompting::{
-    build_prompt_call, llm_chat_messages_to_values, recent_messages_text, resolve_prompt_modules,
-    render_prompt_variables, resolve_runtime_context_prompt,
+    build_prompt_call, llm_chat_messages_to_values, recent_messages_text, render_prompt_variables,
+    resolve_prompt_modules, resolve_runtime_context_prompt,
 };
 use crate::services::game_engine::structured_output::StructuredOutputFailure;
 use crate::services::notifications::notification_tool_definition;
@@ -36,8 +34,8 @@ fn resolve_generation_params(
     session: &SessionSnapshot,
 ) -> GenerationParams {
     let world_params = world_generation_params(world);
-    let session_params = (!session.generation_params.is_empty())
-        .then(|| session.generation_params.clone());
+    let session_params =
+        (!session.generation_params.is_empty()).then(|| session.generation_params.clone());
     GenerationParams::resolve_for_role(
         role,
         &settings.generation_params,
@@ -152,13 +150,19 @@ pub(crate) fn build_character_prompt_artifacts(
     let narration_prompt = render_prompt_variables(&resolve_character_narration_prompt(
         speaker_profile.map(|profile| profile.narration_prompt.as_str()),
     ));
-    let system_prompt = dialogue_pipeline.build_character_system_prompt_with_contract(
+    let mut system_prompt = dialogue_pipeline.build_character_system_prompt_with_contract(
         speaker_name,
         speaker_profile,
         None,
         None,
         crate::services::game_engine::memory::resolve_fact_extraction_enabled(world),
     );
+    if let Some(interaction_contract) =
+        crate::models::interaction::build_interaction_response_contract(&world.director_config)
+    {
+        system_prompt.push_str("\n\n");
+        system_prompt.push_str(&interaction_contract);
+    }
     let runtime_context_prompt = resolve_runtime_context_prompt(world);
     let character_runtime_context_prompt = speaker_profile
         .map(|profile| render_prompt_variables(&profile.runtime_system_prompt))
@@ -205,9 +209,21 @@ pub(crate) fn build_character_prompt_artifacts(
         visible_inventory_items,
         public_scene_state_lines,
     );
+    let mut response_fields = vec![
+        "speaker",
+        "content",
+        "narration",
+        "session_attribute_updates",
+        "character_attribute_updates",
+        "memory_entries",
+        "fact_extractions",
+    ];
+    if !crate::models::interaction::declared_interaction_kinds(&world.director_config).is_empty() {
+        response_fields.push("interaction");
+    }
     let response_contract = serde_json::json!({
         "format": "json_object",
-        "fields": ["speaker", "content", "narration", "session_attribute_updates", "character_attribute_updates", "memory_entries", "fact_extractions"],
+        "fields": response_fields,
         "runtime_update_format": {
             "session_attribute_updates": [
                 { "key": "attribute_key", "value": "new_value" }
@@ -570,10 +586,8 @@ pub(crate) fn build_character_chat_request(
         kv_vars,
         player_media,
     );
-    let notification_tool_allowed = director_config_allows_mcp_tool(
-        &world.director_config,
-        MCP_TOOL_SCHEDULE_NOTIFICATION_ID,
-    );
+    let notification_tool_allowed =
+        director_config_allows_mcp_tool(&world.director_config, MCP_TOOL_SCHEDULE_NOTIFICATION_ID);
     let tools = notification_tool_allowed.then(|| vec![build_notification_chat_tool_definition()]);
     let native_tool_calling = tools
         .as_ref()
@@ -585,7 +599,7 @@ pub(crate) fn build_character_chat_request(
         generation: generation.clone(),
         stream: Some(model.streaming_enabled && !native_tool_calling),
         json_mode: Some(true),
-        response_schema: Some(build_character_response_schema()),
+        response_schema: Some(build_character_response_schema(world)),
         tools,
         tool_choice: native_tool_calling
             .then_some(crate::services::llm::client::ChatToolChoice::Auto),
@@ -612,8 +626,10 @@ fn build_notification_chat_tool_definition() -> crate::services::llm::client::Ch
     }
 }
 
-pub(crate) fn build_character_response_schema() -> serde_json::Value {
-    serde_json::json!({
+pub(crate) fn build_character_response_schema(
+    world: &crate::models::world::WorldDefinition,
+) -> serde_json::Value {
+    let mut schema = serde_json::json!({
         "type": "object",
         "required": ["speaker", "content", "narration"],
         "additionalProperties": true,
@@ -622,7 +638,21 @@ pub(crate) fn build_character_response_schema() -> serde_json::Value {
             "content": { "type": "string" },
             "narration": { "type": "string" }
         }
-    })
+    });
+    let kinds = crate::models::interaction::declared_interaction_kinds(&world.director_config);
+    if !kinds.is_empty() {
+        schema["properties"]["interaction"] = serde_json::json!({
+            "type": "object",
+            "required": ["kind", "prompt", "config"],
+            "additionalProperties": false,
+            "properties": {
+                "kind": { "type": "string", "enum": kinds },
+                "prompt": { "type": "string" },
+                "config": { "type": "object", "additionalProperties": true }
+            }
+        });
+    }
+    schema
 }
 
 pub(crate) fn build_director_transport_failure(
@@ -768,7 +798,10 @@ pub(crate) fn build_memory_entry_payload(memories: &[MemoryEntry]) -> Vec<serde_
             // 内部追踪/排序字段(importance/created_at/layer/memory_type/source/keywords)。
             let mut entry = serde_json::Map::new();
             entry.insert("content".to_string(), serde_json::json!(memory.content));
-            entry.insert("turn_index".to_string(), serde_json::json!(memory.turn_index));
+            entry.insert(
+                "turn_index".to_string(),
+                serde_json::json!(memory.turn_index),
+            );
             if let Some(speaker) = memory
                 .speaker
                 .as_deref()
@@ -1043,7 +1076,10 @@ pub(crate) fn build_character_scene_state_payload(
         state.insert("state_phase".to_string(), serde_json::json!(state_phase));
     }
     if !session.state.tags.is_empty() {
-        state.insert("state_tags".to_string(), serde_json::json!(session.state.tags));
+        state.insert(
+            "state_tags".to_string(),
+            serde_json::json!(session.state.tags),
+        );
     }
     if !session.state.metrics.is_empty() {
         state.insert(
@@ -1121,15 +1157,24 @@ pub(crate) fn build_visible_inventory_records(
             record.insert("category".to_string(), serde_json::json!(item.category));
             record.insert("quantity".to_string(), serde_json::json!(item.quantity));
             record.insert("owner_type".to_string(), serde_json::json!(item.owner_type));
-            record.insert("knowledge_scope".to_string(), serde_json::json!(knowledge_scope));
+            record.insert(
+                "knowledge_scope".to_string(),
+                serde_json::json!(knowledge_scope),
+            );
             if !item.description.trim().is_empty() {
-                record.insert("description".to_string(), serde_json::json!(item.description));
+                record.insert(
+                    "description".to_string(),
+                    serde_json::json!(item.description),
+                );
             }
             if !item.tags.is_empty() {
                 record.insert("tags".to_string(), serde_json::json!(item.tags));
             }
             if !item.disclosed_to.is_empty() {
-                record.insert("disclosed_to".to_string(), serde_json::json!(item.disclosed_to));
+                record.insert(
+                    "disclosed_to".to_string(),
+                    serde_json::json!(item.disclosed_to),
+                );
             }
             serde_json::Value::Object(record)
         })
@@ -1398,7 +1443,8 @@ pub(crate) fn annotate_player_message_speakers(
     let mut annotated = Vec::with_capacity(messages.len());
     for message in messages {
         if message.role == "system" {
-            if let Some(speaker_name) = extract_player_view_switch_speaker(message.content.as_str()) {
+            if let Some(speaker_name) = extract_player_view_switch_speaker(message.content.as_str())
+            {
                 resolved_player_speaker = speaker_name;
             }
             annotated.push(message.clone());
@@ -1479,8 +1525,7 @@ pub(crate) fn resolve_character_memory_recall_limit(
     if strategy.is_empty() {
         return 8;
     }
-    let overrides =
-        crate::services::game_engine::memory::parse_memory_strategy(strategy);
+    let overrides = crate::services::game_engine::memory::parse_memory_strategy(strategy);
     if overrides.disabled {
         // 策略为"不记"时召回条数归零(prepare_character_recall 也会短路,双保险)。
         return 0;
@@ -1649,7 +1694,9 @@ mod tests {
     #[test]
     fn recall_limit_reads_turn_hint_from_strategy() {
         assert_eq!(
-            resolve_character_memory_recall_limit(Some(&profile_with_strategy("记住最近12轮的关键信息"))),
+            resolve_character_memory_recall_limit(Some(&profile_with_strategy(
+                "记住最近12轮的关键信息"
+            ))),
             12
         );
         assert_eq!(
@@ -1794,10 +1841,7 @@ mod tests {
             .as_array()
             .expect("multipart user content");
         assert_eq!(parts[0]["type"], "text");
-        assert!(parts[0]["text"]
-            .as_str()
-            .unwrap_or("")
-            .contains("看图说话"));
+        assert!(parts[0]["text"].as_str().unwrap_or("").contains("看图说话"));
         assert_eq!(
             parts[1].pointer("/image_url/url").and_then(|v| v.as_str()),
             Some("data:image/png;base64,QUJD")

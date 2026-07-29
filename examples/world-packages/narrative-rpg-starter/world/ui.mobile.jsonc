@@ -1,0 +1,83 @@
+{
+  "schema_version": 2,
+  "meta": {
+    "name": "甲子风云移动界面",
+    "author": "Cloud Dream Engine"
+  },
+  "layout": {
+    "root": {
+      "type": "stack",
+      "class_name": "jiazi-mobile",
+      "direction": "vertical",
+      "gap": "8px",
+      "padding": "0",
+      "style": {
+        "height": "var(--game-visual-viewport-height, 100dvh)",
+        "min_height": "0",
+        "overflow": "hidden"
+      },
+      "children": [
+        {
+          "type": "component",
+          "component": "scene_header",
+          "class_name": "jiazi-mobile-header",
+          "props": {
+            "show_world_name": true,
+            "show_location": true,
+            "show_time_label": false,
+            "show_player_identity": false,
+            "show_visible_characters": false,
+            "show_copy_button": false,
+            "title_mode": "mobile"
+          }
+        },
+        {
+          "type": "component",
+          "component": "side_panel_tabs",
+          "class_name": "jiazi-mobile-side",
+          "props": {
+            "show_map_tab": true,
+            "show_attribute_tabs": true,
+            "drawer_label": "局势"
+          }
+        },
+        {
+          "type": "component",
+          "component": "message_list",
+          "class_name": "jiazi-mobile-chat",
+          "style": { "flex": "1 1 0", "min_height": "0" },
+          "props": {
+            "auto_scroll": true,
+            "show_pending_state": true,
+            "show_agent_reasoning": true,
+            "show_typing_indicator": true,
+            "mobile_simple": true
+          }
+        },
+        {
+          "type": "component",
+          "component": "input_composer",
+          "class_name": "jiazi-mobile-input",
+          "props": {
+            "placeholder": "说出你的决定或行动……",
+            "submit_label": "行动",
+            "show_image_button": false,
+            "show_audio_button": false,
+            "enter_to_submit": true
+          }
+        },
+        {
+          "type": "component",
+          "component": "floating_actions",
+          "class_name": "jiazi-mobile-actions",
+          "props": {
+            "show_back": true,
+            "show_debug": false,
+            "show_settings": false,
+            "layout": "row"
+          }
+        }
+      ]
+    }
+  }
+}

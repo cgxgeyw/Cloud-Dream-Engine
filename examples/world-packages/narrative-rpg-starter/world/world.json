@@ -1,0 +1,104 @@
+{
+  "name": "甲子风云",
+  "genre": "东汉末年 / 历史叙事 RPG",
+  "background_prompt": "中平元年（184年），河北大旱与疫病相继，徭役、豪强兼并和官吏盘剥令乡里濒临崩溃。太平道以治病互助聚拢信众，黄巾起义已在冀州爆发。玩家是原创乡民阿宁，不预知未来，也不能凭空调动历史名将。故事应尊重当时交通、身份、信息传播和物资条件。",
+  "opening_scene": "冀州·巨鹿郡外",
+  "summary": "在黄巾起义爆发后的冀州乡野，选择投奔、守乡或避乱，并承担路线带来的后果。",
+  "time_system": "东汉中平纪年；时间按昼夜与行程推进",
+  "map_nodes": {
+    "version": 1,
+    "nodes": [
+      { "id": "julu-outskirts", "label": "冀州·巨鹿郡外" },
+      { "id": "ning-village", "label": "宁家村" },
+      { "id": "yellow-turban-camp", "label": "黄巾前营" },
+      { "id": "county-seat", "label": "广宗县城" },
+      { "id": "southern-road", "label": "漳水南道" }
+    ],
+    "edges": [
+      { "source": "冀州·巨鹿郡外", "target": "宁家村" },
+      { "source": "冀州·巨鹿郡外", "target": "黄巾前营" },
+      { "source": "冀州·巨鹿郡外", "target": "广宗县城" },
+      { "source": "宁家村", "target": "漳水南道" }
+    ]
+  },
+  "triggers": [],
+  "time_config": {
+    "mode": "narrative",
+    "label": "中平元年二月"
+  },
+  "director_config": {
+    "service_mode": "world_sim",
+    "allow_scene_transition": true,
+    "allow_npc_spawn": true,
+    "history_dialogue_rounds": 8,
+    "director_tool_loop_limit": 4,
+    "world_director_prompt": "你负责运行一个低魔、写实的东汉末年历史叙事。每回合只推进足够让玩家做出下一步决定的内容。路线选择必须产生资源、关系、地点和风险上的真实差异，不得把三条路线重新合并成同一剧情。",
+    "message_interaction_kinds": ["choice"],
+    "prompt_presets": [
+      {
+        "name": "历史边界",
+        "content": "当前时间为东汉中平元年。角色只能知道其身份和地点允许知道的消息，不得提前引用后世称谓、结局或尚未发生的战役。",
+        "position": "system_prefix",
+        "scope": "both",
+        "order": 10
+      },
+      {
+        "name": "玩家路线",
+        "content": "玩家当前路线：{{var:route}}。若为“未选择”，让何山在合适时机提供 join、defend、flee 三选一；路线确定后不得重复出同一道选择题，后续地点、冲突和人物态度必须服从该路线。",
+        "position": "system_suffix",
+        "scope": "both",
+        "order": 20
+      },
+      {
+        "name": "战乱写实规则",
+        "content": "涉及战斗、逃难或征粮时，明确人数、距离、体力、粮食和伤情。普通人不能以一敌众，受伤与物资消耗必须留下后果。",
+        "position": "system_suffix",
+        "scope": "both",
+        "keywords": ["交战", "追兵", "逃难", "征粮", "黄巾", "官军"],
+        "keyword_scan_depth": 10,
+        "order": 30
+      }
+    ],
+    "generation_params": {
+      "temperature": 0.75,
+      "top_p": 0.9,
+      "max_tokens": 900
+    }
+  },
+  "ui_assets_config": {
+    "background_source_mode": "local-first",
+    "portrait_source_mode": "local-first",
+    "runtime_image_generation_enabled": false,
+    "local_background_assets": [],
+    "local_scene_backgrounds": {}
+  },
+  "ui_runtime_version": 3,
+  "ui_capabilities": ["supports_world_storage"],
+  "storage": {
+    "kv_namespaces": ["variables"],
+    "collections": {}
+  },
+  "logic": {
+    "runtime": "sandbox-js-v1",
+    "timeout_ms": 1000,
+    "events": {
+      "session_start": "starter.sessionStart",
+      "interaction_answered": "starter.interactionAnswered"
+    }
+  },
+  "opening_messages": [
+    {
+      "role": "narration",
+      "content": "中平元年二月，巨鹿郡外的土路被逃难人群踩成泥浆。北面烟柱接连升起，县城方向传来紧闭城门的消息，太平道的黄色旗帜则出现在东边林梢。"
+    },
+    {
+      "role": "assistant",
+      "speaker": "何山",
+      "content": "阿宁，不能再等了。村里只剩三日粮，官差和黄巾都在寻人。咱们得先摸清三条路，再定去处。"
+    }
+  ],
+  "opening_character_names": ["阿宁", "何山"],
+  "player_character_name": "阿宁",
+  "opening_character_source_ids": ["player-aning", "guide-he-shan"],
+  "player_character_source_id": "player-aning"
+}
