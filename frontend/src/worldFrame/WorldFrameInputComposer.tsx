@@ -4,6 +4,8 @@ import { Image, Keyboard, Mic, Send, Square, X } from "lucide-react";
 import type { GameUiComponentNode } from "../data/gameUi";
 import type { GameUiRuntimeActions } from "../gameUiRuntime/actions";
 import type { GameUiRuntimeContext } from "../gameUiRuntime/runtimeContext";
+import { InteractionBlock } from "../gameUiRuntime/components/InteractionBlock";
+import type { MessageInteraction } from "../data/types";
 
 type Props = {
   runtime: GameUiRuntimeContext;
@@ -39,6 +41,7 @@ export function WorldFrameInputComposer({ runtime, actions, node }: Props) {
     || runtime.draft_input.images.length > 0
     || runtime.draft_input.audios.length > 0
   );
+  const pendingInteraction = findPendingInteraction(runtime.messages);
 
   const submit = () => {
     if (!canSubmit) {
@@ -94,6 +97,16 @@ export function WorldFrameInputComposer({ runtime, actions, node }: Props) {
 
   return (
     <div className="game-input-area game-ui-panel">
+      {pendingInteraction ? (
+        <div className="game-pending-interaction" aria-label={"待定行动"}>
+          <InteractionBlock
+            messageId={pendingInteraction.messageId}
+            interaction={pendingInteraction.interaction}
+            locked={submitting}
+            actions={actions}
+          />
+        </div>
+      ) : null}
       {editing ? (
         <div className="game-input-mode">
           <div className="game-input-mode-copy">
@@ -136,7 +149,10 @@ export function WorldFrameInputComposer({ runtime, actions, node }: Props) {
         />
 
         <div className={runtime.capabilities.platform === "mobile" ? "game-input-actions" : "game-input-toolbar"}>
-          <div className={runtime.capabilities.platform === "mobile" ? undefined : "game-input-toolbar-left"}>
+          <div
+            className={runtime.capabilities.platform === "mobile" ? undefined : "game-input-toolbar-left"}
+            style={runtime.capabilities.platform === "mobile" ? { display: "contents" } : undefined}
+          >
             {showImageButton ? (
               <button
                 type="button"
@@ -217,6 +233,28 @@ export function WorldFrameInputComposer({ runtime, actions, node }: Props) {
       ) : null}
     </div>
   );
+}
+
+export function findPendingInteraction(messages: GameUiRuntimeContext["messages"]): {
+  messageId: string;
+  interaction: MessageInteraction;
+} | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.metadata?.message_kind !== "world_interaction") continue;
+    const raw = (message.metadata ?? {}).interaction;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const interaction = raw as MessageInteraction;
+    if (
+      typeof interaction.interaction_id === "string"
+      && typeof interaction.kind === "string"
+      && interaction.status === "pending"
+      && message.message_id
+    ) {
+      return { messageId: message.message_id, interaction };
+    }
+  }
+  return null;
 }
 
 function readBooleanProp(node: GameUiComponentNode | undefined, key: string, fallback: boolean): boolean {

@@ -439,7 +439,7 @@ pub struct SwitchCharacterProposal {
     pub visible_characters: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SessionRuntimeAttributesResponse {
     pub session_attributes: Vec<RuntimeAttributeGroup>,
     pub character_attributes: Vec<RuntimeAttributeGroup>,

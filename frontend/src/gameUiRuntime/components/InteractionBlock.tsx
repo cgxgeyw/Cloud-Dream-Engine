@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import type { MessageInteraction } from "../../data/types";
 import type { GameUiRuntimeActions } from "../actions";
+import { formatInteractionAnswer, readInteractionFields, readInteractionOptions } from "../interactions";
 
 type InteractionBlockProps = {
   messageId: string | undefined;
@@ -41,13 +42,13 @@ export function InteractionBlock({ messageId, interaction, locked, actions }: In
     return (
       <div className="game-interaction game-interaction--answered" style={containerStyle} data-kind={interaction.kind}>
         {interaction.prompt ? <div style={{ opacity: 0.85 }}>{interaction.prompt}</div> : null}
-        <div style={{ fontWeight: 600 }}>已回答：{formatAnswer(interaction)}</div>
+        <div style={{ fontWeight: 600 }}>已回答：{formatInteractionAnswer(interaction) || "（空）"}</div>
       </div>
     );
   }
 
-  const options = readOptions(interaction);
-  const fields = readFields(interaction);
+  const options = readInteractionOptions(interaction);
+  const fields = readInteractionFields(interaction);
 
   return (
     <div className="game-interaction" style={containerStyle} data-kind={interaction.kind}>
@@ -196,68 +197,4 @@ function readStringProp(value: unknown, fallback: string): string {
 
 function readNumberProp(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
-}
-
-function readOptions(interaction: MessageInteraction): { id: string; label: string }[] {
-  const raw = interaction.config.options;
-  if (!Array.isArray(raw)) return [];
-  return raw.flatMap((item) => {
-    if (!item || typeof item !== "object") return [];
-    const record = item as Record<string, unknown>;
-    const id = typeof record.id === "string" ? record.id : "";
-    const label = typeof record.label === "string" ? record.label : "";
-    return id && label ? [{ id, label }] : [];
-  });
-}
-
-function readFields(
-  interaction: MessageInteraction,
-): { id: string; label: string; input: string; required: boolean }[] {
-  const raw = interaction.config.fields;
-  if (!Array.isArray(raw)) return [];
-  return raw.flatMap((item) => {
-    if (!item || typeof item !== "object") return [];
-    const record = item as Record<string, unknown>;
-    const id = typeof record.id === "string" ? record.id : "";
-    const label = typeof record.label === "string" ? record.label : "";
-    return id && label
-      ? [{
-          id,
-          label,
-          input: typeof record.input === "string" ? record.input : "text",
-          required: record.required === true,
-        }]
-      : [];
-  });
-}
-
-function formatAnswer(interaction: MessageInteraction): string {
-  const answer = interaction.answer;
-  if (answer === null || answer === undefined) return "（空）";
-  switch (interaction.kind) {
-    case "choice": {
-      const option = readOptions(interaction).find((item) => item.id === answer);
-      return option?.label ?? String(answer);
-    }
-    case "multi_choice": {
-      if (!Array.isArray(answer)) return String(answer);
-      const options = readOptions(interaction);
-      return answer
-        .map((id) => options.find((item) => item.id === id)?.label ?? String(id))
-        .join("、");
-    }
-    case "form": {
-      if (typeof answer !== "object" || Array.isArray(answer)) return String(answer);
-      const fields = readFields(interaction);
-      return Object.entries(answer as Record<string, unknown>)
-        .map(([id, value]) => `${fields.find((f) => f.id === id)?.label ?? id}：${String(value)}`)
-        .join("；");
-    }
-    case "confirm":
-      return answer === true
-        ? readStringProp(interaction.config.confirm_label, "确认")
-        : readStringProp(interaction.config.cancel_label, "取消");
-    default:
-      return String(answer);
-  }
 }

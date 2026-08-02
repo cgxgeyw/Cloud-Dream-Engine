@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { BrowserRouter, HashRouter, Route, Routes } from "react-router-dom";
 import { ResponsiveLayout } from "./components/ResponsiveLayout";
 import { SettingsProvider } from "./data/SettingsContext";
@@ -45,6 +45,12 @@ function AppRoutes() {
 
 export default function App() {
   const Router = isTauriEnvironment() ? HashRouter : BrowserRouter;
+
+  useEffect(() => {
+    const preventContextMenu = (event: MouseEvent) => event.preventDefault();
+    document.addEventListener("contextmenu", preventContextMenu);
+    return () => document.removeEventListener("contextmenu", preventContextMenu);
+  }, []);
 
   return (
     <Router>

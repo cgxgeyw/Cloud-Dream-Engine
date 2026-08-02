@@ -1130,10 +1130,11 @@ fn validate_mobile_document_rules(
         );
     }
 
-    if !is_standalone_ledger && !state.components.contains("side_panel_tabs") {
+    if !is_standalone_ledger && !state.components.contains("side_panel_tabs")
+    {
         state.warn(
             "mobile_missing_side_panel_tabs",
-            "Mobile UI documents should put status, map, and custom tabs in side_panel_tabs instead of inline chat content.",
+            "Mobile UI documents should provide side_panel_tabs for status and map access instead of inline chat content.",
             "layout.root",
         );
     }

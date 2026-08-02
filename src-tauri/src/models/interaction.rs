@@ -3,7 +3,7 @@
 //! 信封：`{ speaker, content, narration, interaction? }`。
 //! 模型返回 interaction 候选 → 宿主按类型结构校验（且世界包已声明允许的类型）
 //! → 持久化到消息 metadata.interaction → 宿主渲染 → 玩家回答 → 幂等标记已回答
-//! → 触发 interaction_answered 事件 → 世界包 logic.js 处理。
+//! → 触发可选 interaction_answered 事件 → 把可读答案作为玩家消息提交下一回合。
 //! 信封不放可执行 effects：状态变更继续走结构化提议 → Orchestrator 校验链路。
 
 use serde::{Deserialize, Serialize};
@@ -333,11 +333,14 @@ pub fn validate_interaction_answer(
     }
 }
 
-/// 世界包声明允许使用的 interaction 类型（director_config.message_interaction_kinds）。
-/// 未声明时模型返回的 interaction 一律丢弃。
-pub fn declared_interaction_kinds(director_config: &serde_json::Value) -> Vec<String> {
+/// Interaction kinds emitted by the world director itself.
+pub fn declared_director_interaction_kinds(director_config: &serde_json::Value) -> Vec<String> {
+    declared_interaction_kinds_for(director_config, "director_interaction_kinds")
+}
+
+fn declared_interaction_kinds_for(director_config: &serde_json::Value, key: &str) -> Vec<String> {
     director_config
-        .get("message_interaction_kinds")
+        .get(key)
         .and_then(|value| value.as_array())
         .map(|items| {
             items
@@ -357,42 +360,4 @@ pub fn declared_interaction_kinds(director_config: &serde_json::Value) -> Vec<St
                 .collect()
         })
         .unwrap_or_default()
-}
-
-pub fn build_interaction_response_contract(director_config: &serde_json::Value) -> Option<String> {
-    let kinds = declared_interaction_kinds(director_config);
-    if kinds.is_empty() {
-        return None;
-    }
-
-    let mut examples = Vec::new();
-    for kind in &kinds {
-        let example = match kind.as_str() {
-            INTERACTION_KIND_CHOICE => Some(
-                r#"choice: {"kind":"choice","prompt":"请选择","config":{"options":[{"id":"a","label":"选项 A"},{"id":"b","label":"选项 B"}]}}"#,
-            ),
-            INTERACTION_KIND_MULTI_CHOICE => Some(
-                r#"multi_choice: {"kind":"multi_choice","prompt":"可多选","config":{"options":[{"id":"a","label":"选项 A"},{"id":"b","label":"选项 B"}],"min":1,"max":2}}"#,
-            ),
-            INTERACTION_KIND_FORM => Some(
-                r#"form: {"kind":"form","prompt":"请填写","config":{"fields":[{"id":"name","label":"姓名","input":"text","required":true}]}}"#,
-            ),
-            INTERACTION_KIND_CONFIRM => Some(
-                r#"confirm: {"kind":"confirm","prompt":"是否继续？","config":{"confirm_label":"继续","cancel_label":"取消"}}"#,
-            ),
-            INTERACTION_KIND_SLIDER => Some(
-                r#"slider: {"kind":"slider","prompt":"请选择数值","config":{"min":0,"max":100,"step":1,"default":50}}"#,
-            ),
-            _ => None,
-        };
-        if let Some(example) = example {
-            examples.push(format!("- {example}"));
-        }
-    }
-
-    Some(format!(
-        "【可选交互】本世界允许 interaction 类型：{}。需要玩家点击或填写时，在回复 JSON 顶层增加 \"interaction\" 字段；不需要交互时省略。interaction 必须严格使用以下结构之一：\n{}\n不要把选项只写进 content。",
-        kinds.join(", "),
-        examples.join("\n")
-    ))
 }

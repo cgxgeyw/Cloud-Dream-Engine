@@ -100,6 +100,8 @@ type DirectorConfig = {
   };
   allow_scene_transition: boolean;
   allow_npc_spawn: boolean;
+  allow_player_character_switch: boolean;
+  director_interaction_kinds: InteractionKind[];
   history_dialogue_rounds: number;
   director_tool_loop_limit: number;
   director_model: string;
@@ -117,6 +119,16 @@ type DirectorConfig = {
   /** 世界级生成参数（第 8 项）。留空的项交给应用默认，玩家还能在存档里再覆盖。 */
   generation_params: GenerationParams;
 };
+
+type InteractionKind = "choice" | "multi_choice" | "form" | "confirm" | "slider";
+
+const interactionKindOptions: Array<{ value: InteractionKind; label: string }> = [
+  { value: "choice", label: "单选" },
+  { value: "multi_choice", label: "多选" },
+  { value: "form", label: "表单" },
+  { value: "confirm", label: "确认" },
+  { value: "slider", label: "滑条" },
+];
 
 type PromptPreset = {
   id: string;
@@ -175,6 +187,8 @@ const defaultDirectorConfig: DirectorConfig = {
   },
   allow_scene_transition: true,
   allow_npc_spawn: true,
+  allow_player_character_switch: true,
+  director_interaction_kinds: [],
   history_dialogue_rounds: 6,
   director_tool_loop_limit: 4,
   director_model: "",
@@ -395,6 +409,12 @@ function normalizeDirectorConfig(raw: Record<string, unknown> | undefined): Dire
     value === "director" || value === "character" || value === "both" ? value : "both";
   const rawRuntimePolicy = raw?.runtime_policy as Record<string, unknown> | undefined;
   const serviceMode = raw?.service_mode === "agent_chat" ? "agent_chat" : "world_sim";
+  const normalizeInteractionKinds = (value: unknown): InteractionKind[] =>
+    Array.isArray(value)
+      ? Array.from(new Set(value.filter((item): item is InteractionKind =>
+        typeof item === "string" && interactionKindOptions.some((option) => option.value === item),
+      )))
+      : [];
   return {
     service_mode: serviceMode,
     default_agent_id:
@@ -414,6 +434,11 @@ function normalizeDirectorConfig(raw: Record<string, unknown> | undefined): Dire
         : defaultDirectorConfig.allow_scene_transition,
     allow_npc_spawn:
       typeof raw?.allow_npc_spawn === "boolean" ? raw.allow_npc_spawn : defaultDirectorConfig.allow_npc_spawn,
+    allow_player_character_switch:
+      typeof raw?.allow_player_character_switch === "boolean"
+        ? raw.allow_player_character_switch
+        : defaultDirectorConfig.allow_player_character_switch,
+    director_interaction_kinds: normalizeInteractionKinds(raw?.director_interaction_kinds),
     history_dialogue_rounds:
       typeof raw?.history_dialogue_rounds === "number"
         ? Math.max(0, Math.min(20, Math.round(raw.history_dialogue_rounds)))
@@ -1456,6 +1481,19 @@ export function WorldEditorPage() {
     updateDirectorPatch({ allowed_mcp_tool_ids: Array.from(current) });
   }
 
+  function toggleInteractionKind(
+    configKey: "director_interaction_kinds",
+    kind: InteractionKind,
+  ) {
+    const selected = new Set(directorConfig[configKey]);
+    if (selected.has(kind)) {
+      selected.delete(kind);
+    } else {
+      selected.add(kind);
+    }
+    updateDirectorPatch({ [configKey]: Array.from(selected) } as Pick<DirectorConfig, typeof configKey>);
+  }
+
   function updateMergedDirectorPrompt(value: string) {
     updateDirectorPatch({
       world_director_prompt: value,
@@ -2100,7 +2138,33 @@ export function WorldEditorPage() {
                         <input type="checkbox" checked={directorConfig.allow_npc_spawn} onChange={(e) => updateDirectorPatch({ allow_npc_spawn: e.target.checked })} />
                       </div>
                     </label>
+                    <label className="editor-field">
+                      <span className="editor-field-label">允许主控提议切换玩家角色</span>
+                      <div className="settings-inline-toggle">
+                        <input type="checkbox" checked={directorConfig.allow_player_character_switch} onChange={(e) => updateDirectorPatch({ allow_player_character_switch: e.target.checked })} />
+                      </div>
+                    </label>
                   </div>
+                </FoldableEditorSection>
+              ) : null}
+
+              {directorConfig.service_mode === "world_sim" ? (
+                <FoldableEditorSection title="行动选项">
+                  <fieldset className="editor-interaction-source">
+                    <legend>世界主控提供</legend>
+                    <div className="editor-interaction-options">
+                      {interactionKindOptions.map((option) => (
+                        <label key={option.value} className="editor-interaction-option">
+                          <input
+                            type="checkbox"
+                            checked={directorConfig.director_interaction_kinds.includes(option.value)}
+                            onChange={() => toggleInteractionKind("director_interaction_kinds", option.value)}
+                          />
+                          <span>{option.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
                 </FoldableEditorSection>
               ) : null}
 

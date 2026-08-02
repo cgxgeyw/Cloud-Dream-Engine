@@ -195,11 +195,16 @@ async fn submit_player_action_inner(
     };
     // 会话级 variables KV（第 6 项 {{var:key}} 占位符的数据源）
     // 与导演的生成参数（第 8 项：应用→世界→会话三级覆盖）一起在同一次加锁内读出。
-    let (kv_vars, director_generation) = {
+    let (kv_vars, runtime_attributes, director_generation) = {
         let db = state.db.lock().await;
         let settings = crate::commands::settings::load_app_settings(db.conn())?;
         (
             crate::services::game_engine::prompting::load_prompt_kv_vars(db.conn(), &session_id)?,
+            state
+                .services
+                .runtime
+                .session_orchestrator
+                .get_session_runtime_attributes(db.conn(), &session_id)?,
             crate::services::game_engine::orchestrator::resolve_generation_params_with_model(
                 crate::models::generation_params::GENERATION_ROLE_DIRECTOR,
                 &settings,
@@ -243,6 +248,7 @@ async fn submit_player_action_inner(
             &mcp_tools,
             &mcp_servers,
             &kv_vars,
+            &runtime_attributes,
             &director_generation,
             Some(NotificationToolRuntime {
                 app: &app,

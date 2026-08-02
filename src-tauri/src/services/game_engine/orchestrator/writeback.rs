@@ -551,7 +551,7 @@ pub(crate) fn should_persist_session_message(message: &ChatMessage) -> bool {
         .trim();
     matches!(
         action_type,
-        "director_trace" | "switch_character" | "character_created"
+        "director_trace" | "switch_character" | "character_created" | "world_interaction"
     )
 }
 

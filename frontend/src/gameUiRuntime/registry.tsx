@@ -24,8 +24,8 @@ export type GameUiRegisteredComponentDefinition = {
 
 // 组件清单（id、props、动作、能力）的唯一来源是 shared/game-ui/catalog.json；
 // 本文件只负责把目录中的组件接到各自的 React 渲染器上。
-// ledger_book 只在世界框架内渲染（WorldFrameRuntimeView / GameUiPreview），
-// 因此目录里有它但这里没有渲染器，注册表会自动跳过。
+// 存储型完整页面组件只在世界框架内渲染（WorldFrameRuntimeView / GameUiPreview），
+// 因此目录里有定义但这里没有渲染器，注册表会自动跳过。
 function createComponentRenderers(
   runtime: GameUiRuntimeContext,
   actions: GameUiRuntimeActions,

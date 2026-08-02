@@ -1,6 +1,7 @@
 import type { KvScope } from "../data/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { Copy } from "lucide-react";
 
 import {
   createWorldRecord,
@@ -19,6 +20,7 @@ import type { GameUiPlatform
 } from "../data/gameUi";
 import type { GameSessionStateBag } from "../game/useGameSession";
 import type { WorldFrameAction } from "../worldFrame/protocol";
+import { formatInteractionAnswer } from "../gameUiRuntime/interactions";
 import {
   createGameUiRuntimeSnapshot,
   type WorldFrameRuntimePayload,
@@ -70,12 +72,22 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
     setMicrophoneError(null);
     try {
       if (isTauriEnvironment()) {
-        const statuses = await requestWorldPermissions(["microphone"], true);
-        const micStatus = statuses.find((status) => status.permission === "microphone");
-        if (micStatus?.granted === false) {
-          setMicrophoneError("\u9ea6\u514b\u98ce\u6743\u9650\u88ab\u62d2\u7edd\u3002");
-          return;
+        // \u539f\u751f\u6865\u6743\u9650\u7533\u8bf7\u5931\u8d25\u4e0d\u963b\u65ad\u5f55\u97f3\uff1agetUserMedia \u65f6 WebView \u7684
+        // onPermissionRequest \u4f1a\u81ea\u884c\u53d1\u8d77\u7cfb\u7edf\u7ea7 RECORD_AUDIO \u7533\u8bf7\u3002
+        try {
+          const statuses = await requestWorldPermissions(["microphone"], true);
+          const micStatus = statuses.find((status) => status.permission === "microphone");
+          if (micStatus?.granted === false) {
+            setMicrophoneError("\u9ea6\u514b\u98ce\u6743\u9650\u88ab\u62d2\u7edd\u3002");
+            return;
+          }
+        } catch (nativePermissionError) {
+          console.warn("[audio] failed to request native microphone permission:", nativePermissionError);
         }
+      }
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setMicrophoneError("\u5f53\u524d\u73af\u5883\u4e0d\u652f\u6301\u5f55\u97f3\u3002");
+        return;
       }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaStreamRef.current = stream;
@@ -124,7 +136,7 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
     } catch (errorLike) {
       const errorState = errorLike as { name?: string; message?: string };
       const name = errorState.name;
-      const detail = typeof errorLike === "string" ? errorLike : name || errorState.message || "\u672a\u77e5\u9519\u8bef";
+      const detail = typeof errorLike === "string" ? errorLike : (name && errorState.message ? `${name}: ${errorState.message}` : name || errorState.message) || "\u672a\u77e5\u9519\u8bef";
       setMicrophoneError(
         name === "NotAllowedError"
           ? "\u9ea6\u514b\u98ce\u6743\u9650\u88ab\u62d2\u7edd\u3002"
@@ -214,12 +226,18 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
         const result = await bag.handleAnswerInteraction(action.messageId, action.interactionId, action.answer);
         // 第 4 项事件接线：仅首次回答触发，重复提交（幂等）不重复计分。
         if (result?.newlyAnswered) {
-          void dispatchWorldEvent("interaction_answered", {
+          await dispatchWorldEvent("interaction_answered", {
             session_id: bag.session?.id ?? "",
             message_id: action.messageId,
             interaction_id: action.interactionId,
             answer: result.answer,
           });
+        }
+        const playerReply = result?.interaction
+          ? formatInteractionAnswer(result.interaction, result.answer).trim()
+          : "";
+        if (playerReply) {
+          await bag.handleSubmitAction({ mode: "submit", content: playerReply });
         }
         return;
       }
@@ -334,6 +352,8 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
     // seq 单调递增，重发同一回合也会重新触发；只依赖信号本体。
   }, [bag.lastCompletedTurn, bag.session, dispatchWorldEvent]);
 
+  const activeSessionId = bag.session?.id ?? "";
+
   return (
     <div className="world-ui-runtime-host">
       <input
@@ -350,6 +370,19 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
           event.target.value = "";
         }}
       />
+      {activeSessionId ? (
+        <button
+          type="button"
+          className="world-session-diagnostic"
+          onClick={() => void bag.handleCopyMessage(activeSessionId)}
+          title="复制会话 ID"
+          aria-label={`复制会话 ID ${activeSessionId}`}
+        >
+          <span className="world-session-diagnostic-label">会话 ID</span>
+          <code>{activeSessionId}</code>
+          <Copy size={12} aria-hidden="true" />
+        </button>
+      ) : null}
       <WorldFrameHost
         mode="runtime"
         payload={payload}

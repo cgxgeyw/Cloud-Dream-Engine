@@ -150,19 +150,13 @@ pub(crate) fn build_character_prompt_artifacts(
     let narration_prompt = render_prompt_variables(&resolve_character_narration_prompt(
         speaker_profile.map(|profile| profile.narration_prompt.as_str()),
     ));
-    let mut system_prompt = dialogue_pipeline.build_character_system_prompt_with_contract(
+    let system_prompt = dialogue_pipeline.build_character_system_prompt_with_contract(
         speaker_name,
         speaker_profile,
         None,
         None,
         crate::services::game_engine::memory::resolve_fact_extraction_enabled(world),
     );
-    if let Some(interaction_contract) =
-        crate::models::interaction::build_interaction_response_contract(&world.director_config)
-    {
-        system_prompt.push_str("\n\n");
-        system_prompt.push_str(&interaction_contract);
-    }
     let runtime_context_prompt = resolve_runtime_context_prompt(world);
     let character_runtime_context_prompt = speaker_profile
         .map(|profile| render_prompt_variables(&profile.runtime_system_prompt))
@@ -209,7 +203,7 @@ pub(crate) fn build_character_prompt_artifacts(
         visible_inventory_items,
         public_scene_state_lines,
     );
-    let mut response_fields = vec![
+    let response_fields = vec![
         "speaker",
         "content",
         "narration",
@@ -218,9 +212,6 @@ pub(crate) fn build_character_prompt_artifacts(
         "memory_entries",
         "fact_extractions",
     ];
-    if !crate::models::interaction::declared_interaction_kinds(&world.director_config).is_empty() {
-        response_fields.push("interaction");
-    }
     let response_contract = serde_json::json!({
         "format": "json_object",
         "fields": response_fields,
@@ -599,7 +590,7 @@ pub(crate) fn build_character_chat_request(
         generation: generation.clone(),
         stream: Some(model.streaming_enabled && !native_tool_calling),
         json_mode: Some(true),
-        response_schema: Some(build_character_response_schema(world)),
+        response_schema: Some(build_character_response_schema()),
         tools,
         tool_choice: native_tool_calling
             .then_some(crate::services::llm::client::ChatToolChoice::Auto),
@@ -626,10 +617,8 @@ fn build_notification_chat_tool_definition() -> crate::services::llm::client::Ch
     }
 }
 
-pub(crate) fn build_character_response_schema(
-    world: &crate::models::world::WorldDefinition,
-) -> serde_json::Value {
-    let mut schema = serde_json::json!({
+pub(crate) fn build_character_response_schema() -> serde_json::Value {
+    serde_json::json!({
         "type": "object",
         "required": ["speaker", "content", "narration"],
         "additionalProperties": true,
@@ -638,21 +627,7 @@ pub(crate) fn build_character_response_schema(
             "content": { "type": "string" },
             "narration": { "type": "string" }
         }
-    });
-    let kinds = crate::models::interaction::declared_interaction_kinds(&world.director_config);
-    if !kinds.is_empty() {
-        schema["properties"]["interaction"] = serde_json::json!({
-            "type": "object",
-            "required": ["kind", "prompt", "config"],
-            "additionalProperties": false,
-            "properties": {
-                "kind": { "type": "string", "enum": kinds },
-                "prompt": { "type": "string" },
-                "config": { "type": "object", "additionalProperties": true }
-            }
-        });
-    }
-    schema
+    })
 }
 
 pub(crate) fn build_director_transport_failure(

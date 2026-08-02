@@ -1356,6 +1356,7 @@ mod tests {
                 &[],
                 &[],
                 &std::collections::HashMap::new(),
+                &crate::models::session::SessionRuntimeAttributesResponse::default(),
                 &crate::models::generation_params::GenerationParams::builtin_default_for_role(
                     crate::models::generation_params::GENERATION_ROLE_DIRECTOR,
                 ),
@@ -1466,6 +1467,7 @@ mod tests {
                 &[],
                 &[],
                 &std::collections::HashMap::new(),
+                &crate::models::session::SessionRuntimeAttributesResponse::default(),
                 &crate::models::generation_params::GenerationParams::builtin_default_for_role(
                     crate::models::generation_params::GENERATION_ROLE_DIRECTOR,
                 ),
@@ -1509,6 +1511,7 @@ mod tests {
                 &[],
                 &[],
                 &std::collections::HashMap::new(),
+                &crate::models::session::SessionRuntimeAttributesResponse::default(),
                 &crate::models::generation_params::GenerationParams::builtin_default_for_role(
                     crate::models::generation_params::GENERATION_ROLE_DIRECTOR,
                 ),
@@ -1582,6 +1585,7 @@ mod tests {
                 &[],
                 &[],
                 &std::collections::HashMap::new(),
+                &crate::models::session::SessionRuntimeAttributesResponse::default(),
                 &generation,
                 None,
                 None,
@@ -1659,6 +1663,7 @@ mod tests {
                 &[],
                 &[],
                 &std::collections::HashMap::new(),
+                &crate::models::session::SessionRuntimeAttributesResponse::default(),
                 &crate::models::generation_params::GenerationParams::builtin_default_for_role(
                     crate::models::generation_params::GENERATION_ROLE_DIRECTOR,
                 ),
@@ -1737,6 +1742,7 @@ mod tests {
                 &[],
                 &[],
                 &std::collections::HashMap::new(),
+                &crate::models::session::SessionRuntimeAttributesResponse::default(),
                 &generation,
                 None,
                 None,
@@ -1860,6 +1866,189 @@ mod tests {
                 .is_none()
         );
     }
+
+    #[test]
+    fn load_resume_player_request_scans_back_past_misaligned_turn() {
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        schema::create_tables(&conn).expect("create schema");
+        let orchestrator = SessionOrchestrator;
+        let session_id = "sess-misaligned";
+
+        // 回合 1:正常开局后导演结构化输出失败(无 finished)。
+        append_turn_journal(
+            &conn,
+            session_id,
+            1,
+            "created",
+            "completed",
+            serde_json::json!({
+                "player_input": "推开密室的门",
+                "action_mode": "submit",
+            }),
+        )
+        .expect("append created turn 1");
+        append_turn_journal(
+            &conn,
+            session_id,
+            1,
+            "structured_output_failed",
+            "completed",
+            serde_json::json!({}),
+        )
+        .expect("append failure turn 1");
+        // 旧 bug 的错位存档:回合 2 只有 structured_output_failed,没有 created。
+        append_turn_journal(
+            &conn,
+            session_id,
+            2,
+            "structured_output_failed",
+            "completed",
+            serde_json::json!({}),
+        )
+        .expect("append failure turn 2");
+
+        let request = orchestrator
+            .load_resume_player_request(&conn, session_id)
+            .expect("错位存档应自愈,不再报 Missing created payload")
+            .expect("应找到可恢复的回合 1");
+        assert_eq!(request.resend_from_turn_index, Some(1));
+        assert!(matches!(
+            request.action_mode,
+            PlayerActionMode::Resend
+        ));
+        assert_eq!(request.content.as_str(), "推开密室的门");
+    }
+
+    #[test]
+    fn load_resume_player_request_returns_none_when_latest_turn_finished() {
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        schema::create_tables(&conn).expect("create schema");
+        let orchestrator = SessionOrchestrator;
+        let session_id = "sess-finished";
+
+        append_turn_journal(
+            &conn,
+            session_id,
+            1,
+            "created",
+            "completed",
+            serde_json::json!({ "player_input": "look around" }),
+        )
+        .expect("append created");
+        append_turn_journal(
+            &conn,
+            session_id,
+            1,
+            "finished",
+            "completed",
+            serde_json::json!({}),
+        )
+        .expect("append finished");
+
+        assert!(orchestrator
+            .load_resume_player_request(&conn, session_id)
+            .expect("load ok")
+            .is_none());
+    }
+
+    #[test]
+    fn resume_retry_reuses_incomplete_turn_index_and_stays_resumable() {
+        use crate::db::repositories::model_repo::ModelRepository;
+        use crate::models::model_config::ModelConfigCreateRequest;
+
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        schema::create_tables(&conn).expect("create schema");
+        WorldRepository::new(&conn)
+            .create(&WorldCreateRequest {
+                name: "World".to_string(),
+                genre: "".to_string(),
+                background_prompt: "".to_string(),
+                opening_scene: "Dock".to_string(),
+                summary: "".to_string(),
+                time_system: "".to_string(),
+                map_nodes: serde_json::json!({ "version": 1, "nodes": [] }),
+                triggers: vec![],
+                time_config: serde_json::json!({}),
+                director_config: serde_json::json!({}),
+                ui_theme_config: serde_json::json!({}),
+                opening_messages: vec![],
+                opening_character_ids: vec![],
+                player_character_id: None,
+            })
+            .expect("create world");
+        ModelRepository::new(&conn)
+            .create(&ModelConfigCreateRequest {
+                name: "test".to_string(),
+                model_type: "text".to_string(),
+                provider: "openai".to_string(),
+                model_id: "gpt-test".to_string(),
+                base_url: "https://api.openai.com/v1".to_string(),
+                api_key: "".to_string(),
+                max_tokens: 1200,
+                streaming_enabled: false,
+                is_default: true,
+                input_modalities: vec![],
+            })
+            .expect("create model");
+        let session = sample_session();
+        crate::db::repositories::session_repo::SessionRepository::new(&conn)
+            .upsert(&session)
+            .expect("upsert session");
+        let orchestrator = SessionOrchestrator;
+
+        let submit = PlayerActionRequest {
+            content: MessageContent::Text("推开密室的门".to_string()),
+            action_mode: PlayerActionMode::Submit,
+            resend_from_turn_index: None,
+        };
+        let failure = StructuredOutputFailure {
+            stage: StructuredFailureStage::DirectorMain,
+            failure_code: "json_parse_failed".to_string(),
+            summary: "director output is not valid json".to_string(),
+            provider: "openai".to_string(),
+            model_id: "gpt-test".to_string(),
+            turn_index: 1,
+            speaker_name: None,
+            raw_text_excerpt: "{broken".to_string(),
+            repair_summary: None,
+            schema_errors: vec!["response must be a JSON object".to_string()],
+            domain_errors: Vec::new(),
+        };
+
+        // 回合 1:开局后导演结构化输出失败。
+        let first = orchestrator
+            .prepare_turn_context(&conn, &session.id, &submit)
+            .expect("prepare turn 1");
+        assert_eq!(first.turn_index, 1);
+        assert!(!first.resume_incomplete_turn);
+        orchestrator
+            .record_structured_output_failure(&conn, &session.id, first.turn_index, &submit, &failure)
+            .expect("record failure 1");
+
+        // 第一次重发:resume 必须复用回合号 1,而不是另开回合 2。
+        let resume = orchestrator
+            .load_resume_player_request(&conn, &session.id)
+            .expect("load resume")
+            .expect("resume request");
+        assert_eq!(resume.resend_from_turn_index, Some(1));
+        let resumed = orchestrator
+            .prepare_turn_context(&conn, &session.id, &resume)
+            .expect("prepare resume");
+        assert!(resumed.resume_incomplete_turn);
+        assert_eq!(resumed.turn_index, 1, "resume 必须复用原回合号");
+
+        // 第二次失败仍记到回合 1;第三次重发仍能拿到 resume 请求
+        // (修复前此处因回合错位报 Missing created payload,表现为"无法二次重发")。
+        orchestrator
+            .record_structured_output_failure(&conn, &session.id, resumed.turn_index, &resume, &failure)
+            .expect("record failure 2");
+        let resume_again = orchestrator
+            .load_resume_player_request(&conn, &session.id)
+            .expect("第三次重发必须能拿到 resume 请求")
+            .expect("resume request after second failure");
+        assert_eq!(resume_again.resend_from_turn_index, Some(1));
+        assert_eq!(resume_again.content.as_str(), "推开密室的门");
+    }
 }
 
 impl SessionOrchestrator {
@@ -1878,6 +2067,7 @@ impl SessionOrchestrator {
         mcp_tools: &[McpToolDefinition],
         mcp_servers: &[crate::models::mcp_server::McpServerConfig],
         kv_vars: &std::collections::HashMap<String, String>,
+        runtime_attributes: &crate::models::session::SessionRuntimeAttributesResponse,
         generation: &crate::models::generation_params::GenerationParams,
         notification_runtime: Option<NotificationToolRuntime<'_>>,
         mut progress_callback: Option<&mut (dyn FnMut(DirectorLoopStreamProgress) + Send)>,
@@ -1897,11 +2087,13 @@ impl SessionOrchestrator {
                     "director_decision",
                     None,
                     mcp_tools,
-                kv_vars,
+                    kv_vars,
+                    Some(runtime_attributes),
                     player_media,
                 );
                 let request = world_director.build_chat_request_from_prompt_call(
                     &prompt_call,
+                    world,
                     &model.model_id,
                     generation,
                     model.streaming_enabled,
@@ -1973,11 +2165,13 @@ impl SessionOrchestrator {
                 "director_decision",
                 None,
                 mcp_tools,
-            kv_vars,
+                kv_vars,
+                Some(runtime_attributes),
                 player_media,
             );
             let request = world_director.build_chat_request_from_prompt_call(
                 &prompt_call,
+                world,
                 &model.model_id,
                 generation,
                 model.streaming_enabled,
@@ -2189,7 +2383,12 @@ impl SessionOrchestrator {
             player_stats: vec![],
             map_graph_nodes: map_topology.nodes,
             map_graph_edges: map_topology.edges,
-            inventory_items: vec![],
+            inventory_items: world
+                .ui_theme_config
+                .get("initial_inventory_items")
+                .cloned()
+                .and_then(|value| serde_json::from_value(value).ok())
+                .unwrap_or_default(),
             system_log: vec![],
             scene: SceneRuntime {
                 scene_id: "opening".to_string(),
@@ -2206,6 +2405,43 @@ impl SessionOrchestrator {
 
         let session_repo = crate::db::repositories::session_repo::SessionRepository::new(conn);
         session_repo.upsert(&session)?;
+
+        let package_attribute_schemas = world
+            .ui_theme_config
+            .get("attribute_schemas")
+            .cloned()
+            .and_then(|value| serde_json::from_value::<Vec<crate::models::attribute::AttributeSchemaCreateRequest>>(value).ok())
+            .unwrap_or_default();
+        if !package_attribute_schemas.is_empty() {
+            let attribute_repo = crate::db::repositories::attribute_repo::AttributeRepository::new(conn);
+            let registered = attribute_repo.list_schemas(None)?;
+            for declared in package_attribute_schemas {
+                if declared.default_value.is_null() {
+                    continue;
+                }
+                let Some(schema) = registered.iter().find(|schema| {
+                    schema.scope.trim() == declared.scope.trim()
+                        && schema.key.trim() == declared.key.trim()
+                }) else {
+                    return Err(format!("World attribute schema is not registered: {}", declared.key));
+                };
+                let (owner_type, owner_id) = match schema.scope.as_str() {
+                    "session" => ("session", session.id.clone()),
+                    "session_character" => (
+                        "session_character",
+                        format!("{}:{}", session.id, player_character_id),
+                    ),
+                    _ => continue,
+                };
+                attribute_repo.upsert_value(&crate::models::attribute::AttributeValueUpsertRequest {
+                    schema_id: schema.id.clone(),
+                    owner_type: owner_type.to_string(),
+                    owner_id,
+                    value: schema.default_value.clone(),
+                    source: "world_package_default".to_string(),
+                })?;
+            }
+        }
 
         let save = crate::models::save::SaveSummary {
             id: uuid::Uuid::new_v4().to_string(),
@@ -2331,24 +2567,36 @@ impl SessionOrchestrator {
         if latest_turn_index <= 0 {
             return Ok(None);
         }
-        let recovery_journal = load_turn_journal(conn, session_id, latest_turn_index)?;
-        if recovery_journal.is_empty() || journal_has_completed_step(&recovery_journal, "finished")
-        {
-            return Ok(None);
+        // 从最新回合向前找第一个"未完成且有 created 载荷"的回合。
+        // 旧版本曾把重试写进错位的新回合(只有 structured_output_failed、没有 created),
+        // 对这类存档只检查最新回合会永远报 Missing created payload;向前扫描可自愈。
+        let mut turn_index = latest_turn_index;
+        while turn_index > 0 {
+            let recovery_journal = load_turn_journal(conn, session_id, turn_index)?;
+            if recovery_journal.is_empty() {
+                break;
+            }
+            if journal_has_completed_step(&recovery_journal, "finished") {
+                // 最新回合已完成:更早的回合视为历史,与旧行为一致返回 None。
+                return Ok(None);
+            }
+            if let Some(created_payload) = journal_payload(&recovery_journal, "created") {
+                let content = created_payload
+                    .get("player_input")
+                    .and_then(|value| value.as_str())
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| "Incomplete turn has no player input".to_string())?;
+                return Ok(Some(PlayerActionRequest {
+                    content: MessageContent::Text(content),
+                    action_mode: PlayerActionMode::Resend,
+                    resend_from_turn_index: Some(turn_index),
+                }));
+            }
+            // 未完成但缺 created 的错位回合:跳过,继续向前找。
+            turn_index -= 1;
         }
-        let created_payload = journal_payload(&recovery_journal, "created")
-            .ok_or_else(|| "Missing created payload for incomplete turn".to_string())?;
-        let content = created_payload
-            .get("player_input")
-            .and_then(|value| value.as_str())
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| "Incomplete turn has no player input".to_string())?;
-        Ok(Some(PlayerActionRequest {
-            content: MessageContent::Text(content),
-            action_mode: PlayerActionMode::Resend,
-            resend_from_turn_index: Some(latest_turn_index),
-        }))
+        Err("Missing created payload for incomplete turn".to_string())
     }
 
     pub fn record_structured_output_failure(
@@ -2559,6 +2807,12 @@ impl SessionOrchestrator {
         let session = session_repo
             .get(session_id)?
             .ok_or_else(|| "Session not found".to_string())?;
+        let world = resolve_world_for_session(conn, &session)?;
+        let character_names = crate::db::repositories::character_repo::CharacterRepository::new(conn)
+            .list_by_world(&world.id)?
+            .into_iter()
+            .map(|character| (character.id, character.name))
+            .collect::<HashMap<_, _>>();
         let attribute_repo =
             crate::db::repositories::attribute_repo::AttributeRepository::new(conn);
         let schema_map = attribute_repo
@@ -2586,11 +2840,11 @@ impl SessionOrchestrator {
         }
         let mut runtime_character_groups = Vec::new();
         for (owner_id, values) in grouped_values {
-            let owner_label = owner_id
-                .split(':')
-                .nth(1)
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| owner_id.clone());
+            let character_id = owner_id.split(':').next_back().unwrap_or_default();
+            let owner_label = character_names
+                .get(character_id)
+                .cloned()
+                .unwrap_or_else(|| character_id.to_string());
             let items = values
                 .iter()
                 .filter_map(|value| build_runtime_attribute_item(value, &schema_map))
@@ -2672,7 +2926,14 @@ impl SessionOrchestrator {
                 .map(str::trim)
                 .filter(|value| !value.is_empty()),
         )?;
-        let turn_index = next_turn_index(conn, session_id)?;
+        // 续跑未完成回合(resume)时必须复用原回合号:若另取 next_turn_index,
+        // created/snapshot_created 会因旧 journal 去重检查而跳过、不再写入新回合,
+        // 而 structured_output_failed 却会记到新回合,导致之后每次重发都在
+        // load_resume_player_request 处报 "Missing created payload"(无法二次重发的根因)。
+        let turn_index = match (resume_incomplete_turn, replay_turn_index) {
+            (true, Some(replay_index)) => replay_index,
+            _ => next_turn_index(conn, session_id)?,
+        };
         if !journal_has_completed_step(&recovery_journal, "created") {
             append_turn_journal(
                 conn,
@@ -2955,6 +3216,23 @@ impl SessionOrchestrator {
         }
 
         let mut pre_runtime_system_messages = Vec::<ChatMessage>::new();
+        if let Some(interaction) = director_runtime_payload.interaction.clone() {
+            pre_runtime_system_messages.push(ChatMessage {
+                message_id: ChatMessage::generate_id(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                parent_message_id: None,
+                role: "system".to_string(),
+                content: MessageContent::Text(interaction.prompt.clone()),
+                speaker: None,
+                metadata: Some(serde_json::json!({
+                    "turn_index": turn_index,
+                    "action_type": "world_interaction",
+                    "message_kind": "world_interaction",
+                    "interaction_source": "world_director",
+                    "interaction": interaction,
+                })),
+            });
+        }
         if let Some(trace_message) = director_trace_message {
             pre_runtime_system_messages.push(build_director_trace_chat_message(
                 trace_message,

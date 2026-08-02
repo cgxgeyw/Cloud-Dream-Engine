@@ -21,19 +21,8 @@ import {
   resolveDialogueSpeakerLabel,
   shouldHidePinnedNarrationMessage,
 } from "../../game/utils";
-import type { MessageInteraction } from "../../data/types";
 import type { GameUiRuntimeActions } from "../actions";
 import type { GameUiRuntimeContext } from "../runtimeContext";
-import { InteractionBlock } from "./InteractionBlock";
-
-/** 从消息 metadata 解析交互（第 5 项）。 */
-function parseMessageInteraction(message: { metadata?: Record<string, unknown> | null }): MessageInteraction | null {
-  const raw = (message.metadata ?? {}).interaction;
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const record = raw as Record<string, unknown>;
-  if (typeof record.interaction_id !== "string" || typeof record.kind !== "string") return null;
-  return record as unknown as MessageInteraction;
-}
 
 function MobileErrorNotice({
   speakerName,
@@ -112,6 +101,12 @@ function getImageParts(content: string | ContentPart[]): ImageContentPart[] {
     return [];
   }
   return content.filter((part): part is ImageContentPart => part.type === "image_url");
+}
+
+function resolveMessageVisualRole(role: string): string {
+  if (role === "assistant") return "agent";
+  if (role === "narration") return "system";
+  return role;
 }
 
 // 消息里的图片附件缩略图。内联样式保证在宿主与 iframe 里都可用（与语音气泡一致）。
@@ -255,7 +250,9 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
           return null;
         }
 
-        if (mobileSimple && !["system", "agent", "player"].includes(message.role)) {
+        const visualRole = resolveMessageVisualRole(message.role);
+
+        if (mobileSimple && !["system", "agent", "player"].includes(visualRole)) {
           return null;
         }
 
@@ -369,7 +366,7 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
               && !message.metadata?.recovered
               && index === runtime.messages.length - 1));
         const messageTurnIndex = Number(message.metadata?.turn_index ?? 0);
-        const canResendPlayerTurn = message.role === "player" && Number.isInteger(messageTurnIndex) && messageTurnIndex > 0;
+        const canResendPlayerTurn = visualRole === "player" && Number.isInteger(messageTurnIndex) && messageTurnIndex > 0;
         const isEditingThisTurn = runtime.editing?.turnIndex === messageTurnIndex;
         const turnActionsLocked =
           runtime.ui_state.submitting
@@ -377,20 +374,22 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
           || (!!runtime.editing && !isEditingThisTurn);
         const speakerLabel = resolveDialogueSpeakerLabel(message, runtime.world_characters);
         const isMobile = runtime.capabilities.platform === "mobile";
-        const messageInteraction = message.role === "agent" && !message.pending
-          ? parseMessageInteraction(message)
-          : null;
+        const isWorldInteraction = messageMetadata.message_kind === "world_interaction";
+
+        if (isWorldInteraction) {
+          return null;
+        }
 
         return (
           <React.Fragment
             key={`${message.role}-${index}-${message.speaker ?? "none"}-${message.pending ? "pending" : "committed"}`}
           >
           <div
-            className={`game-message-row game-message-row--${message.role}${message.pending ? " game-message-row--pending" : ""}`}
+            className={`game-message-row game-message-row--${visualRole}${message.pending ? " game-message-row--pending" : ""}`}
           >
-            <div className={`game-message game-message--${message.role}${message.pending ? " game-message--pending" : ""} game-ui-message-bubble`} data-variant={message.role}>
-              {message.role !== "system" ? (
-                <div className={`game-message-speaker${message.role === "player" ? " game-message-speaker--player" : ""} game-ui-message-speaker`} data-variant={message.role}>
+            <div className={`game-message game-message--${visualRole}${message.pending ? " game-message--pending" : ""} game-ui-message-bubble`} data-variant={visualRole}>
+              {visualRole !== "system" ? (
+                <div className={`game-message-speaker${visualRole === "player" ? " game-message-speaker--player" : ""} game-ui-message-speaker`} data-variant={visualRole}>
                   {message.pending ? `${speakerLabel} / 发送中` : speakerLabel}
                 </div>
               ) : null}
@@ -403,7 +402,7 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
                   </div>
                 </div>
               ) : (
-                <div className={`game-message-content ${message.role === "system" ? "game-message-content--system" : "game-message-content--default"}`}>
+                <div className={`game-message-content ${visualRole === "system" ? "game-message-content--system" : "game-message-content--default"}`}>
                   {getMessageText(message.content)}
                   {getImageParts(message.content).map((part, partIndex) => (
                     <ImageMessageThumbnail key={`image-${partIndex}`} part={part} />
@@ -415,18 +414,9 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
               )}
             </div>
 
-            {messageInteraction ? (
-              <InteractionBlock
-                messageId={message.message_id}
-                interaction={messageInteraction}
-                locked={runtime.ui_state.submitting}
-                actions={actions}
-              />
-            ) : null}
-
-            {!message.pending && isMobile && (message.role === "agent" || message.role === "player") ? (
-              <div className={`game-message-inline-actions${message.role === "player" ? " game-message-inline-actions--player" : ""}${message.role === "agent" ? " game-message-inline-actions--agent" : ""}`}>
-                {message.role === "player" ? (
+            {!message.pending && isMobile && (visualRole === "agent" || visualRole === "player") ? (
+              <div className={`game-message-inline-actions${visualRole === "player" ? " game-message-inline-actions--player" : ""}${visualRole === "agent" ? " game-message-inline-actions--agent" : ""}`}>
+                {visualRole === "player" ? (
                   <>
                     <button
                       type="button"
@@ -460,7 +450,7 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
                     </button>
                   </>
                 ) : null}
-                {message.role === "agent" ? (
+                {visualRole === "agent" ? (
                   <>
                     <button type="button" className="game-message-action-btn game-message-action-btn--copy game-ui-button" data-variant="ghost" onClick={() => void actions.copyText(getMessageText(message.content))} aria-label="\u590d\u5236" title="\u590d\u5236">
                       <Copy size={12} />
@@ -481,12 +471,12 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
               </div>
             ) : null}
 
-            {!message.pending && !isMobile && message.role !== "agent" ? (
+            {!message.pending && !isMobile && visualRole !== "agent" ? (
               <div className="game-message-actions">
                 <button type="button" className="game-message-action-btn game-message-action-btn--copy game-ui-button" data-variant="ghost" onClick={() => void actions.copyText(getMessageText(message.content))} aria-label="复制消息" title="复制消息">
                   <Copy size={12} />
                 </button>
-                {message.role === "player" ? (
+                {visualRole === "player" ? (
                   <>
                     <button
                       type="button"
@@ -523,7 +513,7 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
               </div>
             ) : null}
 
-            {!message.pending && !isMobile && message.role === "agent" ? (
+            {!message.pending && !isMobile && visualRole === "agent" ? (
               <div className="game-message-actions game-message-actions--agent">
                 <button type="button" className="game-message-action-btn game-message-action-btn--copy game-ui-button" data-variant="ghost" onClick={() => void actions.copyText(getMessageText(message.content))} aria-label="复制回复" title="复制回复">
                   <Copy size={12} />

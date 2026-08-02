@@ -4,6 +4,7 @@ use std::path::Path;
 use rusqlite::Connection;
 
 use crate::db::repositories::character_repo::CharacterRepository;
+use crate::db::repositories::attribute_repo::AttributeRepository;
 use crate::db::repositories::world_repo::WorldRepository;
 use crate::models::character::{CharacterCreateRequest, CharacterDefinition};
 use crate::models::session::{
@@ -349,6 +350,10 @@ impl WorldService {
             .get("allow_npc_spawn")
             .and_then(|value| value.as_bool())
             .unwrap_or(true);
+        let allow_player_character_switch = object
+            .get("allow_player_character_switch")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(true);
         let service_mode = object
             .get("service_mode")
             .and_then(|value| value.as_str())
@@ -467,7 +472,7 @@ impl WorldService {
             .and_then(|value| value.as_array())
             .cloned()
             .unwrap_or_default();
-        let message_interaction_kinds = crate::models::interaction::declared_interaction_kinds(raw);
+        let director_interaction_kinds = crate::models::interaction::declared_director_interaction_kinds(raw);
         let return_processing_rules = object
             .get("return_processing_rules")
             .and_then(|value| value.as_array())
@@ -502,6 +507,7 @@ impl WorldService {
             },
             "allow_scene_transition": allow_scene_transition,
             "allow_npc_spawn": allow_npc_spawn,
+            "allow_player_character_switch": allow_player_character_switch,
             "history_dialogue_rounds": history_dialogue_rounds,
             "director_tool_loop_limit": director_tool_loop_limit,
             "character_memory_hit_turns": character_memory_hit_turns,
@@ -516,7 +522,7 @@ impl WorldService {
             "director_model": director_model,
             "world_director_prompt": world_director_prompt,
             "prompt_presets": prompt_presets,
-            "message_interaction_kinds": message_interaction_kinds,
+            "director_interaction_kinds": director_interaction_kinds,
             "return_processing_rules": return_processing_rules,
             "allowed_mcp_tool_ids": allowed_mcp_tool_ids,
             "generation_params": generation_params,
@@ -703,6 +709,8 @@ impl WorldService {
                 "platform_features": imported_world.platform_features.clone(),
                 "storage": imported_world.ui_storage_config.clone(),
                 "logic": imported_world.ui_logic_config.clone(),
+                "attribute_schemas": imported_world.attribute_schemas.clone(),
+                "initial_inventory_items": imported_world.initial_inventory_items.clone(),
                 "entries": {
                     "desktop": {
                         "document": desktop_ui_source,
@@ -718,6 +726,35 @@ impl WorldService {
             opening_character_ids: Vec::new(),
             player_character_id: None,
         })?;
+
+        let attribute_repo = AttributeRepository::new(&tx);
+        let existing_schemas = attribute_repo.list_schemas(None)?;
+        for schema in &imported_world.attribute_schemas {
+            if let Some(existing) = existing_schemas.iter().find(|existing| {
+                existing.scope.trim() == schema.scope.trim()
+                    && existing.key.trim() == schema.key.trim()
+            }) {
+                let same_definition = existing.label.trim() == schema.label.trim()
+                    && existing.value_type.trim() == schema.value_type.trim()
+                    && existing.description.trim() == schema.description.trim()
+                    && existing.default_value == schema.default_value
+                    && existing.enum_options == schema.enum_options
+                    && existing.display_policy == schema.display_policy
+                    && existing.access_policy == schema.access_policy
+                    && existing.mutation_policy == schema.mutation_policy
+                    && existing.influence_policy == schema.influence_policy
+                    && existing.projection_policy == schema.projection_policy;
+                if same_definition {
+                    continue;
+                }
+                return Err(format!(
+                    "Attribute schema key conflicts with an existing definition for scope {}: {}. World package keys must be globally namespaced.",
+                    schema.scope.trim(),
+                    schema.key.trim(),
+                ));
+            }
+            attribute_repo.create_schema(schema)?;
+        }
 
         let mut id_map = HashMap::new();
         let mut name_map = HashMap::new();
@@ -997,7 +1034,7 @@ impl WorldService {
                     "scene_state": artifacts.scene_state,
                     "visibility_context": artifacts.visibility_context,
                     // 真正随请求下发、但不在对话文本里的旁路字段，补进预览以便和实际发送一致。
-                    "response_schema": build_character_response_schema(world),
+                    "response_schema": build_character_response_schema(),
                     // 第 8 项：预览按「角色内置默认 + 世界覆盖」显示；应用级与会话级
                     // 覆盖要到实际开局才有（此处没有存档），到时以回合 trace 为准。
                     "request_params": crate::services::llm::param_support::describe_params_without_provider(
@@ -1230,6 +1267,8 @@ mod tests {
                 time_config: serde_json::json!({}),
                 director_config: serde_json::json!({}),
                 ui_assets_config: serde_json::json!({}),
+                attribute_schemas: Vec::new(),
+                initial_inventory_items: Vec::new(),
                 ui_runtime_version: Some(2),
                 ui_capabilities: Vec::new(),
                 platform_features: Vec::new(),

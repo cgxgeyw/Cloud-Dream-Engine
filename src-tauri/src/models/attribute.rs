@@ -56,13 +56,21 @@ pub struct AttributeSchemaCreateRequest {
     pub key: String,
     pub label: String,
     pub value_type: String,
+    #[serde(default)]
     pub description: String,
+    #[serde(default)]
     pub default_value: serde_json::Value,
+    #[serde(default)]
     pub enum_options: Vec<String>,
+    #[serde(default)]
     pub display_policy: HashMap<String, serde_json::Value>,
+    #[serde(default)]
     pub access_policy: HashMap<String, serde_json::Value>,
+    #[serde(default)]
     pub mutation_policy: HashMap<String, serde_json::Value>,
+    #[serde(default)]
     pub influence_policy: HashMap<String, serde_json::Value>,
+    #[serde(default)]
     pub projection_policy: HashMap<String, serde_json::Value>,
 }
 

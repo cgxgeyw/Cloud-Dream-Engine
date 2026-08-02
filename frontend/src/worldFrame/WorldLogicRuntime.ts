@@ -1,4 +1,5 @@
 import type { WorldLogicConfig } from "../data/gameUi";
+import type { KvScope } from "../data/types";
 import type { WorldFrameAction } from "./protocol";
 
 const MAX_LOGIC_MESSAGE_BYTES = 256 * 1024;
@@ -132,12 +133,14 @@ async function handleStorageRequest(
       return sendAction({
         type: "world-kv-list",
         namespace: readString(payload.namespace, "namespace"),
+        scope: readKvScope(payload.scope),
       });
     case "kv.get":
       return sendAction({
         type: "world-kv-get",
         namespace: readString(payload.namespace, "namespace"),
         key: readString(payload.key, "key"),
+        scope: readKvScope(payload.scope),
       });
     case "kv.set":
       return sendAction({
@@ -145,12 +148,14 @@ async function handleStorageRequest(
         namespace: readString(payload.namespace, "namespace"),
         key: readString(payload.key, "key"),
         value: payload.value,
+        scope: readKvScope(payload.scope),
       });
     case "kv.delete":
       return sendAction({
         type: "world-kv-delete",
         namespace: readString(payload.namespace, "namespace"),
         key: readString(payload.key, "key"),
+        scope: readKvScope(payload.scope),
       });
     case "platform.invoke":
       return sendAction({
@@ -161,6 +166,19 @@ async function handleStorageRequest(
     default:
       throw new Error(`Unsupported world logic operation: ${request.operation}`);
   }
+}
+
+function readKvScope(value: unknown): KvScope | undefined {
+  const scope = asRecord(value);
+  const scopeName = scope?.scope;
+  if (scopeName !== "world" && scopeName !== "session" && scopeName !== "character") {
+    return undefined;
+  }
+  const result: KvScope = { scope: scopeName };
+  if (scope && scopeName === "character" && typeof scope.character_id === "string") {
+    result.character_id = scope.character_id;
+  }
+  return result;
 }
 
 function createWorkerSource(packageSource: string): string {

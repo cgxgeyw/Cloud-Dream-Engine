@@ -47,7 +47,7 @@ describe("shared game UI catalog", () => {
       expect(component, `registry component ${id} missing from catalog`).toBeDefined();
       expect(definition.propsSchema).toEqual(component?.props);
     }
-    // 运行时注册表覆盖除 ledger_book（仅世界框架内渲染）外的全部目录组件。
+    // 存储型完整页面组件只在隔离世界框架内渲染。
     expect(Object.keys(registry).sort()).toEqual(
       GAME_UI_CATALOG.components
         .map((component) => component.id)

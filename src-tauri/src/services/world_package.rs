@@ -386,20 +386,24 @@ fn validate_world_package_director_config(config: &serde_json::Value) -> Result<
         return Err("director_config must be an object".to_string());
     };
 
-    if let Some(kinds) = object.get("message_interaction_kinds") {
-        let kinds = kinds.as_array().ok_or_else(|| {
-            "director_config.message_interaction_kinds must be an array".to_string()
-        })?;
+    if object.contains_key("message_interaction_kinds") {
+        return Err(
+            "director_config.message_interaction_kinds has been removed; use director_interaction_kinds for world-director actions"
+                .to_string(),
+        );
+    }
+
+    if let Some(kinds) = object.get("director_interaction_kinds") {
+        let kinds = kinds
+            .as_array()
+            .ok_or_else(|| "director_config.director_interaction_kinds must be an array".to_string())?;
         for (index, kind) in kinds.iter().enumerate() {
             let kind = kind.as_str().ok_or_else(|| {
-                format!("director_config.message_interaction_kinds[{index}] must be a string")
+                format!("director_config.director_interaction_kinds[{index}] must be a string")
             })?;
-            if !matches!(
-                kind,
-                "choice" | "multi_choice" | "form" | "confirm" | "slider"
-            ) {
+            if !matches!(kind, "choice" | "multi_choice" | "form" | "confirm" | "slider") {
                 return Err(format!(
-                    "Unsupported message interaction kind `{kind}` at director_config.message_interaction_kinds[{index}]"
+                    "Unsupported director interaction kind `{kind}` at director_config.director_interaction_kinds[{index}]"
                 ));
             }
         }
@@ -813,6 +817,18 @@ fn to_world_package_data(
             .get("assets")
             .cloned()
             .unwrap_or_else(|| serde_json::json!({})),
+        attribute_schemas: world
+            .ui_theme_config
+            .get("attribute_schemas")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default(),
+        initial_inventory_items: world
+            .ui_theme_config
+            .get("initial_inventory_items")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default(),
         ui_runtime_version: Some(
             world
                 .ui_theme_config

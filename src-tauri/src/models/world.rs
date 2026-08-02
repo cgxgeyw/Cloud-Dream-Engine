@@ -154,6 +154,12 @@ pub struct WorldPackageWorldData {
     pub time_config: serde_json::Value,
     pub director_config: serde_json::Value,
     pub ui_assets_config: serde_json::Value,
+    /// 世界包声明的持久化运行时属性。导入后注册为通用属性 schema，
+    /// 创建存档时按 scope 把默认值写入当前会话或玩家角色。
+    #[serde(default)]
+    pub attribute_schemas: Vec<crate::models::attribute::AttributeSchemaCreateRequest>,
+    #[serde(default)]
+    pub initial_inventory_items: Vec<crate::models::session::InventoryItem>,
     #[serde(default)]
     pub ui_runtime_version: Option<u32>,
     #[serde(default)]

@@ -1,6 +1,10 @@
-﻿use crate::models::character::CharacterCreateRequest;
+use crate::models::character::CharacterCreateRequest;
 use crate::models::character::CharacterDefinition;
 use crate::models::generation_params::GenerationParams;
+use crate::models::interaction::{
+    declared_director_interaction_kinds, validate_interaction_candidate, MessageInteraction,
+    INTERACTION_STATUS_PENDING,
+};
 use crate::models::mcp_tool::{McpToolDefinition, MCP_TOOL_SCHEDULE_NOTIFICATION_ID, is_builtin_mcp_tool_id};
 use crate::models::model_config::ModelConfig;
 use crate::models::session::{ChatMessage, InventoryItem, MessageContent, SessionSnapshot};
@@ -25,6 +29,66 @@ use self::speaker_selection::parse_planned_speakers;
 
 #[derive(Debug, Clone, Default)]
 pub struct WorldDirectorService;
+
+fn append_runtime_attributes(
+    payload: &mut serde_json::Value,
+    session: &SessionSnapshot,
+    runtime: &crate::models::session::SessionRuntimeAttributesResponse,
+) {
+    let to_records = |groups: &[crate::models::session::RuntimeAttributeGroup]| {
+        groups
+            .iter()
+            .map(|group| {
+                serde_json::json!({
+                    "owner_type": group.owner_type,
+                    "owner_id": group.owner_id,
+                    "owner_label": group.owner_label,
+                    "attributes": group.items.iter().map(|item| {
+                        serde_json::json!({
+                            "key": item.key,
+                            "label": item.label,
+                            "value_type": item.value_type,
+                            "value": item.value,
+                        })
+                    }).collect::<Vec<_>>()
+                })
+            })
+            .collect::<Vec<_>>()
+    };
+    let player_owner_suffix = format!(":{}", session.player_character_id);
+    let player_attributes = runtime
+        .character_attributes
+        .iter()
+        .find(|group| group.owner_id.ends_with(&player_owner_suffix))
+        .map(|group| {
+            group.items.iter().map(|item| {
+                serde_json::json!({
+                    "key": item.key,
+                    "label": item.label,
+                    "value_type": item.value_type,
+                    "value": item.value,
+                })
+            }).collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let Some(current_state) = payload
+        .get_mut("current_state")
+        .and_then(|value| value.as_object_mut())
+    else {
+        return;
+    };
+    current_state.insert(
+        "runtime_attributes".to_string(),
+        serde_json::json!({
+            "session": to_records(&runtime.session_attributes),
+            "player": {
+                "character_name": session.player_character_name,
+                "attributes": player_attributes,
+            },
+            "characters": to_records(&runtime.character_attributes),
+        }),
+    );
+}
 
 #[derive(Debug, Clone)]
 pub struct DirectorLoopIterationTrace {
@@ -65,6 +129,7 @@ pub struct ParsedDirectorRuntimePayload {
     pub generated_character_payloads: Vec<serde_json::Value>,
     pub character_visual_directives: Vec<serde_json::Value>,
     pub switch_character_proposal: Option<serde_json::Value>,
+    pub interaction: Option<MessageInteraction>,
 }
 
 impl WorldDirectorService {
@@ -91,6 +156,7 @@ impl WorldDirectorService {
             tool_loop_messages,
             &[],
             &std::collections::HashMap::new(),
+            None,
             &[],
         )
     }
@@ -105,6 +171,7 @@ impl WorldDirectorService {
         tool_loop_messages: Option<Vec<serde_json::Value>>,
         mcp_tools: &[McpToolDefinition],
         kv_vars: &std::collections::HashMap<String, String>,
+        runtime_attributes: Option<&crate::models::session::SessionRuntimeAttributesResponse>,
         player_media: &[crate::models::session::ContentPart],
     ) -> serde_json::Value {
         let history_rounds = self.resolve_director_history_rounds(world);
@@ -113,7 +180,7 @@ impl WorldDirectorService {
             history_rounds,
             Some(session.player_character_name.as_str()),
         );
-        let payload = self.build_runtime_turn_payload_with_mcp_tools(
+        let mut payload = self.build_runtime_turn_payload_with_mcp_tools(
             world,
             session,
             characters,
@@ -121,6 +188,9 @@ impl WorldDirectorService {
             chat_history.clone(),
             mcp_tools,
         );
+        if let Some(attributes) = runtime_attributes {
+            append_runtime_attributes(&mut payload, session, attributes);
+        }
         let system_prompt = self.resolve_director_system_prompt(world);
         let runtime_context_prompt = resolve_runtime_context_prompt(world);
         let module_resolution = resolve_prompt_modules(
@@ -426,7 +496,12 @@ impl WorldDirectorService {
             tool_data.insert("visual_capabilities".to_string(), visual_capabilities);
         }
 
-        serde_json::json!({
+        let allow_player_character_switch = world
+            .director_config
+            .get("allow_player_character_switch")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(true);
+        let mut payload = serde_json::json!({
             "basic_setting": basic_setting,
             "current_state": current_state,
             "chat_history": chat_history,
@@ -449,6 +524,7 @@ impl WorldDirectorService {
                     "next_scene_background_hint",
                     "next_scene_tags",
                     "character_visual_directives",
+                    "inventory_items",
                     "session_attribute_updates",
                     "character_attribute_updates"
                 ],
@@ -466,8 +542,9 @@ impl WorldDirectorService {
                     "next_scene_background_hint": "Short description of the new scene's visual background. Return only on a scene change.",
                     "next_scene_tags": "Atmosphere/state tags for the new scene. Return only when the tags change.",
                     "character_visual_directives": "Per-character visual/portrait directives. Return only when a character's visual state should change.",
+                    "inventory_items": "The COMPLETE player inventory after this turn. Array items use { item_id, name, category, quantity, description, tags, owner_type, owner_id, visibility, disclosed_to }. Return only when an item is gained, lost, consumed, transferred, or its quantity changes.",
                     "session_attribute_updates": "Updates to session/world runtime custom attributes. Array of { key, value } where key matches an existing attribute schema key. Return only when a value changes.",
-                    "character_attribute_updates": "Updates to a visible character's runtime custom attributes. Array of { character_name, key, value } where key matches an existing attribute schema key. Return only when a value changes."
+                    "character_attribute_updates": "Updates to the current player or a scene character's runtime custom attributes. Array of { character_name, key, value } where key exactly matches a key listed in current_state.runtime_attributes. Return changes caused by this turn, including health, stamina, resources, equipment, techniques, progression, or other declared state."
                 },
                 "runtime_update_format": {
                     "session_attribute_updates": [
@@ -487,15 +564,40 @@ impl WorldDirectorService {
                     "Do not rebuild the full session state.",
                     "Only include current_line when a non-dialogue scene update is necessary.",
                     "Use session_attribute_updates to modify session/world runtime custom attributes by schema key.",
-                    "Use character_attribute_updates to modify a visible character's runtime custom attributes by character_name and schema key.",
+                    "Use character_attribute_updates to modify the current player or a scene character by character_name and an exact schema key from current_state.runtime_attributes.",
+                    "When an action has a concrete cost or consequence, update every affected runtime attribute in the same turn instead of describing the change only in prose.",
                     "Do not include the player character name in scene_visible_characters or planned_speakers; the player is implicitly present."
                 ]
             }
-        })
+        });
+        if !allow_player_character_switch {
+            if let Some(response_contract) = payload
+                .get_mut("response_contract")
+                .and_then(|value| value.as_object_mut())
+            {
+                if let Some(core_fields) = response_contract
+                    .get_mut("core_fields")
+                    .and_then(|value| value.as_array_mut())
+                {
+                    core_fields.retain(|field| field.as_str() != Some("switch_character_proposal"));
+                }
+                if let Some(field_guide) = response_contract
+                    .get_mut("field_guide")
+                    .and_then(|value| value.as_object_mut())
+                {
+                    field_guide.remove("switch_character_proposal");
+                }
+                response_contract.insert(
+                    "how_to_fill".to_string(),
+                    serde_json::json!("Return a single JSON object. Always include planned_speakers (even if empty). Include optional fields ONLY when they apply / change this turn; omit unchanged fields entirely rather than echoing the current state back. Never resend basic_setting, current_state, or chat_history. See field_guide for what each field means and when to send it."),
+                );
+            }
+        }
+        payload
     }
 
-    fn build_director_response_schema(&self) -> serde_json::Value {
-        serde_json::json!({
+    fn build_director_response_schema(&self, world: &WorldDefinition) -> serde_json::Value {
+        let mut schema = serde_json::json!({
             "type": "object",
             "additionalProperties": true,
             "required": ["planned_speakers"],
@@ -569,6 +671,26 @@ impl WorldDirectorService {
                 "character_visual_directives": {
                     "type": "array"
                 },
+                "inventory_items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["name", "quantity"],
+                        "additionalProperties": true,
+                        "properties": {
+                            "item_id": { "type": "string" },
+                            "name": { "type": "string" },
+                            "category": { "type": "string" },
+                            "quantity": { "type": "integer" },
+                            "description": { "type": "string" },
+                            "tags": { "type": "array", "items": { "type": "string" } },
+                            "owner_type": { "type": "string" },
+                            "owner_id": { "type": "string" },
+                            "visibility": { "type": "string" },
+                            "disclosed_to": { "type": "array", "items": { "type": "string" } }
+                        }
+                    }
+                },
                 "session_attribute_updates": {
                     "type": "array",
                     "description": "Runtime custom attribute updates for the current session. key must match an attribute schema key.",
@@ -597,12 +719,41 @@ impl WorldDirectorService {
                     }
                 }
             }
-        })
+        });
+        let kinds = declared_director_interaction_kinds(&world.director_config);
+        if !kinds.is_empty() {
+            schema["properties"]["interaction"] = serde_json::json!({
+                "type": "object",
+                "description": "A pending player action issued by the world director, not by a character. Use only for a meaningful decision that must be resolved before any character speaks. When present, planned_speakers must be an empty array.",
+                "required": ["kind", "prompt", "config"],
+                "additionalProperties": false,
+                "properties": {
+                    "kind": { "type": "string", "enum": kinds },
+                    "prompt": { "type": "string" },
+                    "config": { "type": "object", "additionalProperties": true }
+                }
+            });
+        }
+        let allow_player_character_switch = world
+            .director_config
+            .get("allow_player_character_switch")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(true);
+        if !allow_player_character_switch {
+            if let Some(properties) = schema
+                .get_mut("properties")
+                .and_then(|value| value.as_object_mut())
+            {
+                properties.remove("switch_character_proposal");
+            }
+        }
+        schema
     }
 
     pub fn build_chat_request_from_prompt_call(
         &self,
         prompt_call: &serde_json::Value,
+        world: &WorldDefinition,
         model_id: &str,
         generation: &GenerationParams,
         stream_enabled: bool,
@@ -704,7 +855,7 @@ impl WorldDirectorService {
             generation: generation.clone(),
             stream: Some(stream_enabled),
             json_mode: Some(true),
-            response_schema: Some(self.build_director_response_schema()),
+            response_schema: Some(self.build_director_response_schema(world)),
             tools,
             tool_choice: native_tools_active.then_some(ChatToolChoice::Auto),
             native_tool_calling: native_tools_active.then_some(true),
@@ -733,20 +884,21 @@ impl WorldDirectorService {
             .first()
             .map(|message| message.content_text())
             .unwrap_or_default();
-        let history_rounds = self.resolve_director_history_rounds(world);
-        let chat_history = self.build_history_dialogue(
-            &session.messages,
-            history_rounds,
-            Some(session.player_character_name.as_str()),
-        );
-        let payload =
-            self.build_runtime_turn_payload(world, session, characters, player_input, chat_history);
         let user_prompt = request_messages
             .iter()
             .rev()
             .find(|message| message.role == "user")
             .map(|message| message.content_text())
             .unwrap_or_default();
+        let payload = serde_json::from_str::<serde_json::Value>(&user_prompt).unwrap_or_else(|_| {
+            let history_rounds = self.resolve_director_history_rounds(world);
+            let chat_history = self.build_history_dialogue(
+                &session.messages,
+                history_rounds,
+                Some(session.player_character_name.as_str()),
+            );
+            self.build_runtime_turn_payload(world, session, characters, player_input, chat_history)
+        });
         let raw_model_return = self.extract_raw_model_return_text(response_value);
         let return_processing = self.apply_return_processing(world, &raw_model_return);
         let processed_model_return = return_processing
@@ -953,6 +1105,7 @@ impl WorldDirectorService {
     ) -> Result<DirectorLoopRunResult, String> {
         let mut active_request = initial_request;
         let mut traces = Vec::new();
+        let mut json_repair_attempts = 0usize;
         loop {
             let started = std::time::Instant::now();
             let request_used = active_request.clone();
@@ -1077,6 +1230,17 @@ impl WorldDirectorService {
                 tool_enriched: tool_enriched.clone(),
             });
             if !self.should_continue_tool_loop(world, &parsed, iteration) {
+                // 导演最终输出不是合法 JSON 对象时,把坏输出和解析错误反馈给模型重出,
+                // 最多 DIRECTOR_JSON_REPAIR_ATTEMPTS 轮;仍失败则原样返回,由
+                // validate_director_payload 走 json_parse_failed 路径。
+                if director_output_needs_json_repair(&parsed)
+                    && json_repair_attempts < DIRECTOR_JSON_REPAIR_ATTEMPTS
+                {
+                    json_repair_attempts += 1;
+                    active_request =
+                        build_director_json_repair_request(&active_request, &response.content);
+                    continue;
+                }
                 return Ok(DirectorLoopRunResult {
                     parsed: tool_enriched,
                     traces,
@@ -1325,7 +1489,13 @@ impl WorldDirectorService {
                 "switch_player_character" => {
                     let target_character_name =
                         arg_string(&arguments, "target_character_name").unwrap_or_default();
-                    if !target_character_name.is_empty()
+                    let allow_player_character_switch = world
+                        .director_config
+                        .get("allow_player_character_switch")
+                        .and_then(|value| value.as_bool())
+                        .unwrap_or(true);
+                    if allow_player_character_switch
+                        && !target_character_name.is_empty()
                         && target_character_name != session.player_character_name
                     {
                         let scene_character_roster = {
@@ -1769,6 +1939,11 @@ impl WorldDirectorService {
             .get("allow_npc_spawn")
             .and_then(|value| value.as_bool())
             .unwrap_or(true);
+        let allow_player_character_switch = world
+            .director_config
+            .get("allow_player_character_switch")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(true);
         let world_phase = normalize_llm_text(parsed.get("world_phase"))
             .filter(|value| matches!(value.as_str(), "opening" | "escalation" | "crisis"))
             .unwrap_or_else(|| session.state.phase.clone());
@@ -1832,6 +2007,7 @@ impl WorldDirectorService {
         } else {
             session.visible_characters.clone()
         };
+        let interaction = Self::parse_director_interaction(parsed.get("interaction"), world);
         let planned_speakers = parse_planned_speakers(
             parse_string_list(parsed.get("planned_speakers")),
             &merged_visible,
@@ -1860,15 +2036,41 @@ impl WorldDirectorService {
             next_scene_tags,
             next_time_label,
             scene_visible_characters,
-            planned_speakers,
+            planned_speakers: if interaction.is_some() { Vec::new() } else { planned_speakers },
             generated_character_payloads,
             character_visual_directives,
-            switch_character_proposal: parse_switch_character_proposal(
-                parsed.get("switch_character_proposal"),
-                &session.player_character_name,
-            ),
+            switch_character_proposal: allow_player_character_switch.then(|| {
+                parse_switch_character_proposal(
+                    parsed.get("switch_character_proposal"),
+                    &session.player_character_name,
+                )
+            }).flatten(),
+            interaction,
         }
     }
+
+    fn parse_director_interaction(
+    raw: Option<&serde_json::Value>,
+    world: &WorldDefinition,
+) -> Option<MessageInteraction> {
+    let raw = raw?;
+    let (kind, prompt, config) = validate_interaction_candidate(raw).ok()?;
+    if !declared_director_interaction_kinds(&world.director_config)
+        .iter()
+        .any(|allowed| allowed == &kind)
+    {
+        return None;
+    }
+    Some(MessageInteraction {
+        interaction_id: ChatMessage::generate_id(),
+        kind,
+        prompt,
+        config,
+        status: INTERACTION_STATUS_PENDING.to_string(),
+        answer: None,
+        answered_at: None,
+    })
+}
 
     fn extract_tool_calls(
         &self,
@@ -2374,7 +2576,14 @@ impl WorldDirectorService {
                     }
                 }
             }),
-            serde_json::json!({
+        ];
+        let allow_player_character_switch = world
+            .director_config
+            .get("allow_player_character_switch")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(true);
+        if allow_player_character_switch {
+            tools.push(serde_json::json!({
                 "tool_name": "switch_player_character",
                 "description": "Switch the player viewpoint to another character and explain the visible character roster after switching.",
                 "arguments_schema": {
@@ -2388,8 +2597,8 @@ impl WorldDirectorService {
                         "scene_background_hint": { "type": "string" }
                     }
                 }
-            }),
-        ];
+            }));
+        }
         if allowed.contains("mcp-tool-image-generation") {
             tools.push(serde_json::json!({
                 "tool_name": "generate_image",
@@ -2617,13 +2826,158 @@ fn extract_first_balanced_json_segment(raw: &str) -> Option<String> {
     None
 }
 
+/// 导演最终输出无法解析为 JSON 对象时,携带解析错误让模型重出的最大修复轮次。
+const DIRECTOR_JSON_REPAIR_ATTEMPTS: usize = 2;
+
+/// 导演最终输出是否需要 LLM 修复重试:解析结果不是非空 JSON 对象。
+fn director_output_needs_json_repair(parsed: &serde_json::Value) -> bool {
+    parsed
+        .as_object()
+        .map(|object| object.is_empty())
+        .unwrap_or(true)
+}
+
+/// 修复反馈消息(中文):告知解析错误,要求模型只输出修正后的完整 JSON。
+fn build_director_json_repair_feedback(parse_error: &str) -> String {
+    format!(
+        "你上一次的输出无法解析为 JSON 对象(错误:{parse_error})。请重新输出完整、合法的 JSON 对象,只输出 JSON 本身,不要包含解释文字或 Markdown 代码围栏。"
+    )
+}
+
+/// 构造 JSON 修复请求:在原对话后追加"模型的坏输出 + 解析错误反馈",让模型重出。
+/// 请求其它部分(model/generation/json_mode/tools 等)保持不变,仍走原有请求构造与流式逻辑。
+fn build_director_json_repair_request(
+    previous_request: &ChatRequest,
+    previous_output: &str,
+) -> ChatRequest {
+    let parse_error = match serde_json::from_str::<serde_json::Value>(previous_output.trim()) {
+        Ok(_) => "输出不是合法的 JSON 对象".to_string(),
+        Err(error) => error.to_string(),
+    };
+    let mut request = previous_request.clone();
+    request.messages.push(crate::services::llm::client::ChatMessage {
+        role: "assistant".to_string(),
+        content: serde_json::Value::String(previous_output.to_string()),
+        reasoning_content: None,
+        speaker: None,
+        tool_call_id: None,
+        tool_calls: None,
+        metadata: Some(serde_json::json!({ "json_repair": true })),
+    });
+    request.messages.push(crate::services::llm::client::ChatMessage {
+        role: "user".to_string(),
+        content: serde_json::Value::String(build_director_json_repair_feedback(&parse_error)),
+        reasoning_content: None,
+        speaker: None,
+        tool_call_id: None,
+        tool_calls: None,
+        metadata: Some(serde_json::json!({ "json_repair": true })),
+    });
+    request
+}
+
 fn repair_common_json_issues(raw: &str) -> String {
-    raw.replace('\u{201c}', "\"")
+    let replaced = raw
+        .replace('\u{201c}', "\"")
         .replace('\u{201d}', "\"")
         .replace('\u{2018}', "'")
         .replace('\u{2019}', "'")
         .replace(",}", "}")
-        .replace(",]", "]")
+        .replace(",]", "]");
+    let sanitized = sanitize_json_control_chars(&replaced);
+    complete_truncated_json(&sanitized)
+}
+
+/// 剔除/转义 JSON 里的非法控制字符。字符串值内部的裸 \r 直接去掉、裸换行和
+/// 裸制表符转成 \\n / \\t 转义(保留原有语义),其余 C0 控制字符移除;字符串外
+/// 只移除非法控制符,合法空白(空格/\t/\r/\n)原样保留。
+fn sanitize_json_control_chars(raw: &str) -> String {
+    let mut output = String::with_capacity(raw.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    for ch in raw.chars() {
+        if in_string {
+            if escaped {
+                output.push(ch);
+                escaped = false;
+                continue;
+            }
+            match ch {
+                '\\' => {
+                    output.push(ch);
+                    escaped = true;
+                }
+                '"' => {
+                    output.push(ch);
+                    in_string = false;
+                }
+                '\r' => {}
+                '\n' => output.push_str("\\n"),
+                '\t' => output.push_str("\\t"),
+                ch if (ch as u32) < 0x20 => {}
+                _ => output.push(ch),
+            }
+            continue;
+        }
+        match ch {
+            '"' => {
+                output.push(ch);
+                in_string = true;
+            }
+            ch if (ch as u32) < 0x20 && !matches!(ch, '\t' | '\n' | '\r') => {}
+            _ => output.push(ch),
+        }
+    }
+    output
+}
+
+/// 截断 JSON 补全:文本以 { 或 [ 开头但括号未闭合时(常见于输出被 max_tokens
+/// 截断),先补上未闭合的字符串引号,再按逆序补 ] / }。已平衡的文本原样返回。
+fn complete_truncated_json(raw: &str) -> String {
+    let trimmed_start = raw.trim_start();
+    if !trimmed_start.starts_with('{') && !trimmed_start.starts_with('[') {
+        return raw.to_string();
+    }
+    let mut stack: Vec<char> = Vec::new();
+    let mut in_string = false;
+    let mut escaped = false;
+    for ch in raw.chars() {
+        if in_string {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            match ch {
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' | '[' => stack.push(ch),
+            '}' | ']' => {
+                stack.pop();
+            }
+            _ => {}
+        }
+    }
+    if stack.is_empty() && !in_string {
+        return raw.to_string();
+    }
+    let mut completed = raw.to_string();
+    if in_string {
+        // 末尾悬空的转义反斜杠先自成一对,否则补上的引号会被它转义掉。
+        if escaped {
+            completed.push('\\');
+        }
+        completed.push('"');
+    }
+    while let Some(opener) = stack.pop() {
+        completed.push(if opener == '{' { '}' } else { ']' });
+    }
+    completed
 }
 
 fn arg_string(arguments: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<String> {
@@ -3302,6 +3656,35 @@ mod tests {
     }
 
     #[test]
+    fn director_interaction_waits_for_player_before_speakers_run() {
+        let service = WorldDirectorService::new();
+        let world = sample_world(serde_json::json!({
+            "director_interaction_kinds": ["choice"]
+        }));
+        let session = sample_session();
+        let parsed = serde_json::json!({
+            "planned_speakers": ["Alice"],
+            "interaction": {
+                "kind": "choice",
+                "prompt": "Choose a route",
+                "config": {
+                    "options": [
+                        { "id": "river", "label": "River path" },
+                        { "id": "ridge", "label": "Ridge path" }
+                    ]
+                }
+            }
+        });
+
+        let payload = service.parse_runtime_payload(&parsed, &session, &world, "continue");
+
+        assert!(payload.planned_speakers.is_empty());
+        let interaction = payload.interaction.expect("director interaction");
+        assert_eq!(interaction.kind, "choice");
+        assert_eq!(interaction.status, INTERACTION_STATUS_PENDING);
+    }
+
+    #[test]
     fn parse_runtime_payload_sanitizes_switch_character_proposal() {
         let service = WorldDirectorService::new();
         let world = sample_world(serde_json::json!({ "allow_scene_transition": true }));
@@ -3332,6 +3715,25 @@ mod tests {
         assert!(!visible_names.contains(&"Player"));
         assert!(!visible_names.contains(&"Alice"));
         assert!(visible_names.contains(&"Bob"));
+    }
+
+    #[test]
+    fn parse_runtime_payload_drops_switch_proposal_when_disabled() {
+        let service = WorldDirectorService::new();
+        let world = sample_world(serde_json::json!({
+            "allow_player_character_switch": false
+        }));
+        let session = sample_session();
+        let parsed = serde_json::json!({
+            "switch_character_proposal": {
+                "target_character_name": "Alice",
+                "reason": "Need stealth expert"
+            }
+        });
+
+        let payload = service.parse_runtime_payload(&parsed, &session, &world, "switch");
+
+        assert!(payload.switch_character_proposal.is_none());
     }
 
     #[test]
@@ -3464,7 +3866,8 @@ mod tests {
     #[test]
     fn director_response_schema_omits_removed_runtime_log_fields() {
         let service = WorldDirectorService::new();
-        let schema = service.build_director_response_schema();
+        let world = sample_world(serde_json::json!({}));
+        let schema = service.build_director_response_schema(&world);
         let properties = schema
             .get("properties")
             .and_then(|value| value.as_object())
@@ -3498,5 +3901,120 @@ mod tests {
         assert!(required.contains(&"name"));
         assert!(required.contains(&"role"));
         assert!(required.contains(&"background_prompt"));
+    }
+
+    #[test]
+    fn repair_common_json_issues_escapes_bare_newlines_inside_strings() {
+        let broken = "{\"current_line\": \"第一行\n第二行\"}";
+        let repaired = repair_common_json_issues(broken);
+        let parsed =
+            serde_json::from_str::<serde_json::Value>(&repaired).expect("修复后应能解析");
+        assert_eq!(
+            parsed.get("current_line").and_then(|value| value.as_str()),
+            Some("第一行\n第二行")
+        );
+    }
+
+    #[test]
+    fn repair_common_json_issues_removes_bare_carriage_returns_in_strings() {
+        let broken = "{\"current_line\": \"甲\r\n乙\"}";
+        let repaired = repair_common_json_issues(broken);
+        let parsed =
+            serde_json::from_str::<serde_json::Value>(&repaired).expect("修复后应能解析");
+        assert_eq!(
+            parsed.get("current_line").and_then(|value| value.as_str()),
+            Some("甲\n乙")
+        );
+    }
+
+    #[test]
+    fn repair_common_json_issues_completes_truncated_json() {
+        let truncated = "{\"world_phase\": \"opening\", \"planned_speakers\": [\"Alice\"";
+        let repaired = repair_common_json_issues(truncated);
+        let parsed =
+            serde_json::from_str::<serde_json::Value>(&repaired).expect("补全后应能解析");
+        assert_eq!(
+            parsed.get("world_phase").and_then(|value| value.as_str()),
+            Some("opening")
+        );
+        assert_eq!(
+            parsed
+                .get("planned_speakers")
+                .and_then(|value| value.as_array())
+                .map(|items| items.len()),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn repair_common_json_issues_completes_unterminated_string() {
+        let truncated = "{\"current_line\": \"雾从江面升起";
+        let repaired = repair_common_json_issues(truncated);
+        let parsed =
+            serde_json::from_str::<serde_json::Value>(&repaired).expect("补全后应能解析");
+        assert_eq!(
+            parsed.get("current_line").and_then(|value| value.as_str()),
+            Some("雾从江面升起")
+        );
+    }
+
+    #[test]
+    fn repair_common_json_issues_keeps_valid_json_untouched() {
+        let valid = "{\"a\": 1, \"b\": [1, 2], \"c\": \"x\\n\"}";
+        assert_eq!(repair_common_json_issues(valid), valid);
+    }
+
+    #[test]
+    fn director_output_needs_json_repair_only_for_non_object_or_empty() {
+        assert!(director_output_needs_json_repair(&serde_json::Value::Null));
+        assert!(director_output_needs_json_repair(&serde_json::json!(
+            "just text"
+        )));
+        assert!(director_output_needs_json_repair(&serde_json::json!({})));
+        assert!(!director_output_needs_json_repair(&serde_json::json!({
+            "planned_speakers": ["Alice"]
+        })));
+    }
+
+    #[test]
+    fn build_director_json_repair_request_appends_output_and_feedback() {
+        let request = ChatRequest {
+            model: "model".to_string(),
+            messages: vec![crate::services::llm::client::ChatMessage {
+                role: "system".to_string(),
+                content: serde_json::json!("prompt"),
+                reasoning_content: None,
+                speaker: None,
+                tool_call_id: None,
+                tool_calls: None,
+                metadata: None,
+            }],
+            generation: GenerationParams::default(),
+            stream: Some(false),
+            json_mode: Some(true),
+            response_schema: None,
+            tools: None,
+            tool_choice: None,
+            native_tool_calling: None,
+        };
+
+        let repaired = build_director_json_repair_request(&request, "{broken json");
+
+        assert_eq!(repaired.messages.len(), 3);
+        assert_eq!(repaired.messages[1].role, "assistant");
+        assert_eq!(
+            repaired.messages[1].content.as_str(),
+            Some("{broken json")
+        );
+        assert_eq!(repaired.messages[2].role, "user");
+        let feedback = repaired.messages[2]
+            .content
+            .as_str()
+            .expect("feedback text");
+        assert!(feedback.contains("无法解析为 JSON 对象"));
+        assert!(feedback.contains("只输出 JSON 本身"));
+        // 原请求的 model/json_mode 等参数保持不变
+        assert_eq!(repaired.model, "model");
+        assert_eq!(repaired.json_mode, Some(true));
     }
 }

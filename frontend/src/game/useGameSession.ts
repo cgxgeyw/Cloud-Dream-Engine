@@ -30,6 +30,7 @@ import {
   type ChatMessageResponse,
   type PlayerActionMode,
   type RetryFailedLlmStepRequest,
+  type RuntimeAttributeItem,
   type SaveResponse,
   type SessionRuntimeAttributesResponse,
   type SessionMapEdge,
@@ -39,7 +40,7 @@ import {
   type WorldResponse,
   answerInteraction,
 } from "../data/apiAdapter";
-import type { ContentPart } from "../data/types";
+import type { ContentPart, MessageInteraction } from "../data/types";
 import {
   buildGameUiStylesheet,
   createGameUiScopeSelector,
@@ -116,21 +117,68 @@ function stringifyRuntimeAttributeValue(value: unknown): string {
 
 function buildAttributeSideTabsFromRuntimeAttributes(
   runtimeAttributes: SessionRuntimeAttributesResponse,
+  inventoryItems: SessionSnapshotResponse["inventory_items"],
+  sessionId: string,
+  playerCharacterId: string,
 ): Array<[string, string]> {
-  return [...runtimeAttributes.session_attributes, ...runtimeAttributes.character_attributes]
-    .map((group) => {
-      const lines = group.items
-        .map((item) => {
-          const value = stringifyRuntimeAttributeValue(item.value);
-          if (!value) {
-            return "";
-          }
-          return `${item.label || item.key}: ${value}`;
-        })
-        .filter(Boolean);
-      return [group.owner_label.trim(), lines.join("\n")] as [string, string];
-    })
-    .filter(([label, content]) => label && content);
+  const grouped = new Map<string, string[]>();
+  const playerGroups = runtimeAttributes.character_attributes.filter((group) =>
+    group.owner_id === playerCharacterId
+    || group.owner_id.endsWith(`:${playerCharacterId}`)
+    || group.owner_id === `${sessionId}:${playerCharacterId}`
+  );
+  for (const owner of [...runtimeAttributes.session_attributes, ...playerGroups]) {
+    const orderedItems = [...owner.items].sort((left, right) => {
+      const leftOrder = typeof left.display_policy.order === "number" ? left.display_policy.order : 0;
+      const rightOrder = typeof right.display_policy.order === "number" ? right.display_policy.order : 0;
+      return leftOrder - rightOrder;
+    });
+    for (const item of orderedItems) {
+      if (item.display_policy.hidden === true) continue;
+      const value = stringifyRuntimeAttributeValue(item.value);
+      if (!value) continue;
+      const configuredGroup = typeof item.display_policy.group === "string"
+        ? item.display_policy.group.trim()
+        : "";
+      const label = configuredGroup || owner.owner_label.trim();
+      if (!label) continue;
+      const lines = grouped.get(label) ?? [];
+      lines.push(`${item.label || item.key}: ${value}`);
+      grouped.set(label, lines);
+    }
+  }
+  const inventoryLines = inventoryItems.map((item) => {
+    const quantity = item.quantity > 1 ? ` x${item.quantity}` : "";
+    const detail = item.description.trim() ? `\n  ${item.description.trim()}` : "";
+    return `${item.name}${quantity}${detail}`;
+  });
+  grouped.set("背包", inventoryLines.length > 0 ? inventoryLines : ["暂无物品"]);
+  return Array.from(grouped, ([label, lines]) => [label, lines.join("\n")]);
+}
+
+function findAttributeItemsForTab(
+  runtimeAttributes: SessionRuntimeAttributesResponse,
+  tabLabel: string,
+  sessionId: string,
+  playerCharacterId: string,
+) {
+  const playerGroups = runtimeAttributes.character_attributes.filter((group) =>
+    group.owner_id === playerCharacterId
+    || group.owner_id.endsWith(`:${playerCharacterId}`)
+    || group.owner_id === `${sessionId}:${playerCharacterId}`
+  );
+  return [...runtimeAttributes.session_attributes, ...playerGroups]
+    .flatMap((owner) => owner.items.filter((item) => {
+      const configuredGroup = typeof item.display_policy.group === "string"
+        ? item.display_policy.group.trim()
+        : "";
+      return (configuredGroup || owner.owner_label.trim()) === tabLabel && item.display_policy.hidden !== true;
+    }))
+    .sort((left, right) => {
+      const leftOrder = typeof left.display_policy.order === "number" ? left.display_policy.order : 0;
+      const rightOrder = typeof right.display_policy.order === "number" ? right.display_policy.order : 0;
+      return leftOrder - rightOrder;
+    });
 }
 
 export interface GameSessionStateBag {
@@ -189,7 +237,7 @@ export interface GameSessionStateBag {
     messageId: string,
     interactionId: string,
     answer: unknown,
-  ) => Promise<{ answer: unknown; newlyAnswered: boolean } | null>;
+  ) => Promise<{ answer: unknown; newlyAnswered: boolean; interaction: MessageInteraction | null } | null>;
   /** 最近一次完成回合的信号（世界包事件 turn_completed 的触发源） */
   lastCompletedTurn: { sessionId: string; turnIndex: number; seq: number } | null;
 
@@ -211,6 +259,7 @@ export interface GameSessionStateBag {
   sideTabs: Array<{ key: string; label: string }>;
   activeAttributeTab: string;
   activeAttributeContent: string;
+  activeAttributeItems: RuntimeAttributeItem[];
   latestNarration: string;
   dialogueMessages: ChatMessageResponse[];
   renderedDialogueMessages: RenderChatMessage[];
@@ -242,6 +291,9 @@ export function useGameSession(
   const { sessionId: sessionIdParam } = useParams<{ sessionId: string }>();
 
   const [session, setSession] = useState<SessionSnapshotResponse | null>(null);
+  // 流式帧只携带正在增长的消息。把它与完整会话快照拆开，避免每个 token 都
+  // 刷新地图、属性、场景等本应在回合完成后才更新的区域。
+  const [streamingMessages, setStreamingMessages] = useState<ChatMessageResponse[] | null>(null);
   const [themeWorld, setThemeWorld] = useState<WorldResponse | null>(null);
   const [playerCharacter, setPlayerCharacter] = useState<CharacterResponse | null>(null);
   const [worldCharacters, setWorldCharacters] = useState<CharacterResponse[]>([]);
@@ -284,7 +336,15 @@ export function useGameSession(
     Set<string>
   >(new Set());
 
-  const applySessionSnapshot = useCallback((snapshot: SessionSnapshotResponse) => {
+  const applySessionSnapshot = useCallback((snapshot: SessionSnapshotResponse, options?: {
+    streaming?: boolean;
+  }) => {
+    if (options?.streaming) {
+      setStreamingMessages(snapshot.messages ?? []);
+      return;
+    }
+
+    setStreamingMessages(null);
     setSession(snapshot);
     setRuntimeAttributesRevision((revision) => revision + 1);
   }, []);
@@ -360,6 +420,7 @@ export function useGameSession(
   useEffect(() => {
     clearRuntimeAttributeRefreshTimers();
     setSession(null);
+    setStreamingMessages(null);
     setThemeWorld(null);
     setPlayerCharacter(null);
     setWorldCharacters([]);
@@ -443,7 +504,11 @@ export function useGameSession(
             return;
           }
 
-          if (payload.type === "session.snapshot" && payload.payload) {
+          if (
+            payload.type === "session.snapshot"
+            && payload.payload
+            && !submitInFlightRef.current
+          ) {
             hasLoadedSession = true;
             applySessionSnapshot(payload.payload);
           }
@@ -485,7 +550,7 @@ export function useGameSession(
     let unsubscribe: (() => void) | null = null;
 
     void onSessionSnapshot(sessionId, (snapshot) => {
-      if (!cancelled) {
+      if (!cancelled && !submitInFlightRef.current) {
         applySessionSnapshot(snapshot);
       }
     })
@@ -688,13 +753,14 @@ export function useGameSession(
     };
   }, [session?.id]);
 
+  const activeSessionMessages = streamingMessages ?? session?.messages ?? [];
   const messages = useMemo<RenderChatMessage[]>(
     () =>
-      (session?.messages ?? []).map((message) => ({
+      activeSessionMessages.map((message) => ({
         ...message,
         pending: false,
       })),
-    [session?.messages],
+    [activeSessionMessages],
   );
 
   useEffect(() => {
@@ -786,8 +852,13 @@ export function useGameSession(
     [session?.map_graph_edges],
   );
   const attributeSideTabs = useMemo<Array<[string, string]>>(
-    () => buildAttributeSideTabsFromRuntimeAttributes(runtimeAttributes),
-    [runtimeAttributes],
+    () => buildAttributeSideTabsFromRuntimeAttributes(
+      runtimeAttributes,
+      session?.inventory_items ?? [],
+      session?.id ?? sessionId,
+      session?.player_character_id ?? "",
+    ),
+    [runtimeAttributes, session?.id, session?.inventory_items, session?.player_character_id, sessionId],
   );
   const worldCharacterNameSet = useMemo(
     () =>
@@ -823,6 +894,17 @@ export function useGameSession(
   const activeAttributeContent = activeAttributeTab
     ? attributeSideTabs.find(([label]) => label === activeAttributeTab)?.[1] ?? ""
     : "";
+  const activeAttributeItems = useMemo(
+    () => activeAttributeTab
+      ? findAttributeItemsForTab(
+          runtimeAttributes,
+          activeAttributeTab,
+          session?.id ?? sessionId,
+          session?.player_character_id ?? "",
+        )
+      : [],
+    [activeAttributeTab, runtimeAttributes, session?.id, session?.player_character_id, sessionId],
+  );
 
   const latestNarration = useMemo(() => {
     const currentLine = session?.current_line?.trim();
@@ -1008,11 +1090,23 @@ export function useGameSession(
       return;
     }
 
-    const frame = window.requestAnimationFrame(() => {
+    const scrollToBottom = () => {
       container.scrollTop = container.scrollHeight;
+    };
+    let trailingFrame = 0;
+    const frame = window.requestAnimationFrame(() => {
+      scrollToBottom();
+      trailingFrame = window.requestAnimationFrame(() => {
+        if (shouldAutoScrollRef.current) {
+          scrollToBottom();
+        }
+      });
     });
+    // 流式文本换行与延后加载的内容会在本次 React 提交之后改变 scrollHeight。
+    // 再等一帧可保持跟随，而不会覆盖用户已主动向上滚动的阅读位置。
     return () => {
       window.cancelAnimationFrame(frame);
+      window.cancelAnimationFrame(trailingFrame);
     };
   }, [chatAutoScrollEnabled, renderedDialogueMessages]);
 
@@ -1052,7 +1146,12 @@ export function useGameSession(
       try {
         const response = await answerInteraction(sessionId, messageId, interactionId, answer);
         applySessionSnapshot(response.session);
-        return { answer: response.answer, newlyAnswered: response.newly_answered };
+        const answeredMessage = response.session.messages.find((message) => message.message_id === messageId);
+        const rawInteraction = answeredMessage?.metadata?.interaction;
+        const interaction = rawInteraction && typeof rawInteraction === "object" && !Array.isArray(rawInteraction)
+          ? rawInteraction as MessageInteraction
+          : null;
+        return { answer: response.answer, newlyAnswered: response.newly_answered, interaction };
       } catch (error) {
         setActionError(error instanceof Error ? error.message : String(error));
         return null;
@@ -1093,6 +1192,8 @@ export function useGameSession(
         return;
       }
       submitInFlightRef.current = true;
+      // 自己刚发送的回合必须接管到底部；之后用户手动上滚仍会解除跟随。
+      shouldAutoScrollRef.current = true;
       setSubmitting(true);
       setActionError(null);
 
@@ -1187,7 +1288,7 @@ export function useGameSession(
                   setOptimisticPlayerMessage(null);
                 }
               }
-              applySessionSnapshot(nextSnapshot);
+              applySessionSnapshot(nextSnapshot, { streaming: true });
             },
             onError: (detail) => {
               setActionError(formatActionErrorMessage(detail));
@@ -1473,6 +1574,7 @@ export function useGameSession(
     sideTabs,
     activeAttributeTab,
     activeAttributeContent,
+    activeAttributeItems,
     latestNarration,
     dialogueMessages,
     renderedDialogueMessages,

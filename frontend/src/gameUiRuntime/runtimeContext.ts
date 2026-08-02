@@ -131,6 +131,7 @@ export type GameUiRuntimeContext = {
   side_tabs: Array<{ key: string; label: string }>;
   active_side_tab: SideTab;
   active_attribute_content: string;
+  active_attribute_items: RuntimeAttributeItem[];
   draft_input: {
     value: string;
     images: GameUiDraftAttachment[];
@@ -224,6 +225,7 @@ export function createGameUiRuntimeContext(
     side_tabs: bag.sideTabs,
     active_side_tab: bag.sideTab,
     active_attribute_content: bag.activeAttributeContent,
+    active_attribute_items: bag.activeAttributeItems,
     draft_input: {
       value: bag.inputValue,
       images: bag.inputImages,

@@ -7,10 +7,10 @@
 ```text
 角色生成 choice
   -> 玩家点击
-  -> interaction_answered
-  -> logic.js 写入 session 级 variables.route
-  -> {{var:route}} 注入下一回合 Prompt
-  -> 主控与角色按玩家路线继续剧情
+  -> 宿主把选项标签写成玩家消息
+  -> 自动启动下一回合
+  -> 主控更新地点、在场人物、背包和声明过的角色属性
+  -> 主控与角色按玩家选择继续剧情
 ```
 
 ## 1. 先写玩法闭环
@@ -19,17 +19,17 @@
 
 | 问题 | 必须落实到 |
 |---|---|
-| 玩家每回合做什么 | `input_composer`、角色交互或可信组件 |
+| 玩家每回合做什么 | `input_composer`、世界主控交互或可信组件 |
 | 谁决定剧情推进 | 世界主控、角色模型或确定性 logic.js |
-| 哪些状态会改变 | 引擎属性/背包/场景，或世界包 records/KV |
-| 状态如何影响下一回合 | 引擎上下文、`{{var:key}}`、关键词 Prompt 模块 |
+| 哪些状态会改变 | 核心玩法用引擎属性/背包/场景，独立工具数据才用 records/KV |
+| 状态如何影响下一回合 | `current_state.runtime_attributes`、背包与场景上下文；辅助变量才用 `{{var:key}}` |
 | 玩家在哪里看到结果 | 消息、地图、属性标签或注册组件 |
 
 任何一个“系统”都必须能画出完整链路。例如“门派声望”不能只有 storage schema，也不能只有角色属性字符串：必须有写入入口、持久化位置、Prompt 消费点和可见反馈。
 
 ## 2. 分清三种状态
 
-1. **引擎权威状态**：场景、位置、在场角色、角色属性、背包、规则和记忆。由主控结构化写回，适合叙事游戏的核心状态。
+1. **引擎权威状态**：场景、位置、在场角色、角色属性、背包、规则和记忆。由主控结构化写回，适合叙事游戏的核心状态。世界包用 `attribute_schemas` 声明属性和默认值，用 `initial_inventory_items` 声明开局背包。
 2. **session KV**：单个存档内的路线、开关、计分和轻量聚合值。声明 `variables` namespace 后，可用 `{{var:key}}` 注入 Prompt。
 3. **records**：任务日志、事件历史、交易、图鉴等多条同构记录。需要主动通过 UI action 或 logic.js 写入。
 
@@ -43,7 +43,7 @@
 
 - `session_start`：初始化存档变量。
 - `turn_completed`：回合完成后记日志、累计数值。
-- `interaction_answered`：玩家回答结构化交互后写入路线或得分。
+- `interaction_answered`：可选的额外本地事件；正常剧情不依赖它，回答会自动成为玩家消息并继续下一回合。
 
 ## 4. Prompt 模块的正确分工
 
@@ -60,21 +60,23 @@
 
 常驻模块不填写 `keywords`。条件模块通过 `keywords` 控制是否注入，不能写 `scope: "keyword"`。世界背景写稳定设定；Prompt 模块写运行规则、条件知识和会话变量，不要重复堆砌同一段世界观。
 
-## 5. 交互必须进入角色回复 JSON
+## 5. 交互必须进入世界主控回复 JSON
 
 先在 `director_config` 声明：
 
 ```json
-"message_interaction_kinds": ["choice"]
+"director_interaction_kinds": ["choice"]
 ```
 
-然后在角色 `response_contract_prompt` 说明何时出题，例如：
+然后在世界主控提示词中说明何时出题，例如：
 
 ```text
 当路线仍为“未选择”且剧情来到岔路时，必须用 choice 让玩家从 join、defend、flee 中选择；不要把三个选项只写成正文列表。
 ```
 
-宿主会自动把允许类型和精确格式追加到角色回复契约。模型应输出：
+写主控提示词的通用原则（同样适用于角色提示词）：每要求一个输出字段，都要附一个完整、可直接解析的 JSON 示例，并明确要求"只输出 JSON 本身、不用代码围栏、字符串内换行写 `\n`"。只描述字段不给示例是模型输出无法解析的最常见原因。详见《world-package-guide-v3.md》"角色提示词怎么写"一节。
+
+宿主会把允许类型和精确格式加入世界主控回复契约。模型应输出：
 
 ```json
 "interaction": {
@@ -90,55 +92,56 @@
 }
 ```
 
-只声明交互类型不会改变世界状态。还要把 `interaction_answered` 绑定到 logic.js。
+玩家点击后，宿主会把选项 `label` 作为一条真实玩家回复并自动启动下一回合。主控会像处理普通输入一样处理这次选择，并用 `next_location`、`scene_visible_characters`、`inventory_items` 和属性更新写回结果，不需要 logic.js 中转。
 
-## 6. 用事件把回答接回世界
+## 6. 用属性把结果接回世界
 
-`world.json`：
+先在 `world.json` 声明稳定状态：
 
-```json
-"storage": {
-  "kv_namespaces": ["variables"],
-  "collections": {}
-},
-"logic": {
-  "runtime": "sandbox-js-v1",
-  "timeout_ms": 1000,
-  "events": {
-    "session_start": "starter.sessionStart",
-    "interaction_answered": "starter.interactionAnswered"
+```jsonc
+"attribute_schemas": [
+  {
+    "scope": "session_character",
+    "key": "starter_stamina",
+    "label": "体力",
+    "value_type": "number",
+    "default_value": 100,
+    "display_policy": { "group": "状态", "presentation": "meter", "max": 100 }
+  },
+  {
+    "scope": "session_character",
+    "key": "starter_route",
+    "label": "当前路线",
+    "value_type": "text",
+    "default_value": "未选择",
+    "display_policy": { "group": "阅历" }
   }
-}
+]
 ```
 
-`logic.js`：
+再明确要求主控在行动产生事实结果时写回：
 
-```js
-world.register("starter.interactionAnswered", async (input, api) => {
-  const routes = {
-    join: "投奔义军",
-    defend: "守护乡里",
-    flee: "避乱南下"
-  };
-  const route = routes[String(input.answer || "")];
-  if (!route) return { ignored: true };
-  await api.kv.set("variables", "route", route, { scope: "session" });
-  return { route };
-});
+```text
+current_state.runtime_attributes 是权威状态。玩家选择路线后，用
+character_attribute_updates 更新 starter_route；奔跑、攀爬或负重时同时更新
+starter_stamina。不能只在叙事中描述变化。
 ```
 
-最后增加常驻 Prompt 模块：
+主控返回示例：
 
 ```json
 {
-  "name": "玩家路线",
-  "content": "玩家当前路线：{{var:route}}。后续冲突、可见角色和地点必须服从该路线。",
-  "position": "system_suffix",
-  "scope": "both"
+  "planned_speakers": ["乡勇首领"],
+  "next_location": "村东土垒",
+  "scene_visible_characters": ["乡勇首领"],
+  "character_attribute_updates": [
+    { "character_name": "玩家角色名", "key": "starter_route", "value": "守护乡里" },
+    { "character_name": "玩家角色名", "key": "starter_stamina", "value": 92 }
+  ]
 }
 ```
 
-这四段缺一不可：声明交互、模型出题、事件写入、Prompt 消费。
+这条链路只有一份真相来源：schema 定义初值，主控读取当前值并写回，`side_panel_tabs` 直接展示结果。只有确定性计分、独立工具记录或复杂本地计算才需要额外使用 `interaction_answered` 和 logic.js。
 
 ## 7. UI 节点不要猜字段
 
@@ -182,9 +185,10 @@ world.register("starter.interactionAnswered", async (input, api) => {
 
 - 每个组件 prop 都在 `props` 中。
 - 每个 Prompt scope 都是 `director`、`character` 或 `both`。
-- 每个 logic handler 都能从 `logic.events` 或 UI `logic.run` 到达。
-- 每个交互回答都有状态写入或明确说明只用于一次性 UI。
+- 每个存在的 logic handler 都能从 `logic.events` 或 UI `logic.run` 到达。
+- 每个交互回答都会作为玩家消息进入下一回合；需要持久化的结果由主控写入权威状态。
 - 每个持久化值都有写入者和消费方。
+- 核心角色状态没有同时复制到 KV、records 或自定义面板状态。
 - 没有把 `triggers` 当作事件系统。
 - 没有引用 ZIP 中不存在的资源。
 - 地图、角色和设定只暴露当前剧情阶段需要的内容。

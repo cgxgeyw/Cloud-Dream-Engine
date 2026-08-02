@@ -6,7 +6,7 @@
    ═══════════════════════════════════════════════════════════════ */
 
 export type ThemeMode = "light" | "dark";
-export type ThemeStyle = "default" | "kawaii";
+export type ThemeStyle = "default" | "kawaii" | "mondrian";
 
 /** @deprecated Use ThemeMode + ThemeStyle instead. Kept for backward compat. */
 export type AppTheme = ThemeMode;
@@ -14,6 +14,7 @@ export type AppTheme = ThemeMode;
 export const ALL_THEME_STYLES: { id: ThemeStyle; label: string; description: string }[] = [
   { id: "default", label: "默认", description: "干净明亮的现代风格" },
   { id: "kawaii", label: "粉色可爱", description: "软糯粉色 · 圆润泡泡 · 糖果梦境" },
+  { id: "mondrian", label: "蒙德里安", description: "原色分割 · 硬朗线条 · 漫画外框" },
 ];
 
 const MODE_STORAGE_KEY = "app-theme";
@@ -46,7 +47,7 @@ export function persistMode(mode: ThemeMode) {
 // ─── Style (default / kawaii) ───
 
 function isStyle(value: string | null): value is ThemeStyle {
-  return value === "default" || value === "kawaii";
+  return value === "default" || value === "kawaii" || value === "mondrian";
 }
 
 export function resolveInitialStyle(): ThemeStyle {

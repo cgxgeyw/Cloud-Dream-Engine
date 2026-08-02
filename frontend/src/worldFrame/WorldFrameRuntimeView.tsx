@@ -1,5 +1,5 @@
 import type { KvScope } from "../data/types";
-import { useMemo, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 
 import { GameUiRenderer, type GameUiRenderContext } from "../components/GameUiRenderer";
 import type { GameUiActionReference, GameUiPropValue, WorldLogicConfig
@@ -22,11 +22,39 @@ type Props = {
 export function WorldFrameRuntimeView({ payload, sendAction }: Props) {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
+  const shouldFollowMessagesRef = useRef(true);
   const runtime = useMemo(
     () => hydrateGameUiRuntimeContext(payload.snapshot, { input: inputRef, messages: messagesRef }),
     [payload.snapshot],
   );
-  const actions = useMemo(() => createFrameActions(sendAction), [sendAction]);
+  const forceMessageFollow = useCallback(() => {
+    shouldFollowMessagesRef.current = true;
+  }, []);
+  const actions = useMemo(() => createFrameActions(sendAction, forceMessageFollow), [forceMessageFollow, sendAction]);
+
+  useEffect(() => {
+    const container = messagesRef.current;
+    if (!container) return undefined;
+    const updateFollowState = () => {
+      shouldFollowMessagesRef.current = container.scrollHeight - container.scrollTop - container.clientHeight <= 24;
+    };
+    updateFollowState();
+    container.addEventListener("scroll", updateFollowState, { passive: true });
+    return () => container.removeEventListener("scroll", updateFollowState);
+  }, [runtime.messages.length]);
+
+  useLayoutEffect(() => {
+    if (!runtime.message_preferences.auto_scroll_enabled || !shouldFollowMessagesRef.current) return;
+    let innerFrame = requestAnimationFrame(() => {
+      innerFrame = requestAnimationFrame(() => {
+        const container = messagesRef.current;
+        if (container && shouldFollowMessagesRef.current) {
+          container.scrollTop = container.scrollHeight;
+        }
+      });
+    });
+    return () => cancelAnimationFrame(innerFrame);
+  }, [runtime.message_preferences.auto_scroll_enabled, runtime.messages]);
   const componentRenderers = useMemo(() => ({
     ...createGameUiComponentRenderers(runtime, actions),
     input_composer: ({ node }: Parameters<NonNullable<ReturnType<typeof createGameUiComponentRenderers>[string]>>[0]) => (
@@ -35,7 +63,7 @@ export function WorldFrameRuntimeView({ payload, sendAction }: Props) {
     ledger_book: ({ node }: Parameters<NonNullable<ReturnType<typeof createGameUiComponentRenderers>[string]>>[0]) => (
       <LedgerBook node={node} platform={payload.platform} sendAction={sendAction} onExit={actions.navigateBack} />
     ),
-  }), [actions, payload.platform, runtime, sendAction]);
+  }), [actions, payload.logic, payload.platform, runtime, sendAction]);
   const runtimeData = useMemo(() => ({
     session: runtime.session,
     world: runtime.world,
@@ -51,6 +79,7 @@ export function WorldFrameRuntimeView({ payload, sendAction }: Props) {
     side_tabs: runtime.side_tabs,
     active_side_tab: runtime.active_side_tab,
     active_attribute_content: runtime.active_attribute_content,
+    active_attribute_items: runtime.active_attribute_items,
     scene_focus: runtime.scene_focus,
     latest_narration: runtime.latest_narration,
     draft_input: payload.snapshot.draft_input,
@@ -77,6 +106,7 @@ export function WorldFrameRuntimeView({ payload, sendAction }: Props) {
       data-game-ui-scope={payload.scopeId}
       data-world-frame-runtime="3"
       style={viewportStyle}
+      onContextMenu={(event) => event.preventDefault()}
     >
       {payload.stylesheet ? <style>{payload.stylesheet}</style> : null}
       {runtime.ui_state.loading ? <div className="game-loading">{"\u6b63\u5728\u52a0\u8f7d\u4f1a\u8bdd..."}</div> : null}
@@ -215,14 +245,22 @@ async function dispatchDslAction(
   throw new Error(`Unsupported world UI action: ${actionId}`);
 }
 
-function createFrameActions(send: (action: WorldFrameAction) => Promise<unknown>): GameUiRuntimeActions {
+function createFrameActions(
+  send: (action: WorldFrameAction) => Promise<unknown>,
+  forceMessageFollow: () => void,
+): GameUiRuntimeActions {
   return {
     clearActionError: () => void send({ type: "clear-action-error" }),
     setDraftValue: (value) => void send({ type: "set-draft-value", value }),
     setAutoScrollEnabled: (enabled) => void send({ type: "set-auto-scroll", enabled }),
-    submitMessage: (options = {}) => send({ type: "submit-message", options }).then(() => undefined),
-    answerInteraction: (messageId, interactionId, answer) =>
-      send({ type: "answer-interaction", messageId, interactionId, answer }).then(() => undefined),
+    submitMessage: (options = {}) => {
+      forceMessageFollow();
+      return send({ type: "submit-message", options }).then(() => undefined);
+    },
+    answerInteraction: (messageId, interactionId, answer) => {
+      forceMessageFollow();
+      return send({ type: "answer-interaction", messageId, interactionId, answer }).then(() => undefined);
+    },
     startEditingTurn: (content, turnIndex) => void send({ type: "start-editing-turn", content, turnIndex }),
     cancelEditingTurn: () => void send({ type: "cancel-editing-turn" }),
     branchFromCurrent: () => send({ type: "branch-from-current" }).then(() => undefined),

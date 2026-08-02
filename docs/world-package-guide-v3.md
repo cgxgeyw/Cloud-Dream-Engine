@@ -280,7 +280,40 @@ manifest 中与 UI 有关的字段：
 | `opening_character_source_ids` | string[] | 开场角色的 `source_character_id` 列表，可空数组 |
 | `player_character_source_id` | string \| null | 玩家角色的 `source_character_id` |
 
-以下字段有默认值，缺省即可：`ui_runtime_version`（2）、`ui_capabilities`（[]）、`platform_features`（[]）、`storage`（{}）、`logic`（{}）。
+以下字段有默认值，缺省即可：`attribute_schemas`（[]）、`initial_inventory_items`（[]）、`ui_runtime_version`（2）、`ui_capabilities`（[]）、`platform_features`（[]）、`storage`（{}）、`logic`（{}）。
+
+### attribute_schemas 持久化属性
+
+世界包在 `attribute_schemas` 声明世界主控可读写的权威状态。导入时宿主注册 schema，创建存档时把非空 `default_value` 初始化到当前会话或玩家角色；后续由主控通过 `session_attribute_updates` / `character_attribute_updates` 写回。不要再用 KV 复制一份气血、体力、装备或修炼状态。
+
+```jsonc
+{
+  "scope": "session_character",
+  "key": "my_world_stamina",
+  "label": "体力",
+  "value_type": "number",
+  "description": "奔跑、攀爬和负重会消耗体力。",
+  "default_value": 100,
+  "display_policy": {
+    "group": "状态",
+    "presentation": "meter",
+    "max": 100,
+    "order": 20
+  }
+}
+```
+
+- `scope`：世界包运行时属性使用 `session` 或 `session_character`；后者默认初始化给玩家角色。
+- `key`：主控写回时使用的稳定 key。数据库当前要求同 scope 全局唯一，包作者必须加世界前缀。
+- `value_type`：`text`、`number`、`boolean`、`list` 或 `json`。
+- `default_value`：新存档初值，类型必须与 `value_type` 一致。
+- `display_policy.group`：`side_panel_tabs` 中的标签名；同组属性自动聚合。
+- `display_policy.presentation`：`meter` 显示数值条，`list` 显示条目集合，缺省显示普通值。
+- `display_policy.max` / `order`：数值条上限和组内顺序。
+
+世界主控请求的 `current_state.runtime_attributes` 会列出当前值和可写 key。行动真实造成消耗、恢复、受伤、身份、装备、功法或进度变化时，主控必须在同一回合返回属性更新，不能只在叙事中声称“体力下降”。地图位置、时间和在场人物分别继续使用 `next_location`、`next_time_label` 与 `scene_visible_characters`；背包使用主控的完整 `inventory_items` 写回。
+
+`initial_inventory_items` 使用会话 `InventoryItem` 结构声明新存档的开局物品：`item_id`、`name`、`category`、`quantity`、`description`、`tags`、`owner_type`、`owner_id`、`visibility`、`disclosed_to`。它只负责初值，后续变化仍由主控返回完整 `inventory_items`；不要在属性或 KV 中再复制一份背包。
 
 ### map_nodes 拓扑格式
 
@@ -344,6 +377,34 @@ manifest 中与 UI 有关的字段：
 可选字段：`avatar_asset`（头像资源，缺省空串）。
 
 玩家角色与 NPC 的区别由世界配置决定（`player_character_source_id`），角色文件里不需要 `is_player` 之类的字段。
+
+### 角色提示词怎么写（避免 NPC 回复 JSON 解析失败）
+
+NPC 发言时，宿主按以下顺序拼接系统提示：
+
+1. `system_prompt_template` 的渲染结果（支持 `{{speaker}}`、`{{role}}`、`{{background_prompt}}` 占位符）；
+2. 该角色的 `response_contract_prompt`（可空）；
+3. **内置回复格式契约**（永远追加，创作者无法关闭）：说明 `speaker`/`content`/`narration` 三个必填字段，并附一个完整 JSON 示例和字符串转义规则；
+4. 内置记忆提取契约（仅当世界开启事实提取时）。
+
+各字段该写什么：
+
+| 字段 | 该写 | 不该写 |
+|---|---|---|
+| `background_prompt` | 角色背景、经历、人物关系，纯散文 | 输出格式要求 |
+| `system_prompt_template` | 人设、语气、行为禁忌、扮演要点 | 输出格式、JSON 字段定义 |
+| `response_contract_prompt` | 默认留空；仅当需要角色**额外**输出结构化字段时，补一段该字段的说明 + 一个完整 JSON 示例 | 重复定义 `speaker`/`content`/`narration`；要求 Markdown 代码围栏 |
+| `narration_prompt` | 旁白/动作描写的风格要求 | — |
+| `runtime_system_prompt` | 需要运行时追加的简短指令 | — |
+
+写契约类提示词的要点（与内置契约同款写法）：
+
+- 先列字段名和含义，再给**一个完整、可直接解析的 JSON 示例**。只描述字段不给示例时，模型很容易自造字段名（如把 `content` 写成 `utterance`）或写坏结构——这是 NPC 回复解析失败的最常见原因。
+- 明确要求"只输出 JSON 本身"：不要用 ``` 代码围栏包裹，不要在 JSON 之外写解释或开场白。
+- 提醒字符串转义：字符串值内的换行必须写成 `\n`，值内的英文双引号必须写成 `\"`，不要直接换行或直接写引号。
+- 不要重命名或删除内置必填字段。额外字段会被宿主保留（`additionalProperties: true`），但未被宿主消费的字段写了也没用。
+
+宿主侧容错（了解即可，不要依赖）：NPC 回复 JSON 写坏时，宿主会按字段名尽力打捞正文，实在打捞不到才显示占位文案；导演输出解析失败时会把错误反馈给模型自动重试修复。这些兜底不能替代写对提示词。
 
 ## 6. UI 文档顶层字段
 
@@ -612,9 +673,11 @@ Props：`placeholder`、`submit_label`、`editing_submit_label`、`show_image_bu
 
 地图和自定义属性标签。移动端会作为状态抽屉呈现。
 
-**这是移动端唯一的地图/属性入口**：mobile 文档不含本组件时，玩家在手机上完全看不到地图和属性（校验器只给警告、不拦导入，作者需自查）。两份文档都应包含它。
+这是桌面和移动端统一的地图、背包与持久化属性入口。移动端文档必须包含它，否则玩家在手机上看不到地图和角色状态（校验器只给警告、不拦导入，作者需自查）。属性会按 `attribute_schemas[].display_policy.group` 自动分组；会话背包使用运行时 `inventory_items`，不需要世界包再建 KV 镜像。
 
 Props：`show_map_tab`、`show_attribute_tabs`、`empty_text`、`drawer_label`。
+
+移动端抽屉内顶部自带"收起"关闭按钮（`.game-status-drawer-close`），世界包 CSS 可以按需覆盖其样式；不要依赖抽屉把手来关闭抽屉，抽屉展开后会盖住把手。
 
 支持 `content` slot，用于自定义当前标签内容。
 
@@ -686,6 +749,7 @@ Props：
 | `side_tabs` | 可用侧栏标签 |
 | `active_side_tab` | 当前侧栏标签 key |
 | `active_attribute_content` | 当前属性标签内容 |
+| `active_attribute_items` | 当前属性标签的结构化条目，可用于自定义展示 |
 | `scene_focus` | 当前焦点发言者、内容和头像路径 |
 | `latest_narration` | 最新旁白 |
 | `draft_input` | 草稿文本、附件、录音状态和麦克风错误 |
@@ -794,7 +858,7 @@ Props：
 当前 schema 子集支持 `type`、`required`、`properties`、`additionalProperties`、`enum`、`minLength`、`maxLength`、`minimum` 和 `maximum`。`indexes` 是为后续宿主查询优化保留的提示；当前 `api.records.query` 读取集合后在 Worker 内筛选，不会创建物理数据库索引。
 
 - `records`：用于账单、任务、日记、商品等多条同构记录，按 `world_id + collection` 隔离。
-- `kv`：用于设置、偏好和少量聚合状态，分三级作用域：**world**（跨存档共享，缺省）/ **session**（单个世界存档）/ **character**（存档内角色）。动作参数和 `api.kv.*` 末参都可带 `scope`：`{ "scope": "session" }` 或 `{ "scope": "character", "character_id": "角色ID" }`；session_id 由宿主注入，世界包无法读写其它存档。删除存档连带清 session 级和角色级变量，删除世界清 world 级。
+- `kv`：用于设置、偏好和少量聚合状态，分三级作用域：**world**（跨存档共享，缺省）/ **session**（单个世界存档）/ **character**（存档内角色）。UI action 可带 `{ "scope": "session" }` 或 `{ "scope": "character", "character_id": "角色ID" }`；沙箱 `api.kv.*` 的末参使用 `{ scope: "session" }` 或 `{ scope: "character", characterId: "角色ID" }`。作用域会从 Worker SDK 原样传入宿主，session_id 由宿主注入，世界包无法伪造或读写其它存档。删除存档连带清 session 级和角色级变量，删除世界清 world 级。
 - UI 文档自己的 `state` 只存在于当前页面，不属于持久化存储。
 - 单条值、JSON 深度、字段数、条目数、集合容量和世界总容量均有限额。
 - 更新和删除记录必须匹配宿主生成的 UUID；iframe 和逻辑脚本不能提交其他 `world_id`。
@@ -842,9 +906,9 @@ world.register("journal.monthSummary", async (input, api) => {
 | `api.kv.get(namespace, key, fallback?, options?)` | 保存的值或 fallback |
 | `api.kv.set(namespace, key, value, options?)` | 更新后的 KV 条目 |
 | `api.kv.remove(namespace, key, options?)` | 无 |
+| `api.platform.invoke(feature, params)` | 平台能力调用的结构化结果（见「平台能力」节） |
 
 `options` 即作用域参数：`{ scope: "world" | "session" | "character", characterId?: string }`，缺省 world；character 作用域需带 `characterId`。
-| `api.platform.invoke(feature, params)` | 平台能力调用的结构化结果（见「平台能力」节） |
 
 ### 世界事件（logic.events）
 
@@ -1063,7 +1127,7 @@ v3 stylesheet 在世界 iframe 内原样注入，不做 selector 前缀改写。
 - 使用独立 mobile document 和 stylesheet。
 - 顶部必须预留 safe area，标题文字应截断，不得进入右侧状态/抽屉把手区域。
 - 自定义属性放入状态抽屉，不要挤在聊天列顶部。
-- **必须包含 `side_panel_tabs`**：它是移动端唯一的地图/属性入口，缺了玩家在手机上看不到地图。
+- **必须提供地图/属性入口**：使用 `side_panel_tabs`；没有它时玩家在手机上看不到地图、背包和角色状态。
 - **必须包含 `floating_actions`（至少 `show_back`）**：玩家需要能退出世界返回应用。
 - 输入区采用两行：textarea 独占一行，图片、录音和发送按钮位于下一行。
 - 聊天流聚焦叙事、角色/玩家发言和折叠思维链。
@@ -1074,19 +1138,19 @@ v3 stylesheet 在世界 iframe 内原样注入，不做 selector 前缀改写。
 
 以下字段都在 `world/world.json` 的 `director_config` 中，随世界包导出导入。
 
-### 交互消息（message_interaction_kinds）
+### 行动选项（director_interaction_kinds）
 
-角色回复可以携带一条结构化交互（选项、表单、确认、滑条），宿主负责渲染控件，玩家作答结果随消息持久化。世界包必须显式声明允许的类型，未声明的类型一律丢弃。声明会同时扩展角色可见的回复格式说明和请求 `response_schema`：
+行动选项只由世界主控生成，角色回复不提供选项。宿主负责在输入框旁渲染控件，玩家作答结果会成为下一条真实玩家消息。世界包必须显式声明允许的类型，未声明的类型一律丢弃：
 
 ```json
 {
   "director_config": {
-    "message_interaction_kinds": ["choice", "slider"]
+    "director_interaction_kinds": ["choice", "slider"]
   }
 }
 ```
 
-所有交互统一放在角色回复 JSON 顶层的 `interaction` 字段中，结构固定为 `{ "kind", "prompt", "config" }`。`config` 的字段如下：
+所有交互统一放在世界主控回复 JSON 顶层的 `interaction` 字段中，不能嵌在其它业务字段里。交互使用 `{ "kind", "prompt", "config" }`：
 
 | 类型 | 说明 | `config` 关键字段 |
 |---|---|---|
@@ -1100,9 +1164,6 @@ v3 stylesheet 在世界 iframe 内原样注入，不做 selector 前缀改写。
 
 ```json
 {
-  "speaker": "军中向导",
-  "content": "三条路都能走，但只能选一条。",
-  "narration": "远处鼓声越来越近。",
   "interaction": {
     "kind": "choice",
     "prompt": "你准备走哪条路？",
@@ -1116,7 +1177,13 @@ v3 stylesheet 在世界 iframe 内原样注入，不做 selector 前缀改写。
 }
 ```
 
-在角色的 `response_contract_prompt` 里只需说明**何时**出题和选项语义；宿主会按世界声明自动补充精确 JSON 格式。回答**幂等**：重复提交返回首次结果，不会重复计分。要让回答改变后续剧情，还必须绑定 `interaction_answered` 事件并把结果写入 session KV、记录或其它宿主状态；只声明 `message_interaction_kinds` 不会自动产生玩法。
+在世界主控提示词里只需说明**何时**出题和选项语义；宿主会按世界声明自动补充精确 JSON 格式。玩家提交后，宿主先把交互标记为已回答，再把选项标签、表单内容、确认文案或滑条数值格式化成一条真实玩家消息，并自动启动下一模型回合，因此后续剧情会像普通玩家输入一样继续。回答**幂等**：重复提交返回首次结果，不会重复创建玩家消息。`interaction_answered` 事件只用于世界包确实需要的额外本地逻辑，不能代替正常回合提交。
+
+候选解析器也兼容把 `options`、`fields`、`min/max` 等字段直接放在 `interaction` 顶层，但这是宽容输入，不是作者应要求模型生成的标准格式。宿主校验后会统一持久化为世界主控消息的 `metadata.interaction.config`，前端只渲染这个归一化结果。选项标识必须使用 `id`，不能使用 `value`；表单字段必须使用 `id` 与 `input`，不能使用 `key` 与 `type`。
+
+### 玩家角色切换
+
+`allow_player_character_switch` 控制世界主控能否提议玩家切换到其他角色，默认 `true`。关闭后，主控返回的 `switch_character_proposal` 会被运行时丢弃；玩家仍可由应用的独立切换功能手动切换。
 
 ### 提示词模块（prompt_presets）
 

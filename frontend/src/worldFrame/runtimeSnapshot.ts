@@ -91,6 +91,7 @@ export function createGameUiRuntimeSnapshot(
     side_tabs: runtime.side_tabs,
     active_side_tab: runtime.active_side_tab,
     active_attribute_content: runtime.active_attribute_content,
+    active_attribute_items: runtime.active_attribute_items,
     draft_input: {
       value: runtime.draft_input.value,
       images: options.images,

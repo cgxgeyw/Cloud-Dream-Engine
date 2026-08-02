@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, type ReactNode } from "react";
+import { lazy, memo, Suspense, useState, type ReactNode } from "react";
 import { ArrowLeft, Copy } from "lucide-react";
 import type { GameUiComponentNode } from "../../data/gameUi";
 import type { GameUiRuntimeActions } from "../actions";
@@ -29,6 +29,22 @@ function readStringProp(
 ): string {
   const value = node?.props?.[key];
   return typeof value === "string" && value.trim() ? value : fallback;
+}
+
+function hasSameSidePanelConfig(
+  left: GameUiComponentNode | undefined,
+  right: GameUiComponentNode | undefined,
+): boolean {
+  if (left === right) {
+    return true;
+  }
+  if (!left || !right) {
+    return false;
+  }
+  return left.component === right.component
+    && left.class_name === right.class_name
+    && left.variant === right.variant
+    && JSON.stringify(left.props ?? {}) === JSON.stringify(right.props ?? {});
 }
 
 export function SceneHeaderComponent({ runtime, actions, node }: RuntimeComponentProps) {
@@ -183,7 +199,7 @@ export function NarrationCardComponent({ runtime, actions, node }: RuntimeCompon
   );
 }
 
-export function SidePanelTabsComponent({ runtime, actions, node, renderSlot }: RuntimeComponentProps) {
+function SidePanelTabs({ runtime, actions, node, renderSlot }: RuntimeComponentProps) {
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const showMapTab = readBooleanProp(node, "show_map_tab", true);
   const showAttributeTabs = readBooleanProp(node, "show_attribute_tabs", true);
@@ -222,24 +238,52 @@ export function SidePanelTabsComponent({ runtime, actions, node, renderSlot }: R
         {customContent ? customContent : null}
         {!customContent && visibleTabs.length === 0 ? <div className="game-card">{emptyText}</div> : null}
         {!customContent && runtime.active_side_tab === "map" && (runtime.capabilities.platform !== "mobile" || mobileDrawerOpen) ? (
-          runtime.ui_state.streaming_response_active ? (
-            // 回合进行中快照会高频刷新,布局剧烈抖动时 ReactFlow 会量出 0 尺寸的画布
-            // 且不会自愈(ResizeObserver loop 错误被全局吞掉),表现为"回合后拓扑图消失"。
-            // 流式期间先挂占位,回合结束快照稳定后再挂载画布,强制重新测量 + fitView。
-            <div className="game-map-graph" />
-          ) : (
-            <Suspense fallback={<div className="game-map-graph" />}>
-              <SessionMapGraph
-                key={runtime.capabilities.platform === "mobile" ? `mobile-map-${mobileDrawerOpen ? "open" : "closed"}-${runtime.messages.length}` : `desktop-map-${runtime.messages.length}`}
-                nodes={runtime.map_graph.nodes}
-                edges={runtime.map_graph.edges}
-                compact={runtime.capabilities.platform === "mobile"}
-              />
-            </Suspense>
-          )
+          <Suspense fallback={<div className="game-map-graph" />}>
+            <SessionMapGraph
+              key={runtime.capabilities.platform === "mobile" ? `mobile-map-${mobileDrawerOpen ? "open" : "closed"}` : "desktop-map"}
+              nodes={runtime.map_graph.nodes}
+              edges={runtime.map_graph.edges}
+              compact={runtime.capabilities.platform === "mobile"}
+            />
+          </Suspense>
         ) : null}
         {!customContent && runtime.active_side_tab.startsWith("attribute:") && runtime.active_attribute_content ? (
-          <div className="game-card game-attribute-tab-content">{runtime.active_attribute_content}</div>
+          runtime.active_attribute_items.length > 0 ? (
+            <div className="game-attribute-items">
+              {runtime.active_attribute_items.map((item) => {
+                const presentation = typeof item.display_policy.presentation === "string"
+                  ? item.display_policy.presentation
+                  : "value";
+                const maximum = typeof item.display_policy.max === "number" && item.display_policy.max > 0
+                  ? item.display_policy.max
+                  : 100;
+                const numericValue = typeof item.value === "number" ? item.value : null;
+                const meterPercent = numericValue === null
+                  ? 0
+                  : Math.max(0, Math.min(100, (numericValue / maximum) * 100));
+                const values = Array.isArray(item.value) ? item.value : null;
+                return (
+                  <section className="game-attribute-item" key={item.schema_id} data-presentation={presentation}>
+                    <div className="game-attribute-item-heading">
+                      <span>{item.label || item.key}</span>
+                      {presentation === "meter" && numericValue !== null ? <strong>{numericValue}</strong> : null}
+                    </div>
+                    {presentation === "meter" && numericValue !== null ? (
+                      <div className="game-attribute-meter" aria-label={`${item.label || item.key} ${numericValue}`}>
+                        <span style={{ width: `${meterPercent}%` }} />
+                      </div>
+                    ) : values ? (
+                      <div className="game-attribute-list">
+                        {values.map((value, index) => <span key={`${item.schema_id}-${index}`}>{String(value)}</span>)}
+                      </div>
+                    ) : (
+                      <div className="game-attribute-value">{String(item.value ?? "")}</div>
+                    )}
+                  </section>
+                );
+              })}
+            </div>
+          ) : <div className="game-card game-attribute-tab-content">{runtime.active_attribute_content}</div>
         ) : null}
       </div>
     </>
@@ -267,6 +311,15 @@ export function SidePanelTabsComponent({ runtime, actions, node, renderSlot }: R
           {drawerLabel}
         </button>
         <div className="game-status-drawer game-ui-panel" data-variant="sidebar">
+          <button
+            type="button"
+            className="game-status-drawer-close game-ui-button"
+            data-variant="ghost"
+            aria-label="关闭状态抽屉"
+            onClick={() => setMobileDrawerOpen(false)}
+          >
+            {"收起"}
+          </button>
           {tabsContent}
         </div>
       </aside>
@@ -279,6 +332,25 @@ export function SidePanelTabsComponent({ runtime, actions, node, renderSlot }: R
     </aside>
   );
 }
+
+export const SidePanelTabsComponent = memo(
+  SidePanelTabs,
+  (previous, next) => {
+    // 自定义插槽可能依赖完整 runtime，交由默认渲染路径处理。内置状态栏只关心
+    // 以下稳定数据；流式消息变化时跳过它，避免地图/属性面板参与每个 token 的刷新。
+    if (previous.node?.slots?.content || next.node?.slots?.content) {
+      return false;
+    }
+    return hasSameSidePanelConfig(previous.node, next.node)
+      && previous.runtime.capabilities.platform === next.runtime.capabilities.platform
+      && previous.runtime.side_tabs === next.runtime.side_tabs
+      && previous.runtime.active_side_tab === next.runtime.active_side_tab
+      && previous.runtime.active_attribute_content === next.runtime.active_attribute_content
+      && previous.runtime.active_attribute_items === next.runtime.active_attribute_items
+      && previous.runtime.map_graph.nodes === next.runtime.map_graph.nodes
+      && previous.runtime.map_graph.edges === next.runtime.map_graph.edges;
+  },
+);
 
 export function FloatingActionsComponent({ runtime, actions, node }: RuntimeComponentProps) {
   const showBack = readBooleanProp(node, "show_back", true);

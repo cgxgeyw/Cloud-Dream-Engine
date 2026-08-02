@@ -521,7 +521,7 @@ impl SessionOrchestrator {
                     if let Some(raw_payload) = parsed_response.raw_payload.clone() {
                         runtime_payloads.push(raw_payload);
                     }
-                    let mut message_metadata = serde_json::json!({
+                    let message_metadata = serde_json::json!({
                         "turn_index": turn_index,
                         "narration": parsed_response.narration.clone(),
                         "message_kind": "agent_response",
@@ -529,13 +529,6 @@ impl SessionOrchestrator {
                         "reasoning_expanded": false,
                         "raw_response": raw_response.clone()
                     });
-                    // 交互消息（第 5 项）：模型返回 interaction 候选，
-                    // 结构校验通过且世界包声明了该类型才挂到消息上，否则静默丢弃。
-                    if let Some(interaction) = build_message_interaction(world, &parsed_response) {
-                        if let Ok(value) = serde_json::to_value(&interaction) {
-                            message_metadata["interaction"] = value;
-                        }
-                    }
                     messages.push(ChatMessage {
                         message_id: ChatMessage::generate_id(),
                         created_at: chrono::Utc::now().to_rfc3339(),
@@ -833,31 +826,4 @@ fn fallback_notification_tool_response(speaker_name: &str) -> String {
         "narration": ""
     })
     .to_string()
-}
-
-/// 从角色回复中提取并校验 interaction 候选。
-/// 结构不合法或世界包未声明该类型（director_config.message_interaction_kinds）时返回 None。
-fn build_message_interaction(
-    world: &crate::models::world::WorldDefinition,
-    parsed_response: &crate::services::game_engine::dialogue::ParsedCharacterResponse,
-) -> Option<crate::models::interaction::MessageInteraction> {
-    use crate::models::interaction::{
-        declared_interaction_kinds, validate_interaction_candidate, MessageInteraction,
-        INTERACTION_STATUS_PENDING,
-    };
-    let raw = parsed_response.raw_payload.as_ref()?.get("interaction")?;
-    let (kind, prompt, config) = validate_interaction_candidate(raw).ok()?;
-    let allowed = declared_interaction_kinds(&world.director_config);
-    if !allowed.iter().any(|item| item == &kind) {
-        return None;
-    }
-    Some(MessageInteraction {
-        interaction_id: uuid::Uuid::new_v4().to_string(),
-        kind,
-        prompt,
-        config,
-        status: INTERACTION_STATUS_PENDING.to_string(),
-        answer: None,
-        answered_at: None,
-    })
 }

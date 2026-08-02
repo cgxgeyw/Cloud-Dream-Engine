@@ -2,6 +2,7 @@ import type { NavigateFunction } from "react-router-dom";
 import type { SubmitActionOptions, SwitchProposalView } from "../game/utils";
 import type { GameSessionStateBag } from "../game/useGameSession";
 import type { GameUiRuntimeContext } from "./runtimeContext";
+import { formatInteractionAnswer } from "./interactions";
 
 type InputComposerBridge = {
   openImagePicker: () => void;
@@ -50,7 +51,12 @@ export function createGameUiRuntimeActions(
     setAutoScrollEnabled: bag.setChatAutoScrollEnabled,
     submitMessage: (options = {}) => bag.handleSubmitAction(options),
     answerInteraction: async (messageId, interactionId, answer) => {
-      await bag.handleAnswerInteraction(messageId, interactionId, answer);
+      const result = await bag.handleAnswerInteraction(messageId, interactionId, answer);
+      if (!result?.newlyAnswered || !result.interaction) return;
+      const playerReply = formatInteractionAnswer(result.interaction, result.answer).trim();
+      if (playerReply) {
+        await bag.handleSubmitAction({ mode: "submit", content: playerReply });
+      }
     },
     startEditingTurn: bag.startEditingTurn,
     cancelEditingTurn: bag.cancelEditingTurn,

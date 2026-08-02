@@ -1,0 +1,398 @@
+/* App shell only. World-owned runtime interfaces remain isolated from this skin. */
+.theme-picker-preview--mondrian {
+  border: 2px solid oklch(0.19 0.015 258);
+  border-radius: 0;
+  background:
+    linear-gradient(90deg, transparent 0 57%, oklch(0.19 0.015 258) 57% 62%, oklch(0.49 0.19 257) 62% 100%),
+    linear-gradient(transparent 0 34%, oklch(0.19 0.015 258) 34% 41%, transparent 41% 100%),
+    linear-gradient(90deg, oklch(0.56 0.22 29) 0 34%, oklch(0.19 0.015 258) 34% 40%, oklch(0.985 0.009 96) 40% 100%);
+}
+
+.theme-picker-preview--mondrian .theme-picker-preview-header,
+.theme-picker-preview--mondrian .theme-picker-preview-body {
+  display: none;
+}
+
+:root[data-color-scheme="mondrian"] {
+  --color-charcoal: oklch(0.19 0.015 258);
+  --color-concrete: oklch(0.49 0.015 258);
+  --color-accent: oklch(0.49 0.19 257);
+  --color-bg: oklch(0.95 0.014 96);
+  --color-surface: oklch(0.985 0.009 96);
+  --color-success: oklch(0.57 0.15 151);
+  --color-warning: oklch(0.82 0.16 88);
+  --color-error: oklch(0.55 0.21 29);
+  --color-border: oklch(0.24 0.014 258);
+  --color-border-hover: oklch(0.16 0.015 258);
+  --color-muted: oklch(0.4 0.014 258);
+  --color-faint: oklch(0.32 0.015 258);
+  --color-subtle-bg: oklch(0.925 0.017 96);
+  --color-hover-bg: oklch(0.9 0.025 96);
+  --color-active-bg: color-mix(in srgb, var(--color-accent) 12%, transparent);
+
+  --radius-sm: 0;
+  --radius-default: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-full: 0;
+  --shadow-sm: 2px 2px 0 oklch(0.19 0.015 258 / 0.92);
+  --shadow-default: 4px 4px 0 oklch(0.19 0.015 258 / 0.92);
+  --shadow-md: 6px 6px 0 oklch(0.19 0.015 258 / 0.92);
+  --shadow-lg: 9px 9px 0 oklch(0.19 0.015 258 / 0.92);
+  --font-display: "Arial Narrow", "Aptos Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-body: "Aptos", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "JetBrains Mono", Consolas, monospace;
+
+  --mondrian-ink: oklch(0.19 0.015 258);
+  --mondrian-paper: oklch(0.985 0.009 96);
+  --mondrian-paper-deep: oklch(0.945 0.018 96);
+  --mondrian-red: oklch(0.56 0.22 29);
+  --mondrian-blue: oklch(0.49 0.19 257);
+  --mondrian-yellow: oklch(0.86 0.16 92);
+  --mondrian-outline: 2px solid var(--mondrian-ink);
+  --mondrian-offset: 3px 3px 0 var(--mondrian-ink), -1px -1px 0 var(--mondrian-ink);
+}
+
+:root[data-color-scheme="mondrian"][data-theme="dark"] {
+  --color-charcoal: oklch(0.94 0.012 96);
+  --color-concrete: oklch(0.7 0.02 96);
+  --color-accent: oklch(0.71 0.17 258);
+  --color-bg: oklch(0.2 0.012 258);
+  --color-surface: oklch(0.245 0.013 258);
+  --color-border: oklch(0.79 0.015 96);
+  --color-border-hover: oklch(0.96 0.012 96);
+  --color-muted: oklch(0.75 0.016 96);
+  --color-faint: oklch(0.86 0.013 96);
+  --color-subtle-bg: oklch(0.3 0.014 258);
+  --color-hover-bg: oklch(0.35 0.015 258);
+  --mondrian-ink: oklch(0.94 0.012 96);
+  --mondrian-paper: oklch(0.245 0.013 258);
+  --mondrian-paper-deep: oklch(0.3 0.014 258);
+  --mondrian-red: oklch(0.68 0.2 29);
+  --mondrian-blue: oklch(0.71 0.17 258);
+  --mondrian-yellow: oklch(0.86 0.16 92);
+  --mondrian-offset: 3px 3px 0 oklch(0.94 0.012 96), -1px -1px 0 oklch(0.94 0.012 96);
+}
+
+:root[data-color-scheme="mondrian"] body {
+  background: var(--color-bg);
+  color: var(--color-charcoal);
+}
+
+:root[data-color-scheme="mondrian"] .layout-root {
+  background-color: var(--color-bg);
+  background-image:
+    linear-gradient(var(--mondrian-ink), var(--mondrian-ink)),
+    linear-gradient(90deg, var(--mondrian-ink), var(--mondrian-ink)),
+    linear-gradient(90deg, transparent 0 72%, var(--mondrian-blue) 72% 100%);
+  background-position: 0 11%, 78% 0, 0 0;
+  background-repeat: no-repeat;
+  background-size: 100% 3px, 3px 100%, 100% 100%;
+}
+
+:root[data-color-scheme="mondrian"] .layout-inner {
+  max-width: 1280px;
+}
+
+:root[data-color-scheme="mondrian"] .layout-header {
+  border: var(--mondrian-outline);
+  border-left-width: 9px;
+  border-bottom-width: 5px;
+  border-radius: 0;
+  background: linear-gradient(90deg, var(--mondrian-red) 0 14px, transparent 14px 70%, var(--mondrian-yellow) 70% 100%);
+  box-shadow: var(--shadow-default);
+  padding: 18px 20px;
+}
+
+:root[data-color-scheme="mondrian"] .layout-header--has-bg,
+:root[data-color-scheme="mondrian"] .layout-inner--has-bg .surface-panel,
+:root[data-color-scheme="mondrian"] .layout-inner--has-bg .menu-btn {
+  background: var(--mondrian-paper);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+:root[data-color-scheme="mondrian"] .layout-brand {
+  color: var(--mondrian-red);
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+:root[data-color-scheme="mondrian"] .layout-title,
+:root[data-color-scheme="mondrian"] .settings-section-title,
+:root[data-color-scheme="mondrian"] .theme-picker-heading {
+  color: var(--mondrian-ink);
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+:root[data-color-scheme="mondrian"] .surface-panel,
+:root[data-color-scheme="mondrian"] .card-item,
+:root[data-color-scheme="mondrian"] .settings-model-item,
+:root[data-color-scheme="mondrian"] .mcp-tool-card,
+:root[data-color-scheme="mondrian"] .settings-model-discovery,
+:root[data-color-scheme="mondrian"] .settings-upload-zone,
+:root[data-color-scheme="mondrian"] .newgame-world-card,
+:root[data-color-scheme="mondrian"] .toast-card {
+  border: var(--mondrian-outline);
+  border-radius: 0;
+  background: var(--mondrian-paper);
+  box-shadow: var(--shadow-default);
+}
+
+:root[data-color-scheme="mondrian"] .surface-panel,
+:root[data-color-scheme="mondrian"] .card-item,
+:root[data-color-scheme="mondrian"] .settings-model-item {
+  background-image: linear-gradient(90deg, transparent calc(100% - 28px), var(--mondrian-yellow) calc(100% - 28px));
+}
+
+:root[data-color-scheme="mondrian"] .menu-btn {
+  border: var(--mondrian-outline);
+  border-radius: 0;
+  background: var(--mondrian-paper);
+  box-shadow: var(--shadow-sm);
+  overflow: visible;
+}
+
+:root[data-color-scheme="mondrian"] .menu-btn::after {
+  background: var(--mondrian-blue);
+}
+
+:root[data-color-scheme="mondrian"] .menu-btn:hover {
+  border-color: var(--mondrian-ink);
+  color: var(--mondrian-paper);
+  transform: translate(-1px, -1px);
+  box-shadow: var(--shadow-md);
+}
+
+:root[data-color-scheme="mondrian"] .menu-btn-icon {
+  border: var(--mondrian-outline);
+  border-radius: 0;
+  background: var(--mondrian-yellow);
+  color: var(--mondrian-ink);
+}
+
+:root[data-color-scheme="mondrian"] .action-btn,
+:root[data-color-scheme="mondrian"] .card-action-btn,
+:root[data-color-scheme="mondrian"] .editor-tab,
+:root[data-color-scheme="mondrian"] .editor-tab-add,
+:root[data-color-scheme="mondrian"] .editor-tab-add-confirm,
+:root[data-color-scheme="mondrian"] .editor-tab-add-cancel {
+  border: var(--mondrian-outline);
+  border-radius: 0;
+  background: var(--mondrian-paper);
+  box-shadow: var(--mondrian-offset);
+  color: var(--mondrian-ink);
+  clip-path: polygon(2% 0, 96% 2%, 100% 19%, 98% 91%, 81% 100%, 5% 97%, 0 77%, 2% 24%);
+  overflow: visible;
+  transition: transform 160ms ease-out, box-shadow 160ms ease-out, background-color 160ms ease-out, color 160ms ease-out;
+}
+
+:root[data-color-scheme="mondrian"] .action-btn::after,
+:root[data-color-scheme="mondrian"] .card-action-btn::after {
+  display: none;
+}
+
+:root[data-color-scheme="mondrian"] .action-btn:hover:not([disabled]),
+:root[data-color-scheme="mondrian"] .card-action-btn:hover:not([disabled]),
+:root[data-color-scheme="mondrian"] .editor-tab:hover,
+:root[data-color-scheme="mondrian"] .editor-tab-add:hover {
+  background: var(--mondrian-yellow);
+  color: var(--mondrian-ink);
+  transform: translate(-2px, -2px) rotate(-0.5deg);
+  box-shadow: 5px 5px 0 var(--mondrian-ink), -1px -1px 0 var(--mondrian-ink);
+}
+
+:root[data-color-scheme="mondrian"] .action-btn:active:not([disabled]),
+:root[data-color-scheme="mondrian"] .card-action-btn:active:not([disabled]) {
+  transform: translate(1px, 1px) rotate(0.25deg);
+  box-shadow: 1px 1px 0 var(--mondrian-ink);
+}
+
+:root[data-color-scheme="mondrian"] .action-btn--primary,
+:root[data-color-scheme="mondrian"] .action-btn--accent,
+:root[data-color-scheme="mondrian"] .editor-tab--active,
+:root[data-color-scheme="mondrian"] .menu-btn--primary,
+:root[data-color-scheme="mondrian"] .home-mobile-btn--primary,
+:root[data-color-scheme="mondrian"] .mobile-nav-item--active {
+  background: var(--mondrian-blue);
+  border-color: var(--mondrian-ink);
+  color: oklch(0.985 0.009 96);
+}
+
+:root[data-color-scheme="mondrian"] .action-btn--primary:hover:not([disabled]),
+:root[data-color-scheme="mondrian"] .action-btn--accent:hover:not([disabled]),
+:root[data-color-scheme="mondrian"] .editor-tab--active:hover {
+  background: var(--mondrian-red);
+  color: oklch(0.985 0.009 96);
+}
+
+:root[data-color-scheme="mondrian"] .action-btn--danger {
+  background: var(--mondrian-red);
+  color: oklch(0.985 0.009 96);
+  border-color: var(--mondrian-ink);
+}
+
+:root[data-color-scheme="mondrian"] .field-input,
+:root[data-color-scheme="mondrian"] .editor-field-input,
+:root[data-color-scheme="mondrian"] .editor-tab-add-input,
+:root[data-color-scheme="mondrian"] .mcp-editor-panel input:not([type="checkbox"]),
+:root[data-color-scheme="mondrian"] .mcp-editor-panel textarea,
+:root[data-color-scheme="mondrian"] .mcp-editor-panel select {
+  border: var(--mondrian-outline);
+  border-radius: 0;
+  background: var(--mondrian-paper);
+  box-shadow: inset 3px 3px 0 color-mix(in srgb, var(--mondrian-ink) 9%, transparent);
+}
+
+:root[data-color-scheme="mondrian"] .field-input:focus,
+:root[data-color-scheme="mondrian"] .editor-field-input:focus,
+:root[data-color-scheme="mondrian"] .editor-tab-add-input:focus,
+:root[data-color-scheme="mondrian"] .mcp-editor-panel input:not([type="checkbox"]):focus,
+:root[data-color-scheme="mondrian"] .mcp-editor-panel textarea:focus,
+:root[data-color-scheme="mondrian"] .mcp-editor-panel select:focus {
+  border-color: var(--mondrian-blue);
+  outline: 3px solid var(--mondrian-yellow);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+:root[data-color-scheme="mondrian"] .settings-tabs,
+:root[data-color-scheme="mondrian"] .editor-tabs {
+  border-color: var(--mondrian-ink);
+}
+
+:root[data-color-scheme="mondrian"] .settings-tab {
+  border: var(--mondrian-outline);
+  border-radius: 0;
+  background: var(--mondrian-paper);
+  color: var(--mondrian-ink);
+}
+
+:root[data-color-scheme="mondrian"] .settings-tab::after {
+  background: var(--mondrian-yellow);
+}
+
+:root[data-color-scheme="mondrian"] .settings-tab--active {
+  background: var(--mondrian-red);
+  color: oklch(0.985 0.009 96);
+  border-color: var(--mondrian-ink);
+}
+
+:root[data-color-scheme="mondrian"] .theme-picker-card {
+  border: var(--mondrian-outline);
+  border-radius: 0;
+  background: var(--mondrian-paper);
+  box-shadow: var(--shadow-sm);
+}
+
+:root[data-color-scheme="mondrian"] .theme-picker-card:hover,
+:root[data-color-scheme="mondrian"] .theme-picker-card--active {
+  border-color: var(--mondrian-ink);
+  background: var(--mondrian-paper);
+  box-shadow: var(--shadow-md);
+}
+
+:root[data-color-scheme="mondrian"] .settings-nav-item,
+:root[data-color-scheme="mondrian"] .mobile-nav-item {
+  border: var(--mondrian-outline);
+  border-radius: 0;
+  background: var(--mondrian-paper);
+  box-shadow: var(--shadow-sm);
+}
+
+:root[data-color-scheme="mondrian"] .settings-nav-item:hover,
+:root[data-color-scheme="mondrian"] .mobile-nav-item:hover {
+  border-color: var(--mondrian-ink);
+  background: var(--mondrian-yellow);
+}
+
+:root[data-color-scheme="mondrian"] .modal-backdrop,
+:root[data-color-scheme="mondrian"] .mobile-overlay {
+  background: color-mix(in srgb, var(--mondrian-ink) 48%, transparent);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+:root[data-color-scheme="mondrian"] .modal-dialog,
+:root[data-color-scheme="mondrian"] .mobile-sidebar {
+  border: var(--mondrian-outline);
+  border-radius: 0;
+  background: var(--mondrian-paper);
+  box-shadow: var(--shadow-lg);
+}
+
+:root[data-color-scheme="mondrian"] .mobile-sidebar-brand,
+:root[data-color-scheme="mondrian"] .mobile-sidebar-footer {
+  border-color: var(--mondrian-ink);
+}
+
+:root[data-color-scheme="mondrian"] .mobile-sidebar-brand-icon-btn,
+:root[data-color-scheme="mondrian"] .mobile-theme-btn,
+:root[data-color-scheme="mondrian"] .mobile-back-btn,
+:root[data-color-scheme="mondrian"] .mobile-close-btn,
+:root[data-color-scheme="mondrian"] .mobile-fab {
+  border: var(--mondrian-outline);
+  border-radius: 0;
+  box-shadow: var(--shadow-sm);
+}
+
+:root[data-color-scheme="mondrian"] .mobile-fab {
+  background: var(--mondrian-red);
+  color: oklch(0.985 0.009 96);
+}
+
+@media (max-width: 767px) {
+  :root[data-color-scheme="mondrian"] .layout-root {
+    background-image:
+      linear-gradient(90deg, var(--mondrian-ink) 0 3px, transparent 3px),
+      linear-gradient(var(--mondrian-ink) 0 3px, transparent 3px),
+      linear-gradient(90deg, var(--mondrian-paper) 0 67%, var(--mondrian-yellow) 67% 100%);
+    background-size: 100% 100%, 100% 100%, 100% 100%;
+  }
+
+  :root[data-color-scheme="mondrian"] .layout-header {
+    border-left-width: 6px;
+    border-bottom-width: 4px;
+    padding: 16px 16px 16px 72px;
+    background: linear-gradient(90deg, var(--mondrian-red) 0 9px, transparent 9px 75%, var(--mondrian-yellow) 75% 100%);
+  }
+
+  :root[data-color-scheme="mondrian"] .layout-header--compact {
+    padding-left: 72px;
+  }
+
+  :root[data-color-scheme="mondrian"] .layout-title {
+    font-size: 27px;
+  }
+
+  :root[data-color-scheme="mondrian"] .surface-panel,
+  :root[data-color-scheme="mondrian"] .card-item,
+  :root[data-color-scheme="mondrian"] .settings-model-item,
+  :root[data-color-scheme="mondrian"] .mcp-tool-card,
+  :root[data-color-scheme="mondrian"] .settings-nav-item {
+    box-shadow: var(--shadow-sm);
+  }
+
+  :root[data-color-scheme="mondrian"] .action-btn,
+  :root[data-color-scheme="mondrian"] .card-action-btn {
+    min-height: 40px;
+    padding-inline: 12px;
+  }
+
+  :root[data-color-scheme="mondrian"] .mobile-sidebar {
+    border-left: 0;
+    border-top: 0;
+    border-bottom: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-color-scheme="mondrian"] *,
+  :root[data-color-scheme="mondrian"] *::before,
+  :root[data-color-scheme="mondrian"] *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
