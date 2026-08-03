@@ -4,9 +4,19 @@
 // 新增组件 / 动作 / 能力只改那一个 JSON 文件。
 import catalogJson from "../../../shared/game-ui/catalog.json";
 
+export type GameUiCatalogDiagnostic = {
+  code: string;
+  message: string;
+};
+
 export type GameUiCatalogCapability = {
   id: string;
   description: string;
+  requires_runtime_version?: number;
+  requires_capabilities?: string[];
+  required_when_bundle_features?: string[];
+  runtime_version_error?: GameUiCatalogDiagnostic;
+  missing_declaration_error?: GameUiCatalogDiagnostic;
 };
 
 export type GameUiCatalogAction = {
@@ -28,6 +38,8 @@ export type GameUiCatalogComponent = {
 
 export type GameUiCatalog = {
   schema_version: number;
+  supported_document_schema_versions?: number[];
+  supported_ui_runtime_versions?: number[];
   capabilities: GameUiCatalogCapability[];
   actions: GameUiCatalogAction[];
   components: GameUiCatalogComponent[];

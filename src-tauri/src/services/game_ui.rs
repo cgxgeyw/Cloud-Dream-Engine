@@ -13,11 +13,9 @@ use crate::services::game_ui_catalog::{
     capability_ids, find_action, find_component, game_ui_catalog, is_supported_capability,
 };
 
-// 组件 / 动作 / 能力的唯一来源是仓库根 `shared/game-ui/catalog.json`
+// 组件 / 动作 / 能力 / 受支持版本列表的唯一来源是仓库根 `shared/game-ui/catalog.json`
 // （经 `game_ui_catalog` 模块加载）。本文件不再维护任何硬编码清单。
 
-const SUPPORTED_SCHEMA_VERSIONS: [u32; 1] = [2];
-const SUPPORTED_UI_RUNTIME_VERSIONS: [u32; 2] = [2, 3];
 const MAX_WORLD_STYLESHEET_BYTES: usize = 1024 * 1024;
 
 struct CompilationState {
@@ -126,7 +124,10 @@ impl GameUiService {
         });
 
         let mut diagnostics = Vec::new();
-        if !SUPPORTED_UI_RUNTIME_VERSIONS.contains(&runtime_version) {
+        if !game_ui_catalog()
+            .supported_ui_runtime_versions
+            .contains(&runtime_version)
+        {
             diagnostics.push(WorldUiDiagnostic {
                 severity: "error".to_string(),
                 code: "unsupported_ui_runtime_version".to_string(),
@@ -176,66 +177,53 @@ impl GameUiService {
                 path: Some("bundle.logic".to_string()),
             });
         }
-        let uses_world_storage = desktop
-            .capabilities
-            .iter()
-            .chain(mobile.capabilities.iter())
-            .any(|capability| capability == "supports_world_storage")
-            || request
-                .storage
-                .get("collections")
-                .and_then(Value::as_object)
-                .map(|collections| !collections.is_empty())
-                .unwrap_or(false)
-            || request
-                .storage
-                .get("kv_namespaces")
-                .and_then(Value::as_array)
-                .map(|namespaces| !namespaces.is_empty())
-                .unwrap_or(false)
-            || request.logic.get("runtime").and_then(Value::as_str) == Some("sandbox-js-v1");
-        if uses_world_storage
-            && !request
+        // 能力要求全部声明在 catalog 的能力条目上：
+        // - UI 文档用到了某能力，或 bundle 特征命中其 required_when_bundle_features，
+        //   就必须在 bundle.capabilities 里声明它（missing_declaration_error）；
+        // - 声明了 requires_runtime_version 的能力在 runtime 版本不足时报
+        //   runtime_version_error。诊断 code/message 随条目声明，校验器不再硬编码
+        //   具体 capability id 与版本/文案的绑定。
+        let bundle_features = detect_bundle_features(&request.storage, &request.logic);
+        for capability in &game_ui_catalog().capabilities {
+            let used_by_document = desktop
                 .capabilities
                 .iter()
-                .any(|capability| capability == "supports_world_storage")
-        {
-            diagnostics.push(WorldUiDiagnostic {
-                severity: "error".to_string(),
-                code: "missing_world_storage_capability".to_string(),
-                message:
-                    "Worlds using storage or sandbox logic must declare supports_world_storage."
-                        .to_string(),
-                path: Some("bundle.capabilities".to_string()),
-            });
-        }
-        let uses_world_records = desktop
-            .capabilities
-            .iter()
-            .chain(mobile.capabilities.iter())
-            .any(|capability| capability == "supports_world_records");
-        if uses_world_records && runtime_version < 3 {
-            diagnostics.push(WorldUiDiagnostic {
-                severity: "error".to_string(),
-                code: "world_records_require_runtime_v3".to_string(),
-                message: "World record storage is only available in UI runtime version 3."
-                    .to_string(),
-                path: Some("bundle.runtime_version".to_string()),
-            });
-        }
-        if uses_world_records
-            && !request
+                .chain(mobile.capabilities.iter())
+                .any(|used| used == &capability.id);
+            let required_by_features = capability
+                .required_when_bundle_features
+                .iter()
+                .any(|feature| bundle_features.contains(feature.as_str()));
+            if !used_by_document && !required_by_features {
+                continue;
+            }
+            if let (Some(required_version), Some(error)) = (
+                capability.requires_runtime_version,
+                &capability.runtime_version_error,
+            ) {
+                if runtime_version < required_version {
+                    diagnostics.push(WorldUiDiagnostic {
+                        severity: "error".to_string(),
+                        code: error.code.clone(),
+                        message: error.message.clone(),
+                        path: Some("bundle.runtime_version".to_string()),
+                    });
+                }
+            }
+            if !request
                 .capabilities
                 .iter()
-                .any(|capability| capability == "supports_world_records")
-        {
-            diagnostics.push(WorldUiDiagnostic {
-                severity: "error".to_string(),
-                code: "missing_world_records_capability".to_string(),
-                message: "Worlds using ledger_book must declare supports_world_records."
-                    .to_string(),
-                path: Some("bundle.capabilities".to_string()),
-            });
+                .any(|declared| declared == &capability.id)
+            {
+                if let Some(error) = &capability.missing_declaration_error {
+                    diagnostics.push(WorldUiDiagnostic {
+                        severity: "error".to_string(),
+                        code: error.code.clone(),
+                        message: error.message.clone(),
+                        path: Some("bundle.capabilities".to_string()),
+                    });
+                }
+            }
         }
         if desktop.schema_version != mobile.schema_version {
             diagnostics.push(WorldUiDiagnostic {
@@ -492,7 +480,10 @@ impl GameUiService {
         };
 
         if let Some(version) = schema_version {
-            if !SUPPORTED_SCHEMA_VERSIONS.contains(&version) {
+            if !game_ui_catalog()
+                .supported_document_schema_versions
+                .contains(&version)
+            {
                 state.error(
                     "unsupported_schema_version",
                     format!("Unsupported schema_version {version}."),
@@ -856,6 +847,32 @@ fn parse_document_source(source: &str) -> Result<Value, String> {
         return Err("UI document source is empty.".to_string());
     }
     json5::from_str::<Value>(trimmed).map_err(|error| error.to_string())
+}
+
+/// 计算 bundle 级特征标志。特征 id 与 catalog 能力条目的
+/// `required_when_bundle_features` 对应（game_ui_catalog::KNOWN_BUNDLE_FEATURES）：
+/// - `storage_config`：storage.collections / kv_namespaces 非空；
+/// - `sandbox_logic`：logic.runtime 为 sandbox-js-v1。
+/// 特征判定依赖世界包内容，无法声明在静态 catalog 里，因此留在这个独立函数中。
+fn detect_bundle_features(storage: &Value, logic: &Value) -> BTreeSet<&'static str> {
+    let mut features = BTreeSet::new();
+    let has_collections = storage
+        .get("collections")
+        .and_then(Value::as_object)
+        .map(|collections| !collections.is_empty())
+        .unwrap_or(false);
+    let has_kv_namespaces = storage
+        .get("kv_namespaces")
+        .and_then(Value::as_array)
+        .map(|namespaces| !namespaces.is_empty())
+        .unwrap_or(false);
+    if has_collections || has_kv_namespaces {
+        features.insert("storage_config");
+    }
+    if logic.get("runtime").and_then(Value::as_str) == Some("sandbox-js-v1") {
+        features.insert("sandbox_logic");
+    }
+    features
 }
 
 fn partition_diagnostics(
@@ -1396,7 +1413,7 @@ fn current_compatibility_target() -> WorldUiCompatibilityTarget {
     let catalog = game_ui_catalog();
     WorldUiCompatibilityTarget {
         name: "current-client".to_string(),
-        supported_schema_versions: SUPPORTED_SCHEMA_VERSIONS.to_vec(),
+        supported_schema_versions: catalog.supported_document_schema_versions.clone(),
         supported_components: catalog
             .components
             .iter()
@@ -1639,6 +1656,56 @@ mod tests {
             .errors
             .iter()
             .any(|diagnostic| diagnostic.code == "missing_world_records_capability"));
+    }
+
+    #[test]
+    fn storage_features_require_declared_world_storage_capability() {
+        let service = GameUiService::new();
+        let document = r#"{
+          schema_version: 2,
+          layout: {
+            root: {
+              type: "component",
+              component: "scene_header"
+            }
+          }
+        }"#;
+        let validate = |storage: serde_json::Value, logic: serde_json::Value| {
+            service.validate_world_ui_bundle(WorldUiBundleValidationRequest {
+                desktop_file: document.to_string(),
+                mobile_file: document.to_string(),
+                runtime_version: Some(2),
+                desktop_stylesheet: String::new(),
+                mobile_stylesheet: String::new(),
+                capabilities: Vec::new(),
+                storage,
+                logic,
+            })
+        };
+
+        // storage 配置非空 ⇒ 命中 catalog 声明的 storage_config 特征。
+        let result = validate(serde_json::json!({ "collections": { "ledger.entries": {} } }), serde_json::json!({}));
+        assert!(result
+            .errors
+            .iter()
+            .any(|diagnostic| diagnostic.code == "missing_world_storage_capability"));
+
+        // 沙箱 logic runtime ⇒ 命中 sandbox_logic 特征。
+        let result = validate(
+            serde_json::json!({}),
+            serde_json::json!({ "runtime": "sandbox-js-v1", "entry": "logic.js" }),
+        );
+        assert!(result
+            .errors
+            .iter()
+            .any(|diagnostic| diagnostic.code == "missing_world_storage_capability"));
+
+        // 无特征、文档未使用 ⇒ 不要求声明。
+        let result = validate(serde_json::json!({}), serde_json::json!({}));
+        assert!(!result
+            .errors
+            .iter()
+            .any(|diagnostic| diagnostic.code == "missing_world_storage_capability"));
     }
 
     #[test]

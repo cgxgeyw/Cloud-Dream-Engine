@@ -11,6 +11,11 @@ pub struct SessionSnapshot {
     pub current_line: String,
     pub player_character_id: String,
     pub player_character_name: String,
+    /// 当前在场 NPC 名册（不含玩家），是"谁在场"的唯一持久化状态。
+    /// 每轮由导演输出字段 `scene_visible_characters` 驱动更新：显式给出即完整替换，
+    /// 缺省则沿用本名册并并入本轮新生成的角色（见 director.rs 的 parse_runtime_payload
+    /// 与 orchestrator/run.rs 的名册解析）。`scene.present_characters` 是由它派生的
+    /// 视图（名册 + 玩家），不是独立状态。
     pub visible_characters: Vec<String>,
     pub messages: Vec<ChatMessage>,
     pub player_stats: Vec<String>,
@@ -351,6 +356,10 @@ pub struct SceneRuntime {
     pub name: String,
     pub background_hint: String,
     pub temporary_tags: Vec<String>,
+    /// 派生视图 = `SessionSnapshot.visible_characters` + 玩家角色名，供记忆参与者、
+    /// 场景展示等读取。每轮写回时由 SceneManager::refresh_scene /
+    /// build_turn_participants 从同一份名册重建，不独立维护，保证与
+    /// visible_characters 永不脱节。
     pub present_characters: Vec<String>,
 }
 

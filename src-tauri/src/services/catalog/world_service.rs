@@ -425,12 +425,6 @@ impl WorldService {
             .and_then(|value| value.as_i64())
             .map(|value| value.clamp(1, 8))
             .unwrap_or(4);
-        let director_tool_loop_termination = object
-            .get("director_tool_loop_termination")
-            .and_then(|value| value.as_str())
-            .map(|value| value.trim().to_string())
-            .filter(|value| value == "tool_calls_present")
-            .unwrap_or_else(|| "tool_calls_present".to_string());
         let director_stage_labels = object
             .get("director_stage_labels")
             .and_then(|value| value.as_object())
@@ -517,7 +511,6 @@ impl WorldService {
             "character_memory_candidate_limit": character_memory_candidate_limit,
             "character_memory_semantic_weight": character_memory_semantic_weight,
             "director_tool_call_limit": director_tool_call_limit,
-            "director_tool_loop_termination": director_tool_loop_termination,
             "director_stage_labels": director_stage_labels,
             "director_model": director_model,
             "world_director_prompt": world_director_prompt,

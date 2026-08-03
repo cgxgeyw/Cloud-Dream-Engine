@@ -30,6 +30,16 @@ use self::speaker_selection::parse_planned_speakers;
 #[derive(Debug, Clone, Default)]
 pub struct WorldDirectorService;
 
+/// 统一读取 director_config.allow_player_character_switch;缺省按 true(允许换角)。
+/// 各处拿到 bool 后的处理语义不同(删 prompt 契约字段/解析忽略/工具效果忽略),保持不变。
+fn allow_player_character_switch(world: &WorldDefinition) -> bool {
+    world
+        .director_config
+        .get("allow_player_character_switch")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true)
+}
+
 fn append_runtime_attributes(
     payload: &mut serde_json::Value,
     session: &SessionSnapshot,
@@ -55,11 +65,14 @@ fn append_runtime_attributes(
             })
             .collect::<Vec<_>>()
     };
-    let player_owner_suffix = format!(":{}", session.player_character_id);
+    // session_character 分组的 owner_id 生产格式固定为 `{session_id}:{character_id}`
+    // (orchestrator/run.rs 建组、runtime_effects.rs 写入、save_repo.rs 分支复制均如此),
+    // 因此用完整 owner_id 精确匹配,避免 character_id 互为后缀时拿错组。
+    let player_owner_id = format!("{}:{}", session.id, session.player_character_id);
     let player_attributes = runtime
         .character_attributes
         .iter()
-        .find(|group| group.owner_id.ends_with(&player_owner_suffix))
+        .find(|group| group.owner_id == player_owner_id)
         .map(|group| {
             group.items.iter().map(|item| {
                 serde_json::json!({
@@ -496,11 +509,7 @@ impl WorldDirectorService {
             tool_data.insert("visual_capabilities".to_string(), visual_capabilities);
         }
 
-        let allow_player_character_switch = world
-            .director_config
-            .get("allow_player_character_switch")
-            .and_then(|value| value.as_bool())
-            .unwrap_or(true);
+        let allow_player_character_switch = allow_player_character_switch(world);
         let mut payload = serde_json::json!({
             "basic_setting": basic_setting,
             "current_state": current_state,
@@ -734,11 +743,7 @@ impl WorldDirectorService {
                 }
             });
         }
-        let allow_player_character_switch = world
-            .director_config
-            .get("allow_player_character_switch")
-            .and_then(|value| value.as_bool())
-            .unwrap_or(true);
+        let allow_player_character_switch = allow_player_character_switch(world);
         if !allow_player_character_switch {
             if let Some(properties) = schema
                 .get_mut("properties")
@@ -1096,7 +1101,6 @@ impl WorldDirectorService {
         world: &WorldDefinition,
         characters: &[CharacterDefinition],
         initial_request: ChatRequest,
-        _loop_limit: usize,
         turn_index: i32,
         mcp_tools: &[McpToolDefinition],
         mcp_servers: &[crate::models::mcp_server::McpServerConfig],
@@ -1442,235 +1446,56 @@ impl WorldDirectorService {
                     }));
                 }
                 "change_scene" => {
-                    let scene_name = arg_string(&arguments, "scene_name")
-                        .or_else(|| arg_string(&arguments, "location"))
-                        .unwrap_or_else(|| session.scene.name.clone());
-                    let scene_description = arg_string(&arguments, "scene_description")
-                        .or_else(|| arg_string(&arguments, "scene_background_hint"))
-                        .unwrap_or_else(|| session.scene.background_hint.clone());
-                    merged.insert(
-                        "next_location".to_string(),
-                        serde_json::Value::String(scene_name.clone()),
+                    self.apply_change_scene_tool(
+                        session,
+                        &call_id,
+                        &arguments,
+                        &mut merged,
+                        &mut tool_results,
                     );
-                    merged.insert(
-                        "next_scene_name".to_string(),
-                        serde_json::Value::String(scene_name),
-                    );
-                    merged.insert(
-                        "scene_background_hint".to_string(),
-                        serde_json::Value::String(scene_description),
-                    );
-                    if let Some(new_characters) =
-                        arguments.get("new_characters").and_then(|v| v.as_array())
-                    {
-                        if !new_characters.is_empty() {
-                            merged.insert(
-                                "generated_characters".to_string(),
-                                serde_json::Value::Array(new_characters.clone()),
-                            );
-                        }
-                    }
-                    if let Some(scene_character_roster) = arguments
-                        .get("scene_character_roster")
-                        .and_then(|v| v.as_array())
-                    {
-                        merged.insert(
-                            "scene_visible_characters".to_string(),
-                            serde_json::Value::Array(scene_character_roster.clone()),
-                        );
-                    }
-                    tool_results.push(serde_json::json!({
-                        "id": call_id,
-                        "tool_name": "change_scene",
-                        "ok": true,
-                        "arguments": arguments,
-                    }));
                 }
                 "switch_player_character" => {
-                    let target_character_name =
-                        arg_string(&arguments, "target_character_name").unwrap_or_default();
-                    let allow_player_character_switch = world
-                        .director_config
-                        .get("allow_player_character_switch")
-                        .and_then(|value| value.as_bool())
-                        .unwrap_or(true);
-                    if allow_player_character_switch
-                        && !target_character_name.is_empty()
-                        && target_character_name != session.player_character_name
-                    {
-                        let scene_character_roster = {
-                            let values = arg_string_list(arguments.get("scene_character_roster"));
-                            if values.is_empty() {
-                                session.visible_characters.clone()
-                            } else {
-                                values
-                            }
-                        };
-                        merged.insert(
-                            "switch_character_proposal".to_string(),
-                            serde_json::json!({
-                                "target_character_name": target_character_name,
-                                "reason": arg_string(&arguments, "reason").unwrap_or_else(|| "tool_switch".to_string()),
-                                "location": arg_string(&arguments, "location").unwrap_or_else(|| session.location.clone()),
-                                "scene_name": arg_string(&arguments, "scene_name").unwrap_or_else(|| session.scene.name.clone()),
-                                "scene_background_hint": arg_string(&arguments, "scene_background_hint").unwrap_or_else(|| session.scene.background_hint.clone()),
-                                "scene_tags": arg_string_list(arguments.get("scene_tags")),
-                                "scene_character_roster": scene_character_roster,
-                            }),
-                        );
-                    }
-                    tool_results.push(serde_json::json!({
-                        "id": call_id,
-                        "tool_name": "switch_player_character",
-                        "ok": true,
-                        "arguments": arguments,
-                    }));
+                    self.apply_switch_player_character_tool(
+                        session,
+                        world,
+                        &call_id,
+                        &arguments,
+                        &mut merged,
+                        &mut tool_results,
+                    );
                 }
                 "generate_image" => {
-                    let kind =
-                        arg_string(&arguments, "kind").unwrap_or_else(|| "background".to_string());
-                    let prompt = arg_string(&arguments, "prompt").unwrap_or_default();
-                    if !prompt.is_empty() {
-                        if kind == "portrait" {
-                            if let Some(character_name) = arg_string(&arguments, "character_name") {
-                                let mut directives = merged
-                                    .get("character_visual_directives")
-                                    .and_then(|value| value.as_array())
-                                    .cloned()
-                                    .unwrap_or_default();
-                                directives.push(serde_json::json!({
-                                    "character_name": character_name,
-                                    "generation_prompt": prompt,
-                                }));
-                                merged.insert(
-                                    "character_visual_directives".to_string(),
-                                    serde_json::Value::Array(directives),
-                                );
-                            }
-                        } else {
-                            merged.insert(
-                                "background_generation_prompt".to_string(),
-                                serde_json::Value::String(prompt),
-                            );
-                        }
-                    }
-                    tool_results.push(serde_json::json!({
-                        "id": call_id,
-                        "tool_name": "generate_image",
-                        "ok": true,
-                        "result": {
-                            "status": "accepted",
-                            "arguments": arguments,
-                        }
-                    }));
+                    self.apply_generate_image_tool(
+                        &call_id,
+                        &arguments,
+                        &mut merged,
+                        &mut tool_results,
+                    );
                 }
                 "schedule_notification" => {
-                    if !schedule_notification_allowed {
-                        tool_results.push(serde_json::json!({
-                            "id": call_id,
-                            "tool_name": "schedule_notification",
-                            "ok": false,
-                            "error": "schedule_notification is not allowed for this world",
-                        }));
-                        continue;
-                    }
-                    if let Some(runtime) = notification_runtime {
-                        // H7: 使用调用方传入的主连接(在 async 层加锁取得),不再 Database::new()。
-                        let result = match notification_conn {
-                            Some(conn) => NotificationScheduler::execute_tool_call(
-                                conn,
-                                runtime.app,
-                                runtime.data_dir,
-                                NotificationToolContext {
-                                    session_id: &session.id,
-                                    world_id: &world.id,
-                                    world_name: &world.name,
-                                    turn_index,
-                                    speaker_name: None,
-                                    speaker_avatar_asset: None,
-                                },
-                                &call_id,
-                                &arguments,
-                            ),
-                            None => serde_json::json!({
-                                "id": call_id,
-                                "tool_name": "schedule_notification",
-                                "tool_call_id": call_id,
-                                "ok": false,
-                                "error": "notification database connection is unavailable",
-                            }),
-                        };
-                        tool_results.push(result);
-                        continue;
-                    }
-                    match pending_notification_from_tool_call(&session.id, &call_id, &arguments) {
-                        Ok(pending) => {
-                            let scheduled_at = pending.scheduled_at.clone();
-                            let body = pending.body.clone();
-                            let title = pending.title.clone();
-                            pending_notifications.push(
-                                serde_json::to_value(&pending).unwrap_or_else(|err| {
-                                    // L11: 序列化失败会构造残缺对象,通知可能永不触发;记录日志便于排查。
-                                    #[cfg(debug_assertions)]
-                                    eprintln!(
-                                        "[director] serialize pending notification failed (session={}, call={}): {err}",
-                                        session.id, call_id
-                                    );
-                                    #[cfg(not(debug_assertions))]
-                                    let _ = err;
-                                    serde_json::json!({
-                                        "tool_call_id": call_id,
-                                        "source": format!("tool:schedule_notification:{}:{}", session.id, call_id),
-                                        "title": title,
-                                        "body": body,
-                                        "scheduled_at": scheduled_at,
-                                    })
-                                }),
-                            );
-                            tool_results.push(serde_json::json!({
-                                "id": call_id,
-                                "tool_name": "schedule_notification",
-                                "ok": true,
-                                "result": {
-                                    "status": "scheduled",
-                                    "scheduled_at": scheduled_at,
-                                    "content": body,
-                                    "title": title,
-                                }
-                            }));
-                        }
-                        Err(error) => {
-                            tool_results.push(serde_json::json!({
-                                "id": call_id,
-                                "tool_name": "schedule_notification",
-                                "ok": false,
-                                "error": error,
-                            }));
-                        }
-                    }
+                    self.apply_schedule_notification_tool(
+                        session,
+                        world,
+                        schedule_notification_allowed,
+                        notification_runtime,
+                        notification_conn,
+                        turn_index,
+                        &call_id,
+                        &arguments,
+                        &mut pending_notifications,
+                        &mut tool_results,
+                    );
                 }
                 _ => {
                     // 自定义 MCP 工具：结果来自 execute_pending_mcp_tool_calls 的异步预执行。
-                    match mcp_results.get(&tool_call_index) {
-                        Some(outcome) => {
-                            let mut entry = outcome.as_object().cloned().unwrap_or_default();
-                            entry.insert("id".to_string(), serde_json::Value::String(call_id));
-                            entry.insert(
-                                "tool_name".to_string(),
-                                serde_json::Value::String(tool_name.clone()),
-                            );
-                            entry.insert("arguments".to_string(), serde_json::json!(arguments));
-                            tool_results.push(serde_json::Value::Object(entry));
-                        }
-                        None => {
-                            tool_results.push(serde_json::json!({
-                                "id": call_id,
-                                "tool_name": tool_name,
-                                "ok": false,
-                                "error": format!("未找到工具 {tool_name} 的执行结果：该工具未配置 MCP server 或未在本世界授权"),
-                            }));
-                        }
-                    }
+                    self.apply_custom_mcp_tool_result(
+                        mcp_results,
+                        tool_call_index,
+                        &call_id,
+                        &tool_name,
+                        &arguments,
+                        &mut tool_results,
+                    );
                 }
             }
         }
@@ -1687,6 +1512,283 @@ impl WorldDirectorService {
             );
         }
         serde_json::Value::Object(merged)
+    }
+
+    /// change_scene 工具效果:写入场景切换字段并回执。
+    fn apply_change_scene_tool(
+        &self,
+        session: &SessionSnapshot,
+        call_id: &str,
+        arguments: &serde_json::Map<String, serde_json::Value>,
+        merged: &mut serde_json::Map<String, serde_json::Value>,
+        tool_results: &mut Vec<serde_json::Value>,
+    ) {
+        let scene_name = arg_string(arguments, "scene_name")
+            .or_else(|| arg_string(arguments, "location"))
+            .unwrap_or_else(|| session.scene.name.clone());
+        let scene_description = arg_string(arguments, "scene_description")
+            .or_else(|| arg_string(arguments, "scene_background_hint"))
+            .unwrap_or_else(|| session.scene.background_hint.clone());
+        merged.insert(
+            "next_location".to_string(),
+            serde_json::Value::String(scene_name.clone()),
+        );
+        merged.insert(
+            "next_scene_name".to_string(),
+            serde_json::Value::String(scene_name),
+        );
+        merged.insert(
+            "scene_background_hint".to_string(),
+            serde_json::Value::String(scene_description),
+        );
+        if let Some(new_characters) = arguments.get("new_characters").and_then(|v| v.as_array()) {
+            if !new_characters.is_empty() {
+                merged.insert(
+                    "generated_characters".to_string(),
+                    serde_json::Value::Array(new_characters.clone()),
+                );
+            }
+        }
+        if let Some(scene_character_roster) = arguments
+            .get("scene_character_roster")
+            .and_then(|v| v.as_array())
+        {
+            merged.insert(
+                "scene_visible_characters".to_string(),
+                serde_json::Value::Array(scene_character_roster.clone()),
+            );
+        }
+        tool_results.push(serde_json::json!({
+            "id": call_id,
+            "tool_name": "change_scene",
+            "ok": true,
+            "arguments": arguments,
+        }));
+    }
+
+    /// switch_player_character 工具效果:生成换角提案并回执。
+    fn apply_switch_player_character_tool(
+        &self,
+        session: &SessionSnapshot,
+        world: &WorldDefinition,
+        call_id: &str,
+        arguments: &serde_json::Map<String, serde_json::Value>,
+        merged: &mut serde_json::Map<String, serde_json::Value>,
+        tool_results: &mut Vec<serde_json::Value>,
+    ) {
+        let target_character_name =
+            arg_string(arguments, "target_character_name").unwrap_or_default();
+        if allow_player_character_switch(world)
+            && !target_character_name.is_empty()
+            && target_character_name != session.player_character_name
+        {
+            let scene_character_roster = {
+                let values = arg_string_list(arguments.get("scene_character_roster"));
+                if values.is_empty() {
+                    session.visible_characters.clone()
+                } else {
+                    values
+                }
+            };
+            merged.insert(
+                "switch_character_proposal".to_string(),
+                serde_json::json!({
+                    "target_character_name": target_character_name,
+                    "reason": arg_string(arguments, "reason").unwrap_or_else(|| "tool_switch".to_string()),
+                    "location": arg_string(arguments, "location").unwrap_or_else(|| session.location.clone()),
+                    "scene_name": arg_string(arguments, "scene_name").unwrap_or_else(|| session.scene.name.clone()),
+                    "scene_background_hint": arg_string(arguments, "scene_background_hint").unwrap_or_else(|| session.scene.background_hint.clone()),
+                    "scene_tags": arg_string_list(arguments.get("scene_tags")),
+                    "scene_character_roster": scene_character_roster,
+                }),
+            );
+        }
+        tool_results.push(serde_json::json!({
+            "id": call_id,
+            "tool_name": "switch_player_character",
+            "ok": true,
+            "arguments": arguments,
+        }));
+    }
+
+    /// generate_image 工具效果:写入背景/立绘生成指令并回执。
+    fn apply_generate_image_tool(
+        &self,
+        call_id: &str,
+        arguments: &serde_json::Map<String, serde_json::Value>,
+        merged: &mut serde_json::Map<String, serde_json::Value>,
+        tool_results: &mut Vec<serde_json::Value>,
+    ) {
+        let kind = arg_string(arguments, "kind").unwrap_or_else(|| "background".to_string());
+        let prompt = arg_string(arguments, "prompt").unwrap_or_default();
+        if !prompt.is_empty() {
+            if kind == "portrait" {
+                if let Some(character_name) = arg_string(arguments, "character_name") {
+                    let mut directives = merged
+                        .get("character_visual_directives")
+                        .and_then(|value| value.as_array())
+                        .cloned()
+                        .unwrap_or_default();
+                    directives.push(serde_json::json!({
+                        "character_name": character_name,
+                        "generation_prompt": prompt,
+                    }));
+                    merged.insert(
+                        "character_visual_directives".to_string(),
+                        serde_json::Value::Array(directives),
+                    );
+                }
+            } else {
+                merged.insert(
+                    "background_generation_prompt".to_string(),
+                    serde_json::Value::String(prompt),
+                );
+            }
+        }
+        tool_results.push(serde_json::json!({
+            "id": call_id,
+            "tool_name": "generate_image",
+            "ok": true,
+            "result": {
+                "status": "accepted",
+                "arguments": arguments,
+            }
+        }));
+    }
+
+    /// schedule_notification 工具效果:落库或写入 pending_notifications 并回执。
+    #[allow(clippy::too_many_arguments)]
+    fn apply_schedule_notification_tool(
+        &self,
+        session: &SessionSnapshot,
+        world: &WorldDefinition,
+        schedule_notification_allowed: bool,
+        notification_runtime: Option<NotificationToolRuntime<'_>>,
+        notification_conn: Option<&rusqlite::Connection>,
+        turn_index: i32,
+        call_id: &str,
+        arguments: &serde_json::Map<String, serde_json::Value>,
+        pending_notifications: &mut Vec<serde_json::Value>,
+        tool_results: &mut Vec<serde_json::Value>,
+    ) {
+        if !schedule_notification_allowed {
+            tool_results.push(serde_json::json!({
+                "id": call_id,
+                "tool_name": "schedule_notification",
+                "ok": false,
+                "error": "schedule_notification is not allowed for this world",
+            }));
+            return;
+        }
+        if let Some(runtime) = notification_runtime {
+            // H7: 使用调用方传入的主连接(在 async 层加锁取得),不再 Database::new()。
+            let result = match notification_conn {
+                Some(conn) => NotificationScheduler::execute_tool_call(
+                    conn,
+                    runtime.app,
+                    runtime.data_dir,
+                    NotificationToolContext {
+                        session_id: &session.id,
+                        world_id: &world.id,
+                        world_name: &world.name,
+                        turn_index,
+                        speaker_name: None,
+                        speaker_avatar_asset: None,
+                    },
+                    call_id,
+                    arguments,
+                ),
+                None => serde_json::json!({
+                    "id": call_id,
+                    "tool_name": "schedule_notification",
+                    "tool_call_id": call_id,
+                    "ok": false,
+                    "error": "notification database connection is unavailable",
+                }),
+            };
+            tool_results.push(result);
+            return;
+        }
+        match pending_notification_from_tool_call(&session.id, call_id, arguments) {
+            Ok(pending) => {
+                let scheduled_at = pending.scheduled_at.clone();
+                let body = pending.body.clone();
+                let title = pending.title.clone();
+                pending_notifications.push(
+                    serde_json::to_value(&pending).unwrap_or_else(|err| {
+                        // L11: 序列化失败会构造残缺对象,通知可能永不触发;记录日志便于排查。
+                        #[cfg(debug_assertions)]
+                        eprintln!(
+                            "[director] serialize pending notification failed (session={}, call={}): {err}",
+                            session.id, call_id
+                        );
+                        #[cfg(not(debug_assertions))]
+                        let _ = err;
+                        serde_json::json!({
+                            "tool_call_id": call_id,
+                            "source": format!("tool:schedule_notification:{}:{}", session.id, call_id),
+                            "title": title,
+                            "body": body,
+                            "scheduled_at": scheduled_at,
+                        })
+                    }),
+                );
+                tool_results.push(serde_json::json!({
+                    "id": call_id,
+                    "tool_name": "schedule_notification",
+                    "ok": true,
+                    "result": {
+                        "status": "scheduled",
+                        "scheduled_at": scheduled_at,
+                        "content": body,
+                        "title": title,
+                    }
+                }));
+            }
+            Err(error) => {
+                tool_results.push(serde_json::json!({
+                    "id": call_id,
+                    "tool_name": "schedule_notification",
+                    "ok": false,
+                    "error": error,
+                }));
+            }
+        }
+    }
+
+    /// 自定义 MCP 工具效果:回填 execute_pending_mcp_tool_calls 的异步预执行结果。
+    fn apply_custom_mcp_tool_result(
+        &self,
+        mcp_results: &std::collections::HashMap<usize, serde_json::Value>,
+        tool_call_index: usize,
+        call_id: &str,
+        tool_name: &str,
+        arguments: &serde_json::Map<String, serde_json::Value>,
+        tool_results: &mut Vec<serde_json::Value>,
+    ) {
+        match mcp_results.get(&tool_call_index) {
+            Some(outcome) => {
+                let mut entry = outcome.as_object().cloned().unwrap_or_default();
+                entry.insert(
+                    "id".to_string(),
+                    serde_json::Value::String(call_id.to_string()),
+                );
+                entry.insert(
+                    "tool_name".to_string(),
+                    serde_json::Value::String(tool_name.to_string()),
+                );
+                entry.insert("arguments".to_string(), serde_json::json!(arguments));
+                tool_results.push(serde_json::Value::Object(entry));
+            }
+            None => {
+                tool_results.push(serde_json::json!({
+                    "id": call_id,
+                    "tool_name": tool_name,
+                    "ok": false,
+                    "error": format!("未找到工具 {tool_name} 的执行结果：该工具未配置 MCP server 或未在本世界授权"),
+                }));
+            }
+        }
     }
 
     pub fn parse_loose_json(&self, raw: &str) -> serde_json::Value {
@@ -1842,8 +1944,6 @@ impl WorldDirectorService {
                 native_tool_calling: previous_request.native_tool_calling,
             });
         }
-        let _ = parsed;
-        let _ = tool_enriched;
         Err("Director tool follow-up requires native tool_calls".to_string())
     }
 
@@ -1852,8 +1952,10 @@ impl WorldDirectorService {
             .director_config
             .get("director_tool_loop_limit")
             .and_then(|value| value.as_i64())
-            .map(|value| value.clamp(1, 12) as usize)
-            .unwrap_or(4)
+            .map(|value| {
+                value.clamp(DIRECTOR_TOOL_LOOP_LIMIT_MIN, DIRECTOR_TOOL_LOOP_LIMIT_MAX) as usize
+            })
+            .unwrap_or(DIRECTOR_TOOL_LOOP_LIMIT_DEFAULT)
     }
 
     pub fn resolve_tool_call_limit(&self, world: &WorldDefinition) -> usize {
@@ -1861,8 +1963,10 @@ impl WorldDirectorService {
             .director_config
             .get("director_tool_call_limit")
             .and_then(|value| value.as_i64())
-            .map(|value| value.clamp(1, 8) as usize)
-            .unwrap_or(4)
+            .map(|value| {
+                value.clamp(DIRECTOR_TOOL_CALL_LIMIT_MIN, DIRECTOR_TOOL_CALL_LIMIT_MAX) as usize
+            })
+            .unwrap_or(DIRECTOR_TOOL_CALL_LIMIT_DEFAULT)
     }
 
     pub fn resolve_runtime_stage_label(
@@ -1909,17 +2013,9 @@ impl WorldDirectorService {
         if iteration >= self.resolve_tool_loop_limit(world) {
             return false;
         }
-        let termination_mode = world
-            .director_config
-            .get("director_tool_loop_termination")
-            .and_then(|value| value.as_str())
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-            .unwrap_or("tool_calls_present");
-        match termination_mode {
-            "tool_calls_present" => !self.extract_tool_calls(parsed, None).is_empty(),
-            _ => !self.extract_tool_calls(parsed, None).is_empty(),
-        }
+        // 唯一的终止语义:模型还在发 tool_calls 就继续循环,直到 loop limit。
+        // (曾经的 director_tool_loop_termination 配置从未实现第二种模式,已移除。)
+        !self.extract_tool_calls(parsed, None).is_empty()
     }
 
     pub fn parse_runtime_payload(
@@ -1939,11 +2035,7 @@ impl WorldDirectorService {
             .get("allow_npc_spawn")
             .and_then(|value| value.as_bool())
             .unwrap_or(true);
-        let allow_player_character_switch = world
-            .director_config
-            .get("allow_player_character_switch")
-            .and_then(|value| value.as_bool())
-            .unwrap_or(true);
+        let allow_player_character_switch = allow_player_character_switch(world);
         let world_phase = normalize_llm_text(parsed.get("world_phase"))
             .filter(|value| matches!(value.as_str(), "opening" | "escalation" | "crisis"))
             .unwrap_or_else(|| session.state.phase.clone());
@@ -1998,6 +2090,9 @@ impl WorldDirectorService {
             world,
             &session.time_label,
         );
+        // scene_visible_characters 是导演输出的"每轮更新指令"（wire 字段，勿改名）：
+        // 显式给出即对在场名册做完整替换；缺省(None)则沿用 session.visible_characters
+        // （持久状态），新生成角色的并入发生在 run.rs 的名册解析阶段。
         let scene_visible_characters = parse_scene_visible_characters(
             parsed.get("scene_visible_characters"),
             &session.player_character_name,
@@ -2577,11 +2672,7 @@ impl WorldDirectorService {
                 }
             }),
         ];
-        let allow_player_character_switch = world
-            .director_config
-            .get("allow_player_character_switch")
-            .and_then(|value| value.as_bool())
-            .unwrap_or(true);
+        let allow_player_character_switch = allow_player_character_switch(world);
         if allow_player_character_switch {
             tools.push(serde_json::json!({
                 "tool_name": "switch_player_character",
@@ -2828,6 +2919,16 @@ fn extract_first_balanced_json_segment(raw: &str) -> Option<String> {
 
 /// 导演最终输出无法解析为 JSON 对象时,携带解析错误让模型重出的最大修复轮次。
 const DIRECTOR_JSON_REPAIR_ATTEMPTS: usize = 2;
+
+/// 导演工具循环轮次上限(director_tool_loop_limit)的缺省值与允许范围。
+const DIRECTOR_TOOL_LOOP_LIMIT_DEFAULT: usize = 4;
+const DIRECTOR_TOOL_LOOP_LIMIT_MIN: i64 = 1;
+const DIRECTOR_TOOL_LOOP_LIMIT_MAX: i64 = 12;
+
+/// 单轮导演输出中允许处理的工具调用条数(director_tool_call_limit)的缺省值与允许范围。
+const DIRECTOR_TOOL_CALL_LIMIT_DEFAULT: usize = 4;
+const DIRECTOR_TOOL_CALL_LIMIT_MIN: i64 = 1;
+const DIRECTOR_TOOL_CALL_LIMIT_MAX: i64 = 8;
 
 /// 导演最终输出是否需要 LLM 修复重试:解析结果不是非空 JSON 对象。
 fn director_output_needs_json_repair(parsed: &serde_json::Value) -> bool {
@@ -3424,6 +3525,67 @@ mod tests {
         assert_eq!(service.resolve_tool_call_limit(&low_world), 1);
         assert_eq!(service.resolve_tool_call_limit(&high_world), 8);
         assert_eq!(service.resolve_tool_call_limit(&mid_world), 3);
+    }
+
+    fn runtime_attribute_group(
+        owner_id: &str,
+        key: &str,
+    ) -> crate::models::session::RuntimeAttributeGroup {
+        crate::models::session::RuntimeAttributeGroup {
+            owner_type: "session_character".to_string(),
+            owner_id: owner_id.to_string(),
+            owner_label: owner_id.to_string(),
+            items: vec![crate::models::session::RuntimeAttributeItem {
+                schema_id: format!("schema-{key}"),
+                key: key.to_string(),
+                label: key.to_string(),
+                value_type: "number".to_string(),
+                value: serde_json::json!(1),
+                source: "test".to_string(),
+                display_policy: serde_json::json!({}),
+                influence_policy: serde_json::json!({}),
+            }],
+        }
+    }
+
+    #[test]
+    fn append_runtime_attributes_matches_player_group_by_exact_owner_id() {
+        // "li" 与 "han-li" 互为后缀:玩家组必须按完整 owner_id 精确匹配。
+        let mut session = sample_session();
+        session.player_character_id = "li".to_string();
+        let mut payload = serde_json::json!({ "current_state": {} });
+        let runtime = crate::models::session::SessionRuntimeAttributesResponse {
+            session_attributes: vec![],
+            character_attributes: vec![
+                runtime_attribute_group("sess-1:han-li", "han-li-attr"),
+                runtime_attribute_group("sess-1:li", "player-attr"),
+            ],
+        };
+
+        append_runtime_attributes(&mut payload, &session, &runtime);
+
+        let player = &payload["current_state"]["runtime_attributes"]["player"];
+        let attrs = player["attributes"].as_array().unwrap();
+        assert_eq!(attrs.len(), 1);
+        assert_eq!(attrs[0]["key"], serde_json::json!("player-attr"));
+    }
+
+    #[test]
+    fn append_runtime_attributes_ignores_foreign_owner_with_same_character_suffix() {
+        // 其它来源的 owner_id 即使以 ":li" 结尾(旧后缀匹配会误中),也不能当作玩家组。
+        let mut session = sample_session();
+        session.player_character_id = "li".to_string();
+        let mut payload = serde_json::json!({ "current_state": {} });
+        let runtime = crate::models::session::SessionRuntimeAttributesResponse {
+            session_attributes: vec![],
+            character_attributes: vec![runtime_attribute_group("other-sess:li", "foreign-attr")],
+        };
+
+        append_runtime_attributes(&mut payload, &session, &runtime);
+
+        let player = &payload["current_state"]["runtime_attributes"]["player"];
+        let attrs = player["attributes"].as_array().unwrap();
+        assert!(attrs.is_empty());
     }
 
     #[test]

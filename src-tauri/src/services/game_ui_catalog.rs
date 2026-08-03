@@ -10,11 +10,40 @@ use std::sync::LazyLock;
 
 use serde::Deserialize;
 
+/// bundle 级特征 id：`required_when_bundle_features` 只能引用这里的值。
+/// 特征本身的判定依赖世界包内容（storage/logic 配置），由 game_ui.rs 的
+/// detect_bundle_features 计算；catalog 只声明"特征 → 必需能力"的映射。
+pub const KNOWN_BUNDLE_FEATURES: [&str; 2] = ["storage_config", "sandbox_logic"];
+
+/// 能力校验失败时使用的诊断（code/message 与世界包校验器的既有输出保持一致，
+/// 因此随能力条目一起声明在 catalog 里，而不是硬编码在校验器中）。
+#[derive(Debug, Deserialize)]
+pub struct GameUiCatalogDiagnostic {
+    pub code: String,
+    pub message: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct GameUiCatalogCapability {
     pub id: String,
     #[allow(dead_code)]
     pub description: String,
+    /// 该能力要求的最低 UI runtime 版本（如 world records 需要 v3）。
+    #[serde(default)]
+    pub requires_runtime_version: Option<u32>,
+    /// 该能力依赖的其它能力（声明式元数据；当前校验器不据此追加诊断）。
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub requires_capabilities: Vec<String>,
+    /// bundle 出现这些特征时，即使 UI 文档没用到该能力，也必须声明它。
+    #[serde(default)]
+    pub required_when_bundle_features: Vec<String>,
+    /// 使用了该能力但 runtime 版本不足时的诊断。
+    #[serde(default)]
+    pub runtime_version_error: Option<GameUiCatalogDiagnostic>,
+    /// 使用了该能力（或 bundle 特征要求它）但未在 bundle.capabilities 声明时的诊断。
+    #[serde(default)]
+    pub missing_declaration_error: Option<GameUiCatalogDiagnostic>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,6 +79,13 @@ pub struct GameUiCatalogComponent {
 pub struct GameUiCatalog {
     #[allow(dead_code)]
     pub schema_version: u32,
+    /// 受支持的 UI 文档 schema_version 列表（旧版 catalog 文件缺省为空，
+    /// validate_catalog 会拒绝空列表，因此仓库内的 catalog 必须显式给出）。
+    #[serde(default)]
+    pub supported_document_schema_versions: Vec<u32>,
+    /// 受支持的 UI runtime 版本列表。
+    #[serde(default)]
+    pub supported_ui_runtime_versions: Vec<u32>,
     pub capabilities: Vec<GameUiCatalogCapability>,
     pub actions: Vec<GameUiCatalogAction>,
     pub components: Vec<GameUiCatalogComponent>,
@@ -102,6 +138,57 @@ fn validate_catalog(catalog: &GameUiCatalog) {
         "component",
         catalog.components.iter().map(|entry| entry.id.as_str()),
     );
+
+    assert!(
+        !catalog.supported_document_schema_versions.is_empty(),
+        "catalog supported_document_schema_versions cannot be empty"
+    );
+    assert!(
+        !catalog.supported_ui_runtime_versions.is_empty(),
+        "catalog supported_ui_runtime_versions cannot be empty"
+    );
+
+    for capability in &catalog.capabilities {
+        if let Some(required) = capability.requires_runtime_version {
+            assert!(
+                catalog.supported_ui_runtime_versions.contains(&required),
+                "catalog capability `{}` requires unsupported UI runtime version {required}",
+                capability.id
+            );
+            let error = capability.runtime_version_error.as_ref().unwrap_or_else(|| {
+                panic!(
+                    "catalog capability `{}` declares requires_runtime_version without runtime_version_error",
+                    capability.id
+                )
+            });
+            assert!(
+                !error.code.trim().is_empty() && !error.message.trim().is_empty(),
+                "catalog capability `{}` has an empty runtime_version_error",
+                capability.id
+            );
+        }
+        for dependency in &capability.requires_capabilities {
+            assert!(
+                catalog.capabilities.iter().any(|entry| &entry.id == dependency),
+                "catalog capability `{}` requires unknown capability `{dependency}`",
+                capability.id
+            );
+        }
+        for feature in &capability.required_when_bundle_features {
+            assert!(
+                KNOWN_BUNDLE_FEATURES.contains(&feature.as_str()),
+                "catalog capability `{}` references unknown bundle feature `{feature}`",
+                capability.id
+            );
+        }
+        if let Some(error) = &capability.missing_declaration_error {
+            assert!(
+                !error.code.trim().is_empty() && !error.message.trim().is_empty(),
+                "catalog capability `{}` has an empty missing_declaration_error",
+                capability.id
+            );
+        }
+    }
 
     for action in &catalog.actions {
         for capability in &action.implies_capabilities {
@@ -163,6 +250,33 @@ mod tests {
         assert!(!catalog.components.is_empty());
         // validate_catalog 已在加载时跑过；这里显式再跑一遍作为回归锚点。
         validate_catalog(catalog);
+    }
+
+    #[test]
+    fn capability_requirements_are_declared_in_catalog() {
+        let catalog = game_ui_catalog();
+        assert_eq!(catalog.supported_document_schema_versions, vec![2]);
+        assert_eq!(catalog.supported_ui_runtime_versions, vec![2, 3]);
+
+        let records = catalog
+            .capabilities
+            .iter()
+            .find(|capability| capability.id == "supports_world_records")
+            .expect("supports_world_records must exist");
+        assert_eq!(records.requires_runtime_version, Some(3));
+        assert!(records.runtime_version_error.is_some());
+        assert!(records.missing_declaration_error.is_some());
+
+        let storage = catalog
+            .capabilities
+            .iter()
+            .find(|capability| capability.id == "supports_world_storage")
+            .expect("supports_world_storage must exist");
+        assert_eq!(
+            storage.required_when_bundle_features,
+            vec!["storage_config".to_string(), "sandbox_logic".to_string()]
+        );
+        assert!(storage.missing_declaration_error.is_some());
     }
 
     #[test]
