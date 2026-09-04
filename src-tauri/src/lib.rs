@@ -20,6 +20,9 @@ fn get_data_dir(app: &tauri::App) -> Result<PathBuf, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if crate::services::notifications::run_scheduled_notification_cli() {
+        return;
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
@@ -149,6 +152,8 @@ pub fn run() {
             commands::mcp_tools::create_mcp_tool,
             commands::mcp_tools::update_mcp_tool,
             commands::mcp_tools::delete_mcp_tool,
+            commands::mcp_tools::export_mcp_tools,
+            commands::mcp_tools::import_mcp_tools,
             commands::rules::list_rules,
             commands::rules::get_rule,
             commands::rules::create_rule,

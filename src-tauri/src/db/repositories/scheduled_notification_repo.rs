@@ -230,14 +230,13 @@ impl<'a> ScheduledNotificationRepository<'a> {
         Ok(())
     }
 
-    #[cfg(mobile)]
+    #[cfg(any(target_os = "android", target_os = "windows"))]
     pub fn mark_native_scheduled(
         &self,
         id: &str,
         calendar_event_id: Option<i64>,
     ) -> Result<(), String> {
-        // 安卓行程提醒写入系统日历,delivery=native 表示"到点由系统触发,应用未运行时也生效",
-        // calendar_event_id 保存用于取消/调试(取消实际按 notification id 经 JNI 完成)。
+        // 原生系统调度（Android 日历或 Windows 任务计划）到点触发，应用未运行时也生效。
         self.conn
             .execute(
                 "UPDATE scheduled_notifications

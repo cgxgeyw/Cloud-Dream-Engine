@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration as StdDuration;
 
-use chrono::{DateTime, Duration, Local, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, Duration, Local, NaiveDateTime, TimeZone, Timelike, Utc};
 use rusqlite::params;
 use tauri::AppHandle;
 use tauri_plugin_notification::{NotificationExt, PermissionState};
@@ -308,6 +308,8 @@ impl NotificationScheduler {
         data_dir: PathBuf,
         notification: ScheduledNotification,
     ) -> Result<(), String> {
+        #[cfg(windows)]
+        let _ = &data_dir;
         #[cfg(target_os = "android")]
         {
             return Self::schedule_native_notification(conn, &app, &data_dir, &notification);
@@ -315,11 +317,90 @@ impl NotificationScheduler {
 
         #[cfg(not(target_os = "android"))]
         {
-            // 桌面路径在延时后由 spawn 的任务自行加锁取连接,这里无需 conn。
-            let _ = conn;
-            Self::spawn_notification_task(app, data_dir, notification, true);
-            Ok(())
+            #[cfg(windows)]
+            {
+                return Self::schedule_windows_notification(
+                    conn,
+                    &app,
+                    &data_dir,
+                    &notification,
+                );
+            }
+            #[cfg(not(windows))]
+            {
+                // 其他桌面平台暂时只能由应用进程内的任务负责到点提醒。
+                let _ = conn;
+                Self::spawn_notification_task(app, data_dir, notification, true);
+                Ok(())
+            }
         }
+    }
+
+    #[cfg(windows)]
+    fn schedule_windows_notification(
+        conn: &rusqlite::Connection,
+        app: &AppHandle,
+        data_dir: &Path,
+        notification: &ScheduledNotification,
+    ) -> Result<(), String> {
+        use base64::Engine as _;
+        use std::process::Command;
+
+        let task_name = windows_task_name(&notification.id);
+        let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+        let payload = serde_json::json!({
+            "title": notification.title,
+            "body": notification.body,
+            "scheduled_at": notification.scheduled_at,
+            "task_name": task_name,
+        });
+        let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&payload).map_err(|error| error.to_string())?);
+        let action = format!(
+            "\"{}\" --scheduled-notification {}",
+            executable.display(), encoded
+        );
+        let start_at = parse_stored_notification_time(&notification.scheduled_at)?
+            .with_timezone(&Local);
+        let now = Local::now();
+        let start_minute = start_at
+            .with_second(0)
+            .and_then(|value| value.with_nanosecond(0))
+            .unwrap_or(start_at);
+        let start_minute = if start_minute <= now {
+            now + Duration::minutes(1)
+        } else {
+            start_minute
+        };
+        let status = Command::new("schtasks.exe")
+            .args([
+                "/Create",
+                "/TN",
+                &task_name,
+                "/TR",
+                &action,
+                "/SC",
+                "ONCE",
+                "/ST",
+                &start_minute.format("%H:%M").to_string(),
+                "/SD",
+                &start_minute.format("%m/%d/%Y").to_string(),
+                "/F",
+            ])
+            .status()
+            .map_err(|error| format!("failed to invoke Windows Task Scheduler: {error}"))?;
+        if !status.success() {
+            return Err(format!("Windows Task Scheduler exited with status {status}"));
+        }
+        ScheduledNotificationRepository::new(conn)
+            .mark_native_scheduled(&notification.id, None)?;
+        Self::spawn_notification_task(
+            app.clone(),
+            data_dir.to_path_buf(),
+            notification.clone(),
+            false,
+        );
+        Ok(())
     }
 
     #[cfg(target_os = "android")]
@@ -445,11 +526,83 @@ impl NotificationScheduler {
         }
         #[cfg(not(target_os = "android"))]
         {
+            #[cfg(windows)]
+            {
+                cancel_windows_task(&notification.id)?;
+            }
             let _ = app;
-            let _ = notification;
         }
         Ok(())
     }
+}
+
+#[cfg(windows)]
+fn windows_task_name(notification_id: &str) -> String {
+    format!("CloudDreamScheduledNotification_{}", notification_id)
+}
+
+#[cfg(windows)]
+fn cancel_windows_task(notification_id: &str) -> Result<(), String> {
+    use std::process::Command;
+    let status = Command::new("schtasks.exe")
+        .args(["/Delete", "/TN", &windows_task_name(notification_id), "/F"])
+        .status()
+        .map_err(|error| format!("failed to invoke Windows Task Scheduler: {error}"))?;
+    if status.success() || status.code() == Some(1) {
+        Ok(())
+    } else {
+        Err(format!("Windows Task Scheduler exited with status {status}"))
+    }
+}
+
+#[cfg(windows)]
+pub fn run_scheduled_notification_cli() -> bool {
+    use base64::Engine as _;
+    use std::time::Duration as StdDuration;
+
+    let mut args = std::env::args().skip(1);
+    let Some(flag) = args.next() else {
+        return false;
+    };
+    if flag != "--scheduled-notification" {
+        return false;
+    }
+    let Some(encoded) = args.next() else {
+        return true;
+    };
+    let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded)
+        .ok()
+        .and_then(|value| serde_json::from_slice::<serde_json::Value>(&value).ok());
+    let Some(payload) = decoded else {
+        return true;
+    };
+    let title = payload.get("title").and_then(|value| value.as_str()).unwrap_or(APP_DISPLAY_NAME);
+    let body = payload.get("body").and_then(|value| value.as_str()).unwrap_or("");
+    if let Some(scheduled_at) = payload.get("scheduled_at").and_then(|value| value.as_str()) {
+        if let Ok(target) = parse_stored_notification_time(scheduled_at) {
+            let delay = target - Utc::now();
+            if let Ok(delay) = delay.to_std() {
+                std::thread::sleep(delay.min(StdDuration::from_secs(90)));
+            }
+        }
+    }
+    let _ = notify_rust::Notification::new()
+        .app_id("com.dreamnarrativeengine.app")
+        .summary(title.trim())
+        .body(body.trim())
+        .show();
+    if let Some(task_name) = payload.get("task_name").and_then(|value| value.as_str()) {
+        let _ = std::process::Command::new("schtasks.exe")
+            .args(["/Delete", "/TN", task_name, "/F"])
+            .status();
+    }
+    true
+}
+
+#[cfg(not(windows))]
+pub fn run_scheduled_notification_cli() -> bool {
+    false
 }
 
 /// H7: 通知后台任务的 DB 错误此前被 `let _ =` 吞掉,导致通知静默丢失且无线索。
