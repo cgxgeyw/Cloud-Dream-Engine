@@ -181,6 +181,13 @@ export function createGameUiRuntimeContext(
     bag.session?.id ?? bag.sessionId,
     bag.playerCharacter?.id,
   );
+  const mapGraph = {
+    nodes: bag.mapGraphNodes,
+    edges: bag.mapGraphEdges,
+  };
+  const activeSideTab = bag.sideTabs.some((tab) => tab.key === bag.sideTab)
+    ? bag.sideTab
+    : (mapGraph.nodes.length > 0 && bag.sideTabs.some((tab) => tab.key === "map") ? "map" : bag.sideTab);
 
   return {
     capabilities: createGameUiPlatformCapabilities(platform),
@@ -223,7 +230,7 @@ export function createGameUiRuntimeContext(
       : null,
     visible_characters: bag.session?.visible_characters ?? [],
     side_tabs: bag.sideTabs,
-    active_side_tab: bag.sideTab,
+    active_side_tab: activeSideTab,
     active_attribute_content: bag.activeAttributeContent,
     active_attribute_items: bag.activeAttributeItems,
     draft_input: {
@@ -253,10 +260,7 @@ export function createGameUiRuntimeContext(
       action_error: bag.actionError,
     },
     current_save: bag.currentSave,
-    map_graph: {
-      nodes: bag.mapGraphNodes,
-      edges: bag.mapGraphEdges,
-    },
+    map_graph: mapGraph,
     message_state: {
       active_character_creation_keys: bag.activeCharacterCreationKeys,
       expanded_director_trace_keys: bag.expandedDirectorTraceKeys,

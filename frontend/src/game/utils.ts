@@ -82,6 +82,55 @@ export type AgentReasoningView = {
   reasoningLines: string[];
 };
 
+export type AgentToolActivityItem = {
+  id: string;
+  name: string;
+  argsPreview: string;
+};
+
+export type AgentToolActivityView = {
+  status: "calling" | "done";
+  tools: AgentToolActivityItem[];
+};
+
+/** 解析后端写入 metadata.tool_activity 的工具调用进度（speaker_loop 工具循环）。 */
+export function parseAgentToolActivity(message: ChatMessageResponse): AgentToolActivityView | null {
+  if (message.role !== "agent") {
+    return null;
+  }
+  const metadata = (message.metadata ?? {}) as Record<string, unknown>;
+  const raw = metadata.tool_activity;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  const record = raw as Record<string, unknown>;
+  const status = record.status === "calling" || record.status === "done" ? record.status : null;
+  if (!status) {
+    return null;
+  }
+  const rawTools = Array.isArray(record.tools) ? record.tools : [];
+  const tools: AgentToolActivityItem[] = [];
+  for (const item of rawTools) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      continue;
+    }
+    const entry = item as Record<string, unknown>;
+    const name = String(entry.name ?? "").trim();
+    if (!name) {
+      continue;
+    }
+    tools.push({
+      id: String(entry.id ?? "").trim(),
+      name,
+      argsPreview: String(entry.args_preview ?? "").trim(),
+    });
+  }
+  if (tools.length === 0) {
+    return null;
+  }
+  return { status, tools };
+}
+
 export type DirectorRetryCardView = {
   key: string;
   retryToken: string;

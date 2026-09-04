@@ -30,6 +30,7 @@ import {
   type ChatMessageResponse,
   type PlayerActionMode,
   type RetryFailedLlmStepRequest,
+  type RuntimeAttributeGroup,
   type RuntimeAttributeItem,
   type SaveResponse,
   type SessionRuntimeAttributesResponse,
@@ -154,6 +155,99 @@ function buildAttributeSideTabsFromRuntimeAttributes(
   });
   grouped.set("背包", inventoryLines.length > 0 ? inventoryLines : ["暂无物品"]);
   return Array.from(grouped, ([label, lines]) => [label, lines.join("\n")]);
+}
+
+function filterRuntimeAttributesForWorld(
+  runtimeAttributes: SessionRuntimeAttributesResponse,
+  world: WorldResponse | null,
+): SessionRuntimeAttributesResponse {
+  const rawSchemas = world?.ui_theme_config?.attribute_schemas;
+  if (!Array.isArray(rawSchemas) || rawSchemas.length === 0) {
+    return runtimeAttributes;
+  }
+
+  const declaredKeys = new Set(
+    rawSchemas
+      .filter((schema): schema is Record<string, unknown> => Boolean(schema) && typeof schema === "object")
+      .map((schema) => (typeof schema.key === "string" ? schema.key.trim() : ""))
+      .filter(Boolean),
+  );
+  if (declaredKeys.size === 0) {
+    return runtimeAttributes;
+  }
+
+  const filterGroup = (group: RuntimeAttributeGroup): RuntimeAttributeGroup => ({
+    ...group,
+    items: group.items.filter((item) => {
+      if (declaredKeys.has(item.key)) {
+        return true;
+      }
+      const applicableWorldIds = item.display_policy.applicable_world_ids;
+      return Array.isArray(applicableWorldIds)
+        && applicableWorldIds.some((id) => id === world?.id);
+    }),
+  });
+
+  return {
+    session_attributes: runtimeAttributes.session_attributes.map(filterGroup).filter((group) => group.items.length > 0),
+    character_attributes: runtimeAttributes.character_attributes.map(filterGroup).filter((group) => group.items.length > 0),
+  };
+}
+
+function normalizeSessionMapGraph(
+  rawNodes: unknown,
+  rawEdges: unknown,
+): { nodes: SessionMapNode[]; edges: SessionMapEdge[] } {
+  const nodes: SessionMapNode[] = [];
+  const nodeIds = new Set<string>();
+  if (Array.isArray(rawNodes)) {
+    for (const rawNode of rawNodes) {
+      if (!rawNode || typeof rawNode !== "object") {
+        continue;
+      }
+      const value = rawNode as Record<string, unknown>;
+      const nodeId = typeof value.node_id === "string" ? value.node_id.trim() : "";
+      const label = typeof value.label === "string" ? value.label.trim() : "";
+      if (!nodeId || !label || nodeIds.has(nodeId)) {
+        continue;
+      }
+      nodeIds.add(nodeId);
+      nodes.push({
+        node_id: nodeId,
+        label,
+        discovered: value.discovered === true,
+        current: value.current === true,
+      });
+    }
+  }
+
+  const edges: SessionMapEdge[] = [];
+  const edgeIds = new Set<string>();
+  if (Array.isArray(rawEdges)) {
+    for (const rawEdge of rawEdges) {
+      if (!rawEdge || typeof rawEdge !== "object") {
+        continue;
+      }
+      const value = rawEdge as Record<string, unknown>;
+      const edgeId = typeof value.edge_id === "string" ? value.edge_id.trim() : "";
+      const sourceNodeId = typeof value.source_node_id === "string" ? value.source_node_id.trim() : "";
+      const targetNodeId = typeof value.target_node_id === "string" ? value.target_node_id.trim() : "";
+      if (
+        !edgeId
+        || !sourceNodeId
+        || !targetNodeId
+        || edgeIds.has(edgeId)
+        || !nodeIds.has(sourceNodeId)
+        || !nodeIds.has(targetNodeId)
+      ) {
+        continue;
+      }
+      edgeIds.add(edgeId);
+      edges.push({ edge_id: edgeId, source_node_id: sourceNodeId, target_node_id: targetNodeId });
+    }
+  }
+
+  return { nodes, edges };
 }
 
 function findAttributeItemsForTab(
@@ -291,6 +385,12 @@ export function useGameSession(
   const { sessionId: sessionIdParam } = useParams<{ sessionId: string }>();
 
   const [session, setSession] = useState<SessionSnapshotResponse | null>(null);
+  // 地图只跟随已提交的会话快照更新。流式帧只增长聊天消息，避免地图在
+  // AI 回复期间被空快照或中间快照触发重排/卸载。
+  const [committedMapGraph, setCommittedMapGraph] = useState<{
+    nodes: SessionMapNode[];
+    edges: SessionMapEdge[];
+  }>({ nodes: [], edges: [] });
   // 流式帧只携带正在增长的消息。把它与完整会话快照拆开，避免每个 token 都
   // 刷新地图、属性、场景等本应在回合完成后才更新的区域。
   const [streamingMessages, setStreamingMessages] = useState<ChatMessageResponse[] | null>(null);
@@ -346,6 +446,17 @@ export function useGameSession(
 
     setStreamingMessages(null);
     setSession(snapshot);
+    setCommittedMapGraph((previous) => {
+      const normalized = normalizeSessionMapGraph(snapshot.map_graph_nodes, snapshot.map_graph_edges);
+      // Some completion/error responses are session overlays and omit the
+      // topology. Never let such a response erase a map that was already
+      // committed for this session; a real topology update always carries
+      // the node list (including an intentionally empty initial map).
+      if (normalized.nodes.length === 0 && previous.nodes.length > 0) {
+        return previous;
+      }
+      return normalized;
+    });
     setRuntimeAttributesRevision((revision) => revision + 1);
   }, []);
   const [activeCharacterCreationKeys, setActiveCharacterCreationKeys] =
@@ -353,6 +464,7 @@ export function useGameSession(
 
   const chatMessagesRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const previousMapCountRef = useRef(0);
   const submitInFlightRef = useRef(false);
   const shouldAutoScrollRef = useRef(true);
   const seenCharacterCreationsRef = useRef<Set<string>>(new Set());
@@ -421,6 +533,7 @@ export function useGameSession(
     clearRuntimeAttributeRefreshTimers();
     setSession(null);
     setStreamingMessages(null);
+    setCommittedMapGraph({ nodes: [], edges: [] });
     setThemeWorld(null);
     setPlayerCharacter(null);
     setWorldCharacters([]);
@@ -434,6 +547,7 @@ export function useGameSession(
     setActionError(null);
     setEditingTurn(null);
     setSideTab("map");
+    previousMapCountRef.current = 0;
     setSwitching(false);
     setRetryingToken(null);
     setOptimisticPlayerMessage(null);
@@ -843,22 +957,20 @@ export function useGameSession(
     [gameUiScopeSelector, isMobile, parsedGameUi.document, runtimeBackgroundAsset, worldUiEnvelope],
   );
 
-  const mapGraphNodes = useMemo(
-    () => session?.map_graph_nodes ?? [],
-    [session?.map_graph_nodes],
-  );
-  const mapGraphEdges = useMemo(
-    () => session?.map_graph_edges ?? [],
-    [session?.map_graph_edges],
+  const mapGraphNodes = committedMapGraph.nodes;
+  const mapGraphEdges = committedMapGraph.edges;
+  const visibleRuntimeAttributes = useMemo(
+    () => filterRuntimeAttributesForWorld(runtimeAttributes, themeWorld),
+    [runtimeAttributes, themeWorld],
   );
   const attributeSideTabs = useMemo<Array<[string, string]>>(
     () => buildAttributeSideTabsFromRuntimeAttributes(
-      runtimeAttributes,
+      visibleRuntimeAttributes,
       session?.inventory_items ?? [],
       session?.id ?? sessionId,
       session?.player_character_id ?? "",
     ),
-    [runtimeAttributes, session?.id, session?.inventory_items, session?.player_character_id, sessionId],
+    [session?.id, session?.inventory_items, session?.player_character_id, sessionId, visibleRuntimeAttributes],
   );
   const worldCharacterNameSet = useMemo(
     () =>
@@ -876,6 +988,13 @@ export function useGameSession(
   );
 
   useEffect(() => {
+    const mapBecameAvailable = mapGraphNodes.length > 0 && previousMapCountRef.current === 0;
+    previousMapCountRef.current = mapGraphNodes.length;
+    if (mapBecameAvailable && sideTabs.some((tab) => tab.key === "map")) {
+      setSideTab("map");
+      return;
+    }
+
     if (!sideTabs.length) {
       if (sideTab) {
         setSideTab("");
@@ -886,7 +1005,7 @@ export function useGameSession(
     if (!sideTabs.some((tab) => tab.key === sideTab)) {
       setSideTab(sideTabs[0].key);
     }
-  }, [sideTab, sideTabs]);
+  }, [mapGraphNodes.length, sideTab, sideTabs]);
 
   const activeAttributeTab = sideTab.startsWith("attribute:")
     ? sideTab.slice("attribute:".length)
@@ -897,13 +1016,13 @@ export function useGameSession(
   const activeAttributeItems = useMemo(
     () => activeAttributeTab
       ? findAttributeItemsForTab(
-          runtimeAttributes,
+          visibleRuntimeAttributes,
           activeAttributeTab,
           session?.id ?? sessionId,
           session?.player_character_id ?? "",
         )
       : [],
-    [activeAttributeTab, runtimeAttributes, session?.id, session?.player_character_id, sessionId],
+    [activeAttributeTab, session?.id, session?.player_character_id, sessionId, visibleRuntimeAttributes],
   );
 
   const latestNarration = useMemo(() => {
@@ -1262,6 +1381,7 @@ export function useGameSession(
             role: "player",
             content,
             speaker: session?.player_character_name ?? "玩家",
+            created_at: new Date().toISOString(),
             pending: true,
           });
           setInputValue("");

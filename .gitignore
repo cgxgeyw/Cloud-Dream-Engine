@@ -6,6 +6,7 @@ frontend/node_modules/
 frontend/dist/
 frontend/public/world-frame/
 frontend/*.tsbuildinfo
+frontend/vite.config.js
 src-tauri/tauri.dev.override.json
 
 # Rust/Tauri build output
@@ -35,6 +36,8 @@ target/
 .uploads/
 artifacts/
 build/
+/tmp/
+/tmp_req.json
 /data/
 /frontend/data/
 
@@ -78,3 +81,6 @@ Thumbs.db
 # mimocode tool config (local only)
 .mimocode/
 /新建 文本文档.txt
+
+# 内部架构手册（仅本地查阅，不上传 GitHub）
+/docs/不上传到github.md

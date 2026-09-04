@@ -51,6 +51,7 @@ export function SceneHeaderComponent({ runtime, actions, node }: RuntimeComponen
   if (!runtime.session) {
     return null;
   }
+  const sessionId = runtime.session.id;
 
   const showWorldName = readBooleanProp(node, "show_world_name", true);
   const showLocation = readBooleanProp(node, "show_location", true);
@@ -59,6 +60,9 @@ export function SceneHeaderComponent({ runtime, actions, node }: RuntimeComponen
   const playerIdentityFormat = readStringProp(node, "player_identity_format", "label");
   const showVisibleCharacters = readBooleanProp(node, "show_visible_characters", false);
   const showCopyButton = readBooleanProp(node, "show_copy_button", true);
+  const showSessionId = readBooleanProp(node, "show_session_id", false);
+  const showSessionIdCopyButton = readBooleanProp(node, "show_session_id_copy_button", true);
+  const sessionIdLabel = readStringProp(node, "session_id_label", "会话 ID");
   const titleMode = readStringProp(node, "title_mode", runtime.capabilities.platform);
   const isMobileTitle = titleMode === "mobile";
 
@@ -111,6 +115,20 @@ export function SceneHeaderComponent({ runtime, actions, node }: RuntimeComponen
             onClick={() => void actions.copyText(runtime.copyable_dialogue_text)}
           >
             <Copy size={14} />
+          </button>
+        ) : null}
+        {showSessionId ? (
+          <button
+            type="button"
+            className="game-session-diagnostic game-ui-button"
+            data-variant="ghost"
+            onClick={() => showSessionIdCopyButton && void actions.copyText(sessionId)}
+            title={showSessionIdCopyButton ? `复制${sessionIdLabel}` : sessionIdLabel}
+            aria-label={showSessionIdCopyButton ? `复制${sessionIdLabel} ${sessionId}` : sessionIdLabel}
+          >
+            <span className="game-session-diagnostic-label">{sessionIdLabel}</span>
+            <code>{sessionId}</code>
+            {showSessionIdCopyButton ? <Copy size={12} aria-hidden="true" /> : null}
           </button>
         ) : null}
       </div>
@@ -237,15 +255,22 @@ function SidePanelTabs({ runtime, actions, node, renderSlot }: RuntimeComponentP
       <div className="game-panel game-side-content game-ui-panel" data-variant="sidebar">
         {customContent ? customContent : null}
         {!customContent && visibleTabs.length === 0 ? <div className="game-card">{emptyText}</div> : null}
-        {!customContent && runtime.active_side_tab === "map" && (runtime.capabilities.platform !== "mobile" || mobileDrawerOpen) ? (
-          <Suspense fallback={<div className="game-map-graph" />}>
-            <SessionMapGraph
-              key={runtime.capabilities.platform === "mobile" ? `mobile-map-${mobileDrawerOpen ? "open" : "closed"}` : "desktop-map"}
-              nodes={runtime.map_graph.nodes}
-              edges={runtime.map_graph.edges}
-              compact={runtime.capabilities.platform === "mobile"}
-            />
-          </Suspense>
+        {!customContent ? (
+          <div
+            className="game-side-map-slot"
+            hidden={runtime.active_side_tab !== "map"
+              || (runtime.capabilities.platform === "mobile" && !mobileDrawerOpen)}
+          >
+            <Suspense fallback={<div className="game-map-graph" />}>
+              <SessionMapGraph
+                nodes={runtime.map_graph.nodes}
+                edges={runtime.map_graph.edges}
+                compact={runtime.capabilities.platform === "mobile"}
+                visible={runtime.active_side_tab === "map"
+                  && (runtime.capabilities.platform !== "mobile" || mobileDrawerOpen)}
+              />
+            </Suspense>
+          </div>
         ) : null}
         {!customContent && runtime.active_side_tab.startsWith("attribute:") && runtime.active_attribute_content ? (
           runtime.active_attribute_items.length > 0 ? (

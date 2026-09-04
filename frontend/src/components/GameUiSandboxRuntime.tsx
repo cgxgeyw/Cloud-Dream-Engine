@@ -16,7 +16,7 @@ import {
   setWorldKv,
   updateWorldRecord,
 } from "../data/apiAdapter";
-import type { GameUiPlatform
+import type { GameUiLayoutNodeV2, GameUiPlatform
 } from "../data/gameUi";
 import type { GameSessionStateBag } from "../game/useGameSession";
 import type { WorldFrameAction } from "../worldFrame/protocol";
@@ -353,6 +353,7 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
   }, [bag.lastCompletedTurn, bag.session, dispatchWorldEvent]);
 
   const activeSessionId = bag.session?.id ?? "";
+  const hostSessionDiagnosticMode = resolveHostSessionDiagnosticMode(bag.parsedGameUi.document.layout.root);
 
   return (
     <div className="world-ui-runtime-host">
@@ -370,7 +371,7 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
           event.target.value = "";
         }}
       />
-      {activeSessionId ? (
+      {activeSessionId && hostSessionDiagnosticMode === "fallback" ? (
         <button
           type="button"
           className="world-session-diagnostic"
@@ -392,6 +393,39 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
       />
     </div>
   );
+}
+
+function resolveHostSessionDiagnosticMode(node: GameUiLayoutNodeV2): "fallback" | "world" | "hidden" {
+  if (node.visible === false) {
+    return "fallback";
+  }
+  if (node.type === "component" && node.component === "scene_header") {
+    const value = node.props?.show_session_id;
+    if (value === true) {
+      return "world";
+    }
+    if (value === false) {
+      return "hidden";
+    }
+  }
+
+  const nestedNodes: GameUiLayoutNodeV2[] = [];
+  if ("children" in node) nestedNodes.push(...(node.children ?? []));
+  if ("child" in node) nestedNodes.push(node.child);
+  if ("empty" in node && node.empty) nestedNodes.push(node.empty);
+  if ("slots" in node) {
+    for (const slotValue of Object.values(node.slots ?? {})) {
+      nestedNodes.push(...(Array.isArray(slotValue) ? slotValue : [slotValue]));
+    }
+  }
+
+  for (const child of nestedNodes) {
+    const mode = resolveHostSessionDiagnosticMode(child);
+    if (mode !== "fallback") {
+      return mode;
+    }
+  }
+  return "fallback";
 }
 
 function requireWorldRecordScope(bag: GameSessionStateBag, collection: string): string {

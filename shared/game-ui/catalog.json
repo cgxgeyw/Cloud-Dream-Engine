@@ -118,6 +118,9 @@
         "player_identity_format": "label|action_phrase",
         "show_visible_characters": "boolean",
         "show_copy_button": "boolean",
+        "show_session_id": "boolean",
+        "show_session_id_copy_button": "boolean",
+        "session_id_label": "string",
         "title_mode": "desktop|mobile"
       },
       "implicit_actions": ["copy_text"],
@@ -172,7 +175,12 @@
         "show_pending_state": "boolean",
         "show_agent_reasoning": "boolean",
         "show_typing_indicator": "boolean",
-        "mobile_simple": "boolean"
+        "mobile_simple": "boolean",
+        "show_scroll_controls": "boolean",
+        "show_scroll_top_button": "boolean",
+        "show_scroll_up_button": "boolean",
+        "show_scroll_down_button": "boolean",
+        "show_scroll_bottom_button": "boolean"
       },
       "implicit_actions": [
         "submit_message",

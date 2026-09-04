@@ -35,6 +35,9 @@ export default defineConfig({
     outDir: path.resolve(__dirname, "public", "world-frame"),
     emptyOutDir: true,
     cssCodeSplit: false,
+    // 沙箱 iframe 的 CSP 是 font-src data: blob:（见 frameDocument.ts），
+    // KaTeX 等 CSS 引用的字体必须内联成 base64，单独产物文件会被 CSP 拦截。
+    assetsInlineLimit: 100_000_000,
     lib: {
       entry: path.resolve(__dirname, "src", "worldFrame", "main.tsx"),
       name: "CloudDreamWorldFrame",

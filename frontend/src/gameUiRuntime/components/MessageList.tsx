@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from "react";
-import { Copy, GitBranch, Play, Square } from "lucide-react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ArrowDownToLine, ArrowUpToLine, ChevronDown, ChevronUp, Copy, GitBranch, Play, Square } from "lucide-react";
 import type { AudioContentPart, ContentPart } from "../../data/types";
 import type { GameUiComponentNode } from "../../data/gameUi";
 import {
@@ -13,6 +13,7 @@ import {
 import {
   parseAgentNarration,
   parseAgentReasoning,
+  parseAgentToolActivity,
   parseCharacterCreationMessage,
   parseDirectorRetryCard,
   parseDirectorTrace,
@@ -23,6 +24,7 @@ import {
 } from "../../game/utils";
 import type { GameUiRuntimeActions } from "../actions";
 import type { GameUiRuntimeContext } from "../runtimeContext";
+import { MarkdownMessageContent } from "./MarkdownContent";
 
 function MobileErrorNotice({
   speakerName,
@@ -199,6 +201,60 @@ type MessageListComponentProps = {
   node?: GameUiComponentNode;
 };
 
+const MESSAGE_TIMESTAMP_GAP_MS = 5 * 60 * 1000;
+
+function parseMessageTimestamp(createdAt: string | undefined): Date | null {
+  if (!createdAt) {
+    return null;
+  }
+  const timestamp = new Date(createdAt);
+  return Number.isNaN(timestamp.getTime()) ? null : timestamp;
+}
+
+function localCalendarDay(timestamp: Date): number {
+  return Date.UTC(timestamp.getFullYear(), timestamp.getMonth(), timestamp.getDate());
+}
+
+export function shouldShowMessageTimestamp(
+  createdAt: string | undefined,
+  previousCreatedAt: string | undefined,
+): boolean {
+  const timestamp = parseMessageTimestamp(createdAt);
+  if (!timestamp) {
+    return false;
+  }
+
+  const previousTimestamp = parseMessageTimestamp(previousCreatedAt);
+  if (!previousTimestamp) {
+    return true;
+  }
+
+  return (
+    timestamp.getTime() - previousTimestamp.getTime() >= MESSAGE_TIMESTAMP_GAP_MS
+    || localCalendarDay(timestamp) !== localCalendarDay(previousTimestamp)
+  );
+}
+
+export function formatMessageTimestamp(createdAt: string | undefined, now = new Date()): string | null {
+  const timestamp = parseMessageTimestamp(createdAt);
+  if (!timestamp) {
+    return null;
+  }
+
+  const time = `${String(timestamp.getHours()).padStart(2, "0")}:${String(timestamp.getMinutes()).padStart(2, "0")}`;
+  const dayDifference = (localCalendarDay(now) - localCalendarDay(timestamp)) / 86_400_000;
+  if (dayDifference === 0) {
+    return `今天 ${time}`;
+  }
+  if (dayDifference === 1) {
+    return `昨天 ${time}`;
+  }
+  if (timestamp.getFullYear() === now.getFullYear()) {
+    return `${timestamp.getMonth() + 1}月${timestamp.getDate()}日 ${time}`;
+  }
+  return `${timestamp.getFullYear()}年${timestamp.getMonth() + 1}月${timestamp.getDate()}日 ${time}`;
+}
+
 function readBooleanProp(
   node: GameUiComponentNode | undefined,
   key: string,
@@ -214,10 +270,91 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
   const showAgentReasoning = readBooleanProp(node, "show_agent_reasoning", true);
   const showTypingIndicator = readBooleanProp(node, "show_typing_indicator", true);
   const mobileSimple = readBooleanProp(node, "mobile_simple", false) && runtime.capabilities.platform === "mobile";
+  const showScrollControls = readBooleanProp(node, "show_scroll_controls", true);
+  const showScrollTopButton = readBooleanProp(node, "show_scroll_top_button", true);
+  const showScrollUpButton = readBooleanProp(node, "show_scroll_up_button", true);
+  const showScrollDownButton = readBooleanProp(node, "show_scroll_down_button", true);
+  const showScrollBottomButton = readBooleanProp(node, "show_scroll_bottom_button", true);
+  const [scrollState, setScrollState] = useState({ atTop: true, atBottom: true });
+  const initializedScrollSessionRef = useRef<string | null>(null);
 
   useEffect(() => {
     actions.setAutoScrollEnabled(autoScroll);
   }, [actions, autoScroll]);
+
+  const updateScrollState = useCallback(() => {
+    const container = runtime.chat_messages_ref.current;
+    if (!container) {
+      return;
+    }
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    setScrollState({
+      atTop: container.scrollTop <= 12,
+      atBottom: distanceFromBottom <= 24,
+    });
+  }, [runtime.chat_messages_ref]);
+
+  useEffect(() => {
+    const container = runtime.chat_messages_ref.current;
+    if (!container) {
+      return undefined;
+    }
+    const handleScroll = () => updateScrollState();
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    const resizeObserver = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(() => updateScrollState());
+    resizeObserver?.observe(container);
+    updateScrollState();
+    return () => {
+      container.removeEventListener("scroll", handleScroll);
+      resizeObserver?.disconnect();
+    };
+  }, [runtime.chat_messages_ref, updateScrollState]);
+
+  useLayoutEffect(() => {
+    const container = runtime.chat_messages_ref.current;
+    const sessionId = runtime.session?.id ?? null;
+    if (!container || !sessionId || runtime.messages.length === 0 || initializedScrollSessionRef.current === sessionId) {
+      return;
+    }
+    let trailingFrame = 0;
+    const frame = requestAnimationFrame(() => {
+      container.scrollTop = container.scrollHeight;
+      trailingFrame = requestAnimationFrame(() => {
+        container.scrollTop = container.scrollHeight;
+        initializedScrollSessionRef.current = sessionId;
+        updateScrollState();
+      });
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      cancelAnimationFrame(trailingFrame);
+    };
+  }, [runtime.chat_messages_ref, runtime.messages.length, runtime.session?.id, updateScrollState]);
+
+  const scrollToPosition = useCallback((top: number) => {
+    const container = runtime.chat_messages_ref.current;
+    if (!container) {
+      return;
+    }
+    container.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+  }, [runtime.chat_messages_ref]);
+
+  const scrollOneMessage = useCallback((direction: "up" | "down") => {
+    const container = runtime.chat_messages_ref.current;
+    if (!container) {
+      return;
+    }
+    const containerTop = container.getBoundingClientRect().top;
+    const currentTop = container.scrollTop;
+    const rows = Array.from(container.querySelectorAll<HTMLElement>("[data-game-message-row]"));
+    const positions = rows.map((row) => row.getBoundingClientRect().top - containerTop + currentTop);
+    const target = direction === "up"
+      ? positions.filter((position) => position < currentTop - 8).pop() ?? 0
+      : positions.find((position) => position > currentTop + 8) ?? Number.MAX_SAFE_INTEGER;
+    scrollToPosition(target);
+  }, [runtime.chat_messages_ref, scrollToPosition]);
 
   const hasActiveAgentStream = runtime.messages.some((message) => {
     if (message.role !== "agent") {
@@ -239,8 +376,11 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
     );
   });
 
+  let previousVisibleMessageCreatedAt: string | undefined;
+
   return (
-    <div className="game-chat-messages" ref={runtime.chat_messages_ref}>
+    <div className="game-chat-messages-shell">
+      <div className="game-chat-messages" ref={runtime.chat_messages_ref}>
       {runtime.messages.map((message, index) => {
         if (!showPendingState && message.pending) {
           return null;
@@ -357,6 +497,7 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
 
         const agentReasoning = showAgentReasoning ? parseAgentReasoning(message) : null;
         const agentNarration = message.role === "agent" ? parseAgentNarration(message) : null;
+        const agentToolActivity = message.role === "agent" ? parseAgentToolActivity(message) : null;
         const messageMetadata = (message.metadata ?? {}) as Record<string, unknown>;
         const isAgentStreaming =
           message.role === "agent"
@@ -380,11 +521,21 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
           return null;
         }
 
+        const showTimestamp = shouldShowMessageTimestamp(message.created_at, previousVisibleMessageCreatedAt);
+        const timestampLabel = showTimestamp ? formatMessageTimestamp(message.created_at) : null;
+        previousVisibleMessageCreatedAt = message.created_at;
+
         return (
           <React.Fragment
             key={`${message.role}-${index}-${message.speaker ?? "none"}-${message.pending ? "pending" : "committed"}`}
           >
+          {timestampLabel ? (
+            <time className="game-message-timestamp" dateTime={message.created_at}>
+              {timestampLabel}
+            </time>
+          ) : null}
           <div
+            data-game-message-row
             className={`game-message-row game-message-row--${visualRole}${message.pending ? " game-message-row--pending" : ""}`}
           >
             <div className={`game-message game-message--${visualRole}${message.pending ? " game-message--pending" : ""} game-ui-message-bubble`} data-variant={visualRole}>
@@ -393,17 +544,33 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
                   {message.pending ? `${speakerLabel} / 发送中` : speakerLabel}
                 </div>
               ) : null}
+              {agentToolActivity?.status === "calling" ? (
+                <div className="game-tool-activity">
+                  {agentToolActivity.tools.map((tool, toolIndex) => (
+                    <div className="game-tool-activity-item" key={`${tool.id || tool.name}-${toolIndex}`}>
+                      <span className="game-tool-activity-dot" aria-hidden="true" />
+                      <span>{`正在调用 ${tool.name}${tool.argsPreview ? `（${tool.argsPreview}）` : ""}…`}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
               {message.role === "agent" && agentReasoning ? (
                 <div className="game-agent-blocks">
                   <CotBlock text={agentReasoning.reasoning} streaming={isAgentStreaming} />
                   <div className="game-agent-answer">
                     <div className="game-agent-answer-label">回复</div>
-                    <div className="game-message-content game-message-content--default">{getMessageText(message.content)}</div>
+                    <div className="game-message-content game-message-content--default">
+                      <MarkdownMessageContent text={getMessageText(message.content)} streaming={isAgentStreaming} />
+                    </div>
                   </div>
                 </div>
               ) : (
                 <div className={`game-message-content ${visualRole === "system" ? "game-message-content--system" : "game-message-content--default"}`}>
-                  {getMessageText(message.content)}
+                  {visualRole === "player" ? (
+                    getMessageText(message.content)
+                  ) : (
+                    <MarkdownMessageContent text={getMessageText(message.content)} streaming={isAgentStreaming} />
+                  )}
                   {getImageParts(message.content).map((part, partIndex) => (
                     <ImageMessageThumbnail key={`image-${partIndex}`} part={part} />
                   ))}
@@ -412,6 +579,11 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
                   ))}
                 </div>
               )}
+              {agentToolActivity?.status === "done" ? (
+                <div className="game-tool-activity game-tool-activity--done">
+                  {`已调用：${agentToolActivity.tools.map((tool) => tool.name).join("、")}`}
+                </div>
+              ) : null}
             </div>
 
             {!message.pending && isMobile && (visualRole === "agent" || visualRole === "player") ? (
@@ -545,6 +717,67 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
         const speakerName = lastAgent?.speaker || runtime.session?.player_character_name || "";
         return <TypingIndicator speakerName={speakerName} />;
       })()}
+      </div>
+      {showScrollControls ? (
+        <div className="game-chat-scroll-controls" aria-label="聊天记录滚动控制">
+          {showScrollTopButton ? (
+            <button
+              type="button"
+              className="game-chat-scroll-btn game-chat-scroll-btn--top game-ui-button"
+              data-scroll-action="top"
+              data-variant="ghost"
+              disabled={scrollState.atTop}
+              onClick={() => scrollToPosition(0)}
+              aria-label="滚动到顶部"
+              title="滚动到顶部"
+            >
+              <ArrowUpToLine size={16} aria-hidden="true" />
+            </button>
+          ) : null}
+          {showScrollUpButton ? (
+            <button
+              type="button"
+              className="game-chat-scroll-btn game-chat-scroll-btn--up game-ui-button"
+              data-scroll-action="up"
+              data-variant="ghost"
+              disabled={scrollState.atTop}
+              onClick={() => scrollOneMessage("up")}
+              aria-label="向上滚动一条消息"
+              title="向上滚动一条消息"
+            >
+              <ChevronUp size={16} aria-hidden="true" />
+            </button>
+          ) : null}
+          {showScrollDownButton ? (
+            <button
+              type="button"
+              className="game-chat-scroll-btn game-chat-scroll-btn--down game-ui-button"
+              data-scroll-action="down"
+              data-variant="ghost"
+              disabled={scrollState.atBottom}
+              onClick={() => scrollOneMessage("down")}
+              aria-label="向下滚动一条消息"
+              title="向下滚动一条消息"
+            >
+              <ChevronDown size={16} aria-hidden="true" />
+            </button>
+          ) : null}
+          {showScrollBottomButton ? (
+            <button
+              type="button"
+              className="game-chat-scroll-btn game-chat-scroll-btn--bottom game-ui-button"
+              data-scroll-action="bottom"
+              data-variant="ghost"
+              disabled={scrollState.atBottom}
+              onClick={() => scrollToPosition(Number.MAX_SAFE_INTEGER)}
+              aria-label="滚动到底部"
+              title="滚动到底部"
+            >
+              <ArrowDownToLine size={16} aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
