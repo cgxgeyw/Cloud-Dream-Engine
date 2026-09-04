@@ -339,7 +339,7 @@ pub(crate) fn build_character_visibility_context_payload(
 pub(crate) fn build_character_scene_state_payload(
     session: &SessionSnapshot,
     location: &str,
-    scene_name: &str,
+    _scene_name: &str,
 ) -> serde_json::Value {
     // 只放入对模型有意义且非空的字段：
     // - 删除 scene_id（内部 UUID，模型零语义）
@@ -347,8 +347,6 @@ pub(crate) fn build_character_scene_state_payload(
     // - 数组/映射/标签为空时不放入，减少噪声与 token
     let mut state = serde_json::Map::new();
     state.insert("location".to_string(), serde_json::json!(location));
-    state.insert("scene_name".to_string(), serde_json::json!(scene_name));
-
     let time_label = session.time_label.trim();
     if !time_label.is_empty() {
         state.insert("time_label".to_string(), serde_json::json!(time_label));
@@ -382,19 +380,6 @@ pub(crate) fn build_character_scene_state_payload(
             serde_json::json!(present_characters),
         );
     }
-    let discovered_locations = session
-        .map_graph_nodes
-        .iter()
-        .filter(|node| node.discovered && !node.label.trim().is_empty())
-        .map(|node| node.label.clone())
-        .collect::<Vec<_>>();
-    if !discovered_locations.is_empty() {
-        state.insert(
-            "discovered_locations".to_string(),
-            serde_json::json!(discovered_locations),
-        );
-    }
-
     // 可见属性/物品(及其 public 子集)由 visibility_context 统一承载，这里不再重复。
     serde_json::Value::Object(state)
 }
@@ -506,10 +491,8 @@ pub(crate) fn build_public_scene_state_lines(
     visible_inventory_items: &[InventoryItem],
 ) -> Vec<String> {
     let mut lines = vec![
-        format!("world={}", session.world_name),
         format!("location={}", session.location),
         format!("time={}", session.time_label),
-        format!("scene={}", session.scene.name),
         format!(
             "scene_tags={}",
             if session.scene.temporary_tags.is_empty() {
@@ -523,15 +506,6 @@ pub(crate) fn build_public_scene_state_lines(
             collect_memory_participants(session).join(" / ")
         ),
     ];
-    let discovered = session
-        .map_graph_nodes
-        .iter()
-        .filter(|node| node.discovered && !node.label.trim().is_empty())
-        .map(|node| node.label.clone())
-        .collect::<Vec<_>>();
-    if !discovered.is_empty() {
-        lines.push(format!("discovered_locations={}", discovered.join(" / ")));
-    }
     lines.extend(
         visible_attribute_lines
             .iter()
@@ -961,6 +935,57 @@ mod tests {
             resolve_character_memory_recall_limit(Some(&profile_with_strategy("99轮"))),
             32
         );
+    }
+
+    #[test]
+    fn scene_context_omits_redundant_scene_and_map_inventory() {
+        let session = SessionSnapshot {
+            id: "session".to_string(),
+            world_name: "World".to_string(),
+            location: "七玄门山门".to_string(),
+            time_label: "清晨".to_string(),
+            current_speaker: String::new(),
+            current_line: String::new(),
+            player_character_id: "player".to_string(),
+            player_character_name: "陆谨".to_string(),
+            visible_characters: vec!["韩立".to_string()],
+            messages: Vec::new(),
+            player_stats: Vec::new(),
+            map_graph_nodes: vec![SessionMapNode {
+                node_id: "qixuan-gate".to_string(),
+                label: "七玄门山门".to_string(),
+                discovered: true,
+                current: true,
+            }],
+            map_graph_edges: Vec::new(),
+            inventory_items: Vec::new(),
+            system_log: Vec::new(),
+            scene: SceneRuntime {
+                name: "七玄门山门".to_string(),
+                ..SceneRuntime::default()
+            },
+            assets: AssetSelection::default(),
+            state: SessionState::default(),
+            generation_params: Default::default(),
+        };
+
+        let scene_state = build_character_scene_state_payload(
+            &session,
+            &session.location,
+            &session.scene.name,
+        );
+        assert_eq!(
+            scene_state.get("location").and_then(|value| value.as_str()),
+            Some("七玄门山门")
+        );
+        assert!(scene_state.get("scene_name").is_none());
+        assert!(scene_state.get("discovered_locations").is_none());
+
+        let lines = build_public_scene_state_lines(&session, &[], &[]);
+        assert!(lines.iter().any(|line| line == "location=七玄门山门"));
+        assert!(!lines.iter().any(|line| line.starts_with("scene=")));
+        assert!(!lines.iter().any(|line| line.starts_with("discovered_locations=")));
+        assert!(!lines.iter().any(|line| line.starts_with("world=")));
     }
 
     #[test]

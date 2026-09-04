@@ -1,14 +1,15 @@
 use crate::models::character::CharacterDefinition;
 use crate::models::generation_params::GenerationParams;
-use crate::models::mcp_tool::{director_config_allows_mcp_tool, MCP_TOOL_SCHEDULE_NOTIFICATION_ID};
 use crate::models::memory::MemoryEntry;
 use crate::models::model_config::ModelConfig;
 use crate::models::session::*;
 use crate::models::settings::AppSettings;
 use crate::models::world::WorldDefinition;
 use crate::services::game_engine::dialogue::DialoguePipeline;
+use crate::services::game_engine::director::{
+    build_character_tool_capabilities, tool_capabilities_to_chat_definitions,
+};
 use crate::services::game_engine::structured_output::StructuredOutputFailure;
-use crate::services::notifications::notification_tool_definition;
 use rusqlite::Connection;
 
 use super::character_prompt::build_character_prompt_artifacts;
@@ -92,6 +93,7 @@ pub(crate) fn resolve_text_model(
     Ok(model)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_character_chat_request(
     dialogue_pipeline: &DialoguePipeline,
     world: &WorldDefinition,
@@ -112,6 +114,7 @@ pub(crate) fn build_character_chat_request(
     kv_vars: &std::collections::HashMap<String, String>,
     generation: &GenerationParams,
     player_media: &[ContentPart],
+    mcp_tools: &[crate::models::mcp_tool::McpToolDefinition],
 ) -> crate::services::llm::client::ChatRequest {
     let artifacts = build_character_prompt_artifacts(
         dialogue_pipeline,
@@ -135,9 +138,12 @@ pub(crate) fn build_character_chat_request(
         kv_vars,
         player_media,
     );
-    let notification_tool_allowed =
-        director_config_allows_mcp_tool(&world.director_config, MCP_TOOL_SCHEDULE_NOTIFICATION_ID);
-    let tools = notification_tool_allowed.then(|| vec![build_notification_chat_tool_definition()]);
+    // 工具下发与主控路共用同一套生成与转换逻辑：世界授权的自定义 MCP 工具与内置的
+    // schedule_notification 一视同仁，不再只硬编码后者。
+    let tools = Some(tool_capabilities_to_chat_definitions(
+        &build_character_tool_capabilities(world, mcp_tools),
+    ))
+    .filter(|items| !items.is_empty());
     let native_tool_calling = tools
         .as_ref()
         .map(|items| !items.is_empty())
@@ -153,25 +159,6 @@ pub(crate) fn build_character_chat_request(
         tool_choice: native_tool_calling
             .then_some(crate::services::llm::client::ChatToolChoice::Auto),
         native_tool_calling: native_tool_calling.then_some(true),
-    }
-}
-
-fn build_notification_chat_tool_definition() -> crate::services::llm::client::ChatToolDefinition {
-    let tool = notification_tool_definition();
-    crate::services::llm::client::ChatToolDefinition {
-        name: tool
-            .get("tool_name")
-            .and_then(|value| value.as_str())
-            .unwrap_or("schedule_notification")
-            .to_string(),
-        description: tool
-            .get("description")
-            .and_then(|value| value.as_str())
-            .map(str::to_string),
-        input_schema: tool
-            .get("arguments_schema")
-            .cloned()
-            .unwrap_or_else(|| serde_json::json!({ "type": "object" })),
     }
 }
 
@@ -357,6 +344,7 @@ mod tests {
             &std::collections::HashMap::new(),
             &GenerationParams::default(),
             &media,
+            &[],
         );
 
         let user_message = request
@@ -397,6 +385,7 @@ mod tests {
             &std::collections::HashMap::new(),
             &GenerationParams::default(),
             &[],
+            &[],
         );
         let plain_user = plain_request
             .messages
@@ -405,6 +394,126 @@ mod tests {
             .find(|message| message.role == "user")
             .expect("user message");
         assert!(plain_user.content.is_string());
+    }
+
+    fn stock_quote_tool() -> crate::models::mcp_tool::McpToolDefinition {
+        crate::models::mcp_tool::McpToolDefinition {
+            id: "mcp-tool-stock-quote".to_string(),
+            name: "A股实时行情".to_string(),
+            description: "查询 A 股个股实时行情".to_string(),
+            server_name: "builtin-local".to_string(),
+            tool_name: "stock_quote".to_string(),
+            enabled: true,
+            exposure_policy: serde_json::json!("on-demand"),
+            risk_level: "low".to_string(),
+            trigger_keywords: vec!["行情".to_string()],
+            input_schema: serde_json::json!({
+                "type": "object",
+                "required": ["code"],
+                "properties": { "code": { "type": "string" } }
+            }),
+            server_id: String::new(),
+            impl_kind: "builtin_http".to_string(),
+            impl_config: serde_json::json!({ "mode": "template" }),
+        }
+    }
+
+    fn world_allowing(tool_ids: serde_json::Value) -> WorldDefinition {
+        let mut world = params_test_world(serde_json::json!({}));
+        world.director_config = serde_json::json!({ "allowed_mcp_tool_ids": tool_ids });
+        world
+    }
+
+    fn build_request_with_tools(
+        world: &WorldDefinition,
+        mcp_tools: &[crate::models::mcp_tool::McpToolDefinition],
+    ) -> crate::services::llm::client::ChatRequest {
+        let session = params_test_session("session-tools", "参数世界");
+        let character = profile_with_strategy("");
+        let pipeline = DialoguePipeline::new();
+        build_character_chat_request(
+            &pipeline,
+            world,
+            &params_test_model(),
+            "Alice",
+            Some(&character),
+            &session,
+            "玩家",
+            "开场",
+            "开场",
+            "分析一下贵州茅台",
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &std::collections::HashMap::new(),
+            &GenerationParams::default(),
+            &[],
+            mcp_tools,
+        )
+    }
+
+    /// 回归：世界包授权的自定义 MCP 工具必须下发给角色。此前角色路把工具表写死成
+    /// 只有 schedule_notification，agent_chat 的 agent 因此永远拿不到导入的工具。
+    #[test]
+    fn character_request_exposes_world_authorized_custom_tools() {
+        let world = world_allowing(serde_json::json!(["mcp-tool-stock-quote"]));
+        let request = build_request_with_tools(&world, &[stock_quote_tool()]);
+
+        let tools = request.tools.expect("授权了工具就应下发工具表");
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "stock_quote");
+        assert_eq!(
+            tools[0].input_schema.pointer("/properties/code/type"),
+            Some(&serde_json::json!("string")),
+            "schema 必须原样透传，否则模型不知道怎么传参"
+        );
+        assert_eq!(request.native_tool_calling, Some(true));
+    }
+
+    /// 未授权的工具即使存在于数据库也不下发。
+    #[test]
+    fn character_request_omits_unauthorized_tools() {
+        let world = world_allowing(serde_json::json!([]));
+        let request = build_request_with_tools(&world, &[stock_quote_tool()]);
+
+        assert!(request.tools.is_none(), "未授权时不应下发任何工具");
+        assert_eq!(request.native_tool_calling, None);
+    }
+
+    /// 角色拿不到导演专属工具：这些工具的效果函数要写场景切换/换玩家角色等字段，
+    /// 角色路没有对应写回通道，下发了也执行不了。
+    #[test]
+    fn character_request_never_exposes_director_only_tools() {
+        let world = world_allowing(serde_json::json!([
+            "mcp-tool-stock-quote",
+            "mcp-tool-change-scene",
+            "mcp-tool-list-scenes",
+            "mcp-tool-switch-player-character",
+            "mcp-tool-image-generation"
+        ]));
+        let request = build_request_with_tools(&world, &[stock_quote_tool()]);
+
+        let names = request
+            .tools
+            .expect("工具表")
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["stock_quote".to_string()]);
+    }
+
+    /// 停用的工具不下发，即使世界授权了它。
+    #[test]
+    fn character_request_omits_disabled_tools() {
+        let world = world_allowing(serde_json::json!(["mcp-tool-stock-quote"]));
+        let mut tool = stock_quote_tool();
+        tool.enabled = false;
+        let request = build_request_with_tools(&world, &[tool]);
+
+        assert!(request.tools.is_none(), "停用的工具不应下发");
     }
 
     fn params_test_model() -> ModelConfig {

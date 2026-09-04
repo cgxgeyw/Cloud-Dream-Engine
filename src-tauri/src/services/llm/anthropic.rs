@@ -48,6 +48,8 @@ struct AnthropicUsage {
 struct AnthropicResponse {
     content: Vec<AnthropicContent>,
     usage: Option<AnthropicUsage>,
+    #[serde(default)]
+    stop_reason: Option<String>,
 }
 
 fn build_anthropic_request(request: &ChatRequest, tool_mode: bool) -> AnthropicRequest {
@@ -339,6 +341,8 @@ pub async fn chat_completion(
         }
     }
 
+    let finish_reason = anthropic_response.stop_reason.clone();
+
     let usage = anthropic_response.usage.map(|u| Usage {
         prompt_tokens: u.input_tokens.unwrap_or(0),
         completion_tokens: u.output_tokens.unwrap_or(0),
@@ -354,6 +358,7 @@ pub async fn chat_completion(
             Some(tool_calls)
         },
         usage,
+        finish_reason,
     })
 }
 
@@ -405,6 +410,7 @@ where
     let mut usage: Option<Usage> = None;
     let mut prompt_tokens = 0;
     let mut completion_tokens = 0;
+    let mut stop_reason: Option<String> = None;
 
     let mut stream = response.bytes_stream();
     let mut pending = String::new();
@@ -438,6 +444,7 @@ where
                 &mut tool_uses,
                 &mut prompt_tokens,
                 &mut completion_tokens,
+                &mut stop_reason,
                 &mut on_chunk,
             );
         }
@@ -487,9 +494,11 @@ where
             Some(tool_calls)
         },
         usage,
+        finish_reason: stop_reason,
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
 fn apply_anthropic_stream_event<F>(
     data: &str,
@@ -498,6 +507,7 @@ fn apply_anthropic_stream_event<F>(
     tool_uses: &mut std::collections::BTreeMap<usize, StreamingToolUse>,
     prompt_tokens: &mut i32,
     completion_tokens: &mut i32,
+    stop_reason: &mut Option<String>,
     on_chunk: &mut F,
 ) where
     F: FnMut(ChatStreamChunk) + Send,
@@ -574,6 +584,17 @@ fn apply_anthropic_stream_event<F>(
                 .and_then(|v| v.as_i64())
             {
                 *completion_tokens = output as i32;
+            }
+            // Anthropic 把 stop_reason 放在 message_delta.delta 里；"max_tokens"
+            // 即预算耗尽（等价于 OpenAI 的 finish_reason="length"）。
+            if let Some(reason) = event
+                .get("delta")
+                .and_then(|delta| delta.get("stop_reason"))
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|reason| !reason.is_empty())
+            {
+                *stop_reason = Some(reason.to_string());
             }
         }
         _ => {}

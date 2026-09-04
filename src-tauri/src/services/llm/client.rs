@@ -89,6 +89,23 @@ pub struct ChatResponse {
     pub reasoning: Option<String>,
     pub tool_calls: Option<Vec<ChatToolCall>>,
     pub usage: Option<Usage>,
+    /// 服务端给出的结束原因（OpenAI 的 finish_reason / Anthropic 的 stop_reason）。
+    /// 推理模型会把 max_tokens 预算烧在思考上，导致 content 为空且此处为
+    /// "length"（Anthropic: "max_tokens"）。不看这个信号就会把"被截断"误判成
+    /// "模型没返回 JSON"，进而走 JSON 修复——而修复只会让 prompt 更长、再次截断。
+    #[serde(default)]
+    pub finish_reason: Option<String>,
+}
+
+impl ChatResponse {
+    /// 输出是否因触达 token 上限而被截断。
+    pub fn is_truncated_by_token_limit(&self) -> bool {
+        self.finish_reason
+            .as_deref()
+            .map(str::trim)
+            .map(|reason| reason.eq_ignore_ascii_case("length") || reason.eq_ignore_ascii_case("max_tokens"))
+            .unwrap_or(false)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

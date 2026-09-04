@@ -162,6 +162,19 @@ async fn submit_player_action_inner(
             cancel_notifications_for_turns(db.conn(), &app, &session_id, from_turn_index)?;
         }
     }
+    // 第 7 项：只有绑定了「本平台可用」server 的自定义工具才下发给模型，
+    // 避免模型调用一个必然失败的工具（安卓上的 stdio 配置即属此类）。
+    // 必须在 service_mode 分支之前加载：agent_chat 的角色同样要用这些工具。
+    let (mcp_tools, mcp_servers) = {
+        let db = state.db.lock().await;
+        let tools =
+            crate::db::repositories::mcp_tool_repo::McpToolRepository::new(db.conn()).list()?;
+        let servers =
+            crate::db::repositories::mcp_server_repo::McpServerRepository::new(db.conn()).list()?;
+        let executable = crate::services::mcp::executor::filter_executable_tools(&tools, &servers);
+        (executable, servers)
+    };
+
     let service_config = resolve_service_runtime_config(&world);
     if service_config.service_mode == ServiceMode::AgentChat {
         return run_agent_chat_player_action(
@@ -177,22 +190,13 @@ async fn submit_player_action_inner(
             recovery_journal,
             image_model,
             messages,
+            &mcp_tools,
+            &mcp_servers,
         )
         .await;
     }
 
     let director_service = &state.services.runtime.world_director;
-    // 第 7 项：只有绑定了「本平台可用」server 的自定义工具才下发给模型，
-    // 避免模型调用一个必然失败的工具（安卓上的 stdio 配置即属此类）。
-    let (mcp_tools, mcp_servers) = {
-        let db = state.db.lock().await;
-        let tools =
-            crate::db::repositories::mcp_tool_repo::McpToolRepository::new(db.conn()).list()?;
-        let servers =
-            crate::db::repositories::mcp_server_repo::McpServerRepository::new(db.conn()).list()?;
-        let executable = crate::services::mcp::executor::filter_executable_tools(&tools, &servers);
-        (executable, servers)
-    };
     // 会话级 variables KV（第 6 项 {{var:key}} 占位符的数据源）
     // 与导演的生成参数（第 8 项：应用→世界→会话三级覆盖）一起在同一次加锁内读出。
     let (kv_vars, runtime_attributes, director_generation) = {
@@ -356,6 +360,8 @@ async fn submit_player_action_inner(
                 &runtime_preparation.next_scene_name,
                 &runtime_preparation.next_location,
                 &runtime_preparation.visible_chars,
+                &mcp_tools,
+                &mcp_servers,
                 Some(NotificationToolRuntime {
                     app: &app,
                     data_dir: &state.data_dir,
@@ -623,6 +629,8 @@ async fn run_agent_chat_player_action(
     recovery_journal: Vec<serde_json::Value>,
     image_model: Option<crate::models::model_config::ModelConfig>,
     messages: Vec<crate::models::session::ChatMessage>,
+    mcp_tools: &[crate::models::mcp_tool::McpToolDefinition],
+    mcp_servers: &[crate::models::mcp_server::McpServerConfig],
 ) -> Result<SessionSnapshot, String> {
     let player_media = request.content.media_parts();
     let target = state
@@ -678,6 +686,8 @@ async fn run_agent_chat_player_action(
             &target,
             request.content.as_str(),
             &player_media,
+            mcp_tools,
+            mcp_servers,
             Some(NotificationToolRuntime {
                 app,
                 data_dir: &state.data_dir,

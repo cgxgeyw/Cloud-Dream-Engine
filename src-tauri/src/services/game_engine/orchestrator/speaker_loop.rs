@@ -40,6 +40,8 @@ impl SessionOrchestrator {
         next_scene_name: &str,
         next_location: &str,
         visible_chars: &[String],
+        mcp_tools: &[crate::models::mcp_tool::McpToolDefinition],
+        mcp_servers: &[crate::models::mcp_server::McpServerConfig],
         notification_runtime: Option<NotificationToolRuntime<'_>>,
         mut progress_callback: Option<&mut (dyn FnMut(SpeakerTurnProgress) + Send)>,
     ) -> Result<SpeakerTurnRunResult, String> {
@@ -207,6 +209,7 @@ impl SessionOrchestrator {
                         &speaker_model,
                     ),
                     player_media,
+                    mcp_tools,
                 );
                 speaker_request.stream = Some(
                     speaker_model.streaming_enabled
@@ -263,64 +266,17 @@ impl SessionOrchestrator {
                         &speaker_model.api_key,
                         &speaker_request,
                         |chunk| {
-                            let has_reasoning_delta = chunk.reasoning_delta.is_some();
-                            if let Some(reasoning_delta) = chunk.reasoning_delta.as_deref() {
-                                streamed_reasoning.push_str(reasoning_delta);
-                            }
-                            if !chunk.delta.is_empty() {
-                                streamed_raw_response.push_str(&chunk.delta);
-                                if let Some(parsed_partial) = dialogue_pipeline
-                                    .extract_partial_character_response(
-                                        &streamed_raw_response,
-                                        speaker_name,
-                                    )
-                                {
-                                    streamed_partial = Some(parsed_partial);
-                                }
-                            }
-                            if let Some(callback) = progress_callback.as_deref_mut() {
-                                if has_reasoning_delta || streamed_partial.is_some() {
-                                    let partial = streamed_partial.clone();
-                                    let mut progress_messages = messages.clone();
-                                    progress_messages.push(ChatMessage {
-                                        message_id: ChatMessage::generate_id(),
-                                        created_at: chrono::Utc::now().to_rfc3339(),
-                                        parent_message_id: None,
-                                        role: "agent".to_string(),
-                                        content: MessageContent::Text(
-                                            partial
-                                                .as_ref()
-                                                .map(|value| value.content.clone())
-                                                .unwrap_or_default()
-                                        ),
-                                        speaker: Some(
-                                            partial
-                                                .as_ref()
-                                                .map(|value| value.speaker.clone())
-                                                .unwrap_or_else(|| speaker_name.clone()),
-                                        ),
-                                        metadata: Some(serde_json::json!({
-                                            "turn_index": turn_index,
-                                            "message_kind": "agent_response",
-                                            "reasoning": streamed_reasoning,
-                                            "reasoning_expanded": false,
-                                        })),
-                                    });
-                                    callback(SpeakerTurnProgress {
-                                        messages: progress_messages,
-                                        speaker_name: partial
-                                            .as_ref()
-                                            .map(|value| value.speaker.clone())
-                                            .unwrap_or_else(|| speaker_name.clone()),
-                                        narration: partial
-                                            .as_ref()
-                                            .map(|value| value.narration.clone())
-                                            .filter(|value| !value.trim().is_empty()),
-                                        is_placeholder: false,
-                                        is_error: false,
-                                    });
-                                }
-                            }
+                            handle_speaker_stream_chunk(
+                                &chunk,
+                                dialogue_pipeline,
+                                &messages,
+                                speaker_name,
+                                turn_index,
+                                &mut streamed_raw_response,
+                                &mut streamed_reasoning,
+                                &mut streamed_partial,
+                                &mut progress_callback,
+                            );
                         },
                     )
                     .await;
@@ -349,55 +305,194 @@ impl SessionOrchestrator {
             };
             match llm_result {
                 Ok(response) => {
-                    let notification_tool_results = if world_allows_mcp_tool(
-                        world,
-                        MCP_TOOL_SCHEDULE_NOTIFICATION_ID,
-                    ) {
-                        let db_guard = db.lock().await;
-                        execute_speaker_notification_tool_calls(
-                            db_guard.conn(),
-                            notification_runtime.as_ref(),
-                            session_id,
-                            world,
-                            turn_index,
-                            speaker_name,
-                            speaker_char
-                                .map(|character| character.avatar_asset.as_str())
-                                .unwrap_or(""),
-                            response.tool_calls.as_deref(),
-                        )
-                    } else {
-                        Vec::new()
-                    };
-                    let response = if notification_tool_results.is_empty() {
-                        response
-                    } else {
-                        let followup_request = build_speaker_tool_followup_request(
-                            &speaker_request,
-                            &response,
-                            &notification_tool_results,
-                        );
-                        match llm_client
-                            .chat_completion(
-                                &speaker_provider,
-                                &speaker_model.base_url,
-                                &speaker_model.api_key,
-                                &followup_request,
-                            )
-                            .await
+                    // 工具循环：与主控路同键同钳制（director_tool_loop_limit，默认 4、
+                    // 范围 1-12）。此前角色路只做一轮 follow-up，模型无法「查完再追问」。
+                    let tool_loop_limit = crate::services::game_engine::director::
+                        WorldDirectorService::new()
+                        .resolve_tool_loop_limit(world);
+                    let notification_allowed =
+                        world_allows_mcp_tool(world, MCP_TOOL_SCHEDULE_NOTIFICATION_ID);
+                    let mut response = response;
+                    let mut active_request = speaker_request.clone();
+                    let mut all_tool_results: Vec<SpeakerNotificationToolResult> = Vec::new();
+                    for _ in 0..tool_loop_limit {
+                        // 工具执行前先广播一次「谁在调用什么工具」的占位进度，
+                        // 让前端在（非流式的）工具决策阶段也有可见反馈。
+                        if let Some(calls) = response
+                            .tool_calls
+                            .as_deref()
+                            .filter(|calls| !calls.is_empty())
                         {
-                            Ok(followup_response) => followup_response,
-                            Err(_) if response.content.trim().is_empty() => {
-                                crate::services::llm::client::ChatResponse {
-                                    content: fallback_notification_tool_response(speaker_name),
-                                    reasoning: response.reasoning.clone(),
-                                    tool_calls: None,
-                                    usage: response.usage.clone(),
+                            if let Some(callback) = progress_callback.as_deref_mut() {
+                                let mut tool_messages = messages.clone();
+                                tool_messages.push(ChatMessage {
+                                    message_id: ChatMessage::generate_id(),
+                                    created_at: chrono::Utc::now().to_rfc3339(),
+                                    parent_message_id: None,
+                                    role: "agent".to_string(),
+                                    content: MessageContent::Text(String::new()),
+                                    speaker: Some(speaker_name.clone()),
+                                    metadata: Some(serde_json::json!({
+                                        "turn_index": turn_index,
+                                        "message_kind": "agent_response",
+                                        "tool_activity": build_tool_activity_value(
+                                            calls,
+                                            mcp_tools,
+                                            "calling",
+                                        ),
+                                    })),
+                                });
+                                callback(SpeakerTurnProgress {
+                                    messages: tool_messages,
+                                    speaker_name: speaker_name.clone(),
+                                    narration: None,
+                                    is_placeholder: true,
+                                    is_error: false,
+                                });
+                            }
+                        }
+                        let mut round_results = Vec::new();
+                        if notification_allowed {
+                            let db_guard = db.lock().await;
+                            round_results.extend(execute_speaker_notification_tool_calls(
+                                db_guard.conn(),
+                                notification_runtime.as_ref(),
+                                session_id,
+                                world,
+                                turn_index,
+                                speaker_name,
+                                speaker_char
+                                    .map(|character| character.avatar_asset.as_str())
+                                    .unwrap_or(""),
+                                response.tool_calls.as_deref(),
+                            ));
+                        }
+                        round_results.extend(
+                            execute_speaker_custom_tool_calls(
+                                world,
+                                mcp_tools,
+                                mcp_servers,
+                                response.tool_calls.as_deref(),
+                            )
+                            .await,
+                        );
+                        if round_results.is_empty() {
+                            break;
+                        }
+                        let followup_request = build_speaker_tool_followup_request(
+                            &active_request,
+                            &response,
+                            &round_results,
+                            speaker_model.streaming_enabled,
+                        );
+                        all_tool_results.extend(round_results);
+                        // 追问保留工具（模型可补调失败/遗漏的工具）且按模型配置
+                        // 流式：玩家在「查完数据写回复」阶段能看到思维链与正文逐字
+                        // 出现。每轮追问前清空流式累积器，避免把上一轮的流式内容
+                        // 拼进本轮解析；流式失败回退非流式时同样清空（已被污染）。
+                        let followup_result = if speaker_model.streaming_enabled {
+                            streamed_raw_response.clear();
+                            streamed_reasoning.clear();
+                            streamed_partial = None;
+                            let streamed = llm_client
+                                .chat_completion_stream(
+                                    &speaker_provider,
+                                    &speaker_model.base_url,
+                                    &speaker_model.api_key,
+                                    &followup_request,
+                                    |chunk| {
+                                        handle_speaker_stream_chunk(
+                                            &chunk,
+                                            dialogue_pipeline,
+                                            &messages,
+                                            speaker_name,
+                                            turn_index,
+                                            &mut streamed_raw_response,
+                                            &mut streamed_reasoning,
+                                            &mut streamed_partial,
+                                            &mut progress_callback,
+                                        );
+                                    },
+                                )
+                                .await;
+                            match streamed {
+                                Ok(response) => Ok(response),
+                                Err(_) => {
+                                    streamed_raw_response.clear();
+                                    streamed_reasoning.clear();
+                                    streamed_partial = None;
+                                    llm_client
+                                        .chat_completion(
+                                            &speaker_provider,
+                                            &speaker_model.base_url,
+                                            &speaker_model.api_key,
+                                            &followup_request,
+                                        )
+                                        .await
                                 }
                             }
-                            Err(_) => response,
+                        } else {
+                            llm_client
+                                .chat_completion(
+                                    &speaker_provider,
+                                    &speaker_model.base_url,
+                                    &speaker_model.api_key,
+                                    &followup_request,
+                                )
+                                .await
+                        };
+                        match followup_result {
+                            Ok(followup_response) => {
+                                active_request = followup_request;
+                                response = followup_response;
+                            }
+                            Err(_) => {
+                                if response.content.trim().is_empty() {
+                                    response = crate::services::llm::client::ChatResponse {
+                                        content: fallback_notification_tool_response(speaker_name),
+                                        reasoning: response.reasoning.clone(),
+                                        tool_calls: None,
+                                        usage: response.usage.clone(),
+                                        // 兜底文案是本地合成的完整内容，不是被截断的模型输出。
+                                        finish_reason: None,
+                                    };
+                                }
+                                break;
+                            }
                         }
-                    };
+                    }
+                    let notification_tool_results = all_tool_results;
+                    // max_tokens 预算被思维链烧光时（finish_reason=length 且正文一个字都没
+                    // 出来），静默落到「没有台词」占位会掩盖真实原因。用放大的预算非流式
+                    // 自动重试一次：同样的消息再生成一遍，多数情况下能拿到完整正文。
+                    if response.content.trim().is_empty()
+                        && response
+                            .tool_calls
+                            .as_deref()
+                            .map(|calls| calls.is_empty())
+                            .unwrap_or(true)
+                        && response.finish_reason.as_deref() == Some("length")
+                    {
+                        let current_max = active_request.generation.max_tokens.unwrap_or(0);
+                        let bumped_max = current_max.saturating_mul(4).clamp(4096, 16000);
+                        if bumped_max > current_max {
+                            let mut retry_request = active_request.clone();
+                            retry_request.generation.max_tokens = Some(bumped_max);
+                            retry_request.stream = Some(false);
+                            if let Ok(retry_response) = llm_client
+                                .chat_completion(
+                                    &speaker_provider,
+                                    &speaker_model.base_url,
+                                    &speaker_model.api_key,
+                                    &retry_request,
+                                )
+                                .await
+                            {
+                                response = retry_response;
+                            }
+                        }
+                    }
+                    let response = response;
                     let db_guard = db.lock().await;
                     let conn = db_guard.conn();
                     let speaker_latency_ms = speaker_started_at.elapsed().as_millis() as i64;
@@ -523,7 +618,7 @@ impl SessionOrchestrator {
                     if let Some(raw_payload) = parsed_response.raw_payload.clone() {
                         runtime_payloads.push(raw_payload);
                     }
-                    let message_metadata = serde_json::json!({
+                    let mut message_metadata = serde_json::json!({
                         "turn_index": turn_index,
                         "narration": parsed_response.narration.clone(),
                         "message_kind": "agent_response",
@@ -531,6 +626,18 @@ impl SessionOrchestrator {
                         "reasoning_expanded": false,
                         "raw_response": raw_response.clone()
                     });
+                    // 本回合实际执行过的工具记入最终消息 metadata，
+                    // 前端在回复下方显示「已调用：…」。
+                    if !notification_tool_results.is_empty() {
+                        let done_calls = notification_tool_results
+                            .iter()
+                            .map(|item| item.call.clone())
+                            .collect::<Vec<_>>();
+                        message_metadata.as_object_mut().unwrap().insert(
+                            "tool_activity".to_string(),
+                            build_tool_activity_value(&done_calls, mcp_tools, "done"),
+                        );
+                    }
                     messages.push(ChatMessage {
                         message_id: ChatMessage::generate_id(),
                         created_at: chrono::Utc::now().to_rfc3339(),
@@ -738,6 +845,10 @@ fn speaker_notification_tool_error(call: &ChatToolCall, error: &str) -> serde_js
     })
 }
 
+/// 执行角色发起的 schedule_notification 调用。该工具要写库并注册系统通知，
+/// 因此与走 MCP 执行器的自定义工具分开处理（自定义工具见
+/// `execute_speaker_custom_tool_calls`）。
+#[allow(clippy::too_many_arguments)]
 fn execute_speaker_notification_tool_calls(
     conn: &rusqlite::Connection,
     runtime: Option<&NotificationToolRuntime<'_>>,
@@ -786,10 +897,232 @@ fn execute_speaker_notification_tool_calls(
         .collect()
 }
 
+/// 执行角色发起的自定义 MCP 工具调用（世界包通过 allowed_mcp_tool_ids 授权的那些）。
+///
+/// 复用主控路的 `execute_pending_mcp_tool_calls`：白名单校验、`builtin_http` 本地执行
+/// 与外部 MCP server 分派全在那一份实现里，此处只做调用形状的转换（ChatToolCall →
+/// tool_calls JSON → 按下标取回结果）。
+async fn execute_speaker_custom_tool_calls(
+    world: &WorldDefinition,
+    mcp_tools: &[crate::models::mcp_tool::McpToolDefinition],
+    mcp_servers: &[crate::models::mcp_server::McpServerConfig],
+    tool_calls: Option<&[ChatToolCall]>,
+) -> Vec<SpeakerNotificationToolResult> {
+    let custom_calls = tool_calls
+        .unwrap_or(&[])
+        .iter()
+        .filter(|call| call.tool_name.trim() != "schedule_notification")
+        .cloned()
+        .collect::<Vec<_>>();
+    if custom_calls.is_empty() {
+        return Vec::new();
+    }
+    let parsed = serde_json::json!({
+        "tool_calls": custom_calls
+            .iter()
+            .map(|call| serde_json::json!({
+                "id": call.id,
+                "tool_name": call.tool_name,
+                "arguments": call.arguments,
+            }))
+            .collect::<Vec<_>>(),
+    });
+    let director = crate::services::game_engine::director::WorldDirectorService::new();
+    let results = director
+        .execute_pending_mcp_tool_calls(&parsed, world, mcp_tools, mcp_servers)
+        .await;
+    custom_calls
+        .into_iter()
+        .enumerate()
+        .map(|(index, call)| {
+            let mut entry = results
+                .get(&index)
+                .and_then(|value| value.as_object().cloned())
+                .unwrap_or_else(|| {
+                    // results 里没有该下标 = 超出单轮工具调用上限被丢弃（不是未授权），
+                    // 文案必须说清，否则模型会误以为工具不可用、向玩家报错原因。
+                    serde_json::json!({
+                        "ok": false,
+                        "error": format!(
+                            "超出单轮工具调用上限，本次未执行：{}。请减少单次并发的工具调用数量，分多轮调用。",
+                            call.tool_name.trim()
+                        ),
+                    })
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_default()
+                });
+            entry.insert(
+                "id".to_string(),
+                serde_json::Value::String(call.id.clone()),
+            );
+            entry.insert(
+                "tool_name".to_string(),
+                serde_json::Value::String(call.tool_name.trim().to_string()),
+            );
+            SpeakerNotificationToolResult {
+                call,
+                result: serde_json::Value::Object(entry),
+            }
+        })
+        .collect()
+}
+
+/// 首呼与工具追问共用的流式 chunk 处理：累积原文/思维链/部分解析结果，
+/// 并向进度回调推送逐字更新的中间消息。
+#[allow(clippy::too_many_arguments)]
+fn handle_speaker_stream_chunk(
+    chunk: &crate::services::llm::client::ChatStreamChunk,
+    dialogue_pipeline: &DialoguePipeline,
+    messages: &[ChatMessage],
+    speaker_name: &str,
+    turn_index: i32,
+    streamed_raw_response: &mut String,
+    streamed_reasoning: &mut String,
+    streamed_partial: &mut Option<crate::services::game_engine::dialogue::ParsedCharacterResponse>,
+    progress_callback: &mut Option<&mut (dyn FnMut(SpeakerTurnProgress) + Send)>,
+) {
+    let has_reasoning_delta = chunk.reasoning_delta.is_some();
+    if let Some(reasoning_delta) = chunk.reasoning_delta.as_deref() {
+        streamed_reasoning.push_str(reasoning_delta);
+    }
+    if !chunk.delta.is_empty() {
+        streamed_raw_response.push_str(&chunk.delta);
+        if let Some(parsed_partial) =
+            dialogue_pipeline.extract_partial_character_response(streamed_raw_response, speaker_name)
+        {
+            *streamed_partial = Some(parsed_partial);
+        }
+    }
+    if let Some(callback) = progress_callback.as_deref_mut() {
+        if has_reasoning_delta || streamed_partial.is_some() {
+            let partial = streamed_partial.clone();
+            let mut progress_messages = messages.to_vec();
+            progress_messages.push(ChatMessage {
+                message_id: ChatMessage::generate_id(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                parent_message_id: None,
+                role: "agent".to_string(),
+                content: MessageContent::Text(
+                    partial
+                        .as_ref()
+                        .map(|value| value.content.clone())
+                        .unwrap_or_default(),
+                ),
+                speaker: Some(
+                    partial
+                        .as_ref()
+                        .map(|value| value.speaker.clone())
+                        .unwrap_or_else(|| speaker_name.to_string()),
+                ),
+                metadata: Some(serde_json::json!({
+                    "turn_index": turn_index,
+                    "message_kind": "agent_response",
+                    "reasoning": streamed_reasoning,
+                    "reasoning_expanded": false,
+                })),
+            });
+            callback(SpeakerTurnProgress {
+                messages: progress_messages,
+                speaker_name: partial
+                    .as_ref()
+                    .map(|value| value.speaker.clone())
+                    .unwrap_or_else(|| speaker_name.to_string()),
+                narration: partial
+                    .as_ref()
+                    .map(|value| value.narration.clone())
+                    .filter(|value| !value.trim().is_empty()),
+                is_placeholder: false,
+                is_error: false,
+            });
+        }
+    }
+}
+
+/// 工具调用进度的 metadata 值。status 为 "calling"（执行前的占位进度）或
+/// "done"（回合结束后的最终消息记录）。显示名优先取工具定义里的中文名，
+/// 取不到回退模型侧调用名；"done" 时按 id 去重（同一工具可能调用多轮）。
+fn build_tool_activity_value(
+    tool_calls: &[ChatToolCall],
+    mcp_tools: &[crate::models::mcp_tool::McpToolDefinition],
+    status: &str,
+) -> serde_json::Value {
+    let mut seen_ids = std::collections::HashSet::new();
+    let mut tools = Vec::new();
+    for call in tool_calls {
+        let call_name = call.tool_name.trim();
+        if call_name.is_empty() {
+            continue;
+        }
+        if status == "done" && !seen_ids.insert(call_name.to_string()) {
+            continue;
+        }
+        let display_name = mcp_tools
+            .iter()
+            .find(|tool| tool.tool_name.trim() == call_name)
+            .map(|tool| tool.name.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| call_name.to_string());
+        let mut entry = serde_json::json!({ "id": call_name, "name": display_name });
+        if status == "calling" {
+            if let Some(preview) = summarize_tool_call_arguments(&call.arguments) {
+                entry
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("args_preview".to_string(), serde_json::Value::String(preview));
+            }
+        }
+        tools.push(entry);
+    }
+    serde_json::json!({ "status": status, "tools": tools })
+}
+
+/// 把工具参数压成一行短摘要（取前两个标量参数值，截断 40 字符），
+/// 供「正在调用」状态行显示，例如 `1.600519, 60`。
+fn summarize_tool_call_arguments(arguments: &serde_json::Value) -> Option<String> {
+    let object = arguments.as_object()?;
+    let mut parts = Vec::new();
+    for value in object.values() {
+        let rendered = match value {
+            serde_json::Value::String(text) => text.trim().to_string(),
+            serde_json::Value::Number(number) => number.to_string(),
+            serde_json::Value::Bool(flag) => flag.to_string(),
+            _ => continue,
+        };
+        if rendered.is_empty() {
+            continue;
+        }
+        parts.push(rendered);
+        if parts.len() >= 2 {
+            break;
+        }
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    // serde_json 未开 preserve_order 时 map 按键排序，参数顺序不可依赖；
+    // 排序后拼接保证输出确定（数字开头的代码类参数通常排在前面）。
+    parts.sort();
+    const MAX_PREVIEW_CHARS: usize = 40;
+    let joined = parts.join(", ");
+    if joined.chars().count() > MAX_PREVIEW_CHARS {
+        let mut truncated = joined.chars().take(MAX_PREVIEW_CHARS).collect::<String>();
+        truncated.push('…');
+        Some(truncated)
+    } else {
+        Some(joined)
+    }
+}
+
+/// 工具结果回灌后的追问请求。与主控路一致：追问**保留** tools/tool_choice/
+/// native_tool_calling，模型才能对失败或遗漏的工具发起多轮补调（否则模型想
+/// 重试时没有工具可用，容易交白卷——content 只剩空白）。流式按模型配置透传；
+/// openai 流式路径支持工具调用增量累积，anthropic 不支持时由调用方回退非流式。
 fn build_speaker_tool_followup_request(
     request: &crate::services::llm::client::ChatRequest,
     response: &crate::services::llm::client::ChatResponse,
     tool_results: &[SpeakerNotificationToolResult],
+    stream: bool,
 ) -> crate::services::llm::client::ChatRequest {
     let mut messages = request.messages.clone();
     messages.push(crate::services::llm::client::ChatMessage {
@@ -817,10 +1150,7 @@ fn build_speaker_tool_followup_request(
 
     let mut followup = request.clone();
     followup.messages = messages;
-    followup.stream = Some(false);
-    followup.tools = None;
-    followup.tool_choice = None;
-    followup.native_tool_calling = None;
+    followup.stream = Some(stream);
     followup
 }
 
@@ -874,6 +1204,44 @@ mod tests {
                 "delay_minutes": 30
             }),
         }
+    }
+
+    /// 未在世界包授权的工具调用必须拿到明确的拒绝回执，而不是被静默丢弃——
+    /// 静默丢弃会让模型以为工具不存在，转而凭记忆编数据。
+    #[tokio::test]
+    async fn unauthorized_custom_tool_call_gets_rejection_receipt() {
+        let world = test_world();
+        let call = ChatToolCall {
+            id: "call-x".to_string(),
+            tool_name: "stock_quote".to_string(),
+            arguments: serde_json::json!({ "code": "sh600519" }),
+        };
+
+        let results = execute_speaker_custom_tool_calls(&world, &[], &[], Some(&[call])).await;
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].result["ok"], serde_json::json!(false));
+        assert_eq!(results[0].result["tool_name"], serde_json::json!("stock_quote"));
+        assert_eq!(results[0].result["id"], serde_json::json!("call-x"));
+        assert!(
+            results[0].result["error"]
+                .as_str()
+                .unwrap_or("")
+                .contains("未在本世界授权"),
+            "错误文案应说明未授权: {:?}",
+            results[0].result["error"]
+        );
+    }
+
+    /// schedule_notification 由通知落库路径处理，不该被自定义工具执行器重复执行。
+    #[tokio::test]
+    async fn custom_tool_executor_skips_notification_calls() {
+        let world = test_world();
+        let results =
+            execute_speaker_custom_tool_calls(&world, &[], &[], Some(&[notification_call("call-1")]))
+                .await;
+
+        assert!(results.is_empty());
     }
 
     fn valid_pending_notification_json(tool_call_id: &str) -> serde_json::Value {
@@ -1154,10 +1522,11 @@ mod tests {
             reasoning: Some("think".to_string()),
             tool_calls: None,
             usage: None,
+            finish_reason: None,
         };
         let tool_results = sample_tool_results();
 
-        let followup = build_speaker_tool_followup_request(&request, &response, &tool_results);
+        let followup = build_speaker_tool_followup_request(&request, &response, &tool_results, false);
 
         // 原消息 + assistant + 每个 tool result 一条
         assert_eq!(followup.messages.len(), 1 + 1 + tool_results.len());
@@ -1195,27 +1564,37 @@ mod tests {
     }
 
     #[test]
-    fn build_speaker_tool_followup_request_forces_non_streaming_and_clears_tool_config() {
+    fn build_speaker_tool_followup_request_keeps_tool_config_and_applies_stream_flag() {
         let request = base_chat_request();
         let response = ChatResponse {
             content: String::new(),
             reasoning: None,
             tool_calls: None,
             usage: None,
+            finish_reason: None,
         };
         let tool_results = sample_tool_results();
 
-        let followup = build_speaker_tool_followup_request(&request, &response, &tool_results);
+        let followup = build_speaker_tool_followup_request(&request, &response, &tool_results, false);
 
         assert_eq!(followup.stream, Some(false));
-        assert!(followup.tools.is_none());
-        assert!(followup.tool_choice.is_none());
-        assert!(followup.native_tool_calling.is_none());
+        // 工具配置保留：模型才能在后续轮次补调失败或遗漏的工具
+        assert_eq!(followup.tools.as_ref().map(|tools| tools.len()), Some(1));
+        assert!(matches!(
+            followup.tool_choice,
+            Some(crate::services::llm::client::ChatToolChoice::Auto)
+        ));
+        assert_eq!(followup.native_tool_calling, Some(true));
         // 其余请求配置保持原样
         assert_eq!(followup.model, request.model);
         assert_eq!(followup.generation, request.generation);
         assert!(followup.json_mode.is_none());
         assert!(followup.response_schema.is_none());
+
+        // 流式标志按调用方透传
+        let streamed = build_speaker_tool_followup_request(&request, &response, &tool_results, true);
+        assert_eq!(streamed.stream, Some(true));
+        assert_eq!(streamed.native_tool_calling, Some(true));
     }
 
     // ---- fallback_notification_tool_response ----
@@ -1239,5 +1618,96 @@ mod tests {
             value.get("content").and_then(|v| v.as_str()),
             Some("\u{5df2}\u{5904}\u{7406}\u{901a}\u{77e5}\u{8bf7}\u{6c42}\u{3002}")
         );
+    }
+
+    // ---- build_tool_activity_value / summarize_tool_call_arguments ----
+
+    fn stock_quote_call() -> ChatToolCall {
+        ChatToolCall {
+            id: "call-quote".to_string(),
+            tool_name: "stock_quote".to_string(),
+            arguments: serde_json::json!({ "secid": "1.600519", "lmt": 60 }),
+        }
+    }
+
+    fn stock_tool_definitions() -> Vec<crate::models::mcp_tool::McpToolDefinition> {
+        vec![crate::models::mcp_tool::McpToolDefinition {
+            id: "mcp-tool-stock-quote".to_string(),
+            name: "A股实时行情".to_string(),
+            description: String::new(),
+            server_name: String::new(),
+            tool_name: "stock_quote".to_string(),
+            enabled: true,
+            exposure_policy: serde_json::json!({}),
+            risk_level: String::new(),
+            trigger_keywords: Vec::new(),
+            input_schema: serde_json::json!({}),
+            server_id: String::new(),
+            impl_kind: "builtin_http".to_string(),
+            impl_config: serde_json::json!({}),
+        }]
+    }
+
+    #[test]
+    fn tool_activity_calling_uses_definition_display_name_and_args_preview() {
+        let value =
+            build_tool_activity_value(&[stock_quote_call()], &stock_tool_definitions(), "calling");
+
+        assert_eq!(value.get("status").and_then(|v| v.as_str()), Some("calling"));
+        let tools = value.get("tools").and_then(|v| v.as_array()).expect("tools");
+        assert_eq!(tools.len(), 1);
+        assert_eq!(
+            tools[0].get("name").and_then(|v| v.as_str()),
+            Some("A股实时行情")
+        );
+        assert_eq!(
+            tools[0].get("args_preview").and_then(|v| v.as_str()),
+            Some("1.600519, 60")
+        );
+    }
+
+    #[test]
+    fn tool_activity_falls_back_to_call_name_when_definition_missing() {
+        let value = build_tool_activity_value(&[stock_quote_call()], &[], "calling");
+
+        let tools = value.get("tools").and_then(|v| v.as_array()).expect("tools");
+        assert_eq!(
+            tools[0].get("name").and_then(|v| v.as_str()),
+            Some("stock_quote")
+        );
+    }
+
+    #[test]
+    fn tool_activity_done_dedupes_and_omits_args_preview() {
+        let calls = vec![stock_quote_call(), stock_quote_call()];
+        let value = build_tool_activity_value(&calls, &stock_tool_definitions(), "done");
+
+        let tools = value.get("tools").and_then(|v| v.as_array()).expect("tools");
+        assert_eq!(tools.len(), 1);
+        assert!(tools[0].get("args_preview").is_none());
+    }
+
+    #[test]
+    fn summarize_tool_call_arguments_skips_non_scalars_and_truncates() {
+        let value = summarize_tool_call_arguments(&serde_json::json!({
+            "secid": "1.600519",
+            "nested": { "a": 1 },
+            "flag": true,
+            "extra": "x"
+        }))
+        .expect("preview");
+        assert_eq!(value, "true, x");
+
+        let long = summarize_tool_call_arguments(&serde_json::json!({
+            "text": "一".repeat(60)
+        }))
+        .expect("long preview");
+        assert_eq!(long.chars().count(), 41);
+        assert!(long.ends_with('…'));
+
+        assert!(
+            summarize_tool_call_arguments(&serde_json::json!({ "nested": { "a": 1 } })).is_none()
+        );
+        assert!(summarize_tool_call_arguments(&serde_json::json!([])).is_none());
     }
 }

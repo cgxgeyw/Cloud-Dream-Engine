@@ -54,6 +54,9 @@ impl StructuredOutputFailure {
     }
 
     pub fn display_title(&self) -> &'static str {
+        if self.failure_code == "output_truncated" {
+            return "输出被 token 上限截断";
+        }
         match self.stage {
             StructuredFailureStage::DirectorMain | StructuredFailureStage::DirectorToolFollowup => {
                 "世界主控回复异常"
@@ -63,6 +66,11 @@ impl StructuredOutputFailure {
     }
 
     pub fn display_content(&self) -> String {
+        // 截断是配置问题（max_tokens 太小），不是"模型返回了坏数据"。直接告诉用户
+        // 该调哪个设置，否则重发多少次都是同一个结果。
+        if self.failure_code == "output_truncated" {
+            return "模型输出被 token 上限截断，本回合没有拿到完整数据。请在世界设置或模型配置里提高 max_tokens（推理模型建议 8000 以上）后重发。".to_string();
+        }
         match self.stage {
             StructuredFailureStage::DirectorMain | StructuredFailureStage::DirectorToolFollowup => {
                 "导演返回的结构化数据无效，系统已停止本回合推进。请决定是否重发。".to_string()
@@ -80,6 +88,7 @@ impl StructuredOutputFailure {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn validate_director_payload(
     parsed: &serde_json::Value,
     player_character_name: &str,
@@ -90,12 +99,35 @@ pub fn validate_director_payload(
     turn_index: i32,
     raw_text: &str,
     repair_summary: Option<String>,
+    truncated_by_token_limit: bool,
 ) -> Result<(), StructuredOutputFailure> {
     let stage = if parsed.get("tool_results").is_some() {
         StructuredFailureStage::DirectorToolFollowup
     } else {
         StructuredFailureStage::DirectorMain
     };
+
+    // 输出被 max_tokens 截断时，报"预算不足"而不是"没返回 JSON"：后者会把用户
+    // 引向改提示词，而真正该改的是 max_tokens。推理模型尤其容易把预算烧在思考上，
+    // 此时 content 为空、raw_text 也为空。
+    if truncated_by_token_limit && !director_payload_is_usable(parsed) {
+        return Err(build_failure(
+            stage,
+            "output_truncated",
+            "模型输出被 max_tokens 截断（推理内容占满了预算），本回合没有拿到完整 JSON",
+            provider,
+            model_id,
+            turn_index,
+            None,
+            raw_text,
+            repair_summary,
+            vec![
+                "response was cut off by the token limit; raise max_tokens for this world"
+                    .to_string(),
+            ],
+            Vec::new(),
+        ));
+    }
 
     let Some(object) = parsed.as_object() else {
         return Err(build_failure(
@@ -318,6 +350,16 @@ pub fn validate_character_payload(
     Ok(())
 }
 
+/// 截断的输出是否仍然可用：非空 JSON 对象即认为可用（模型先输出 JSON 再被截在
+/// 尾部的情况下，宽松解析常已补全出可用对象，不该因 finish_reason 就整轮作废）。
+fn director_payload_is_usable(parsed: &serde_json::Value) -> bool {
+    parsed
+        .as_object()
+        .map(|object| !object.is_empty())
+        .unwrap_or(false)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn build_failure(
     stage: StructuredFailureStage,
     failure_code: &str,
@@ -377,6 +419,7 @@ mod tests {
             1,
             "{}",
             None,
+            false,
         );
 
         assert!(result.is_ok());
@@ -398,6 +441,7 @@ mod tests {
             1,
             "{}",
             None,
+            false,
         )
         .expect_err("player should not be allowed in planned_speakers");
 
@@ -406,5 +450,73 @@ mod tests {
             .domain_errors
             .iter()
             .any(|value| value == "planned_speakers cannot include the player character"));
+    }
+
+    /// 回归：推理模型把 max_tokens 烧在思考上时 content 为空，此前会被报成
+    /// json_parse_failed（"模型没返回 JSON"），把用户引向改提示词而不是加预算。
+    #[test]
+    fn truncated_empty_output_reports_token_limit_instead_of_parse_failure() {
+        let failure = validate_director_payload(
+            &serde_json::Value::Null,
+            "Player",
+            &["Alice".to_string()],
+            &["Alice".to_string()],
+            "openai",
+            "deepseek-v4-flash",
+            1,
+            "",
+            None,
+            true,
+        )
+        .expect_err("truncated empty output must fail");
+
+        assert_eq!(failure.failure_code, "output_truncated");
+        assert_eq!(failure.display_title(), "输出被 token 上限截断");
+        assert!(
+            failure.display_content().contains("max_tokens"),
+            "文案要指明该调哪个设置: {}",
+            failure.display_content()
+        );
+    }
+
+    /// 截断但已解析出可用对象时不作废整轮：宽松解析常能补全尾部被截的 JSON。
+    #[test]
+    fn truncated_but_usable_payload_still_passes() {
+        let parsed = serde_json::json!({ "planned_speakers": ["Alice"] });
+
+        let result = validate_director_payload(
+            &parsed,
+            "Player",
+            &["Alice".to_string()],
+            &["Alice".to_string()],
+            "openai",
+            "deepseek-v4-flash",
+            1,
+            "{\"planned_speakers\":[\"Alice\"]}",
+            None,
+            true,
+        );
+
+        assert!(result.is_ok());
+    }
+
+    /// 未截断的空输出仍走原有的 json_parse_failed 路径，不被新分支吞掉。
+    #[test]
+    fn untruncated_non_object_still_reports_parse_failure() {
+        let failure = validate_director_payload(
+            &serde_json::Value::Null,
+            "Player",
+            &["Alice".to_string()],
+            &["Alice".to_string()],
+            "openai",
+            "gpt-test",
+            1,
+            "这不是 JSON",
+            None,
+            false,
+        )
+        .expect_err("non-object output must fail");
+
+        assert_eq!(failure.failure_code, "json_parse_failed");
     }
 }

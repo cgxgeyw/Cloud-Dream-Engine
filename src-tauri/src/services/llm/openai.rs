@@ -45,6 +45,8 @@ struct OpenAIUsage {
 #[derive(Deserialize)]
 struct OpenAIChoice {
     message: OpenAIMessageResponse,
+    #[serde(default)]
+    finish_reason: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -303,6 +305,8 @@ struct StreamingToolCall {
 #[derive(Deserialize)]
 struct OpenAIStreamChoice {
     delta: Option<OpenAIStreamChoiceDelta>,
+    #[serde(default)]
+    finish_reason: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -317,6 +321,7 @@ fn apply_stream_data_chunk<F>(
     reasoning: &mut String,
     tool_calls: &mut Vec<StreamingToolCall>,
     usage: &mut Option<Usage>,
+    finish_reason: &mut Option<String>,
     on_chunk: &mut F,
 ) -> bool
 where
@@ -337,6 +342,16 @@ where
         });
     }
     for choice in parsed.choices.unwrap_or_default() {
+        // finish_reason 通常单独出现在最后一个带 choices 的 chunk 上（delta 为空），
+        // 因此必须在 delta 判空之前记录，否则截断信号会被丢掉。
+        if let Some(reason) = choice
+            .finish_reason
+            .as_deref()
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty())
+        {
+            *finish_reason = Some(reason.to_string());
+        }
         let Some(delta) = choice.delta else {
             continue;
         };
@@ -550,6 +565,11 @@ pub async fn chat_completion(
         .first()
         .and_then(|c| extract_tool_calls(&c.message));
 
+    let finish_reason = openai_response
+        .choices
+        .first()
+        .and_then(|c| c.finish_reason.clone());
+
     let usage = openai_response.usage.map(|u| Usage {
         prompt_tokens: u.prompt_tokens.unwrap_or(0),
         completion_tokens: u.completion_tokens.unwrap_or(0),
@@ -561,6 +581,7 @@ pub async fn chat_completion(
         reasoning,
         tool_calls,
         usage,
+        finish_reason,
     })
 }
 
@@ -625,6 +646,7 @@ where
     let mut pending = String::new();
     let mut finished = false;
     let mut usage: Option<Usage> = None;
+    let mut finish_reason: Option<String> = None;
 
     use futures::StreamExt;
     while let Some(chunk) = stream.next().await {
@@ -658,6 +680,7 @@ where
                 &mut reasoning,
                 &mut tool_calls,
                 &mut usage,
+                &mut finish_reason,
                 &mut on_chunk,
             ) {
                 finished = true;
@@ -678,6 +701,7 @@ where
                 &mut reasoning,
                 &mut tool_calls,
                 &mut usage,
+                &mut finish_reason,
                 &mut on_chunk,
             );
         }
@@ -701,6 +725,7 @@ where
         },
         tool_calls: finalize_streaming_tool_calls(tool_calls),
         usage,
+        finish_reason,
     })
 }
 
@@ -881,6 +906,7 @@ mod tests {
         let mut reasoning = String::new();
         let mut tool_calls = Vec::new();
         let mut usage = None;
+        let mut finish_reason = None;
         let mut chunks = Vec::new();
 
         let finished = apply_stream_data_chunk(
@@ -889,6 +915,7 @@ mod tests {
             &mut reasoning,
             &mut tool_calls,
             &mut usage,
+            &mut finish_reason,
             &mut |chunk| {
                 chunks.push(chunk.delta);
             },
@@ -906,6 +933,7 @@ mod tests {
         let mut reasoning = String::new();
         let mut tool_calls = Vec::new();
         let mut usage = None;
+        let mut finish_reason = None;
         let mut noop = |_chunk: ChatStreamChunk| {};
 
         // 工具调用分片跨多个 chunk：先 id+name，再 arguments 分两段。
@@ -915,6 +943,7 @@ mod tests {
             &mut reasoning,
             &mut tool_calls,
             &mut usage,
+            &mut finish_reason,
             &mut noop,
         );
         apply_stream_data_chunk(
@@ -923,14 +952,84 @@ mod tests {
             &mut reasoning,
             &mut tool_calls,
             &mut usage,
+            &mut finish_reason,
             &mut noop,
         );
+
+        assert!(finish_reason.is_none());
 
         let finalized = finalize_streaming_tool_calls(tool_calls).expect("tool calls");
         assert_eq!(finalized.len(), 1);
         assert_eq!(finalized[0].id, "call_1");
         assert_eq!(finalized[0].tool_name, "get_weather");
         assert_eq!(finalized[0].arguments["city"], "北京");
+    }
+
+    /// 回归：finish_reason 通常单独出现在最后一个 chunk 上（delta 为空/缺失），
+    /// 必须在 delta 判空之前记录，否则"被 token 上限截断"这个信号会整条丢掉。
+    #[test]
+    fn stream_captures_finish_reason_from_delta_less_final_chunk() {
+        let mut content = String::new();
+        let mut reasoning = String::new();
+        let mut tool_calls = Vec::new();
+        let mut usage = None;
+        let mut finish_reason = None;
+        let mut noop = |_chunk: ChatStreamChunk| {};
+
+        apply_stream_data_chunk(
+            "{\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}",
+            &mut content,
+            &mut reasoning,
+            &mut tool_calls,
+            &mut usage,
+            &mut finish_reason,
+            &mut noop,
+        );
+
+        assert_eq!(finish_reason.as_deref(), Some("length"));
+
+        let response = ChatResponse {
+            content,
+            reasoning: None,
+            tool_calls: None,
+            usage,
+            finish_reason,
+        };
+        assert!(response.is_truncated_by_token_limit());
+    }
+
+    /// Anthropic 用 "max_tokens" 表达同一件事，两种写法都要认。
+    #[test]
+    fn truncation_detection_covers_both_provider_spellings() {
+        let base = ChatResponse {
+            content: String::new(),
+            reasoning: None,
+            tool_calls: None,
+            usage: None,
+            finish_reason: None,
+        };
+
+        for reason in ["length", "max_tokens", "MAX_TOKENS"] {
+            let response = ChatResponse {
+                finish_reason: Some(reason.to_string()),
+                ..base.clone()
+            };
+            assert!(
+                response.is_truncated_by_token_limit(),
+                "{reason} 应判为截断"
+            );
+        }
+
+        for reason in ["stop", "tool_calls", "end_turn"] {
+            let response = ChatResponse {
+                finish_reason: Some(reason.to_string()),
+                ..base.clone()
+            };
+            assert!(
+                !response.is_truncated_by_token_limit(),
+                "{reason} 不应判为截断"
+            );
+        }
     }
 
     #[test]

@@ -117,6 +117,9 @@ pub struct DirectorLoopIterationTrace {
 pub struct DirectorLoopRunResult {
     pub parsed: serde_json::Value,
     pub traces: Vec<DirectorLoopIterationTrace>,
+    /// 最后一次模型返回是否因触达 token 上限被截断。放大预算重试后仍截断时为 true,
+    /// 用于把失败报成"输出被截断"而不是误导性的"模型没返回 JSON"。
+    pub truncated_by_token_limit: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -443,12 +446,6 @@ impl WorldDirectorService {
                 serde_json::json!(world.background_prompt),
             );
         }
-        if !world.opening_scene.trim().is_empty() {
-            basic_setting.insert(
-                "opening_scene".to_string(),
-                serde_json::json!(world.opening_scene),
-            );
-        }
         if !world_character_roster.is_empty() {
             basic_setting.insert(
                 "world_character_roster".to_string(),
@@ -477,9 +474,6 @@ impl WorldDirectorService {
                 "current_scene_character_roster".to_string(),
                 serde_json::json!(session.visible_characters),
             );
-        }
-        if !session.scene.name.trim().is_empty() {
-            current_state.insert("scene_name".to_string(), serde_json::json!(session.scene.name));
         }
         if !session.scene.temporary_tags.is_empty() {
             current_state.insert(
@@ -542,8 +536,8 @@ impl WorldDirectorService {
                     "planned_speakers": "CORE, return every turn. Ordered list of character names who should speak this turn, in speaking order. Never include the player character (they are implicitly present). Use only names already in current_scene_character_roster, or names you create via generated_characters in this same response. Return an empty array if no character should speak.",
                     "switch_character_proposal": "CORE field, but return it ONLY when the player clearly asks to take control of / play as a different character. Object: { target_character_name, reason, and optionally location, scene_name, scene_background_hint, scene_tags, visible_characters if the switch also moves the scene }. Omit entirely on normal turns.",
                     "world_phase": "Narrative tension stage. Must be exactly one of: \"opening\", \"escalation\", \"crisis\". Return only when the phase advances; any other value is ignored.",
-                    "next_scene_name": "Name of the new scene. Return only on a scene transition.",
-                    "next_location": "New location label. Return only when the location changes; usually paired with next_scene_name.",
+                    "next_scene_name": "Optional short label for the new scene. Return only on a scene transition; it may be freely generated.",
+                    "next_location": "Optional rough location label for the new scene. Keep it short and practical; return only when the place changes.",
                     "next_time_label": "New in-world time label (e.g. a clock time or time-of-day). Return only when time advances.",
                     "scene_visible_characters": "The COMPLETE list of characters present in the scene AFTER this turn (this replaces the current roster, it is not appended). Exclude the player character. Return only when the on-stage cast changes.",
                     "generated_characters": "Create brand-new characters here BEFORE naming them in scene_visible_characters or planned_speakers. Each item requires name, role, background_prompt (a usable portrayal brief for the later character model, not a one-word label). Return only when introducing someone not already in current_scene_character_roster or world_character_roster.",
@@ -824,31 +818,7 @@ impl WorldDirectorService {
             .and_then(|value| value.get("tool_data"))
             .and_then(|value| value.get("available_tools"))
             .and_then(|value| value.as_array())
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|tool| {
-                        let object = tool.as_object()?;
-                        let name = object
-                            .get("tool_name")
-                            .and_then(|value| value.as_str())
-                            .map(str::trim)
-                            .filter(|value| !value.is_empty())?;
-                        Some(ChatToolDefinition {
-                            name: name.to_string(),
-                            description: object
-                                .get("description")
-                                .and_then(|value| value.as_str())
-                                .map(|value| value.trim().to_string())
-                                .filter(|value| !value.is_empty()),
-                            input_schema: object
-                                .get("arguments_schema")
-                                .cloned()
-                                .unwrap_or_else(|| serde_json::json!({ "type": "object" })),
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            })
+            .map(|items| tool_capabilities_to_chat_definitions(items))
             .filter(|items| !items.is_empty());
         let native_tools_active = tools
             .as_ref()
@@ -1110,6 +1080,7 @@ impl WorldDirectorService {
         let mut active_request = initial_request;
         let mut traces = Vec::new();
         let mut json_repair_attempts = 0usize;
+        let mut token_limit_retries = 0usize;
         loop {
             let started = std::time::Instant::now();
             let request_used = active_request.clone();
@@ -1234,6 +1205,19 @@ impl WorldDirectorService {
                 tool_enriched: tool_enriched.clone(),
             });
             if !self.should_continue_tool_loop(world, &parsed, iteration) {
+                // 输出被 max_tokens 截断(推理模型把预算烧在思考上,content 为空)时,
+                // 必须先放大预算原样重试。此分支必须排在 JSON 修复之前:修复是往同一
+                // 请求追加消息,prompt 更长而预算不变,只会再截断一次。
+                if director_output_needs_json_repair(&parsed)
+                    && response.is_truncated_by_token_limit()
+                    && token_limit_retries < DIRECTOR_TOKEN_LIMIT_RETRIES
+                {
+                    if let Some(grown_request) = grow_token_budget(&active_request) {
+                        token_limit_retries += 1;
+                        active_request = grown_request;
+                        continue;
+                    }
+                }
                 // 导演最终输出不是合法 JSON 对象时,把坏输出和解析错误反馈给模型重出,
                 // 最多 DIRECTOR_JSON_REPAIR_ATTEMPTS 轮;仍失败则原样返回,由
                 // validate_director_payload 走 json_parse_failed 路径。
@@ -1248,6 +1232,7 @@ impl WorldDirectorService {
                 return Ok(DirectorLoopRunResult {
                     parsed: tool_enriched,
                     traces,
+                    truncated_by_token_limit: response.is_truncated_by_token_limit(),
                 });
             }
             active_request = self.build_tool_followup_request(
@@ -1336,6 +1321,22 @@ impl WorldDirectorService {
                 );
                 continue;
             };
+            // 本地工具（builtin_http）由核心直接执行，不需要 MCP server。
+            if crate::models::mcp_tool::is_local_tool(tool) {
+                let outcome =
+                    crate::services::mcp::execute_local_http_tool(tool, arguments).await;
+                results.insert(
+                    index,
+                    serde_json::json!({
+                        "ok": outcome.ok,
+                        "result": outcome.result,
+                        "error": outcome.error,
+                        "truncated": outcome.truncated,
+                        "server_name": "builtin-local",
+                    }),
+                );
+                continue;
+            }
             let server = servers.iter().find(|server| server.id == tool.server_id);
             let Some(server) = server else {
                 results.insert(
@@ -2639,7 +2640,7 @@ impl WorldDirectorService {
             .collect()
     }
 
-    fn build_director_tool_capabilities(
+    pub(crate) fn build_director_tool_capabilities(
         &self,
         world: &WorldDefinition,
         mcp_tools: &[McpToolDefinition],
@@ -2708,43 +2709,15 @@ impl WorldDirectorService {
         if allowed.contains(MCP_TOOL_SCHEDULE_NOTIFICATION_ID) {
             tools.push(notification_tool_definition());
         }
-        for tool in mcp_tools {
-            if !tool.enabled || !allowed.contains(&tool.id) || is_builtin_mcp_tool_id(&tool.id) {
-                continue;
-            }
-            if mcp_tool_exposure_mode(&tool.exposure_policy) == "disabled" {
-                continue;
-            }
-            let tool_name = tool.tool_name.trim();
-            if tool_name.is_empty() {
-                continue;
-            }
-            tools.push(serde_json::json!({
-                "tool_name": tool_name,
-                "description": tool.description.trim(),
-                "arguments_schema": tool.input_schema.clone(),
-                "server_name": tool.server_name.clone(),
-                "mcp_tool_id": tool.id.clone(),
-            }));
-        }
+        tools.extend(custom_mcp_tool_capabilities(&allowed, mcp_tools));
         tools
     }
 
 
 
+
     fn resolve_world_allowed_tool_ids(&self, world: &WorldDefinition) -> Vec<String> {
-        world
-            .director_config
-            .get("allowed_mcp_tool_ids")
-            .and_then(|value| value.as_array())
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| item.as_str().map(|value| value.trim().to_string()))
-                    .filter(|value| !value.is_empty())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default()
+        world_allowed_tool_ids(world)
     }
 
     fn resolve_director_history_rounds(&self, world: &WorldDefinition) -> i32 {
@@ -2920,13 +2893,46 @@ fn extract_first_balanced_json_segment(raw: &str) -> Option<String> {
 /// 导演最终输出无法解析为 JSON 对象时,携带解析错误让模型重出的最大修复轮次。
 const DIRECTOR_JSON_REPAIR_ATTEMPTS: usize = 2;
 
+/// 输出被 max_tokens 截断时,重试放大 token 预算的最大次数与倍率。
+///
+/// 推理模型(deepseek-v4-flash / o 系列等)会先把预算烧在思考上,预算不足时
+/// content 为空、finish_reason = "length"。此时追加"你上次输出不是 JSON"的
+/// 修复消息只会让 prompt 更长、再次截断——必须放大预算重试。
+const DIRECTOR_TOKEN_LIMIT_RETRIES: usize = 2;
+const DIRECTOR_TOKEN_LIMIT_GROWTH: i32 = 3;
+/// 放大后的预算上限,避免世界包配了极大值时把单轮成本推到失控。
+const DIRECTOR_TOKEN_LIMIT_CEILING: i32 = 32_000;
+/// 未显式配置 max_tokens 时,按此值作为放大的起点。
+const DIRECTOR_TOKEN_LIMIT_FALLBACK: i32 = 4_000;
+
+/// 把请求的 max_tokens 放大一档,返回 None 表示已到上限、无需再试。
+fn grow_token_budget(request: &ChatRequest) -> Option<ChatRequest> {
+    let current = request
+        .generation
+        .max_tokens
+        .filter(|value| *value > 0)
+        .unwrap_or(DIRECTOR_TOKEN_LIMIT_FALLBACK);
+    if current >= DIRECTOR_TOKEN_LIMIT_CEILING {
+        return None;
+    }
+    let grown = current
+        .saturating_mul(DIRECTOR_TOKEN_LIMIT_GROWTH)
+        .min(DIRECTOR_TOKEN_LIMIT_CEILING);
+    if grown <= current {
+        return None;
+    }
+    let mut grown_request = request.clone();
+    grown_request.generation.max_tokens = Some(grown);
+    Some(grown_request)
+}
+
 /// 导演工具循环轮次上限(director_tool_loop_limit)的缺省值与允许范围。
 const DIRECTOR_TOOL_LOOP_LIMIT_DEFAULT: usize = 4;
 const DIRECTOR_TOOL_LOOP_LIMIT_MIN: i64 = 1;
 const DIRECTOR_TOOL_LOOP_LIMIT_MAX: i64 = 12;
 
 /// 单轮导演输出中允许处理的工具调用条数(director_tool_call_limit)的缺省值与允许范围。
-const DIRECTOR_TOOL_CALL_LIMIT_DEFAULT: usize = 4;
+const DIRECTOR_TOOL_CALL_LIMIT_DEFAULT: usize = 8;
 const DIRECTOR_TOOL_CALL_LIMIT_MIN: i64 = 1;
 const DIRECTOR_TOOL_CALL_LIMIT_MAX: i64 = 8;
 
@@ -3418,6 +3424,100 @@ fn arg_string_list(value: Option<&serde_json::Value>) -> Vec<String> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default()
+}
+
+/// 角色（含 agent_chat 的唯一 agent）可用的工具能力表。
+///
+/// 与主控表的区别：不含 list_scenes / list_characters / change_scene /
+/// switch_player_character / generate_image —— 这些是导演职权，其效果函数会写
+/// 场景切换、换玩家角色等字段，角色路没有对应的写回通道，下发了也执行不了。
+/// 角色能拿到的是 schedule_notification 与世界授权的自定义 MCP 工具。
+pub(crate) fn build_character_tool_capabilities(
+    world: &WorldDefinition,
+    mcp_tools: &[McpToolDefinition],
+) -> Vec<serde_json::Value> {
+    let allowed = world_allowed_tool_ids(world)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    let mut tools = Vec::new();
+    if allowed.contains(MCP_TOOL_SCHEDULE_NOTIFICATION_ID) {
+        tools.push(notification_tool_definition());
+    }
+    tools.extend(custom_mcp_tool_capabilities(&allowed, mcp_tools));
+    tools
+}
+
+/// 世界授权的工具 id 列表。`WorldDirectorService::resolve_world_allowed_tool_ids`
+/// 是它的方法形态包装，两者共用这一份读取逻辑。
+pub(crate) fn world_allowed_tool_ids(world: &WorldDefinition) -> Vec<String> {
+    world
+        .director_config
+        .get("allowed_mcp_tool_ids")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(|value| value.trim().to_string()))
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+/// 世界授权的自定义 MCP 工具（排除引擎内置 id）的能力条目。主控表与角色表共用，
+/// 保证同一个工具在两条路上下发给模型的 name/description/schema 完全一致。
+fn custom_mcp_tool_capabilities(
+    allowed: &BTreeSet<String>,
+    mcp_tools: &[McpToolDefinition],
+) -> Vec<serde_json::Value> {
+    mcp_tools
+        .iter()
+        .filter(|tool| {
+            tool.enabled && allowed.contains(&tool.id) && !is_builtin_mcp_tool_id(&tool.id)
+        })
+        .filter(|tool| mcp_tool_exposure_mode(&tool.exposure_policy) != "disabled")
+        .filter(|tool| !tool.tool_name.trim().is_empty())
+        .map(|tool| {
+            serde_json::json!({
+                "tool_name": tool.tool_name.trim(),
+                "description": tool.description.trim(),
+                "arguments_schema": tool.input_schema.clone(),
+                "server_name": tool.server_name.clone(),
+                "mcp_tool_id": tool.id.clone(),
+            })
+        })
+        .collect()
+}
+
+/// 把 `build_director_tool_capabilities` 产出的工具能力 JSON 转成下发给模型的
+/// `ChatToolDefinition`。主控路与角色路共用这一份实现：不管工具来自引擎内置还是
+/// 用户导入的工具包，发给模型的形状都一致。
+pub(crate) fn tool_capabilities_to_chat_definitions(
+    capabilities: &[serde_json::Value],
+) -> Vec<ChatToolDefinition> {
+    capabilities
+        .iter()
+        .filter_map(|tool| {
+            let object = tool.as_object()?;
+            let name = object
+                .get("tool_name")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?;
+            Some(ChatToolDefinition {
+                name: name.to_string(),
+                description: object
+                    .get("description")
+                    .and_then(|value| value.as_str())
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty()),
+                input_schema: object
+                    .get("arguments_schema")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({ "type": "object" })),
+            })
+        })
+        .collect()
 }
 
 /// 内置工具的模型侧调用名。这些由同步效果函数处理，不走 MCP 执行器。
@@ -3978,6 +4078,11 @@ mod tests {
             .get("current_state")
             .and_then(|value| value.as_object())
             .expect("current_state");
+        assert!(payload
+            .get("basic_setting")
+            .and_then(|value| value.get("opening_scene"))
+            .is_none());
+        assert!(!current_state.contains_key("scene_name"));
         assert!(!current_state.contains_key("state_tags"));
         assert!(!current_state.contains_key("system_log"));
 

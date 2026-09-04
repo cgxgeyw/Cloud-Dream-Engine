@@ -372,6 +372,8 @@ pub(crate) async fn run_agent_chat_speaker_turn(
     target: &AgentChatTarget,
     player_input: &str,
     player_media: &[crate::models::session::ContentPart],
+    mcp_tools: &[crate::models::mcp_tool::McpToolDefinition],
+    mcp_servers: &[crate::models::mcp_server::McpServerConfig],
     notification_runtime: Option<NotificationToolRuntime<'_>>,
     progress_callback: Option<&mut (dyn FnMut(SpeakerTurnProgress) + Send)>,
 ) -> Result<SpeakerTurnRunResult, String> {
@@ -394,6 +396,8 @@ pub(crate) async fn run_agent_chat_speaker_turn(
             &target.next_scene_name,
             &target.next_location,
             &target.visible_chars,
+            mcp_tools,
+            mcp_servers,
             notification_runtime,
             progress_callback,
         )

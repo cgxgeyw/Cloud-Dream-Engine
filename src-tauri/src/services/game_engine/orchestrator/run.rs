@@ -1529,6 +1529,9 @@ impl SessionOrchestrator {
         let provider = normalize_provider_name(&model.provider);
         let tool_loop_limit = world_director.resolve_tool_loop_limit(world);
 
+        // 恢复分支同样要把"是否被 token 上限截断"带出来，否则截断会在这条路径上
+        // 退化成误导性的 json_parse_failed。
+        let mut recovered_truncated_by_token_limit = false;
         let parsed = if recovery.resume_incomplete_turn {
             if let Some(payload) = recovery.recovered_completed_payload {
                 payload
@@ -1552,7 +1555,7 @@ impl SessionOrchestrator {
                     generation,
                     model.streaming_enabled,
                 );
-                if let Some(callback) = progress_callback.as_deref_mut() {
+                let loop_result = if let Some(callback) = progress_callback.as_deref_mut() {
                     world_director
                         .run_director_tool_loop(
                             llm_client,
@@ -1578,7 +1581,6 @@ impl SessionOrchestrator {
                                 &error,
                             )
                         })?
-                        .parsed
                 } else {
                     world_director
                         .run_director_tool_loop(
@@ -1605,8 +1607,9 @@ impl SessionOrchestrator {
                                 &error,
                             )
                         })?
-                        .parsed
-                }
+                };
+                recovered_truncated_by_token_limit = loop_result.truncated_by_token_limit;
+                loop_result.parsed
             }
         } else {
             let prompt_call = world_director.build_runtime_prompt_call_with_mcp_tools(
@@ -1702,6 +1705,7 @@ impl SessionOrchestrator {
                 turn_index,
                 raw_text,
                 None,
+                loop_result.truncated_by_token_limit,
             )?;
             let runtime_payload = world_director.parse_runtime_payload(
                 &loop_result.parsed,
@@ -1734,6 +1738,7 @@ impl SessionOrchestrator {
             turn_index,
             "",
             None,
+            recovered_truncated_by_token_limit,
         )?;
         let runtime_payload =
             world_director.parse_runtime_payload(&parsed, session, world, player_input);
@@ -1765,9 +1770,34 @@ impl SessionOrchestrator {
             .collect::<HashMap<_, _>>();
         let attribute_repo =
             crate::db::repositories::attribute_repo::AttributeRepository::new(conn);
+        let declared_attribute_keys = world
+            .ui_theme_config
+            .get("attribute_schemas")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| {
+                        Some((
+                            item.get("scope")?.as_str()?.trim().to_string(),
+                            item.get("key")?.as_str()?.trim().to_string(),
+                        ))
+                    })
+                    .collect::<std::collections::HashSet<_>>()
+            })
+            .unwrap_or_default();
         let schema_map = attribute_repo
             .list_schemas(None)?
             .into_iter()
+            .filter(|schema| {
+                declared_attribute_keys.contains(&(schema.scope.clone(), schema.key.clone()))
+                    || schema
+                        .display_policy
+                        .get("applicable_world_ids")
+                        .and_then(|value| value.as_array())
+                        .map(|ids| ids.iter().any(|id| id.as_str() == Some(world.id.as_str())))
+                        .unwrap_or(false)
+            })
             .map(|schema| (schema.id.clone(), schema))
             .collect::<HashMap<_, _>>();
         let session_attributes =

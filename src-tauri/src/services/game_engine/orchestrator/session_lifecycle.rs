@@ -7,7 +7,7 @@ use crate::services::game_engine::service_mode::{
     agent_chat_virtual_player_id, agent_chat_virtual_player_name, resolve_service_runtime_config,
     ServiceMode,
 };
-use crate::services::map_topology::compile_map_topology;
+use crate::services::map_topology::{compile_map_topology, resolve_map_label};
 use rusqlite::Connection;
 
 use super::request_building::*;
@@ -84,7 +84,8 @@ impl SessionOrchestrator {
             .chain(visible_chars.iter().cloned())
             .collect::<Vec<_>>();
 
-        let opening_scene = world.opening_scene.trim().to_string();
+        let opening_scene = resolve_map_label(&world.map_nodes, &world.opening_scene)
+            .unwrap_or_else(|| world.opening_scene.trim().to_string());
         let map_topology = compile_map_topology(&world.map_nodes, &opening_scene);
 
         let session = SessionSnapshot {
@@ -206,10 +207,43 @@ impl SessionOrchestrator {
         conn: &Connection,
         session_id: &str,
     ) -> Result<SessionAssetContext, String> {
-        let session = crate::db::repositories::session_repo::SessionRepository::new(conn)
+        let session_repo = crate::db::repositories::session_repo::SessionRepository::new(conn);
+        let mut session = session_repo
             .get(session_id)?
             .ok_or_else(|| "Session not found".to_string())?;
         let world = resolve_world_for_session(conn, &session)?;
+        let canonical_location = resolve_map_label(&world.map_nodes, &session.location)
+            .unwrap_or_else(|| session.location.trim().to_string());
+        let map_topology = compile_map_topology(&world.map_nodes, &canonical_location);
+        let needs_map_repair = session.location != canonical_location
+            || session
+                .map_graph_nodes
+                .iter()
+                .filter(|node| node.current)
+                .count()
+                != map_topology.nodes.iter().filter(|node| node.current).count()
+            || session
+                .map_graph_nodes
+                .iter()
+                .any(|node| {
+                    node.current
+                        && !map_topology.nodes.iter().any(|candidate| {
+                            candidate.node_id == node.node_id && candidate.current
+                        })
+                });
+        if needs_map_repair {
+            session.location = canonical_location.clone();
+            if session.scene.name.trim().is_empty()
+                || resolve_map_label(&world.map_nodes, &session.scene.name)
+                    .as_deref()
+                    == Some(canonical_location.as_str())
+            {
+                session.scene.name = canonical_location;
+            }
+            session.map_graph_nodes = map_topology.nodes;
+            session.map_graph_edges = map_topology.edges;
+            session_repo.upsert(&session)?;
+        }
         let characters = crate::db::repositories::character_repo::CharacterRepository::new(conn)
             .list_by_world(&world.id)?;
         let settings = resolve_settings(conn)?;
