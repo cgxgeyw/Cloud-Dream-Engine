@@ -2624,14 +2624,29 @@ impl WorldDirectorService {
                     if !speaker.trim().is_empty() {
                         object.insert("speaker".to_string(), serde_json::Value::String(speaker));
                     }
+                    // 历史 metadata 只回传对下一回合有叙事价值的轻量字段（旁白、
+                    // 已调用工具摘要）。reasoning / raw_response / trace_lines 是
+                    // 上一回合导演与 NPC 的思维链和原始输出，单条可达数千字；
+                    // 回传会让导演输入逐轮膨胀并拉长思考。写回事实已由
+                    // current_state 与消息正文承载，无需从 metadata 恢复。
                     if let Some(metadata) = message.metadata.clone() {
-                        if metadata.is_object()
-                            && !metadata
-                                .as_object()
-                                .unwrap_or(&Default::default())
-                                .is_empty()
-                        {
-                            object.insert("metadata".to_string(), metadata);
+                        let filtered: serde_json::Map<String, serde_json::Value> = metadata
+                            .as_object()
+                            .map(|object| {
+                                object
+                                    .iter()
+                                    .filter(|(key, _)| {
+                                        matches!(key.as_str(), "narration" | "tool_activity")
+                                    })
+                                    .map(|(key, value)| (key.clone(), value.clone()))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        if !filtered.is_empty() {
+                            object.insert(
+                                "metadata".to_string(),
+                                serde_json::Value::Object(filtered),
+                            );
                         }
                     }
                 }
