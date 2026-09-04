@@ -249,7 +249,9 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             risk_level TEXT NOT NULL DEFAULT 'low',
             trigger_keywords_json TEXT NOT NULL DEFAULT '[]',
             input_schema_json TEXT NOT NULL DEFAULT '{\"type\":\"object\",\"properties\":{}}',
-            server_id TEXT NOT NULL DEFAULT ''
+            server_id TEXT NOT NULL DEFAULT '',
+            impl_kind TEXT NOT NULL DEFAULT 'mcp',
+            impl_config_json TEXT NOT NULL DEFAULT ''
         );
 
         -- MCP server 连接配置（第 7 项）。stdio 仅桌面端可用，http 全平台可用。

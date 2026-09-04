@@ -1,10 +1,12 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef, type ChangeEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useIsMobile } from "../components/ResponsiveLayout";
 import {
   createMcpTool,
   deleteMcpTool,
+  exportMcpTools,
   fetchMcpTools,
+  importMcpTools,
   updateMcpTool,
   fetchMcpServers,
   type McpServerConfig,
@@ -20,6 +22,16 @@ const defaultInputSchema: Record<string, unknown> = {
   properties: {},
 };
 
+/** 引擎硬编码内置工具 id（与后端 is_builtin_mcp_tool_id 保持一致）：显示为“内置”，不参与导出。 */
+const ENGINE_BUILTIN_TOOL_IDS = new Set([
+  "mcp-tool-list-scenes",
+  "mcp-tool-list-characters",
+  "mcp-tool-change-scene",
+  "mcp-tool-switch-player-character",
+  "mcp-tool-image-generation",
+  "mcp-tool-schedule-notification",
+]);
+
 const emptyDraft: McpToolUpsertRequest = {
   name: "",
   description: "",
@@ -31,9 +43,12 @@ const emptyDraft: McpToolUpsertRequest = {
   trigger_keywords: [],
   input_schema: defaultInputSchema,
   server_id: "",
+  impl_kind: "mcp",
+  impl_config: {},
 };
 
 const defaultInputSchemaText = JSON.stringify(defaultInputSchema, null, 2);
+const defaultImplConfigText = "{}";
 
 function keywordsToText(values: string[]) {
   return values.join(", ");
@@ -64,6 +79,45 @@ function parseInputSchema(value: string): Record<string, unknown> {
   }
   return parsed as Record<string, unknown>;
 }
+
+function implConfigToText(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return defaultImplConfigText;
+  }
+  return JSON.stringify(value, null, 2) ?? defaultImplConfigText;
+}
+
+function parseImplConfig(value: string): Record<string, unknown> {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return {};
+  }
+  const parsed = JSON.parse(trimmed) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("本地执行配置必须是 JSON 对象");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function resolveToolKindLabel(tool: McpToolResponse): string {
+  if (ENGINE_BUILTIN_TOOL_IDS.has(tool.id)) {
+    return "内置";
+  }
+  if (tool.impl_kind === "builtin_http") {
+    return "本地";
+  }
+  return "MCP";
+}
+
+const toolKindBadgeStyle = {
+  fontSize: 12,
+  padding: "1px 6px",
+  marginLeft: 6,
+  borderRadius: 6,
+  border: "1px solid currentColor",
+  opacity: 0.75,
+  verticalAlign: "middle",
+} as const;
 
 function resolveExposurePolicyMode(policy: string | Record<string, unknown> | undefined): string {
   if (typeof policy === "string") {
@@ -102,11 +156,15 @@ export function McpToolsPage() {
   const [draft, setDraft] = useState<McpToolUpsertRequest>(emptyDraft);
   const [keywordText, setKeywordText] = useState("");
   const [schemaText, setSchemaText] = useState(defaultInputSchemaText);
+  const [implConfigText, setImplConfigText] = useState(defaultImplConfigText);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   async function loadTools() {
     setLoading(true);
@@ -158,11 +216,39 @@ export function McpToolsPage() {
     );
   }
 
+  function renderImplKindPicker() {
+    return (
+      <label className="editor-field">
+        <span className="editor-field-label">实现方式</span>
+        <select value={draft.impl_kind} onChange={(event) => changeImplKind(event.target.value)}>
+          <option value="mcp">外部 MCP server</option>
+          <option value="builtin_http">本地 HTTP</option>
+        </select>
+      </label>
+    );
+  }
+
+  function renderImplConfigEditor(style?: { minHeight?: number }) {
+    return (
+      <label className="editor-field">
+        <span className="editor-field-label">本地执行配置（JSON）</span>
+        <textarea
+          value={implConfigText}
+          onChange={(event) => setImplConfigText(event.target.value)}
+          spellCheck={false}
+          placeholder='{"mode":"generic"}'
+          style={{ minHeight: style?.minHeight ?? 120, fontFamily: "Consolas, 'SFMono-Regular', monospace" }}
+        />
+      </label>
+    );
+  }
+
   function openCreateEditor() {
     setEditingId(null);
     setDraft(emptyDraft);
     setKeywordText("");
     setSchemaText(defaultInputSchemaText);
+    setImplConfigText(defaultImplConfigText);
     setEditorOpen(true);
     setError(null);
   }
@@ -180,9 +266,12 @@ export function McpToolsPage() {
       trigger_keywords: tool.trigger_keywords,
       input_schema: tool.input_schema ?? defaultInputSchema,
       server_id: tool.server_id ?? "",
+      impl_kind: tool.impl_kind || "mcp",
+      impl_config: tool.impl_config ?? {},
     });
     setKeywordText(keywordsToText(tool.trigger_keywords));
     setSchemaText(schemaToText(tool.input_schema));
+    setImplConfigText(implConfigToText(tool.impl_config));
     setEditorOpen(true);
     setError(null);
   }
@@ -192,15 +281,36 @@ export function McpToolsPage() {
     setDraft(emptyDraft);
     setKeywordText("");
     setSchemaText(defaultInputSchemaText);
+    setImplConfigText(defaultImplConfigText);
     setEditorOpen(false);
   }
 
+  function changeImplKind(implKind: string) {
+    // 本地实现不需要绑定外部 MCP server，切换时清空绑定。
+    setDraft({ ...draft, impl_kind: implKind, server_id: implKind === "builtin_http" ? "" : draft.server_id });
+  }
+
   async function saveDraft() {
+    let implConfig: Record<string, unknown> = {};
+    if (draft.impl_kind === "builtin_http") {
+      try {
+        implConfig = parseImplConfig(implConfigText);
+      } catch (parseError) {
+        showToast(parseError instanceof Error ? parseError.message : "本地执行配置不是合法 JSON", "error");
+        return;
+      }
+    }
     try {
       setSaving(true);
       setError(null);
       const inputSchema = parseInputSchema(schemaText);
-      const payload = { ...draft, trigger_keywords: textToKeywords(keywordText), input_schema: inputSchema };
+      const payload = {
+        ...draft,
+        trigger_keywords: textToKeywords(keywordText),
+        input_schema: inputSchema,
+        impl_config: implConfig,
+        server_id: draft.impl_kind === "builtin_http" ? "" : draft.server_id,
+      };
       const saved = editingId ? await updateMcpTool(editingId, payload) : await createMcpTool(payload);
       setTools((current) =>
         editingId ? current.map((tool) => (tool.id === saved.id ? saved : tool)) : [saved, ...current],
@@ -240,12 +350,77 @@ export function McpToolsPage() {
     }
   }
 
+  function pickImportFile() {
+    importInputRef.current?.click();
+  }
+
+  async function handleImportFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+    try {
+      setImporting(true);
+      setError(null);
+      const text = await file.text();
+      const summary = await importMcpTools(text);
+      showToast(`导入完成：新增 ${summary.imported}，更新 ${summary.updated}，跳过 ${summary.skipped}`, "success");
+      await loadTools();
+    } catch (importError) {
+      const message = importError instanceof Error ? importError.message : String(importError);
+      setError(message);
+      showToast(message, "error");
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function handleExport() {
+    const ids = tools.filter((tool) => !ENGINE_BUILTIN_TOOL_IDS.has(tool.id)).map((tool) => tool.id);
+    if (ids.length === 0) {
+      showToast("没有可导出的工具（内置工具不导出）", "error");
+      return;
+    }
+    try {
+      setExporting(true);
+      setError(null);
+      const json = await exportMcpTools(ids);
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "mcp-tools-export.json";
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      showToast("工具包已导出", "success");
+    } catch (exportError) {
+      const message = exportError instanceof Error ? exportError.message : "导出工具失败";
+      setError(message);
+      showToast(message, "error");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   // ===== Desktop Layout (双栏同时显示) =====
   const desktopLayout = (
     <ScreenLayout
       title="MCP 工具管理"
       subtitle="登记世界主控可按需调用的工具。未触发时不会把工具列表发送给模型。"
-      toolbar={<button type="button" className="action-btn" onClick={() => navigate("/")}>返回首页</button>}
+      toolbar={
+        <div style={{ display: "flex", gap: 8 }}>
+          <button type="button" className="action-btn" disabled={importing} onClick={pickImportFile}>
+            {importing ? "导入中..." : "导入工具"}
+          </button>
+          <button type="button" className="action-btn" disabled={exporting} onClick={() => void handleExport()}>
+            {exporting ? "导出中..." : "导出工具"}
+          </button>
+          <button type="button" className="action-btn" onClick={() => navigate("/")}>返回首页</button>
+        </div>
+      }
       maxWidth={1120}
     >
       <div style={{ marginBottom: 16 }}>
@@ -271,6 +446,7 @@ export function McpToolsPage() {
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
                   <div>
                     <strong>{tool.name}</strong>
+                    <span style={toolKindBadgeStyle}>{resolveToolKindLabel(tool)}</span>
                     <div className="text-muted" style={{ marginTop: 4 }}>{tool.server_name} / {tool.tool_name}{tool.server_id ? "" : " · 未绑定 server"}</div>
                   </div>
                   <span>{tool.enabled ? "启用" : "停用"} · {resolveExposurePolicyLabel(tool.exposure_policy)} · {resolveRiskLevelLabel(tool.risk_level)}</span>
@@ -290,8 +466,13 @@ export function McpToolsPage() {
           <strong style={{ fontSize: 20 }}>{editingId ? "编辑工具" : "新增工具"}</strong>
           <div className="grid grid--gap-sm" style={{ marginTop: 14 }}>
             <label className="editor-field"><span className="editor-field-label">显示名称</span><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></label>
-            <label className="editor-field"><span className="editor-field-label">MCP 服务（显示名）</span><input value={draft.server_name} onChange={(e) => setDraft({ ...draft, server_name: e.target.value })} /></label>
-            {renderServerPicker()}
+            {renderImplKindPicker()}
+            {draft.impl_kind === "builtin_http" ? renderImplConfigEditor({ minHeight: 140 }) : (
+              <>
+                <label className="editor-field"><span className="editor-field-label">MCP 服务（显示名）</span><input value={draft.server_name} onChange={(e) => setDraft({ ...draft, server_name: e.target.value })} /></label>
+                {renderServerPicker()}
+              </>
+            )}
             <label className="editor-field"><span className="editor-field-label">工具名</span><input value={draft.tool_name} onChange={(e) => setDraft({ ...draft, tool_name: e.target.value })} /></label>
             <label className="editor-field"><span className="editor-field-label">说明</span><textarea value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></label>
             <label className="editor-field"><span className="editor-field-label">参数 Schema</span><textarea value={schemaText} onChange={(e) => setSchemaText(e.target.value)} spellCheck={false} style={{ minHeight: 180, fontFamily: "Consolas, 'SFMono-Regular', monospace" }} /></label>
@@ -300,7 +481,7 @@ export function McpToolsPage() {
             <label className="editor-field"><span className="editor-field-label">风险等级</span><select value={draft.risk_level} onChange={(e) => setDraft({ ...draft, risk_level: e.target.value })}><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label>
             <label style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="checkbox" checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} />启用</label>
             <div style={{ display: "flex", gap: 8 }}>
-              <button type="button" className="action-btn action-btn--accent" disabled={saving || !draft.name.trim() || !draft.server_name.trim() || !draft.tool_name.trim()} onClick={() => void saveDraft()}>{saving ? "保存中..." : "保存"}</button>
+              <button type="button" className="action-btn action-btn--accent" disabled={saving || !draft.name.trim() || !draft.tool_name.trim() || (draft.impl_kind !== "builtin_http" && !draft.server_name.trim())} onClick={() => void saveDraft()}>{saving ? "保存中..." : "保存"}</button>
               <button type="button" className="action-btn" onClick={closeEditor}>清空</button>
             </div>
           </div>
@@ -342,15 +523,21 @@ export function McpToolsPage() {
                   />
                 </label>
 
-                <label className="field-label">
-                  <span className="field-label-text">服务名</span>
-                  <input
-                    value={draft.server_name}
-                    onChange={(event) => setDraft({ ...draft, server_name: event.target.value })}
-                    className="field-input"
-                  />
-                </label>
-                  {renderServerPicker()}
+                {renderImplKindPicker()}
+
+                {draft.impl_kind === "builtin_http" ? null : (
+                  <>
+                    <label className="field-label">
+                      <span className="field-label-text">服务名</span>
+                      <input
+                        value={draft.server_name}
+                        onChange={(event) => setDraft({ ...draft, server_name: event.target.value })}
+                        className="field-input"
+                      />
+                    </label>
+                    {renderServerPicker()}
+                  </>
+                )}
 
                 <label className="field-label">
                   <span className="field-label-text">工具名</span>
@@ -384,6 +571,8 @@ export function McpToolsPage() {
                   style={{ minHeight: 120, resize: "vertical" }}
                 />
               </label>
+
+              {draft.impl_kind === "builtin_http" ? renderImplConfigEditor({ minHeight: 140 }) : null}
 
               <label className="field-label">
                 <span className="field-label-text">参数 Schema</span>
@@ -437,7 +626,7 @@ export function McpToolsPage() {
                 <button
                   type="button"
                   className="action-btn action-btn--accent"
-                  disabled={saving || !draft.name.trim() || !draft.server_name.trim() || !draft.tool_name.trim()}
+                  disabled={saving || !draft.name.trim() || !draft.tool_name.trim() || (draft.impl_kind !== "builtin_http" && !draft.server_name.trim())}
                   onClick={() => void saveDraft()}
                 >
                   {saving ? "保存中..." : "保存"}
@@ -455,9 +644,17 @@ export function McpToolsPage() {
             <div className="settings-detail-head-copy">
               <strong>{"MCP \u5de5\u5177"}</strong>
             </div>
-            <button type="button" className="action-btn action-btn--accent" onClick={openCreateEditor}>
-              + 新增工具
-            </button>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button type="button" className="action-btn" disabled={importing} onClick={pickImportFile}>
+                导入
+              </button>
+              <button type="button" className="action-btn" disabled={exporting} onClick={() => void handleExport()}>
+                导出
+              </button>
+              <button type="button" className="action-btn action-btn--accent" onClick={openCreateEditor}>
+                + 新增工具
+              </button>
+            </div>
           </div>
 
           <SurfacePanel className="surface-panel--pad-lg">
@@ -473,6 +670,7 @@ export function McpToolsPage() {
                     <div className="mcp-tool-card-head">
                       <div className="mcp-tool-card-copy">
                         <strong>{tool.name}</strong>
+                        <span style={toolKindBadgeStyle}>{resolveToolKindLabel(tool)}</span>
                       </div>
                       <div className="mcp-tool-card-meta">
                         <button
@@ -507,5 +705,16 @@ export function McpToolsPage() {
     </ScreenLayout>
   );
 
-  return isMobile ? mobileLayout : desktopLayout;
+  return (
+    <>
+      <input
+        ref={importInputRef}
+        type="file"
+        accept=".json,application/json"
+        style={{ display: "none" }}
+        onChange={(event) => void handleImportFile(event)}
+      />
+      {isMobile ? mobileLayout : desktopLayout}
+    </>
+  );
 }

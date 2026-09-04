@@ -15,14 +15,15 @@ use crate::services::game_ui::GameUiService;
 use crate::state::AppState;
 
 const WORLD_PACKAGE_FORMAT: &str = "dream-world-package";
-const WORLD_PACKAGE_VERSION: u32 = 7;
-const LEGACY_WORLD_PACKAGE_VERSIONS: [u32; 2] = [5, 6];
+const WORLD_PACKAGE_VERSION: u32 = 8;
+const LEGACY_WORLD_PACKAGE_VERSIONS: [u32; 3] = [5, 6, 7];
 const WORLD_PACKAGE_FILE: &str = "world/world.json";
 const WORLD_PACKAGE_DESKTOP_UI_FILE: &str = "world/ui.desktop.jsonc";
 const WORLD_PACKAGE_MOBILE_UI_FILE: &str = "world/ui.mobile.jsonc";
 const WORLD_PACKAGE_DESKTOP_UI_STYLESHEET: &str = "world/ui.desktop.css";
 const WORLD_PACKAGE_MOBILE_UI_STYLESHEET: &str = "world/ui.mobile.css";
 const WORLD_PACKAGE_LOGIC_FILE: &str = "world/logic.js";
+const WORLD_PACKAGE_MCP_TOOLS_FILE: &str = "tools.json";
 const MAX_WORLD_LOGIC_BYTES: usize = 256 * 1024;
 
 pub struct ImportedWorldPackage {
@@ -35,6 +36,8 @@ pub struct ImportedWorldPackage {
     pub ui_capabilities: Vec<String>,
     pub characters: Vec<CharacterPackageData>,
     pub asset_map: HashMap<String, String>,
+    /// v8：包内嵌的 MCP 工具定义（导入时 upsert 到工具表）。
+    pub mcp_tools: Vec<crate::models::mcp_tool::McpToolDefinition>,
 }
 
 pub struct WorldPackageService;
@@ -44,6 +47,7 @@ impl WorldPackageService {
         data_dir: &Path,
         world: &WorldDefinition,
         characters: &[CharacterDefinition],
+        mcp_tools: &[crate::models::mcp_tool::McpToolDefinition],
     ) -> Result<BinaryFileResponse, String> {
         let assets_root = assets_root(data_dir);
         if let Some(source) = world_logic_source(world) {
@@ -54,7 +58,30 @@ impl WorldPackageService {
                 ));
             }
         }
-        let manifest = build_manifest(world, characters, &assets_root)?;
+        // v8：把世界白名单（allowed_mcp_tool_ids）引用到的工具定义内嵌进包，
+        // 导入方无需单独导入工具包。引擎硬编码内置工具不嵌入。
+        let allowed_tool_ids: std::collections::BTreeSet<String> = world
+            .director_config
+            .get("allowed_mcp_tool_ids")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(str::trim).map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let bundled_tools: Vec<crate::models::mcp_tool::McpToolDefinition> = mcp_tools
+            .iter()
+            .filter(|tool| allowed_tool_ids.contains(&tool.id))
+            .filter(|tool| !crate::models::mcp_tool::is_builtin_mcp_tool_id(&tool.id))
+            .cloned()
+            .collect();
+
+        let mut manifest = build_manifest(world, characters, &assets_root)?;
+        if !bundled_tools.is_empty() {
+            manifest.mcp_tools_file = Some(WORLD_PACKAGE_MCP_TOOLS_FILE.to_string());
+        }
         let world_data = to_world_package_data(world, characters);
         let character_data: Vec<(WorldPackageCharacterFileEntry, CharacterPackageData)> =
             characters
@@ -104,6 +131,24 @@ impl WorldPackageService {
                         .as_bytes(),
                 )
                 .map_err(|e| e.to_string())?;
+
+            if !bundled_tools.is_empty() {
+                let tools_payload = serde_json::json!({
+                    "format": "dream-mcp-tools",
+                    "version": 1,
+                    "tools": bundled_tools,
+                });
+                archive
+                    .start_file(WORLD_PACKAGE_MCP_TOOLS_FILE, options)
+                    .map_err(|e| e.to_string())?;
+                archive
+                    .write_all(
+                        serde_json::to_string_pretty(&tools_payload)
+                            .map_err(|e| e.to_string())?
+                            .as_bytes(),
+                    )
+                    .map_err(|e| e.to_string())?;
+            }
 
             archive
                 .start_file(WORLD_PACKAGE_FILE, options)
@@ -355,6 +400,12 @@ impl WorldPackageService {
         }
 
         let ui_capabilities = package_world.ui_capabilities.clone();
+        let package_mcp_tools = match manifest.mcp_tools_file.as_deref() {
+            Some(tools_file) => {
+                read_package_mcp_tools(&mut archive, tools_file)?
+            }
+            None => Vec::new(),
+        };
         Ok(ImportedWorldPackage {
             world: package_world,
             desktop_ui_source,
@@ -365,6 +416,7 @@ impl WorldPackageService {
             ui_capabilities,
             characters: package_characters,
             asset_map,
+            mcp_tools: package_mcp_tools,
         })
     }
 
@@ -787,6 +839,7 @@ fn build_manifest(
         desktop_ui_stylesheet_file: Some(WORLD_PACKAGE_DESKTOP_UI_STYLESHEET.to_string()),
         mobile_ui_stylesheet_file: Some(WORLD_PACKAGE_MOBILE_UI_STYLESHEET.to_string()),
         logic_file: world_logic_source(world).map(|_| WORLD_PACKAGE_LOGIC_FILE.to_string()),
+        mcp_tools_file: None,
         characters_file: None,
         character_files,
         assets,
@@ -979,6 +1032,37 @@ fn read_json_from_zip<T: serde::de::DeserializeOwned>(
     serde_json::from_str(&text).map_err(|e| e.to_string())
 }
 
+/// 读取包内嵌的 MCP 工具定义（dream-mcp-tools 格式，与独立工具包一致）。
+/// 引擎硬编码内置工具一律跳过，避免覆盖宿主行为。
+fn read_package_mcp_tools(
+    archive: &mut zip::ZipArchive<Cursor<Vec<u8>>>,
+    path: &str,
+) -> Result<Vec<crate::models::mcp_tool::McpToolDefinition>, String> {
+    let payload: serde_json::Value = read_json_from_zip(archive, path)
+        .map_err(|e| format!("Invalid bundled MCP tools file: {e}"))?;
+    if payload.get("format").and_then(|value| value.as_str()) != Some("dream-mcp-tools") {
+        return Err("内嵌工具文件格式无效（format 应为 dream-mcp-tools）".to_string());
+    }
+    let tools = payload
+        .get("tools")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| "内嵌工具文件缺少 tools 数组".to_string())?;
+    let mut parsed = Vec::new();
+    for (index, item) in tools.iter().enumerate() {
+        let tool: crate::models::mcp_tool::McpToolDefinition =
+            serde_json::from_value(item.clone())
+                .map_err(|e| format!("内嵌工具第 {} 项解析失败：{e}", index + 1))?;
+        if tool.id.trim().is_empty() || tool.name.trim().is_empty() {
+            return Err(format!("内嵌工具第 {} 项缺少 id 或 name", index + 1));
+        }
+        if crate::models::mcp_tool::is_builtin_mcp_tool_id(&tool.id) {
+            continue;
+        }
+        parsed.push(tool);
+    }
+    Ok(parsed)
+}
+
 fn read_text_from_zip(
     archive: &mut zip::ZipArchive<Cursor<Vec<u8>>>,
     path: &str,
@@ -1118,5 +1202,120 @@ mod tests {
         assert_eq!(imported.characters.len(), 1);
         assert_eq!(imported.characters[0].name, "记账助手");
         assert!(imported.characters[0].model.is_empty());
+    }
+
+    /// stock-analyst 是单智能体 + 自定义 MCP 工具的组合，导入器必须完整保留
+    /// service_mode、default_agent_id 与 allowed_mcp_tool_ids —— 少任何一项，
+    /// 世界就会退回多角色模式或拿不到行情工具。
+    #[test]
+    fn imports_stock_analyst_example_package() {
+        let files = [
+            (
+                "manifest.json",
+                include_str!("../../../examples/world-packages/stock-analyst/manifest.json"),
+            ),
+            (
+                "world/world.json",
+                include_str!("../../../examples/world-packages/stock-analyst/world/world.json"),
+            ),
+            (
+                "world/ui.desktop.jsonc",
+                include_str!(
+                    "../../../examples/world-packages/stock-analyst/world/ui.desktop.jsonc"
+                ),
+            ),
+            (
+                "world/ui.mobile.jsonc",
+                include_str!(
+                    "../../../examples/world-packages/stock-analyst/world/ui.mobile.jsonc"
+                ),
+            ),
+            (
+                "world/ui.desktop.css",
+                include_str!("../../../examples/world-packages/stock-analyst/world/ui.desktop.css"),
+            ),
+            (
+                "world/ui.mobile.css",
+                include_str!("../../../examples/world-packages/stock-analyst/world/ui.mobile.css"),
+            ),
+            (
+                "characters/analyst/character.json",
+                include_str!(
+                    "../../../examples/world-packages/stock-analyst/characters/analyst/character.json"
+                ),
+            ),
+            (
+                "tools.json",
+                include_str!("../../../examples/world-packages/stock-analyst/tools.json"),
+            ),
+        ];
+
+        let mut buffer = Cursor::new(Vec::new());
+        {
+            let mut archive = zip::ZipWriter::new(&mut buffer);
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            for (path, source) in files {
+                archive.start_file(path, options).expect("start zip entry");
+                archive
+                    .write_all(source.as_bytes())
+                    .expect("write zip entry");
+            }
+            archive.finish().expect("finish package");
+        }
+
+        let imported =
+            WorldPackageService::import_package_archive(Path::new("."), buffer.into_inner())
+                .expect("import stock analyst package");
+
+        assert_eq!(imported.world.name, "A股投研助手");
+        assert_eq!(imported.ui_runtime_version, 3);
+        assert_eq!(imported.characters.len(), 1);
+        assert_eq!(imported.characters[0].name, "研究员");
+
+        let director_config = &imported.world.director_config;
+        assert_eq!(
+            director_config.get("service_mode").and_then(|v| v.as_str()),
+            Some("agent_chat"),
+            "单智能体模式必须保留，否则会退回多角色叙事"
+        );
+        assert_eq!(
+            director_config
+                .get("default_agent_id")
+                .and_then(|v| v.as_str()),
+            Some("analyst"),
+            "默认回复角色丢失会导致会话创建失败或选错角色"
+        );
+        let allowed = director_config
+            .get("allowed_mcp_tool_ids")
+            .and_then(|v| v.as_array())
+            .expect("allowed_mcp_tool_ids")
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            allowed,
+            vec![
+                "mcp-tool-stock-quote",
+                "mcp-tool-stock-kline-daily",
+                "mcp-tool-stock-kline-daily-sina",
+                "mcp-tool-stock-announcements",
+                "mcp-tool-market-news",
+            ],
+            "五个行情工具的授权必须完整保留"
+        );
+        // v8：包内嵌工具定义必须完整解析出来（导入时由 world_service upsert）。
+        assert_eq!(imported.mcp_tools.len(), 5, "内嵌工具定义丢失");
+        assert!(imported
+            .mcp_tools
+            .iter()
+            .any(|tool| tool.tool_name == "stock_kline_daily_sina"));
+        // agent_chat 下主控提示词不生效，必须留空以免误导后续维护者。
+        assert_eq!(
+            director_config
+                .get("world_director_prompt")
+                .and_then(|v| v.as_str()),
+            Some("")
+        );
     }
 }

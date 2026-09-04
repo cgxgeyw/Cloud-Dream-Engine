@@ -17,6 +17,7 @@ import type {
   ImageModelTestRequest,
   McpServerUpsertRequest,
   McpToolCreateRequest,
+  McpToolImportSummary,
   ModelConfig,
   PlayerActionRequest,
   RetryFailedLlmStepRequest,
@@ -166,6 +167,7 @@ export type {
   McpToolResponse,
   McpToolCreateRequest,
   McpToolUpsertRequest,
+  McpToolImportSummary,
   McpServerConfig,
   McpServerUpsertRequest,
   McpServerProbeResult,
@@ -645,6 +647,21 @@ export async function updateMcpTool(toolId: string, payload: McpToolCreateReques
 
 export async function deleteMcpTool(toolId: string) {
   return isTauri ? (await getTauri()).deleteMcpTool(toolId) : (await getHttp()).deleteMcpTool(toolId);
+}
+
+// 工具包导入/导出只有 Tauri 命令（无 HTTP 路由），与 getExportDirectorySuggestion 一样仅桌面/安卓可用。
+export async function exportMcpTools(ids: string[]): Promise<string> {
+  if (!isTauri) {
+    throw new Error("工具导出仅在 Tauri 模式下可用");
+  }
+  return (await getTauri()).exportMcpTools(ids);
+}
+
+export async function importMcpTools(json: string): Promise<McpToolImportSummary> {
+  if (!isTauri) {
+    throw new Error("工具导入仅在 Tauri 模式下可用");
+  }
+  return (await getTauri()).importMcpTools(json);
 }
 
 export async function fetchAttributeSchemas(scope?: string) {

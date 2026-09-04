@@ -645,6 +645,10 @@ export type McpToolResponse = {
   input_schema: Record<string, unknown>;
   /** 绑定的 MCP server（mcp_servers.id）；为空表示未绑定，不会下发给模型 */
   server_id: string;
+  /** 实现方式："mcp"（默认，走外部 server）| "builtin_http"（本地执行，无需 server） */
+  impl_kind: string;
+  /** builtin_http 的执行配置（generic / template 等模式） */
+  impl_config: Record<string, unknown>;
 };
 
 export type McpToolCreateRequest = {
@@ -659,9 +663,20 @@ export type McpToolCreateRequest = {
   input_schema: Record<string, unknown>;
   /** 绑定的 MCP server（mcp_servers.id）；为空表示未绑定，不会下发给模型 */
   server_id: string;
+  /** 实现方式："mcp"（默认，走外部 server）| "builtin_http"（本地执行，无需 server） */
+  impl_kind: string;
+  /** builtin_http 的执行配置（generic / template 等模式） */
+  impl_config: Record<string, unknown>;
 };
 
 export type McpToolUpsertRequest = McpToolCreateRequest;
+
+/** import_mcp_tools 的导入结果统计。 */
+export type McpToolImportSummary = {
+  imported: number;
+  updated: number;
+  skipped: number;
+};
 
 // ==============================
 // Attribute

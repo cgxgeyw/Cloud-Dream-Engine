@@ -21,7 +21,7 @@ use crate::services::game_engine::orchestrator::{
     build_character_prompt_artifacts, build_character_response_schema,
 };
 use crate::services::game_engine::prompting::{build_prompt_call, llm_chat_messages_to_values};
-use crate::services::map_topology::compile_map_topology;
+use crate::services::map_topology::{compile_map_topology, resolve_map_label};
 use crate::services::world_package::{ImportedWorldPackage, WorldPackageService};
 
 pub struct WorldService {
@@ -317,8 +317,11 @@ impl WorldService {
                 .ok_or_else(|| "World not found".to_string())?,
         );
         let characters = char_repo.list_by_world(world_id)?;
+        // v8：世界白名单引用到的 MCP 工具一并打包，导入方开箱即用。
+        let mcp_tools =
+            crate::db::repositories::mcp_tool_repo::McpToolRepository::new(conn).list()?;
 
-        WorldPackageService::build_package(data_dir, &world, &characters)
+        WorldPackageService::build_package(data_dir, &world, &characters, &mcp_tools)
     }
 
     /// H8: 解压 + 资产落盘(无 DB,可在锁外执行),与 DB 持久化分离。
@@ -455,6 +458,13 @@ impl WorldService {
             .and_then(|value| value.as_str())
             .map(|value| value.trim().to_string())
             .unwrap_or_default();
+        // 主控每回合的运行时规则（数据管家、回合流程等）必须随配置保留，
+        // 否则世界在编辑器里保存一次就会被静默清空。
+        let runtime_context_prompt = object
+            .get("runtime_context_prompt")
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string())
+            .unwrap_or_default();
         let director_model = object
             .get("director_model")
             .and_then(|value| value.as_str())
@@ -514,6 +524,7 @@ impl WorldService {
             "director_stage_labels": director_stage_labels,
             "director_model": director_model,
             "world_director_prompt": world_director_prompt,
+            "runtime_context_prompt": runtime_context_prompt,
             "prompt_presets": prompt_presets,
             "director_interaction_kinds": director_interaction_kinds,
             "return_processing_rules": return_processing_rules,
@@ -679,6 +690,37 @@ impl WorldService {
         let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
         let world_repo = WorldRepository::new(&tx);
         let char_repo = CharacterRepository::new(&tx);
+        // v8：包内嵌的 MCP 工具先 upsert（按 id 存在则整行更新），
+        // 世界白名单里的 id 因此保持稳定，导入完成即可调用。
+        if !imported.mcp_tools.is_empty() {
+            let tool_repo = crate::db::repositories::mcp_tool_repo::McpToolRepository::new(&tx);
+            let existing_tool_ids: std::collections::BTreeSet<String> = tool_repo
+                .list()?
+                .into_iter()
+                .map(|tool| tool.id)
+                .collect();
+            for tool in &imported.mcp_tools {
+                let request = crate::models::mcp_tool::McpToolCreateRequest {
+                    name: tool.name.clone(),
+                    description: tool.description.clone(),
+                    server_name: tool.server_name.clone(),
+                    tool_name: tool.tool_name.clone(),
+                    enabled: tool.enabled,
+                    exposure_policy: tool.exposure_policy.clone(),
+                    risk_level: tool.risk_level.clone(),
+                    trigger_keywords: tool.trigger_keywords.clone(),
+                    input_schema: tool.input_schema.clone(),
+                    server_id: tool.server_id.clone(),
+                    impl_kind: tool.impl_kind.clone(),
+                    impl_config: tool.impl_config.clone(),
+                };
+                if existing_tool_ids.contains(&tool.id) {
+                    tool_repo.update(&tool.id, &request)?;
+                } else {
+                    tool_repo.insert_with_id(&tool.id, &request)?;
+                }
+            }
+        }
         let created_world = world_repo.create(&WorldCreateRequest {
             name: imported_world.name.clone(),
             genre: imported_world.genre.clone(),
@@ -889,7 +931,8 @@ impl WorldService {
         planned_characters: &[CharacterDefinition],
         opening_messages: &[ChatMessage],
     ) -> SessionSnapshot {
-        let opening_scene = Self::normalize_opening_scene(world);
+        let opening_scene = resolve_map_label(&world.map_nodes, &world.opening_scene)
+            .unwrap_or_else(|| Self::normalize_opening_scene(world));
         let player_character_id = player_character
             .map(|character| character.id.clone())
             .unwrap_or_default();
@@ -1287,6 +1330,7 @@ mod tests {
                 imported_character("failure", "Imported Failure"),
             ],
             asset_map: HashMap::new(),
+            mcp_tools: Vec::new(),
         };
 
         let error = WorldService::new()

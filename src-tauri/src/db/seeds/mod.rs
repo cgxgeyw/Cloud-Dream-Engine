@@ -529,8 +529,46 @@ fn ensure_builtin_mcp_tools(conn: &Connection) -> Result<(), rusqlite::Error> {
         )?;
     }
 
+    // 基础 HTTP 工具（本地工具框架）：由核心直接执行，桌面与 Android 均可用。
+    // 默认只种子这一个本地工具；股票等数据接口工具以工具包 JSON 形式按需导入。
+    conn.execute(
+        "
+        INSERT INTO mcp_tools (
+            id, name, description, server_name, tool_name, enabled, exposure_policy_json, risk_level, trigger_keywords_json, input_schema_json, server_id, impl_kind, impl_config_json
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, '', ?11, ?12)
+        ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            description = excluded.description,
+            server_name = excluded.server_name,
+            tool_name = excluded.tool_name,
+            enabled = excluded.enabled,
+            exposure_policy_json = excluded.exposure_policy_json,
+            risk_level = excluded.risk_level,
+            trigger_keywords_json = excluded.trigger_keywords_json,
+            input_schema_json = excluded.input_schema_json,
+            impl_kind = excluded.impl_kind,
+            impl_config_json = excluded.impl_config_json
+        ",
+        params![
+            "mcp-tool-http-request",
+            "HTTP 请求",
+            "发起一次 HTTP 请求并返回响应内容。仅在用户或世界明确要求访问某个地址时使用；优先使用 https。",
+            "builtin-local",
+            "http_request",
+            1,
+            r#""on-demand""#,
+            "high",
+            r#"["http","url","fetch","request","网页","接口"]"#,
+            r#"{"type":"object","required":["url"],"properties":{"url":{"type":"string","description":"完整请求地址，http 或 https"},"method":{"type":"string","description":"HTTP 方法，默认 GET"},"headers":{"type":"object","description":"请求头"},"params":{"type":"object","description":"URL 查询参数"},"body":{"type":"object","description":"JSON 请求体（POST/PUT 时）"}}}"#,
+            "builtin_http",
+            r#"{"mode":"generic"}"#,
+        ],
+    )?;
+
     Ok(())
 }
+
 fn ensure_core_seed_data(conn: &Connection) -> Result<(), rusqlite::Error> {
     if sample_world_seeding_enabled() {
         let world_count: i64 =

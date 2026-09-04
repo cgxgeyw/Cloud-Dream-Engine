@@ -121,6 +121,10 @@ pub struct WorldPackageManifest {
     pub mobile_ui_stylesheet_file: Option<String>,
     #[serde(default)]
     pub logic_file: Option<String>,
+    /// v8：世界包内嵌的 MCP 工具定义文件（dream-mcp-tools 格式），
+    /// 导入世界时自动 upsert，免去单独导入工具包的步骤。
+    #[serde(default)]
+    pub mcp_tools_file: Option<String>,
     pub characters_file: Option<String>,
     pub character_files: Vec<WorldPackageCharacterFileEntry>,
     pub assets: Vec<WorldPackageAssetEntry>,

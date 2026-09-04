@@ -15,7 +15,7 @@ impl<'a> McpToolRepository<'a> {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, name, description, server_name, tool_name, enabled, exposure_policy_json, risk_level, trigger_keywords_json, input_schema_json, server_id FROM mcp_tools ORDER BY name",
+                "SELECT id, name, description, server_name, tool_name, enabled, exposure_policy_json, risk_level, trigger_keywords_json, input_schema_json, server_id, impl_kind, impl_config_json FROM mcp_tools ORDER BY name",
             )
             .map_err(|e| e.to_string())?;
 
@@ -39,6 +39,9 @@ impl<'a> McpToolRepository<'a> {
                         }),
                     ),
                     server_id: row.get(10)?,
+                    impl_kind: row.get(11)?,
+                    impl_config: serde_json::from_str(&row.get::<_, String>(12)?)
+                        .unwrap_or_default(),
                 })
             })
             .map_err(|e| e.to_string())?
@@ -58,12 +61,21 @@ impl<'a> McpToolRepository<'a> {
                 &uuid::Uuid::new_v4().simple().to_string()[..4]
             );
         }
+        self.insert_with_id(&id, req)
+    }
+
+    /// 按指定 id 插入（工具包导入用，保留 id 以便世界白名单引用不漂移）。
+    pub fn insert_with_id(
+        &self,
+        id: &str,
+        req: &McpToolCreateRequest,
+    ) -> Result<McpToolDefinition, String> {
         let exposure_policy = normalize_exposure_policy(req.exposure_policy.clone());
         let risk_level = normalize_risk_level(&req.risk_level);
         let trigger_keywords = normalize_keywords(&req.trigger_keywords);
         let input_schema = normalize_input_schema(req.input_schema.clone());
         self.conn.execute(
-            "INSERT INTO mcp_tools (id, name, description, server_name, tool_name, enabled, exposure_policy_json, risk_level, trigger_keywords_json, input_schema_json, server_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO mcp_tools (id, name, description, server_name, tool_name, enabled, exposure_policy_json, risk_level, trigger_keywords_json, input_schema_json, server_id, impl_kind, impl_config_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 id,
                 req.name.trim(),
@@ -78,12 +90,14 @@ impl<'a> McpToolRepository<'a> {
                     serde_json::to_string(&default_input_schema()).unwrap_or_default()
                 }),
                 req.server_id.trim(),
+                normalize_impl_kind(&req.impl_kind),
+                serde_json::to_string(&req.impl_config).unwrap_or_default(),
             ],
         )
         .map_err(|e| e.to_string())?;
 
         Ok(McpToolDefinition {
-            id,
+            id: id.to_string(),
             name: req.name.trim().to_string(),
             description: req.description.trim().to_string(),
             server_name: req.server_name.trim().to_string(),
@@ -94,6 +108,8 @@ impl<'a> McpToolRepository<'a> {
             trigger_keywords,
             input_schema,
             server_id: req.server_id.trim().to_string(),
+            impl_kind: normalize_impl_kind(&req.impl_kind).to_string(),
+            impl_config: req.impl_config.clone(),
         })
     }
 
@@ -107,7 +123,7 @@ impl<'a> McpToolRepository<'a> {
         let trigger_keywords = normalize_keywords(&req.trigger_keywords);
         let input_schema = normalize_input_schema(req.input_schema.clone());
         self.conn.execute(
-            "UPDATE mcp_tools SET name = ?1, description = ?2, server_name = ?3, tool_name = ?4, enabled = ?5, exposure_policy_json = ?6, risk_level = ?7, trigger_keywords_json = ?8, input_schema_json = ?9, server_id = ?10 WHERE id = ?11",
+            "UPDATE mcp_tools SET name = ?1, description = ?2, server_name = ?3, tool_name = ?4, enabled = ?5, exposure_policy_json = ?6, risk_level = ?7, trigger_keywords_json = ?8, input_schema_json = ?9, server_id = ?10, impl_kind = ?12, impl_config_json = ?13 WHERE id = ?11",
             params![
                 req.name.trim(),
                 req.description.trim(),
@@ -122,6 +138,8 @@ impl<'a> McpToolRepository<'a> {
                 }),
                 req.server_id.trim(),
                 id,
+                normalize_impl_kind(&req.impl_kind),
+                serde_json::to_string(&req.impl_config).unwrap_or_default(),
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -129,7 +147,7 @@ impl<'a> McpToolRepository<'a> {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, name, description, server_name, tool_name, enabled, exposure_policy_json, risk_level, trigger_keywords_json, input_schema_json, server_id FROM mcp_tools WHERE id = ?1",
+                "SELECT id, name, description, server_name, tool_name, enabled, exposure_policy_json, risk_level, trigger_keywords_json, input_schema_json, server_id, impl_kind, impl_config_json FROM mcp_tools WHERE id = ?1",
             )
             .map_err(|e| e.to_string())?;
         let mut rows = stmt
@@ -152,6 +170,9 @@ impl<'a> McpToolRepository<'a> {
                         }),
                     ),
                     server_id: row.get(10)?,
+                    impl_kind: row.get(11)?,
+                    impl_config: serde_json::from_str(&row.get::<_, String>(12)?)
+                        .unwrap_or_default(),
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -210,6 +231,15 @@ fn normalize_tool_id(name: &str) -> String {
         )
     } else {
         format!("mcp-tool-{slug}")
+    }
+}
+
+fn normalize_impl_kind(value: &str) -> &'static str {
+    match value.trim() {
+        crate::models::mcp_tool::MCP_TOOL_IMPL_BUILTIN_HTTP => {
+            crate::models::mcp_tool::MCP_TOOL_IMPL_BUILTIN_HTTP
+        }
+        _ => crate::models::mcp_tool::MCP_TOOL_IMPL_MCP,
     }
 }
 

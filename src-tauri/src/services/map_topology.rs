@@ -28,6 +28,18 @@ pub fn extract_scene_names(value: &Value) -> Vec<String> {
     compile_map_topology(value, "").scene_names
 }
 
+/// Resolve a runtime location to the configured map label when it is an exact
+/// match or a qualified label such as `Region · Scene`.
+pub fn resolve_map_label(value: &Value, location: &str) -> Option<String> {
+    let location = location.trim();
+    if location.is_empty() {
+        return None;
+    }
+    extract_scene_names(value)
+        .into_iter()
+        .find(|label| map_labels_match(label, location))
+}
+
 pub fn compile_map_topology(value: &Value, current_scene: &str) -> CompiledMapTopology {
     let mut flat_nodes = Vec::new();
     let mut explicit_edges = Vec::new();
@@ -108,7 +120,7 @@ pub fn compile_map_topology(value: &Value, current_scene: &str) -> CompiledMapTo
     let current_scene = current_scene.trim();
     let scene_names = nodes.iter().map(|(node, _)| node.label.clone()).collect::<Vec<_>>();
     let mut session_nodes = nodes.into_iter().map(|(mut node, _)| {
-        node.current = !current_scene.is_empty() && node.label.trim() == current_scene;
+        node.current = !current_scene.is_empty() && map_labels_match(&node.label, current_scene);
         node
     }).collect::<Vec<_>>();
     if !current_scene.is_empty() && !session_nodes.iter().any(|node| node.current) {
@@ -135,6 +147,33 @@ fn collect_hierarchy_nodes(value: &Value, parent_id: Option<String>, nodes: &mut
             collect_hierarchy_nodes(child, current_id.clone(), nodes);
         }
     }
+}
+
+fn map_labels_match(configured: &str, requested: &str) -> bool {
+    let configured = configured.trim();
+    let requested = requested.trim();
+    if configured.is_empty() || requested.is_empty() {
+        return false;
+    }
+    if configured == requested {
+        return true;
+    }
+    let configured_suffix = map_label_suffix(configured);
+    let requested_suffix = map_label_suffix(requested);
+    (configured_suffix != configured && configured_suffix == requested)
+        || (requested_suffix != requested && requested_suffix == configured)
+        || (configured_suffix != configured
+            && requested_suffix != requested
+            && configured_suffix == requested_suffix)
+}
+
+fn map_label_suffix(value: &str) -> &str {
+    value
+        .rsplit(|character| matches!(character, '·' | '/' | '\\' | ':' | '|'))
+        .next()
+        .map(str::trim)
+        .filter(|suffix| !suffix.is_empty())
+        .unwrap_or(value.trim())
 }
 
 fn collect_single_node(value: &Value, parent_id: Option<String>, nodes: &mut Vec<FlatMapNode>) -> Option<String> {
@@ -204,4 +243,33 @@ fn empty_map_topology() -> Value {
         "version": 1,
         "nodes": []
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{compile_map_topology, resolve_map_label};
+
+    fn map() -> serde_json::Value {
+        serde_json::json!({
+            "nodes": [
+                { "id": "mountain", "label": "彩霞山" },
+                { "id": "gate", "label": "七玄门山门" }
+            ],
+            "edges": [{ "source": "彩霞山", "target": "七玄门山门" }]
+        })
+    }
+
+    #[test]
+    fn qualified_opening_location_uses_existing_map_node() {
+        let topology = compile_map_topology(&map(), "彩霞山 · 七玄门山门");
+        assert_eq!(topology.nodes.len(), 2);
+        assert!(topology
+            .nodes
+            .iter()
+            .any(|node| node.label == "七玄门山门" && node.current));
+        assert_eq!(
+            resolve_map_label(&map(), "彩霞山 · 七玄门山门"),
+            Some("七玄门山门".to_string())
+        );
+    }
 }

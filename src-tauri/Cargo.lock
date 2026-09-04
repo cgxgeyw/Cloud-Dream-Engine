@@ -1059,6 +1059,7 @@ dependencies = [
  "candle-transformers",
  "chrono",
  "embed-resource",
+ "encoding_rs",
  "futures",
  "json5",
  "notify-rust",

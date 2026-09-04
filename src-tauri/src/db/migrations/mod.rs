@@ -15,7 +15,8 @@ const MIGRATION_MCP_SERVERS: i64 = 8;
 const MIGRATION_GENERATION_PARAMS: i64 = 9;
 const MIGRATION_MODEL_INPUT_MODALITIES: i64 = 10;
 const MIGRATION_WORLD_FEATURE_GRANTS: i64 = 11;
-const CURRENT_SCHEMA_VERSION: i64 = MIGRATION_WORLD_FEATURE_GRANTS;
+const MIGRATION_MCP_TOOL_IMPL: i64 = 12;
+const CURRENT_SCHEMA_VERSION: i64 = MIGRATION_MCP_TOOL_IMPL;
 
 fn ensure_column(
     conn: &Connection,
@@ -359,6 +360,14 @@ fn migrate_mcp_servers(conn: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
+/// v12：本地工具框架。impl_kind=mcp（默认，外部 server）或 builtin_http（Rust 核心
+/// 直接执行 HTTP，无需 server）；impl_config_json 存 builtin_http 的执行配置。
+fn migrate_mcp_tool_impl(conn: &Connection) -> Result<(), rusqlite::Error> {
+    ensure_column(conn, "mcp_tools", "impl_kind", "TEXT NOT NULL DEFAULT 'mcp'")?;
+    ensure_column(conn, "mcp_tools", "impl_config_json", "TEXT NOT NULL DEFAULT ''")?;
+    Ok(())
+}
+
 /// v9：生成参数（第 8 项）的应用级与会话级存储列。世界级存在
 /// `worlds.director_config_json` 的 `generation_params` 字段里，随世界包走，不需要新列。
 /// 两列都默认 `{}`（本层不覆盖任何参数），旧库升级后行为与改造前一致。
@@ -449,6 +458,11 @@ pub(crate) fn run(conn: &Connection) -> Result<(), rusqlite::Error> {
             );",
         )?;
         set_schema_version(&tx, MIGRATION_WORLD_FEATURE_GRANTS)?;
+    }
+    if version < MIGRATION_MCP_TOOL_IMPL {
+        // 本地工具框架：impl_kind=mcp（默认，外部 server）或 builtin_http（核心直接执行）。
+        migrate_mcp_tool_impl(&tx)?;
+        set_schema_version(&tx, MIGRATION_MCP_TOOL_IMPL)?;
     }
 
     tx.commit()
@@ -576,6 +590,9 @@ mod tests {
         assert!(column_exists(&conn, "characters", "system_prompt_template"));
         assert!(column_exists(&conn, "settings", "embedding_enabled"));
         assert!(column_exists(&conn, "mcp_tools", "input_schema_json"));
+        // v12：本地工具框架的实现方式与配置列。
+        assert!(column_exists(&conn, "mcp_tools", "impl_kind"));
+        assert!(column_exists(&conn, "mcp_tools", "impl_config_json"));
         // v9：生成参数的应用级与会话级列（第 8 项）。
         assert!(column_exists(&conn, "settings", "generation_params_json"));
         assert!(column_exists(&conn, "sessions", "generation_params_json"));

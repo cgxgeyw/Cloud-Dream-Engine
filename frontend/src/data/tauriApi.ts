@@ -26,6 +26,7 @@ import type {
   InventoryItem,
   McpToolCreateRequest,
   McpToolExposurePolicy,
+  McpToolImportSummary,
   McpToolResponse,
   McpToolUpsertRequest,
   MemoryEntry,
@@ -88,7 +89,7 @@ export type {
   SwitchCharacterProposalRequest, SwitchPlayerCharacterRequest, SaveResponse,
   ModelConfig, ModelConfigResponse, ConnectionTestResult, ImageModelTestRequest, ImageModelTestResult, ModelDiscoverResponse,
   EmbeddingModelFileStatus, EmbeddingModelStatus, AppSettings, SettingsResponse, SettingsUpdateRequest,
-  PluginResponse, McpToolExposurePolicy, McpToolResponse, McpToolCreateRequest, McpToolUpsertRequest,
+  PluginResponse, McpToolExposurePolicy, McpToolResponse, McpToolCreateRequest, McpToolUpsertRequest, McpToolImportSummary,
   AttributeSchemaResponse, AttributeSchemaUpsertRequest, AttributeValueResponse, AttributeValueUpsertRequest,
   MemoryEntry, RuntimeAttributeItem, RuntimeAttributeGroup, SessionRuntimeAttributesResponse,
   WorldOpeningPromptPreviewResponse, UploadResponse,
@@ -619,6 +620,14 @@ export function updateMcpTool(toolId: string, payload: McpToolCreateRequest): Pr
 
 export function deleteMcpTool(toolId: string): Promise<void> {
   return tauriCommand("delete_mcp_tool", { id: toolId });
+}
+
+export function exportMcpTools(ids: string[]): Promise<string> {
+  return tauriCommand("export_mcp_tools", { ids });
+}
+
+export function importMcpTools(json: string): Promise<McpToolImportSummary> {
+  return tauriCommand("import_mcp_tools", { json });
 }
 
 export function fetchAttributeSchemas(scope?: string): Promise<AttributeSchemaResponse[]> {

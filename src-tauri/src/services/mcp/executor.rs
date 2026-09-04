@@ -12,7 +12,7 @@ pub struct McpCallOutcome {
 }
 
 impl McpCallOutcome {
-    fn failed(error: String) -> Self {
+    pub(crate) fn failed(error: String) -> Self {
         Self {
             ok: false,
             result: Value::Null,
@@ -54,8 +54,9 @@ pub async fn execute_mcp_tool_call(
     }
 }
 
-/// 只保留「可执行」的工具：内置工具原样保留，自定义工具必须绑定一个
-/// 已启用、本平台支持、必填字段齐全的 server。执行器落地后才下发给模型（第 7 项）。
+/// 只保留「可执行」的工具：内置工具原样保留，本地工具（builtin_http）由核心
+/// 直接执行无需 server，自定义 MCP 工具必须绑定一个已启用、本平台支持、
+/// 必填字段齐全的 server。执行器落地后才下发给模型（第 7 项）。
 pub fn filter_executable_tools(
     tools: &[McpToolDefinition],
     servers: &[McpServerConfig],
@@ -63,7 +64,9 @@ pub fn filter_executable_tools(
     tools
         .iter()
         .filter(|tool| {
-            if crate::models::mcp_tool::is_builtin_mcp_tool_id(&tool.id) {
+            if crate::models::mcp_tool::is_builtin_mcp_tool_id(&tool.id)
+                || crate::models::mcp_tool::is_local_tool(tool)
+            {
                 return true;
             }
             servers
@@ -77,7 +80,7 @@ pub fn filter_executable_tools(
 }
 
 /// 结果超过上限时，替换为截断说明 + 前缀文本，避免把上下文冲爆。
-fn cap_result_size(result: Value, max_bytes: usize) -> (Value, bool) {
+pub(crate) fn cap_result_size(result: Value, max_bytes: usize) -> (Value, bool) {
     let serialized = serde_json::to_string(&result).unwrap_or_default();
     if serialized.len() <= max_bytes {
         return (result, false);
@@ -134,6 +137,8 @@ mod tests {
             trigger_keywords: vec![],
             input_schema: serde_json::json!({ "type": "object" }),
             server_id: server_id.to_string(),
+            impl_kind: "mcp".to_string(),
+            impl_config: serde_json::json!({}),
         }
     }
 
@@ -141,6 +146,14 @@ mod tests {
     fn builtin_tools_stay_exposed_without_server_binding() {
         let tools = vec![tool("mcp-tool-change-scene", "")];
         let filtered = filter_executable_tools(&tools, &[]);
+        assert_eq!(filtered.len(), 1);
+    }
+
+    #[test]
+    fn local_builtin_http_tools_stay_exposed_without_server() {
+        let mut local = tool("mcp-tool-http-request", "");
+        local.impl_kind = "builtin_http".to_string();
+        let filtered = filter_executable_tools(&[local], &[]);
         assert_eq!(filtered.len(), 1);
     }
 
