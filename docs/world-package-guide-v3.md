@@ -168,10 +168,11 @@ npm run tauri:dev
 
 ## 5. 导出包目录结构
 
-当前世界包格式为 `dream-world-package` version 7。应用导出的 ZIP 结构如下：
+当前世界包格式为 `dream-world-package` version 8。应用导出的 ZIP 结构如下：
 
 ```text
 manifest.json
+tools.json            # 可选（v8）：世界引用到的 MCP 工具定义，导入时自动 upsert
 world/
   world.json
   ui.desktop.jsonc
@@ -185,7 +186,7 @@ assets/
   <世界与角色资源>
 ```
 
-空 stylesheet 可能不会写入 ZIP，但 manifest 中仍会保留入口路径。导入器兼容 version 5、6 世界包，并将旧的 `desktop_file` / `mobile_file` 归一化为双入口。
+空 stylesheet 可能不会写入 ZIP，但 manifest 中仍会保留入口路径。导入器兼容 version 5、6、7 世界包，并将旧的 `desktop_file` / `mobile_file` 归一化为双入口。
 
 > **打包最常见的失败**：`manifest.json` 必须在 ZIP **根目录**。不要右键压缩外层文件夹——那会让所有条目多套一层 `<包名>/` 前缀，导入器按精确路径在根目录找 `manifest.json`，找不到就报 `Invalid manifest: specified file not found in archive`。正确做法是进入包目录、压缩里面的内容：
 >
@@ -199,7 +200,7 @@ manifest 中与 UI 有关的字段：
 ```json
 {
   "format": "dream-world-package",
-  "version": 7,
+  "version": 8,
   "world_file": "world/world.json",
   "desktop_ui_file": "world/ui.desktop.jsonc",
   "mobile_ui_file": "world/ui.mobile.jsonc",
@@ -219,7 +220,7 @@ manifest 中与 UI 有关的字段：
 ```json
 {
   "format": "dream-world-package",
-  "version": 7,
+  "version": 8,
   "world_file": "world/world.json",
   "desktop_ui_file": "world/ui.desktop.jsonc",
   "mobile_ui_file": "world/ui.mobile.jsonc",
@@ -227,6 +228,7 @@ manifest 中与 UI 有关的字段：
   "desktop_ui_stylesheet_file": "world/ui.desktop.css",
   "mobile_ui_stylesheet_file": "world/ui.mobile.css",
   "logic_file": "world/logic.js",
+  "mcp_tools_file": "tools.json",
   "character_files": [
     {
       "source_character_id": "han-li",
@@ -248,12 +250,13 @@ manifest 中与 UI 有关的字段：
 | 字段 | 必需 | 说明 |
 |---|---|---|
 | `format` | 是 | 必须为 `dream-world-package` |
-| `version` | 是 | 当前为 `7`；兼容旧版 `5`、`6` |
+| `version` | 是 | 当前为 `8`；兼容旧版 `5`、`6`、`7` |
 | `world_file` | 是 | 世界数据 JSON 的路径 |
 | `desktop_ui_file` / `mobile_ui_file` | 是 | 两份 UI 文档路径 |
 | `ui_runtime_version` | 否 | `2` 或 `3`，缺省 `2`；新世界写 `3` |
 | `desktop_ui_stylesheet_file` / `mobile_ui_stylesheet_file` | 否 | 样式表路径，空内容可不打包但保留入口 |
 | `logic_file` | 否 | 沙箱逻辑源码路径（≤ 256 KB），无逻辑则省略 |
+| `mcp_tools_file` | 否 | v8 新增：内嵌 MCP 工具定义文件（`dream-mcp-tools` 格式，同独立工具包）。导入世界时按 id 自动 upsert 到工具表，世界 `allowed_mcp_tool_ids` 引用到的工具随包即发即用，无需单独导入工具包。应用导出世界时会自动把白名单引用到的工具打进包 |
 | `character_files` | 是 | **至少一个角色**。每条：`source_character_id`（包内角色 ID）、`character_name`（显示名）、`file_path`（指向 **character.json 文件**，不是目录） |
 | `assets` | 否 | 资源条目：`source_path`（导出前的原始路径）、`archive_path`（ZIP 内路径）、`owner_type` / `owner_id`（可空） |
 
@@ -627,9 +630,13 @@ NPC 发言时，宿主按以下顺序拼接系统提示：
 
 场景标题、世界、地点、时间、玩家和在场角色。
 
-Props：`show_world_name`、`show_location`、`show_time_label`、`show_player_identity`、`show_visible_characters`、`show_copy_button`、`player_identity_format`、`title_mode`。
+Props：`show_world_name`、`show_location`、`show_time_label`、`show_player_identity`、`show_visible_characters`、`show_copy_button`、`show_session_id`、`show_session_id_copy_button`、`session_id_label`、`player_identity_format`、`title_mode`。
 
 `player_identity_format`：`label` 或 `action_phrase`。`title_mode`：`desktop` 或 `mobile`。
+
+`show_session_id` 显式设为 `true` 后，会话 ID 条由世界 UI 顶栏渲染，宿主层的默认调试条会自动让位；显式设为 `false` 可隐藏调试条。未声明时保留宿主默认调试条，兼容旧世界包。
+世界包可用 `.game-session-diagnostic`、`.game-session-diagnostic-label` 和
+`.game-session-diagnostic code` 配合 `custom_css` 定制外观。
 
 ### `scene_focus`
 
@@ -662,6 +669,11 @@ Props：
 | `show_agent_reasoning` | 显示导演/NPC 思维链 |
 | `show_typing_indicator` | 显示等待输入指示 |
 | `mobile_simple` | 移动端精简消息流 |
+| `show_scroll_controls` | 显示右侧四按钮滚动工具栏；默认 `true` |
+| `show_scroll_top_button` | 显示“滚动到顶部”按钮；默认 `true` |
+| `show_scroll_up_button` | 显示“向上滚动一条消息”按钮；默认 `true` |
+| `show_scroll_down_button` | 显示“向下滚动一条消息”按钮；默认 `true` |
+| `show_scroll_bottom_button` | 显示“滚动到底部”按钮；默认 `true` |
 
 ### `input_composer`
 
@@ -1040,7 +1052,33 @@ v3 stylesheet 在世界 iframe 内原样注入，不做 selector 前缀改写。
 [data-component="input_composer"] {
   align-self: end;
 }
+
+/* message_list 的滚动工具栏可按世界包需要隐藏或重新排布 */
+[data-component="message_list"] .game-chat-scroll-controls {
+  right: 12px;
+  gap: 8px;
+}
+
+[data-component="message_list"] .game-chat-scroll-btn {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  border-radius: 10px;
+  background: #1b2430;
+  color: #f8fafc;
+}
+
+[data-component="message_list"] .game-chat-scroll-btn--top,
+[data-component="message_list"] .game-chat-scroll-btn--bottom {
+  border-radius: 50%;
+}
 ```
+
+`message_list` 的四个按钮提供稳定的 `.game-chat-scroll-controls`、
+`.game-chat-scroll-btn` 以及 `.game-chat-scroll-btn--top`、`--up`、`--down`、
+`--bottom` 选择器，同时带有 `data-scroll-action="top|up|down|bottom"`。
+世界包可以用上述 props 控制显隐，用 `custom_css` 控制尺寸、颜色、位置、间距和布局；
+共享运行时只负责滚动行为，不会覆盖这些世界级样式。
 
 可用根 class：
 
@@ -1230,12 +1268,14 @@ v3 stylesheet 在世界 iframe 内原样注入，不做 selector 前缀改写。
 ```json
 {
   "director_config": {
-    "generation_params": { "temperature": 0.9, "max_tokens": 800 }
+    "generation_params": { "temperature": 0.9, "max_tokens": 4000 }
   }
 }
 ```
 
 可用字段：`temperature`、`top_p`、`top_k`、`max_tokens`、`stop`、`presence_penalty`、`frequency_penalty`、`seed`。实际生效值按「角色内置默认 → 应用设置 → 世界 → 会话存档」逐字段取最内层；模型/provider 不支持的参数会被过滤并在调试页留痕（`dropped` 带原因），越界值夹到合法区间。
+
+> **`max_tokens` 别给太小**：带思维链的模型（如 deepseek 推理系列）的 reasoning 也占这份预算。给 800–1000 时常见结局是思维链烧光预算、正文一个字没输出（`finish_reason=length`），角色只剩"（本回合没有可显示的台词）"占位。用推理模型时建议 ≥ 4000。引擎在"正文为空 + length 截断"时会自动放大预算重试一次兜底，但治本仍是把世界参数给够。
 
 注意：玩家能否发图片/语音附件，取决于所用模型在「设置 → 模型」里是否开启了对应**输入模态**开关；未开启的模型收到附件会在提交时明确报错，不会静默丢弃。
 
