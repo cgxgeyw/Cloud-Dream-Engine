@@ -1,0 +1,44 @@
+{
+  "format": "dream-world-package",
+  "version": 8,
+  "world_file": "world/world.json",
+  "desktop_ui_file": "world/ui.desktop.jsonc",
+  "mobile_ui_file": "world/ui.mobile.jsonc",
+  "ui_runtime_version": 3,
+  "desktop_ui_stylesheet_file": "world/ui.desktop.css",
+  "mobile_ui_stylesheet_file": "world/ui.mobile.css",
+  "character_files": [
+    {
+      "source_character_id": "investor",
+      "character_name": "我",
+      "file_path": "characters/investor/character.json"
+    },
+    {
+      "source_character_id": "tech-analyst",
+      "character_name": "林澈",
+      "file_path": "characters/tech-analyst/character.json"
+    },
+    {
+      "source_character_id": "fundamental-analyst",
+      "character_name": "沈明远",
+      "file_path": "characters/fundamental-analyst/character.json"
+    },
+    {
+      "source_character_id": "news-analyst",
+      "character_name": "苏晚",
+      "file_path": "characters/news-analyst/character.json"
+    },
+    {
+      "source_character_id": "risk-officer",
+      "character_name": "赵铮",
+      "file_path": "characters/risk-officer/character.json"
+    },
+    {
+      "source_character_id": "chief-strategist",
+      "character_name": "陆则明",
+      "file_path": "characters/chief-strategist/character.json"
+    }
+  ],
+  "assets": [],
+  "mcp_tools_file": "tools.json"
+}

@@ -1,0 +1,19 @@
+{
+  "format": "dream-world-package",
+  "version": 8,
+  "world_file": "world/world.json",
+  "desktop_ui_file": "world/ui.desktop.jsonc",
+  "mobile_ui_file": "world/ui.mobile.jsonc",
+  "ui_runtime_version": 3,
+  "desktop_ui_stylesheet_file": "world/ui.desktop.css",
+  "mobile_ui_stylesheet_file": "world/ui.mobile.css",
+  "character_files": [
+    {
+      "source_character_id": "analyst",
+      "character_name": "研究员",
+      "file_path": "characters/analyst/character.json"
+    }
+  ],
+  "assets": [],
+  "mcp_tools_file": "tools.json"
+}

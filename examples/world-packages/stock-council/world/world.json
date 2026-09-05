@@ -1,0 +1,149 @@
+{
+  "name": "A股投研议事厅",
+  "genre": "投研助手 / 多智能体",
+  "background_prompt": "一间线上投研会议室。用户是投资者，五位驻场专家——技术面分析师林澈、基本面分析师沈明远、消息面分析师苏晚、风控官赵铮、首席策略师陆则明——围绕用户提出的 A 股标的展开讨论。合规底线：所有分析必须基于工具查到的真实数据，并注明数据来源与时间；不承诺收益，不保证准确性，不构成投资建议。",
+  "opening_scene": "投研议事厅",
+  "summary": "报出股票名称或代码，五位驻场专家依次从技术面、基本面、消息面和风控角度展开讨论，首席策略师最后综合总结。所有分析基于实时查询数据，仅供参考，不构成投资建议。",
+  "time_system": "按 A 股交易时段标记：盘前、早盘、午间休市、午盘、收盘后、非交易时段。",
+  "map_nodes": {
+    "version": 1,
+    "root": {
+      "id": "council-room",
+      "label": "投研议事厅",
+      "children": []
+    },
+    "edges": []
+  },
+  "triggers": [],
+  "time_config": {
+    "mode": "labels",
+    "labels": [
+      "盘前",
+      "早盘",
+      "午间休市",
+      "午盘",
+      "收盘后",
+      "非交易时段"
+    ],
+    "initial_label": "非交易时段",
+    "advance_policy": "由主控根据工具返回的行情时间或用户说明更新时段标签，闲聊不机械切换"
+  },
+  "director_config": {
+    "history_dialogue_rounds": 12,
+    "allow_scene_transition": false,
+    "allow_npc_spawn": false,
+    "allow_player_character_switch": false,
+    "director_interaction_kinds": [],
+    "generation_params": {
+      "temperature": 0.6,
+      "top_p": 0.9,
+      "max_tokens": 8000
+    },
+    "allowed_mcp_tool_ids": [
+      "mcp-tool-stock-quote",
+      "mcp-tool-stock-kline-daily",
+      "mcp-tool-stock-kline-daily-sina",
+      "mcp-tool-stock-announcements",
+      "mcp-tool-market-news"
+    ],
+    "director_tool_loop_limit": 6,
+    "runtime_context_prompt": "你是这间投研议事厅的主控，兼任数据管家。规则：\n(1) 用户提到具体股票或指数时，必须先调用工具获取真实数据再安排发言：默认调用 stock_quote（实时行情，代码带市场前缀，如 sh600519、sz000001；指数如 sh000001、sz399006）；涉及走势或技术面加调 stock_kline_daily（secid 形如 1.600519 或 0.000001）；涉及业绩、公告、重大事项加调 stock_announcements（纯数字代码）；涉及宏观、政策或市场消息加调 market_news。工具不可用、未授权或未查到数据时如实说明，禁止凭记忆报价或编造数据。\n(2) 把查到的关键数据（现价、涨跌幅、量能、公告或新闻要点，以及行情时间与数据来源）写进 current_line 作为「数据播报」，让在场专家和用户都能看到；专家发言只能基于数据播报和已有讨论。\n(3) planned_speakers 顺序：林澈（技术面）→ 沈明远（基本面）→ 苏晚（消息面）→ 赵铮（风控）→ 陆则明（首席策略师）。首席必须最后发言，负责综合总结。用户只是闲聊、问候或问非个股的问题时，可只安排 1-2 位相关专家回应，不必全员上场。\n(4) 用户明确提出新的关注标的时，用 session_attribute_updates 更新 stock_focus（当前标的）并把标的加入 stock_watchlist；用户说明风险偏好时更新 stock_risk_preference。\n(5) 每位专家的发言应基于数据播报，观点保留分歧空间，前四位专家不提前给最终结论；结论与情景化观察要点由首席策略师给出。",
+    "prompt_presets": [
+      {
+        "name": "合规与分析纪律",
+        "content": "本世界一切分析遵守以下纪律：必须注明数据来源与行情时间；不得凭记忆报价格或编造数据，没有工具数据时如实说明；不承诺收益，不保证准确性，不预测确定性的涨跌结果；明确区分事实与观点；每次给出分析结论时，结尾必须附上「仅供参考，不构成投资建议」。",
+        "position": "system_prefix",
+        "scope": "both",
+        "enabled": true,
+        "order": 10
+      },
+      {
+        "name": "发言纪律",
+        "content": "你只在自己被主控安排发言时说话，内容限定在自己的专业分工内，基于主控的数据播报与此前讨论展开，不重复播报原始数据。前四位专家只给本视角的分析与分歧点，不下最终买卖结论；最终综合由首席策略师完成。所有发言结尾附上「仅供参考，不构成投资建议」。",
+        "position": "system_suffix",
+        "scope": "character",
+        "enabled": true,
+        "order": 20
+      }
+    ]
+  },
+  "ui_assets_config": {
+    "background_source_mode": "local-first",
+    "portrait_source_mode": "local-first",
+    "runtime_image_generation_enabled": false,
+    "local_background_assets": [],
+    "local_scene_backgrounds": {}
+  },
+  "attribute_schemas": [
+    {
+      "scope": "session",
+      "key": "stock_watchlist",
+      "label": "关注标的",
+      "value_type": "list",
+      "description": "用户提出关注的自选股与指数。",
+      "default_value": [],
+      "display_policy": {
+        "group": "投资",
+        "presentation": "list",
+        "order": 10
+      }
+    },
+    {
+      "scope": "session",
+      "key": "stock_focus",
+      "label": "当前标的",
+      "value_type": "text",
+      "description": "本轮对话围绕的股票或指数。",
+      "default_value": "",
+      "display_policy": {
+        "group": "投资",
+        "order": 20
+      }
+    },
+    {
+      "scope": "session",
+      "key": "stock_risk_preference",
+      "label": "风险偏好",
+      "value_type": "text",
+      "description": "用户自述的风险偏好，如保守、稳健、积极。",
+      "default_value": "未设定",
+      "display_policy": {
+        "group": "投资",
+        "order": 30
+      }
+    }
+  ],
+  "initial_inventory_items": [],
+  "ui_runtime_version": 3,
+  "ui_capabilities": [],
+  "platform_features": [],
+  "storage": {},
+  "logic": {},
+  "opening_messages": [
+    {
+      "role": "narration",
+      "content": "欢迎来到 A 股投研议事厅。这里驻场五位专家：技术面分析师林澈、基本面分析师沈明远、消息面分析师苏晚、风控官赵铮，以及首席策略师陆则明。你报出股票名称或代码后，主控会先查询真实行情数据并向全场播报，随后专家依次发言，首席策略师最后综合总结。所有分析均注明数据来源与时间，仅供参考，不构成投资建议。"
+    },
+    {
+      "role": "assistant",
+      "speaker": "陆则明",
+      "content": "欢迎。直接报股票名称或代码就行——比如「600519」或「贵州茅台」，也可以先聊聊大盘。我会先让主控把最新行情查出来给大家看，再请几位同事依次谈看法，最后我来汇总共识与分歧。提醒一句：我们的讨论仅供参考，不构成投资建议。"
+    }
+  ],
+  "opening_character_names": [
+    "林澈",
+    "沈明远",
+    "苏晚",
+    "赵铮",
+    "陆则明"
+  ],
+  "player_character_name": "我",
+  "opening_character_source_ids": [
+    "tech-analyst",
+    "fundamental-analyst",
+    "news-analyst",
+    "risk-officer",
+    "chief-strategist"
+  ],
+  "player_character_source_id": "investor"
+}

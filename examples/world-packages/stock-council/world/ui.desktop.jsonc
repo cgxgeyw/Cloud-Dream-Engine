@@ -1,0 +1,160 @@
+{
+  "schema_version": 2,
+  "meta": {
+    "name": "A股投研议事厅桌面界面",
+    "author": "Cloud Dream Engine",
+    "description": "三栏投研工作台：数据播报、讨论流和投资面板各自拥有独立滚动与稳定尺寸。"
+  },
+  "tokens": {
+    "color-primary": "#2f5d4a",
+    "color-panel": "#f2eee3",
+    "color-text": "#1d2824",
+    "color-text-muted": "#66716b",
+    "radius-md": "4px",
+    "radius-lg": "6px",
+    "gap": "0",
+    "font-body": "'Noto Sans SC', 'Microsoft YaHei', system-ui, sans-serif",
+    "font-display": "'Noto Serif SC', 'Songti SC', serif"
+  },
+  "components": {},
+  "state": {},
+  "layout": {
+    "root": {
+      "type": "grid",
+      "class_name": "council-desktop-shell",
+      "columns": ["272px", "minmax(460px, 1fr)", "410px"],
+      "rows": ["74px", "minmax(0, 1fr)", "112px"],
+      "areas": [
+        ["header", "header", "systems"],
+        ["scene", "chat", "systems"],
+        ["scene", "input", "systems"]
+      ],
+      "gap": "0",
+      "padding": "0",
+      "style": { "height": "100%", "min_height": "0", "overflow": "hidden" },
+      "children": [
+        {
+          "type": "stack",
+          "area": "header",
+          "class_name": "council-desktop-header",
+          "direction": "horizontal",
+          "gap": "0",
+          "style": { "height": "100%", "min_width": "0" },
+          "children": [
+            {
+              "type": "component",
+              "component": "scene_header",
+              "class_name": "council-scene-header",
+              "style": { "flex": "1 1 0", "min_width": "0" },
+              "props": {
+                "show_world_name": true,
+                "show_location": true,
+                "show_time_label": true,
+                "show_player_identity": true,
+                "player_identity_format": "action_phrase",
+                "show_visible_characters": false,
+                "show_copy_button": false,
+                "title_mode": "desktop"
+              }
+            },
+            {
+              "type": "component",
+              "component": "floating_actions",
+              "class_name": "council-desktop-actions",
+              "props": {
+                "show_back": true,
+                "show_debug": true,
+                "show_settings": true,
+                "back_label": "",
+                "debug_label": "调试",
+                "settings_label": "设置",
+                "layout": "row"
+              }
+            }
+          ]
+        },
+        {
+          "type": "stack",
+          "area": "scene",
+          "class_name": "council-scene-rail",
+          "direction": "vertical",
+          "gap": "0",
+          "style": { "height": "100%", "min_height": "0" },
+          "children": [
+            {
+              "type": "component",
+              "component": "scene_focus",
+              "class_name": "council-scene-focus",
+              "style": { "flex": "1 1 0", "min_height": "0" },
+              "props": { "show_avatar": true, "show_line": true, "avatar_variant": "focus" }
+            },
+            {
+              "type": "component",
+              "component": "character_bar",
+              "class_name": "council-character-roster",
+              "props": { "empty_text": "暂无在场专家", "max_items": 7, "show_player": false }
+            }
+          ]
+        },
+        {
+          "type": "stack",
+          "area": "chat",
+          "class_name": "council-story-stage",
+          "direction": "vertical",
+          "gap": "0",
+          "style": { "height": "100%", "min_height": "0" },
+          "children": [
+            {
+              "type": "component",
+              "component": "narration_card",
+              "class_name": "council-narration-strip",
+              "props": { "title": "数据播报", "show_copy_button": false, "empty_text": "主控查询到的行情数据会显示在这里。" }
+            },
+            {
+              "type": "component",
+              "component": "message_list",
+              "class_name": "council-message-scroll",
+              "style": { "flex": "1 1 0", "min_height": "0" },
+              "props": {
+                "auto_scroll": true,
+                "show_pending_state": true,
+                "show_agent_reasoning": true,
+                "show_typing_indicator": true,
+                "mobile_simple": false
+              }
+            }
+          ]
+        },
+        {
+          "type": "component",
+          "component": "input_composer",
+          "area": "input",
+          "class_name": "council-command-deck",
+          "props": {
+            "placeholder": "输入股票名称、代码或想讨论的投研问题……",
+            "submit_label": "发送",
+            "editing_submit_label": "保存并重发",
+            "show_image_button": true,
+            "show_audio_button": true,
+            "show_session_meta": false,
+            "enter_to_submit": true
+          }
+        },
+        {
+          "type": "component",
+          "component": "side_panel_tabs",
+          "area": "systems",
+          "class_name": "council-system-ledger",
+          "style": { "height": "100%", "min_height": "0", "min_width": "0" },
+          "props": {
+            "show_map_tab": true,
+            "show_attribute_tabs": true,
+            "empty_text": "暂无投资面板数据。",
+            "drawer_label": "投资"
+          }
+        }
+      ]
+    }
+  },
+  "custom_css": ""
+}

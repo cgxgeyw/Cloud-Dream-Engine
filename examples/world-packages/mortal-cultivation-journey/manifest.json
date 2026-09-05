@@ -1,0 +1,19 @@
+{
+  "format": "dream-world-package",
+  "version": 7,
+  "world_file": "world/world.json",
+  "desktop_ui_file": "world/ui.desktop.jsonc",
+  "mobile_ui_file": "world/ui.mobile.jsonc",
+  "ui_runtime_version": 3,
+  "desktop_ui_stylesheet_file": "world/ui.desktop.css",
+  "mobile_ui_stylesheet_file": "world/ui.mobile.css",
+  "character_files": [
+    { "source_character_id": "lu-jin", "character_name": "陆谨", "file_path": "characters/lu-jin/character.json" },
+    { "source_character_id": "han-li", "character_name": "韩立", "file_path": "characters/han-li/character.json" },
+    { "source_character_id": "zhang-tie", "character_name": "张铁", "file_path": "characters/zhang-tie/character.json" },
+    { "source_character_id": "wang-hufa", "character_name": "王护法", "file_path": "characters/wang-hufa/character.json" },
+    { "source_character_id": "mo-daifu", "character_name": "墨大夫", "file_path": "characters/mo-daifu/character.json" },
+    { "source_character_id": "li-feiyu", "character_name": "厉飞雨", "file_path": "characters/li-feiyu/character.json" }
+  ],
+  "assets": []
+}

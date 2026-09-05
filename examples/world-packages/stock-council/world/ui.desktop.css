@@ -1,0 +1,650 @@
+:root {
+  --council-shell: #1f2823;
+  --council-shell-raised: #28332d;
+  --council-paper: #f2eee3;
+  --council-paper-deep: #e5dfd1;
+  --council-ink: #202723;
+  --council-muted: #687169;
+  --council-jade: #3f765e;
+  --council-jade-soft: #d8e4d9;
+  --council-cinnabar: #a9493f;
+  --council-brass: #b18c49;
+  --council-dark-line: rgba(232, 237, 226, 0.15);
+  --council-paper-line: rgba(48, 58, 51, 0.18);
+}
+
+.game-root--desktop-session {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--council-ink);
+  background: var(--council-shell);
+}
+
+.council-desktop-shell {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--council-shell);
+}
+
+.council-desktop-header,
+.council-scene-rail,
+.council-story-stage,
+.council-command-deck,
+.council-system-ledger {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.council-desktop-header {
+  z-index: 2;
+  border-bottom: 1px solid var(--council-dark-line);
+  background: var(--council-shell-raised);
+}
+
+.council-scene-header .game-header {
+  height: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+  padding: 0 24px;
+  color: #edf0e8;
+}
+
+.council-scene-header .game-header-left,
+.council-scene-header .game-title-group {
+  min-width: 0;
+}
+
+.council-scene-header .game-simple-world {
+  margin-bottom: 4px;
+  overflow: hidden;
+  color: #9eaca3;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.council-scene-header .game-scene-name {
+  display: block;
+  overflow: hidden;
+  font-family: "Noto Serif SC", "Songti SC", serif;
+  font-size: 22px;
+  font-weight: 650;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.council-scene-header .game-header-meta {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 22px;
+}
+
+.council-scene-header .game-simple-meta-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #bdc7bf;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.council-scene-header .game-simple-meta-item > strong {
+  color: #7f9186;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.council-scene-header .game-action-phrase-name {
+  color: #f3eee1;
+  font-family: "Noto Serif SC", "Songti SC", serif;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.council-desktop-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 0 18px 0 8px;
+}
+
+.council-desktop-actions .game-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.council-desktop-actions .game-back-btn,
+.council-desktop-actions .game-quick-btn {
+  min-width: 36px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 10px;
+  border: 1px solid var(--council-dark-line);
+  border-radius: 4px;
+  color: #b8c3bb;
+  background: #202a25;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.council-desktop-actions .game-back-btn {
+  width: 36px;
+  padding: 0;
+}
+
+.council-desktop-actions button:hover,
+.council-desktop-actions button:focus-visible {
+  border-color: rgba(224, 194, 130, 0.48);
+  color: #f0e8d7;
+  outline: 2px solid rgba(177, 140, 73, 0.22);
+  outline-offset: 1px;
+}
+
+.council-scene-rail {
+  border-right: 1px solid var(--council-dark-line);
+  background: #202a25;
+}
+
+.council-scene-focus {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.council-scene-focus .game-scene-center {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  align-items: end;
+  padding: 20px 18px 18px;
+  overflow: hidden;
+  background-color: #2c3932;
+  background-image: var(--game-runtime-bg-image, none);
+  background-position: center;
+  background-size: cover;
+}
+
+.council-scene-focus .game-avatar {
+  align-self: end;
+  justify-self: center;
+  width: min(78%, 196px);
+  max-width: 196px;
+  min-height: 196px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(235, 239, 229, 0.16);
+  border-radius: 4px;
+  color: #e6ecdf;
+  background: rgba(28, 37, 32, 0.88);
+  font-family: "Noto Serif SC", "Songti SC", serif;
+  font-size: 23px;
+  font-weight: 650;
+  text-align: center;
+}
+
+.council-scene-focus .game-avatar--image {
+  border: 0;
+  background: transparent;
+}
+
+.council-scene-focus .game-avatar-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center bottom;
+}
+
+.council-scene-focus .game-current-line {
+  position: relative;
+  width: 100%;
+  max-height: 148px;
+  margin-top: 18px;
+  padding: 13px 14px;
+  overflow: auto;
+  border-top: 1px solid rgba(225, 233, 223, 0.22);
+  border-bottom: 1px solid rgba(225, 233, 223, 0.12);
+  color: #f0eee5;
+  background: rgba(24, 32, 28, 0.91);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.council-character-roster {
+  flex: 0 0 auto;
+  padding: 14px 14px 16px;
+  border-top: 1px solid var(--council-dark-line);
+  background: #1c2521;
+}
+
+.council-character-roster::before {
+  content: "在场专家";
+  display: block;
+  margin-bottom: 9px;
+  color: #778a7e;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.council-character-roster .game-scene-characters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.council-character-roster .game-scene-char,
+.council-character-roster .game-card {
+  padding: 5px 8px;
+  border: 1px solid rgba(223, 230, 219, 0.13);
+  border-radius: 3px;
+  color: #bac5bc;
+  background: #26312c;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.council-story-stage {
+  background: var(--council-paper);
+}
+
+.council-narration-strip {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--council-paper-line);
+  background: var(--council-paper-deep);
+}
+
+.council-narration-strip .game-narration-panel {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 13px;
+  padding: 12px 22px;
+}
+
+.council-narration-strip .game-narration-label {
+  color: var(--council-cinnabar);
+  font-family: "Noto Serif SC", "Songti SC", serif;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.council-narration-strip .game-narration-content {
+  max-width: 72ch;
+  overflow: hidden;
+  color: #5b625d;
+  font-size: 11px;
+  line-height: 1.65;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.council-message-scroll,
+.council-message-scroll .game-chat-messages {
+  height: 100%;
+  min-height: 0;
+}
+
+.council-message-scroll .game-chat-messages {
+  overflow-y: auto;
+  padding: 24px clamp(22px, 4vw, 54px) 28px;
+  background: var(--council-paper);
+  scrollbar-color: #b6ae9e transparent;
+  scrollbar-width: thin;
+}
+
+.council-message-scroll .game-message-row {
+  width: min(100%, 760px);
+  margin: 0 auto 22px;
+}
+
+.council-message-scroll .game-message-row--player {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.council-message-scroll .game-message {
+  max-width: min(82%, 640px);
+  padding: 14px 16px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+}
+
+.council-message-scroll .game-message--agent {
+  border-color: var(--council-paper-line);
+  background: #faf7ef;
+  box-shadow: 0 5px 14px rgba(48, 50, 42, 0.06);
+}
+
+.council-message-scroll .game-message--player {
+  border-color: rgba(63, 118, 94, 0.28);
+  color: #183329;
+  background: var(--council-jade-soft);
+}
+
+.council-message-scroll .game-message--system {
+  max-width: 100%;
+  padding: 8px 12px;
+  border-color: rgba(169, 73, 63, 0.18);
+  color: #7f4d47;
+  background: #eee4d8;
+}
+
+.council-message-scroll .game-message-speaker {
+  margin-bottom: 7px;
+  color: var(--council-jade);
+  font-family: "Noto Serif SC", "Songti SC", serif;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.council-message-scroll .game-message--player .game-message-speaker {
+  color: #365e4c;
+  text-align: right;
+}
+
+.council-message-scroll .game-message-content {
+  color: inherit;
+  font-size: 13px;
+  line-height: 1.78;
+  overflow-wrap: anywhere;
+}
+
+.council-message-scroll .game-message-actions,
+.council-message-scroll .game-message-inline-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.council-message-scroll .game-message-action-btn {
+  min-width: 28px;
+  min-height: 26px;
+  padding: 0 7px;
+  border: 1px solid var(--council-paper-line);
+  border-radius: 3px;
+  color: var(--council-muted);
+  background: transparent;
+  font-size: 10px;
+}
+
+.council-command-deck {
+  border-top: 1px solid var(--council-paper-line);
+  background: #e8e1d3;
+}
+
+.council-command-deck .game-input-area {
+  height: 100%;
+  padding: 14px clamp(22px, 4vw, 54px);
+}
+
+.council-command-deck .game-input-compose {
+  width: min(100%, 760px);
+  height: 100%;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.council-command-deck .game-textarea {
+  width: 100%;
+  min-height: 72px;
+  max-height: 84px;
+  resize: none;
+  padding: 13px 15px;
+  border: 1px solid #bcb3a3;
+  border-radius: 5px;
+  color: var(--council-ink);
+  background: #f8f5ed;
+  font: 13px/1.65 "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+.council-command-deck .game-textarea:focus {
+  border-color: var(--council-jade);
+  outline: 3px solid rgba(63, 118, 94, 0.14);
+}
+
+.council-command-deck .game-input-toolbar {
+  width: 104px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 7px;
+}
+
+.council-command-deck .game-input-toolbar-left {
+  display: flex;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.council-command-deck .game-input-attach-btn {
+  width: 34px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #bcb3a3;
+  border-radius: 4px;
+  color: #5f675f;
+  background: #f2ede2;
+}
+
+.council-command-deck .game-submit-btn {
+  min-width: 104px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 15px;
+  border: 1px solid #315f4c;
+  border-radius: 4px;
+  color: #f5f2e8;
+  background: var(--council-jade);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.council-command-deck .game-submit-btn:disabled {
+  opacity: 0.5;
+}
+
+.council-system-ledger {
+  border-left: 1px solid var(--council-dark-line);
+  background: #202925;
+  overflow: hidden;
+}
+
+.council-system-ledger .game-status {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.council-system-ledger .game-tabs {
+  flex: 0 0 auto;
+  min-height: 74px;
+  padding: 14px 14px 12px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  overflow-x: auto;
+  background: #1b2420;
+  border-bottom: 1px solid #435149;
+}
+
+.council-system-ledger .game-tab {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid #435149;
+  border-radius: 4px;
+  color: #a7b2aa;
+  background: #252f2a;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.council-system-ledger .game-tab--active {
+  color: #f0eee6;
+  border-color: #6f8e7c;
+  background: #344b3f;
+}
+
+.council-system-ledger .game-panel,
+.council-system-ledger .game-side-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 16px;
+  overflow: auto;
+  border: 0;
+  background: #202925;
+}
+
+.council-system-ledger .game-card,
+.council-system-ledger .game-attribute-tab-content {
+  padding: 18px;
+  border: 1px solid #435149;
+  border-radius: 4px;
+  color: #e4e8df;
+  background: #252f2a;
+  font-size: 14px;
+  line-height: 1.9;
+  white-space: pre-wrap;
+}
+
+.council-system-ledger .game-attribute-items {
+  display: grid;
+  gap: 10px;
+}
+
+.council-system-ledger .game-attribute-item {
+  padding: 13px 14px;
+  border: 1px solid #435149;
+  border-radius: 4px;
+  background: #252f2a;
+}
+
+.council-system-ledger .game-attribute-item-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #a7b2aa;
+  font-size: 12px;
+}
+
+.council-system-ledger .game-attribute-item-heading strong,
+.council-system-ledger .game-attribute-value {
+  color: #f0eee6;
+}
+
+.council-system-ledger .game-attribute-value {
+  margin-top: 5px;
+  font-family: var(--council-serif);
+  font-size: 16px;
+}
+
+.council-system-ledger .game-attribute-meter {
+  height: 6px;
+  margin-top: 9px;
+  overflow: hidden;
+  background: #151c19;
+}
+
+.council-system-ledger .game-attribute-meter span {
+  display: block;
+  height: 100%;
+  background: #79aa8d;
+}
+
+.council-system-ledger .game-attribute-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.council-system-ledger .game-attribute-list span {
+  padding: 4px 8px;
+  border: 1px solid #435149;
+  color: #dce5dc;
+  background: #1b2420;
+  font-size: 12px;
+}
+
+.council-system-ledger .game-map-flow-canvas {
+  min-height: 520px;
+  background: #1b2420;
+}
+
+.council-system-ledger .game-map-flow-node {
+  color: #dce5dc;
+  border-color: #53645a;
+  background: #2b3731;
+}
+
+.council-system-ledger .game-map-flow-node--current {
+  border-color: var(--council-brass);
+  background: #453f2e;
+}
+
+@media (max-width: 1280px) {
+  .council-desktop-shell {
+    grid-template-columns: 232px minmax(420px, 1fr) 360px !important;
+  }
+
+  .council-scene-focus .game-avatar {
+    width: min(76%, 168px);
+    min-height: 168px;
+  }
+
+  .council-scene-header .game-header-meta {
+    gap: 12px;
+  }
+}
+
+@media (max-width: 1060px) {
+  .council-desktop-shell {
+    grid-template-columns: minmax(430px, 1fr) 350px !important;
+    grid-template-areas:
+      "header systems"
+      "chat systems"
+      "input systems" !important;
+  }
+
+  .council-scene-rail {
+    display: none !important;
+  }
+
+  .council-scene-header .game-simple-meta-item--action-phrase {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .council-desktop-shell *,
+  .council-desktop-shell *::before,
+  .council-desktop-shell *::after {
+    scroll-behavior: auto !important;
+    transition: none !important;
+  }
+}

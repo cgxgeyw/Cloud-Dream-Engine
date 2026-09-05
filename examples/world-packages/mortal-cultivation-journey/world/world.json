@@ -1,0 +1,450 @@
+{
+  "name": "凡人修仙：小石村问道",
+  "genre": "凡人修仙传同人 / 开放叙事 RPG / 多智能体",
+  "background_prompt": "故事发生在《凡人修仙传》人界篇早期。越国镜州偏远，江湖门派七玄门盘踞彩霞山，与野狼帮争斗不休；世俗之外另有修仙宗门、散修坊市与隐秘家族。玩家陆谨出身镜州小石村，与韩立、张铁同批参加七玄门入门试炼。世界遵循凡人流原则：修为差距真实，资源稀缺，法术与法器有代价，情报不对称，凡人与修士的边界森严。机缘可以改变命运，但任何所得都应有来源，任何突破都需要时间、功法、积累与风险。原作人物保留其早期性格与秘密，未到剧情节点不得提前泄露。玩家拥有独立命运线，可以与原作人物结交、疏远、竞争或分道扬镳，不要求复刻原著剧情。",
+  "opening_scene": "七玄门山门",
+  "summary": "你是镜州小石村少年陆谨。山门石阶、入门试炼和一纸名册，是你从凡俗走向修仙界的第一步。谨慎求生，积累功法、装备与资源，在韩立同期走出一条自己的长生路。",
+  "time_system": "凡人历，以日为基本推进单位；赶路、养伤、炼丹和闭关必须消耗合理时间。",
+  "map_nodes": {
+    "version": 1,
+    "nodes": [
+      {
+        "id": "jingzhou",
+        "label": "镜州"
+      },
+      {
+        "id": "xiaoshicun",
+        "label": "小石村"
+      },
+      {
+        "id": "caixia-mountain",
+        "label": "彩霞山"
+      },
+      {
+        "id": "qixuan-gate",
+        "label": "七玄门山门"
+      },
+      {
+        "id": "bone-cliff",
+        "label": "炼骨崖"
+      },
+      {
+        "id": "outer-yard",
+        "label": "外门弟子院"
+      },
+      {
+        "id": "god-hand-valley",
+        "label": "神手谷"
+      },
+      {
+        "id": "hundred-forging-hall",
+        "label": "百锻堂"
+      },
+      {
+        "id": "wild-wolf-pass",
+        "label": "野狼帮山道"
+      },
+      {
+        "id": "tainan-market",
+        "label": "太南小会"
+      }
+    ],
+    "edges": [
+      {
+        "source": "镜州",
+        "target": "小石村"
+      },
+      {
+        "source": "镜州",
+        "target": "彩霞山"
+      },
+      {
+        "source": "彩霞山",
+        "target": "七玄门山门"
+      },
+      {
+        "source": "七玄门山门",
+        "target": "炼骨崖"
+      },
+      {
+        "source": "七玄门山门",
+        "target": "外门弟子院"
+      },
+      {
+        "source": "外门弟子院",
+        "target": "神手谷"
+      },
+      {
+        "source": "外门弟子院",
+        "target": "百锻堂"
+      },
+      {
+        "source": "彩霞山",
+        "target": "野狼帮山道"
+      },
+      {
+        "source": "镜州",
+        "target": "太南小会"
+      }
+    ]
+  },
+  "triggers": [],
+  "time_config": {
+    "mode": "narrative",
+    "initial_label": "凡人历一日 · 卯时",
+    "advance_policy": "由行动实际耗时推进，不因闲聊机械跳时"
+  },
+  "director_config": {
+    "history_dialogue_rounds": 12,
+    "allow_scene_transition": true,
+    "allow_npc_spawn": true,
+    "allow_player_character_switch": true,
+    "director_interaction_kinds": [
+      "choice",
+      "confirm",
+      "slider"
+    ],
+    "generation_params": {
+      "temperature": 0.78,
+      "top_p": 0.9,
+      "max_tokens": 4000
+    },
+    "world_director_prompt": "你是这个世界的剧情主控，负责让故事持续向前，而不是维持对话。遵守：\n1. 每个回合必须发生至少一件具体的新事情：新的阻碍、新的信息揭示、试炼进度变化、人际变化或场景切换。禁止只安排寒暄、赶路或重复已说过的鼓励。\n2. 如果当前情势没有自然事件，就主动制造一个（执事点名、其他试炼者冲突、有人掉队受伤、天气地形变化、发现异常迹象等），必须符合凡人流逻辑与代价。\n3. 地点与时间要真实流动：赶路就推进路程，试炼就推进试炼进度；不要连续两个回合停留在同一地点的同一段对话。\n4. 开场铺垫不超过两个回合，尽快进入第一个明确目标（炼骨崖试炼）。\n5. 当玩家面临明确抉择时（是否冒险、帮谁、走哪条路、说不说），必须用 interaction 出题（choice / confirm / slider），把选择权交给玩家，不要替玩家决定，也不要把选项只写成正文列表。\n6. planned_speakers 每回合 1~2 人，只安排与当前事件相关的角色；无事可说的角色不要发言。\n7. 禁止任何角色在不同回合重复近似的台词；每次发言必须包含新信息、新反应或新行动。\n8. next_location 必须使用世界地图已有的节点名原文（如「彩霞山」「七玄门山门」「炼骨崖」「外门弟子院」），不要自造地图上不存在的地名；旅途过程写进叙事或旁白，不要为它发明新地点。",
+    "runtime_context_prompt": "你是这个凡人修仙世界的主控。先判断玩家行动的时间成本、体力消耗、伤势风险、所需能力和在场人物，再推进场景。current_state.runtime_attributes 是权威角色状态；只要行动实际造成消耗、恢复、受伤、身份、装备、功法或修炼变化，就必须在同一回合用 character_attribute_updates 更新陆谨对应的精确 key，不能只写进叙事。地点变化用 next_location，时间变化用 next_time_label，在场人物变化用 scene_visible_characters。维护因果连续性，不替玩家决定关键选择，不赠送无来源的功法、法器、丹药或境界。",
+    "prompt_presets": [
+      {
+        "name": "世界运行原则",
+        "content": "本世界坚持凡人流：资源稀缺，强弱有序，信息有限，机缘伴随风险。不要提前泄露角色秘密，不要让弱者无代价战胜高境界修士，不要用突降神器替代选择与积累。玩家陆谨是原创人物，允许改变自身命运，但原作人物仍按其认知和利益行动。",
+        "position": "system_prefix",
+        "scope": "both",
+        "enabled": true,
+        "order": 10
+      },
+      {
+        "name": "修炼与突破",
+        "content": "修炼必须消耗时间。炼气期进境受灵根、功法、灵气、丹药、悟性与根基共同影响。普通七日闭关只产生有限积累；突破必须达到进度并完成瓶颈事件，失败可能受伤或损失资源。境界依次为炼气一至十三层、筑基、结丹、元婴、化神；当前篇章不要越级推进。",
+        "position": "system_suffix",
+        "scope": "both",
+        "keywords": [
+          "修炼",
+          "闭关",
+          "突破",
+          "吐纳",
+          "功法",
+          "丹药"
+        ],
+        "keyword_scan_depth": 12,
+        "enabled": true,
+        "order": 30
+      },
+      {
+        "name": "状态与物品写回",
+        "content": "角色回复必须服从世界主控已经写回的 runtime_attributes 与 inventory_items。角色可以叙述结果，但不得另造第二份状态，也不得声称发生了主控未确认的获得、消耗、装备、功法或境界变化。",
+        "position": "system_suffix",
+        "scope": "character",
+        "enabled": true,
+        "order": 40
+      }
+    ]
+  },
+  "ui_assets_config": {
+    "background_source_mode": "local-first",
+    "portrait_source_mode": "local-first",
+    "runtime_image_generation_enabled": false,
+    "local_background_assets": [],
+    "local_scene_backgrounds": {}
+  },
+  "attribute_schemas": [
+    {
+      "scope": "session_character",
+      "key": "mortal_health",
+      "label": "气血",
+      "value_type": "number",
+      "description": "当前生命与伤势承受能力，0 表示失去行动能力。",
+      "default_value": 100,
+      "display_policy": {
+        "group": "状态",
+        "presentation": "meter",
+        "max": 100,
+        "order": 10
+      }
+    },
+    {
+      "scope": "session_character",
+      "key": "mortal_stamina",
+      "label": "体力",
+      "value_type": "number",
+      "description": "奔跑、攀爬、负重和持续劳作会消耗体力。",
+      "default_value": 100,
+      "display_policy": {
+        "group": "状态",
+        "presentation": "meter",
+        "max": 100,
+        "order": 20
+      }
+    },
+    {
+      "scope": "session_character",
+      "key": "mortal_qi",
+      "label": "灵力",
+      "value_type": "number",
+      "description": "踏入修行后可调动的灵力。",
+      "default_value": 0,
+      "display_policy": {
+        "group": "状态",
+        "presentation": "meter",
+        "max": 100,
+        "order": 30
+      }
+    },
+    {
+      "scope": "session_character",
+      "key": "mortal_realm",
+      "label": "境界",
+      "value_type": "text",
+      "default_value": "凡人",
+      "display_policy": {
+        "group": "状态",
+        "order": 40
+      }
+    },
+    {
+      "scope": "session_character",
+      "key": "mortal_identity",
+      "label": "身份",
+      "value_type": "text",
+      "default_value": "七玄门入门试炼者",
+      "display_policy": {
+        "group": "状态",
+        "order": 50
+      }
+    },
+    {
+      "scope": "session_character",
+      "key": "mortal_spiritual_roots",
+      "label": "灵根",
+      "value_type": "text",
+      "default_value": "未测",
+      "display_policy": {
+        "group": "状态",
+        "order": 60
+      }
+    },
+    {
+      "scope": "session_character",
+      "key": "mortal_foundation",
+      "label": "根基",
+      "value_type": "number",
+      "default_value": 24,
+      "display_policy": {
+        "group": "修炼",
+        "presentation": "meter",
+        "max": 100,
+        "order": 10
+      }
+    },
+    {
+      "scope": "session_character",
+      "key": "mortal_comprehension",
+      "label": "悟性",
+      "value_type": "number",
+      "default_value": 46,
+      "display_policy": {
+        "group": "修炼",
+        "presentation": "meter",
+        "max": 100,
+        "order": 20
+      }
+    },
+    {
+      "scope": "session_character",
+      "key": "mortal_cultivation_method",
+      "label": "主修功法",
+      "value_type": "text",
+      "default_value": "无",
+      "display_policy": {
+        "group": "修炼",
+        "order": 30
+      }
+    },
+    {
+      "scope": "session_character",
+      "key": "mortal_cultivation_progress",
+      "label": "修炼进度",
+      "value_type": "number",
+      "default_value": 0,
+      "display_policy": {
+        "group": "修炼",
+        "presentation": "meter",
+        "max": 100,
+        "order": 40
+      }
+    },
+    {
+      "scope": "session_character",
+      "key": "mortal_bottleneck",
+      "label": "当前瓶颈",
+      "value_type": "text",
+      "default_value": "尚未踏入修行",
+      "display_policy": {
+        "group": "修炼",
+        "order": 50
+      }
+    },
+    {
+      "scope": "session_character",
+      "key": "mortal_equipment",
+      "label": "已装备",
+      "value_type": "list",
+      "default_value": [
+        "粗布短衣",
+        "旧布包"
+      ],
+      "display_policy": {
+        "group": "装备",
+        "presentation": "list",
+        "order": 10
+      }
+    },
+    {
+      "scope": "session_character",
+      "key": "mortal_techniques",
+      "label": "已掌握",
+      "value_type": "list",
+      "default_value": [
+        "尚未习得功法"
+      ],
+      "display_policy": {
+        "group": "功法",
+        "presentation": "list",
+        "order": 10
+      }
+    },
+    {
+      "scope": "session_character",
+      "key": "mortal_reputation",
+      "label": "声望",
+      "value_type": "number",
+      "default_value": 0,
+      "display_policy": {
+        "group": "阅历",
+        "order": 10
+      }
+    },
+    {
+      "scope": "session_character",
+      "key": "mortal_objectives",
+      "label": "当前要事",
+      "value_type": "list",
+      "default_value": [
+        "通过七玄门入门试炼"
+      ],
+      "display_policy": {
+        "group": "阅历",
+        "presentation": "list",
+        "order": 20
+      }
+    },
+    {
+      "scope": "session_character",
+      "key": "mortal_spirit_stones",
+      "label": "灵石",
+      "value_type": "number",
+      "default_value": 0,
+      "display_policy": {
+        "group": "阅历",
+        "order": 30
+      }
+    },
+    {
+      "scope": "session_character",
+      "key": "mortal_contribution",
+      "label": "门派贡献",
+      "value_type": "number",
+      "default_value": 0,
+      "display_policy": {
+        "group": "阅历",
+        "order": 40
+      }
+    }
+  ],
+  "initial_inventory_items": [
+    {
+      "item_id": "mortal-dry-rations",
+      "name": "粗粮饼",
+      "category": "consumable",
+      "quantity": 2,
+      "description": "母亲临行前烙的干粮，已经有些发硬。",
+      "tags": [
+        "食物",
+        "凡物"
+      ],
+      "owner_type": "player",
+      "owner_id": "player",
+      "visibility": "private",
+      "disclosed_to": []
+    },
+    {
+      "item_id": "mortal-water-gourd",
+      "name": "旧水囊",
+      "category": "tool",
+      "quantity": 1,
+      "description": "装着半囊山泉，皮绳磨得发白。",
+      "tags": [
+        "饮水",
+        "凡物"
+      ],
+      "owner_type": "player",
+      "owner_id": "player",
+      "visibility": "private",
+      "disclosed_to": []
+    },
+    {
+      "item_id": "mortal-copper-coins",
+      "name": "铜钱",
+      "category": "currency",
+      "quantity": 18,
+      "description": "离家时带上的全部盘缠。",
+      "tags": [
+        "钱财",
+        "凡俗"
+      ],
+      "owner_type": "player",
+      "owner_id": "player",
+      "visibility": "private",
+      "disclosed_to": []
+    }
+  ],
+  "ui_runtime_version": 3,
+  "ui_capabilities": [],
+  "platform_features": [],
+  "storage": {},
+  "logic": {},
+  "opening_messages": [
+    {
+      "role": "narration",
+      "content": "天色刚泛鱼肚白，彩霞山的石阶已被薄雾打湿。陆谨背着母亲缝的旧布包，和一群同龄少年站在七玄门山门外。高处木门沉默如铁，门前执事逐一翻看名册。队伍里，一个皮肤黝黑、神情安静的少年始终不声不响；另一个高壮少年则频频踮脚，想看清山门后的路。"
+    },
+    {
+      "role": "assistant",
+      "speaker": "王护法",
+      "content": "名册上的都听清了。入门不问出身，只看根骨、心性与能不能吃苦。石阶尽头便是炼骨崖，撑不住的趁早下山，免得丢了性命。陆谨、韩立、张铁，你们三人一组，随我来。"
+    },
+    {
+      "role": "narration",
+      "content": "山风穿过门洞，带来松脂、汗水和铁器的气味。你尚不知道，这道门后既有凡人的刀剑，也藏着通向长生的第一缕灵气。"
+    }
+  ],
+  "opening_character_names": [
+    "韩立",
+    "张铁",
+    "王护法"
+  ],
+  "player_character_name": "陆谨",
+  "opening_character_source_ids": [
+    "han-li",
+    "zhang-tie",
+    "wang-hufa"
+  ],
+  "player_character_source_id": "lu-jin"
+}
