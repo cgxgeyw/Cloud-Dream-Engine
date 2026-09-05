@@ -8,17 +8,44 @@
   "map_nodes": {
     "version": 1,
     "nodes": [
-      { "id": "julu-outskirts", "label": "冀州·巨鹿郡外" },
-      { "id": "ning-village", "label": "宁家村" },
-      { "id": "yellow-turban-camp", "label": "黄巾前营" },
-      { "id": "county-seat", "label": "广宗县城" },
-      { "id": "southern-road", "label": "漳水南道" }
+      {
+        "id": "julu-outskirts",
+        "label": "冀州·巨鹿郡外"
+      },
+      {
+        "id": "ning-village",
+        "label": "宁家村"
+      },
+      {
+        "id": "yellow-turban-camp",
+        "label": "黄巾前营"
+      },
+      {
+        "id": "county-seat",
+        "label": "广宗县城"
+      },
+      {
+        "id": "southern-road",
+        "label": "漳水南道"
+      }
     ],
     "edges": [
-      { "source": "冀州·巨鹿郡外", "target": "宁家村" },
-      { "source": "冀州·巨鹿郡外", "target": "黄巾前营" },
-      { "source": "冀州·巨鹿郡外", "target": "广宗县城" },
-      { "source": "宁家村", "target": "漳水南道" }
+      {
+        "source": "冀州·巨鹿郡外",
+        "target": "宁家村"
+      },
+      {
+        "source": "冀州·巨鹿郡外",
+        "target": "黄巾前营"
+      },
+      {
+        "source": "冀州·巨鹿郡外",
+        "target": "广宗县城"
+      },
+      {
+        "source": "宁家村",
+        "target": "漳水南道"
+      }
     ]
   },
   "triggers": [],
@@ -30,10 +57,13 @@
     "service_mode": "world_sim",
     "allow_scene_transition": true,
     "allow_npc_spawn": true,
+    "allow_player_character_switch": true,
     "history_dialogue_rounds": 8,
     "director_tool_loop_limit": 4,
-    "world_director_prompt": "你负责运行一个低魔、写实的东汉末年历史叙事。每回合只推进足够让玩家做出下一步决定的内容。路线选择必须产生资源、关系、地点和风险上的真实差异，不得把三条路线重新合并成同一剧情。",
-    "message_interaction_kinds": ["choice"],
+    "world_director_prompt": "你负责运行一个低魔、写实的东汉末年历史叙事。每回合只推进足够让玩家做出下一步决定的内容。current_state.runtime_attributes 是权威角色状态；路线选择后更新 starter_route，奔跑、负重、战斗、饥饿或受伤时同步更新体力、气血或粮食，不能只在叙事里描述变化。路线选择必须产生资源、关系、地点和风险上的真实差异，不得把三条路线重新合并成同一剧情。",
+    "director_interaction_kinds": [
+      "choice"
+    ],
     "prompt_presets": [
       {
         "name": "历史边界",
@@ -44,7 +74,7 @@
       },
       {
         "name": "玩家路线",
-        "content": "玩家当前路线：{{var:route}}。若为“未选择”，让何山在合适时机提供 join、defend、flee 三选一；路线确定后不得重复出同一道选择题，后续地点、冲突和人物态度必须服从该路线。",
+        "content": "从 current_state.runtime_attributes.player.attributes 读取 starter_route。若为“未选择”，世界主控在合适时机通过 interaction 提供 join、defend、flee 三选一；玩家点击后该选项会成为下一条玩家消息，主控必须在同一回合更新 starter_route。路线确定后不得重复出同一道选择题，后续地点、冲突和人物态度必须服从该路线。",
         "position": "system_suffix",
         "scope": "both",
         "order": 20
@@ -54,7 +84,14 @@
         "content": "涉及战斗、逃难或征粮时，明确人数、距离、体力、粮食和伤情。普通人不能以一敌众，受伤与物资消耗必须留下后果。",
         "position": "system_suffix",
         "scope": "both",
-        "keywords": ["交战", "追兵", "逃难", "征粮", "黄巾", "官军"],
+        "keywords": [
+          "交战",
+          "追兵",
+          "逃难",
+          "征粮",
+          "黄巾",
+          "官军"
+        ],
         "keyword_scan_depth": 10,
         "order": 30
       }
@@ -62,7 +99,7 @@
     "generation_params": {
       "temperature": 0.75,
       "top_p": 0.9,
-      "max_tokens": 900
+      "max_tokens": 4000
     }
   },
   "ui_assets_config": {
@@ -72,20 +109,76 @@
     "local_background_assets": [],
     "local_scene_backgrounds": {}
   },
-  "ui_runtime_version": 3,
-  "ui_capabilities": ["supports_world_storage"],
-  "storage": {
-    "kv_namespaces": ["variables"],
-    "collections": {}
-  },
-  "logic": {
-    "runtime": "sandbox-js-v1",
-    "timeout_ms": 1000,
-    "events": {
-      "session_start": "starter.sessionStart",
-      "interaction_answered": "starter.interactionAnswered"
+  "attribute_schemas": [
+    {
+      "scope": "session_character",
+      "key": "starter_health",
+      "label": "气血",
+      "value_type": "number",
+      "default_value": 100,
+      "display_policy": {
+        "group": "状态",
+        "presentation": "meter",
+        "max": 100,
+        "order": 10
+      }
+    },
+    {
+      "scope": "session_character",
+      "key": "starter_stamina",
+      "label": "体力",
+      "value_type": "number",
+      "default_value": 100,
+      "display_policy": {
+        "group": "状态",
+        "presentation": "meter",
+        "max": 100,
+        "order": 20
+      }
+    },
+    {
+      "scope": "session_character",
+      "key": "starter_food",
+      "label": "口粮",
+      "value_type": "number",
+      "default_value": 3,
+      "display_policy": {
+        "group": "物资",
+        "order": 10
+      }
+    },
+    {
+      "scope": "session_character",
+      "key": "starter_route",
+      "label": "当前路线",
+      "value_type": "text",
+      "default_value": "未选择",
+      "display_policy": {
+        "group": "阅历",
+        "order": 10
+      }
     }
-  },
+  ],
+  "initial_inventory_items": [
+    {
+      "item_id": "starter-rations",
+      "name": "杂粮饼",
+      "category": "consumable",
+      "quantity": 3,
+      "description": "全家省下的三日口粮。",
+      "tags": [
+        "食物"
+      ],
+      "owner_type": "player",
+      "owner_id": "player",
+      "visibility": "private",
+      "disclosed_to": []
+    }
+  ],
+  "ui_runtime_version": 3,
+  "ui_capabilities": [],
+  "storage": {},
+  "logic": {},
   "opening_messages": [
     {
       "role": "narration",
@@ -97,8 +190,14 @@
       "content": "阿宁，不能再等了。村里只剩三日粮，官差和黄巾都在寻人。咱们得先摸清三条路，再定去处。"
     }
   ],
-  "opening_character_names": ["阿宁", "何山"],
+  "opening_character_names": [
+    "阿宁",
+    "何山"
+  ],
   "player_character_name": "阿宁",
-  "opening_character_source_ids": ["player-aning", "guide-he-shan"],
+  "opening_character_source_ids": [
+    "player-aning",
+    "guide-he-shan"
+  ],
   "player_character_source_id": "player-aning"
 }

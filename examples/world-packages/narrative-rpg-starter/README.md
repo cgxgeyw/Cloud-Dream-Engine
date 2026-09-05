@@ -4,11 +4,11 @@
 
 示例重点是可执行闭环：
 
-1. `message_interaction_kinds` 允许角色生成 `choice`。
-2. 角色在路线未选择时要求模型输出三个固定 ID 的选项。
-3. `interaction_answered` 调用 `starter.interactionAnswered`。
-4. logic.js 将回答写入 session 级 `variables.route`。
-5. Prompt 模块通过 `{{var:route}}` 读取路线，约束后续主控和角色回复。
+1. `director_interaction_kinds` 允许世界主控生成 `choice`。
+2. 世界主控在路线未选择时输出三个固定 ID 的选项。
+3. 宿主把玩家点击的选项标签写成真实玩家消息并自动启动下一回合。
+4. 世界主控从 `current_state.runtime_attributes` 读取当前状态，用 `character_attribute_updates` 写入路线、体力、气血和物资变化。
+5. `side_panel_tabs` 直接展示同一份权威属性和会话背包，不建立 KV 镜像。
 
 包中没有虚构资源路径。正式世界应在 `assets/` 放入真实背景和立绘，并逐项写入 `manifest.assets`。
 

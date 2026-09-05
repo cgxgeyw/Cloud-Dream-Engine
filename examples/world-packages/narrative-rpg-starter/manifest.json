@@ -7,7 +7,6 @@
   "ui_runtime_version": 3,
   "desktop_ui_stylesheet_file": "world/ui.desktop.css",
   "mobile_ui_stylesheet_file": "world/ui.mobile.css",
-  "logic_file": "world/logic.js",
   "character_files": [
     {
       "source_character_id": "player-aning",
