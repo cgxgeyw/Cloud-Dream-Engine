@@ -277,6 +277,7 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
   const showScrollBottomButton = readBooleanProp(node, "show_scroll_bottom_button", true);
   const [scrollState, setScrollState] = useState({ atTop: true, atBottom: true });
   const initializedScrollSessionRef = useRef<string | null>(null);
+  const shouldFollowRef = useRef(true);
 
   useEffect(() => {
     actions.setAutoScrollEnabled(autoScroll);
@@ -288,6 +289,7 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
       return;
     }
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    shouldFollowRef.current = distanceFromBottom <= 24;
     setScrollState({
       atTop: container.scrollTop <= 12,
       atBottom: distanceFromBottom <= 24,
@@ -303,14 +305,29 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
     container.addEventListener("scroll", handleScroll, { passive: true });
     const resizeObserver = typeof ResizeObserver === "undefined"
       ? null
-      : new ResizeObserver(() => updateScrollState());
+      : new ResizeObserver(() => {
+        if (autoScroll && shouldFollowRef.current) {
+          container.scrollTop = container.scrollHeight;
+        }
+        updateScrollState();
+      });
     resizeObserver?.observe(container);
+    const mutationObserver = typeof MutationObserver === "undefined"
+      ? null
+      : new MutationObserver(() => {
+        if (autoScroll && shouldFollowRef.current) {
+          container.scrollTop = container.scrollHeight;
+        }
+        updateScrollState();
+      });
+    mutationObserver?.observe(container, { childList: true, subtree: true, characterData: true });
     updateScrollState();
     return () => {
       container.removeEventListener("scroll", handleScroll);
       resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
     };
-  }, [runtime.chat_messages_ref, updateScrollState]);
+  }, [autoScroll, runtime.chat_messages_ref, updateScrollState]);
 
   useLayoutEffect(() => {
     const container = runtime.chat_messages_ref.current;
