@@ -242,6 +242,34 @@
   border-radius: var(--kawaii-panel-radius);
   background: linear-gradient(180deg, var(--kawaii-shell-strong), var(--color-surface));
   box-shadow: var(--kawaii-sketch-shadow), var(--shadow-default);
+  color: var(--color-charcoal);
+}
+
+/* Primary menu CTA (e.g. 开始冒险): solid lavender fill + cream text for contrast */
+:root[data-color-scheme="kawaii"] .menu-btn--primary,
+:root[data-color-scheme="kawaii"] .menu-btn.menu-btn--primary {
+  border-color: color-mix(in srgb, var(--kawaii-lavender) 55%, #9a8fc0);
+  background: linear-gradient(165deg, #b8a8d8 0%, #a898c8 55%, #c4a898 100%);
+  color: #fffcf8;
+  box-shadow: 1px 2px 0 rgba(130, 115, 160, 0.35), var(--shadow-default);
+}
+
+:root[data-color-scheme="kawaii"] .menu-btn--primary .menu-btn-title,
+:root[data-color-scheme="kawaii"] .menu-btn--primary .menu-btn-desc,
+:root[data-color-scheme="kawaii"] .menu-btn--primary .menu-btn-arrow {
+  color: #fffcf8;
+}
+
+:root[data-color-scheme="kawaii"] .menu-btn--primary .menu-btn-icon {
+  background: rgba(255, 252, 248, 0.2);
+  color: #fffcf8;
+  border-color: rgba(255, 252, 248, 0.35);
+}
+
+:root[data-color-scheme="kawaii"] .menu-btn--primary:hover {
+  background: linear-gradient(165deg, #a898c8 0%, #9888b8 55%, #b89888 100%);
+  color: #fffcf8;
+  border-color: color-mix(in srgb, var(--kawaii-lavender) 70%, #8a7fb0);
 }
 
 :root[data-color-scheme="kawaii"] .field-input,
@@ -446,6 +474,27 @@
     transform: translateY(-1px);
     border-color: var(--kawaii-line-strong);
     box-shadow: var(--shadow-md);
+  }
+
+  :root[data-color-scheme="kawaii"] .menu-btn--primary,
+  :root[data-color-scheme="kawaii"] .menu-btn.menu-btn--primary {
+    background:
+      linear-gradient(165deg, #b8a8d8 0%, #a898c8 55%, #c4a898 100%);
+    color: #fffcf8;
+    border-color: color-mix(in srgb, var(--kawaii-lavender) 55%, #9a8fc0);
+    box-shadow: 1px 2px 0 rgba(130, 115, 160, 0.35), var(--shadow-default);
+  }
+
+  :root[data-color-scheme="kawaii"] .menu-btn--primary .menu-btn-title,
+  :root[data-color-scheme="kawaii"] .menu-btn--primary .menu-btn-desc,
+  :root[data-color-scheme="kawaii"] .menu-btn--primary .menu-btn-arrow,
+  :root[data-color-scheme="kawaii"] .menu-btn--primary:hover {
+    color: #fffcf8;
+  }
+
+  :root[data-color-scheme="kawaii"] .menu-btn--primary .menu-btn-icon {
+    background: rgba(255, 252, 248, 0.2);
+    color: #fffcf8;
   }
 
   :root[data-color-scheme="kawaii"] .menu-btn-icon {
