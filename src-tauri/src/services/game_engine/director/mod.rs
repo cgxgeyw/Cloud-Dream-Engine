@@ -14,7 +14,7 @@ use crate::services::game_engine::prompting::{
     render_prompt_variables, resolve_runtime_context_prompt,
 };
 use crate::services::llm::client::{
-    ChatRequest, ChatToolCall, ChatToolChoice, ChatToolDefinition, LlmClient,
+    ChatRequest, ChatToolCall, ChatToolChoice, LlmClient,
 };
 use crate::services::map_topology::extract_scene_names;
 use crate::services::notifications::{

@@ -1,5 +1,6 @@
     use super::*;
     use crate::models::session::{AssetSelection, SceneRuntime, SessionState};
+    use crate::services::llm::client::ChatToolDefinition;
 
     fn sample_world(director_config: serde_json::Value) -> WorldDefinition {
         WorldDefinition {
