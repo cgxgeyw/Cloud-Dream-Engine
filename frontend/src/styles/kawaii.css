@@ -24,17 +24,19 @@
   --color-hover-bg: oklch(0.954 0.01 300);
   --color-active-bg: color-mix(in srgb, var(--color-accent) 10%, transparent);
 
-  /* Accent candies — rose is one of several, not the base */
-  --kawaii-lavender: oklch(0.74 0.06 300);
-  --kawaii-lavender-soft: oklch(0.94 0.022 300);
-  --kawaii-mint: oklch(0.8 0.05 165);
-  --kawaii-mint-soft: oklch(0.95 0.018 165);
-  --kawaii-peach: oklch(0.84 0.05 55);
-  --kawaii-peach-soft: oklch(0.96 0.018 55);
-  --kawaii-sky: oklch(0.82 0.04 230);
-  --kawaii-sky-soft: oklch(0.95 0.016 230);
-  --kawaii-rose: oklch(0.76 0.055 12);
-  --kawaii-rose-soft: oklch(0.95 0.018 12);
+  /* Accent candies — slightly richer so multi-color reads clearly */
+  --kawaii-lavender: oklch(0.7 0.09 300);
+  --kawaii-lavender-soft: oklch(0.93 0.035 300);
+  --kawaii-mint: oklch(0.76 0.08 165);
+  --kawaii-mint-soft: oklch(0.94 0.03 165);
+  --kawaii-peach: oklch(0.8 0.09 55);
+  --kawaii-peach-soft: oklch(0.95 0.03 55);
+  --kawaii-sky: oklch(0.78 0.07 230);
+  --kawaii-sky-soft: oklch(0.94 0.025 230);
+  --kawaii-rose: oklch(0.72 0.08 12);
+  --kawaii-rose-soft: oklch(0.94 0.03 12);
+  --kawaii-lemon: oklch(0.86 0.08 95);
+  --kawaii-lemon-soft: oklch(0.96 0.03 95);
 
   /* Game session (dark narrative surface) */
   --game-bg-from: oklch(0.32 0.02 330);
@@ -99,8 +101,8 @@
   --kawaii-fill: linear-gradient(180deg, #fffeff 0%, #faf8fc 100%);
   --kawaii-fill-strong: linear-gradient(180deg, #fdfcff 0%, #f5f2f9 100%);
   --kawaii-fill-pressed: linear-gradient(180deg, #f6f3fa 0%, #ece8f4 100%);
-  /* Primary CTA: lavender → peach candy, no hot pink */
-  --kawaii-primary-fill: linear-gradient(165deg, #b8a8d8 0%, #a898c8 52%, #d4b09a 100%);
+  /* Primary CTA: lavender → peach candy */
+  --kawaii-primary-fill: linear-gradient(165deg, #a898c8 0%, #9888b8 52%, #d4a888 100%);
   --kawaii-panel-radius: 28px 24px 20px 26px;
   --kawaii-card-radius: 24px 20px 16px 22px;
   --kawaii-chip-radius: 999px 999px 18px 999px;
@@ -209,8 +211,37 @@
 :root[data-color-scheme="kawaii"] .toast-card {
   border: var(--kawaii-panel-border-width) solid var(--kawaii-sketch);
   border-radius: var(--kawaii-panel-radius);
-  background: var(--kawaii-fill);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--kawaii-candy, #d8d0f0) 18%, transparent) 0 18px, transparent 18px),
+    var(--kawaii-fill);
   box-shadow: var(--kawaii-sketch-shadow), var(--shadow-default);
+}
+
+/* Cycle candy corner tints on lists of cards */
+:root[data-color-scheme="kawaii"] .card-item:nth-child(6n + 1),
+:root[data-color-scheme="kawaii"] .surface-panel:nth-child(6n + 1) {
+  --kawaii-candy: #b8a8d8;
+  border-color: color-mix(in srgb, #b8a8d8 45%, var(--kawaii-sketch));
+}
+:root[data-color-scheme="kawaii"] .card-item:nth-child(6n + 2) {
+  --kawaii-candy: #9dcfb8;
+  border-color: color-mix(in srgb, #9dcfb8 45%, var(--kawaii-sketch));
+}
+:root[data-color-scheme="kawaii"] .card-item:nth-child(6n + 3) {
+  --kawaii-candy: #f0c4a0;
+  border-color: color-mix(in srgb, #f0c4a0 50%, var(--kawaii-sketch));
+}
+:root[data-color-scheme="kawaii"] .card-item:nth-child(6n + 4) {
+  --kawaii-candy: #a8c8e8;
+  border-color: color-mix(in srgb, #a8c8e8 45%, var(--kawaii-sketch));
+}
+:root[data-color-scheme="kawaii"] .card-item:nth-child(6n + 5) {
+  --kawaii-candy: #e8b0c0;
+  border-color: color-mix(in srgb, #e8b0c0 45%, var(--kawaii-sketch));
+}
+:root[data-color-scheme="kawaii"] .card-item:nth-child(6n + 6) {
+  --kawaii-candy: #e8d488;
+  border-color: color-mix(in srgb, #e8d488 50%, var(--kawaii-sketch));
 }
 
 :root[data-color-scheme="kawaii"] .action-btn,
@@ -232,44 +263,99 @@
 
 :root[data-color-scheme="kawaii"] .action-btn--primary,
 :root[data-color-scheme="kawaii"] .action-btn--accent {
-  border-color: color-mix(in srgb, var(--color-accent) 40%, #e0c8d0);
+  border-color: color-mix(in srgb, var(--kawaii-lavender) 50%, #8a7fb0);
   background: var(--kawaii-primary-fill);
-  color: oklch(0.97 0.005 30);
+  color: #fffcf8;
+  box-shadow: 1px 2px 0 rgba(120, 105, 150, 0.3), var(--shadow-sm);
 }
 
+:root[data-color-scheme="kawaii"] .action-btn--danger {
+  border-color: color-mix(in srgb, var(--color-error) 30%, var(--color-border));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-error) 10%, white), #faf6f8);
+  color: var(--color-error);
+}
+
+/* Menu buttons — each item a different candy, primary stays high-contrast CTA */
 :root[data-color-scheme="kawaii"] .menu-btn {
   border: var(--kawaii-panel-border-width) solid var(--kawaii-sketch);
   border-radius: var(--kawaii-panel-radius);
   background: linear-gradient(180deg, var(--kawaii-shell-strong), var(--color-surface));
   box-shadow: var(--kawaii-sketch-shadow), var(--shadow-default);
   color: var(--color-charcoal);
+  --kawaii-menu-tint: var(--kawaii-lavender-soft);
+  --kawaii-menu-ink: color-mix(in srgb, var(--kawaii-lavender) 70%, var(--color-charcoal));
 }
 
-/* Primary menu CTA (e.g. 开始冒险): solid lavender fill + cream text for contrast */
+:root[data-color-scheme="kawaii"] .menu-btn:nth-child(6n + 1) {
+  --kawaii-menu-tint: var(--kawaii-lavender-soft);
+  --kawaii-menu-ink: color-mix(in srgb, var(--kawaii-lavender) 70%, var(--color-charcoal));
+  border-color: color-mix(in srgb, var(--kawaii-lavender) 35%, var(--kawaii-sketch));
+}
+:root[data-color-scheme="kawaii"] .menu-btn:nth-child(6n + 2) {
+  --kawaii-menu-tint: var(--kawaii-mint-soft);
+  --kawaii-menu-ink: color-mix(in srgb, var(--kawaii-mint) 75%, var(--color-charcoal));
+  border-color: color-mix(in srgb, var(--kawaii-mint) 35%, var(--kawaii-sketch));
+}
+:root[data-color-scheme="kawaii"] .menu-btn:nth-child(6n + 3) {
+  --kawaii-menu-tint: var(--kawaii-peach-soft);
+  --kawaii-menu-ink: color-mix(in srgb, var(--kawaii-peach) 70%, var(--color-charcoal));
+  border-color: color-mix(in srgb, var(--kawaii-peach) 40%, var(--kawaii-sketch));
+}
+:root[data-color-scheme="kawaii"] .menu-btn:nth-child(6n + 4) {
+  --kawaii-menu-tint: var(--kawaii-sky-soft);
+  --kawaii-menu-ink: color-mix(in srgb, var(--kawaii-sky) 70%, var(--color-charcoal));
+  border-color: color-mix(in srgb, var(--kawaii-sky) 35%, var(--kawaii-sketch));
+}
+:root[data-color-scheme="kawaii"] .menu-btn:nth-child(6n + 5) {
+  --kawaii-menu-tint: var(--kawaii-rose-soft);
+  --kawaii-menu-ink: color-mix(in srgb, var(--kawaii-rose) 70%, var(--color-charcoal));
+  border-color: color-mix(in srgb, var(--kawaii-rose) 35%, var(--kawaii-sketch));
+}
+:root[data-color-scheme="kawaii"] .menu-btn:nth-child(6n + 6) {
+  --kawaii-menu-tint: var(--kawaii-lemon-soft);
+  --kawaii-menu-ink: color-mix(in srgb, var(--kawaii-lemon) 70%, var(--color-charcoal));
+  border-color: color-mix(in srgb, var(--kawaii-lemon) 40%, var(--kawaii-sketch));
+}
+
+:root[data-color-scheme="kawaii"] .menu-btn .menu-btn-icon {
+  border-radius: 16px 16px 12px 16px;
+  background: var(--kawaii-menu-tint, var(--kawaii-lavender-soft));
+  color: var(--kawaii-menu-ink, color-mix(in srgb, var(--kawaii-lavender) 70%, var(--color-charcoal)));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--kawaii-menu-tint, #d8d0f0) 80%, var(--color-charcoal) 8%);
+}
+
+:root[data-color-scheme="kawaii"] .menu-btn:hover {
+  background: linear-gradient(180deg, var(--kawaii-menu-tint, var(--kawaii-lavender-soft)), var(--color-surface));
+  border-color: var(--kawaii-line-strong);
+  box-shadow: var(--shadow-default);
+}
+
+/* Primary menu CTA (e.g. 开始冒险): high-contrast candy fill + cream text */
 :root[data-color-scheme="kawaii"] .menu-btn--primary,
 :root[data-color-scheme="kawaii"] .menu-btn.menu-btn--primary {
-  border-color: color-mix(in srgb, var(--kawaii-lavender) 55%, #9a8fc0);
-  background: linear-gradient(165deg, #b8a8d8 0%, #a898c8 55%, #c4a898 100%);
+  border-color: color-mix(in srgb, var(--kawaii-lavender) 55%, #7a6fa0);
+  background: linear-gradient(165deg, #9888c0 0%, #8878b0 50%, #c09080 100%);
   color: #fffcf8;
-  box-shadow: 1px 2px 0 rgba(130, 115, 160, 0.35), var(--shadow-default);
+  box-shadow: 1px 2px 0 rgba(100, 85, 130, 0.4), var(--shadow-default);
+  --kawaii-menu-tint: transparent;
 }
 
 :root[data-color-scheme="kawaii"] .menu-btn--primary .menu-btn-title,
 :root[data-color-scheme="kawaii"] .menu-btn--primary .menu-btn-desc,
 :root[data-color-scheme="kawaii"] .menu-btn--primary .menu-btn-arrow {
-  color: #fffcf8;
+  color: #fffcf8 !important;
 }
 
 :root[data-color-scheme="kawaii"] .menu-btn--primary .menu-btn-icon {
-  background: rgba(255, 252, 248, 0.2);
-  color: #fffcf8;
-  border-color: rgba(255, 252, 248, 0.35);
+  background: rgba(255, 252, 248, 0.22) !important;
+  color: #fffcf8 !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 252, 248, 0.35) !important;
 }
 
 :root[data-color-scheme="kawaii"] .menu-btn--primary:hover {
-  background: linear-gradient(165deg, #a898c8 0%, #9888b8 55%, #b89888 100%);
-  color: #fffcf8;
-  border-color: color-mix(in srgb, var(--kawaii-lavender) 70%, #8a7fb0);
+  background: linear-gradient(165deg, #8878b0 0%, #7868a0 50%, #b08070 100%);
+  color: #fffcf8 !important;
+  border-color: color-mix(in srgb, var(--kawaii-lavender) 70%, #6a5f90);
 }
 
 :root[data-color-scheme="kawaii"] .field-input,
@@ -353,7 +439,7 @@
     border: var(--kawaii-panel-border-width) solid var(--kawaii-sketch);
     border-radius: var(--kawaii-panel-radius);
     background:
-      radial-gradient(circle at 12% 14%, rgba(210, 198, 235, 0.22), transparent 18%),
+      linear-gradient(135deg, color-mix(in srgb, var(--kawaii-candy, #d8d0f0) 20%, transparent) 0 22px, transparent 22px),
       radial-gradient(circle at 88% 86%, rgba(230, 210, 190, 0.12), transparent 22%),
       linear-gradient(180deg, rgba(255, 255, 255, 0.45), rgba(255, 255, 255, 0)) top/100% 1px no-repeat,
       var(--kawaii-fill);
@@ -439,21 +525,25 @@
 
   :root[data-color-scheme="kawaii"] .action-btn--primary,
   :root[data-color-scheme="kawaii"] .action-btn--accent,
-  :root[data-color-scheme="kawaii"] .menu-btn--primary,
   :root[data-color-scheme="kawaii"] .home-mobile-btn--primary,
   :root[data-color-scheme="kawaii"] .mobile-nav-item--active,
   :root[data-color-scheme="kawaii"] .settings-model-badge,
   :root[data-color-scheme="kawaii"] .mcp-tool-state--enabled {
-    border-color: color-mix(in srgb, var(--color-accent) 40%, #e0c8d0);
+    border-color: color-mix(in srgb, var(--kawaii-lavender) 50%, #8a7fb0);
     background: var(--kawaii-primary-fill);
-    color: oklch(0.97 0.005 30);
-    box-shadow: 1px 2px 0 rgba(130, 115, 160, 0.22), 0 8px 16px rgba(120, 105, 150, 0.12);
+    color: #fffcf8;
+    box-shadow: 1px 2px 0 rgba(120, 105, 150, 0.3), 0 8px 16px rgba(120, 105, 150, 0.12);
   }
 
   :root[data-color-scheme="kawaii"] .action-btn--danger {
     border-color: color-mix(in srgb, var(--color-error) 24%, var(--color-border));
     background: linear-gradient(180deg, color-mix(in srgb, var(--color-error) 6%, white), #faf8fc);
     color: var(--color-error);
+  }
+
+  :root[data-color-scheme="kawaii"] .home-mobile-btn--secondary {
+    border-color: color-mix(in srgb, var(--kawaii-mint) 35%, var(--kawaii-sketch));
+    background: linear-gradient(180deg, var(--kawaii-mint-soft), #fffefe);
   }
 
   :root[data-color-scheme="kawaii"] .menu-btn {
@@ -478,29 +568,28 @@
 
   :root[data-color-scheme="kawaii"] .menu-btn--primary,
   :root[data-color-scheme="kawaii"] .menu-btn.menu-btn--primary {
-    background:
-      linear-gradient(165deg, #b8a8d8 0%, #a898c8 55%, #c4a898 100%);
+    background: linear-gradient(165deg, #9888c0 0%, #8878b0 50%, #c09080 100%);
     color: #fffcf8;
-    border-color: color-mix(in srgb, var(--kawaii-lavender) 55%, #9a8fc0);
-    box-shadow: 1px 2px 0 rgba(130, 115, 160, 0.35), var(--shadow-default);
+    border-color: color-mix(in srgb, var(--kawaii-lavender) 55%, #7a6fa0);
+    box-shadow: 1px 2px 0 rgba(100, 85, 130, 0.4), var(--shadow-default);
   }
 
   :root[data-color-scheme="kawaii"] .menu-btn--primary .menu-btn-title,
   :root[data-color-scheme="kawaii"] .menu-btn--primary .menu-btn-desc,
   :root[data-color-scheme="kawaii"] .menu-btn--primary .menu-btn-arrow,
   :root[data-color-scheme="kawaii"] .menu-btn--primary:hover {
-    color: #fffcf8;
+    color: #fffcf8 !important;
   }
 
   :root[data-color-scheme="kawaii"] .menu-btn--primary .menu-btn-icon {
-    background: rgba(255, 252, 248, 0.2);
-    color: #fffcf8;
+    background: rgba(255, 252, 248, 0.22) !important;
+    color: #fffcf8 !important;
   }
 
   :root[data-color-scheme="kawaii"] .menu-btn-icon {
     border-radius: 16px 16px 12px 16px;
-    background: var(--kawaii-lavender-soft);
-    color: color-mix(in srgb, var(--kawaii-lavender) 70%, var(--color-charcoal));
+    background: var(--kawaii-menu-tint, var(--kawaii-lavender-soft));
+    color: var(--kawaii-menu-ink, color-mix(in srgb, var(--kawaii-lavender) 70%, var(--color-charcoal)));
   }
 
   :root[data-color-scheme="kawaii"] .card-item-icon {
