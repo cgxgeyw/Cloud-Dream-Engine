@@ -1,40 +1,40 @@
 /*
-  Soft feminine shell theme (style id: kawaii).
-  Muted rose base + lavender / mint / peach accents. Cream paper, gentle glow.
+  Candy Dream shell theme (style id: kawaii).
+  Cream paper + lavender primary; peach / mint / rose as accents only.
   App shell only; world runtime UI stays isolated.
 */
 
 :root[data-color-scheme="kawaii"] {
   /* Ink & neutrals — warm plum-grey, not pure grey */
-  --color-charcoal: oklch(0.46 0.025 340);
-  --color-concrete: oklch(0.7 0.015 340);
-  --color-muted: oklch(0.6 0.018 340);
-  --color-faint: oklch(0.5 0.015 338);
+  --color-charcoal: oklch(0.46 0.025 320);
+  --color-concrete: oklch(0.7 0.015 320);
+  --color-muted: oklch(0.6 0.018 320);
+  --color-faint: oklch(0.5 0.015 318);
 
-  /* Primary: quiet rose (much lower chroma than candy pink) */
-  --color-accent: oklch(0.72 0.07 12);
-  --color-bg: oklch(0.972 0.008 350);
-  --color-surface: oklch(0.99 0.004 30);
+  /* Primary: soft lavender (not pink) */
+  --color-accent: oklch(0.74 0.06 300);
+  --color-bg: oklch(0.974 0.006 320);
+  --color-surface: oklch(0.991 0.003 300);
   --color-success: oklch(0.78 0.06 160);
   --color-warning: oklch(0.82 0.07 80);
   --color-error: oklch(0.7 0.09 20);
-  --color-border: oklch(0.9 0.012 350);
-  --color-border-hover: oklch(0.78 0.045 12);
-  --color-subtle-bg: oklch(0.962 0.008 350);
-  --color-hover-bg: oklch(0.952 0.012 355);
+  --color-border: oklch(0.9 0.01 320);
+  --color-border-hover: oklch(0.76 0.05 300);
+  --color-subtle-bg: oklch(0.964 0.007 320);
+  --color-hover-bg: oklch(0.954 0.01 300);
   --color-active-bg: color-mix(in srgb, var(--color-accent) 10%, transparent);
 
-  /* Secondary accents — lavender / mint / peach / sky */
-  --kawaii-lavender: oklch(0.78 0.06 300);
-  --kawaii-lavender-soft: oklch(0.94 0.025 300);
+  /* Accent candies — rose is one of several, not the base */
+  --kawaii-lavender: oklch(0.74 0.06 300);
+  --kawaii-lavender-soft: oklch(0.94 0.022 300);
   --kawaii-mint: oklch(0.8 0.05 165);
-  --kawaii-mint-soft: oklch(0.95 0.02 165);
-  --kawaii-peach: oklch(0.84 0.055 55);
-  --kawaii-peach-soft: oklch(0.96 0.02 55);
-  --kawaii-sky: oklch(0.82 0.045 230);
-  --kawaii-sky-soft: oklch(0.95 0.018 230);
-  --kawaii-rose: oklch(0.72 0.07 12);
-  --kawaii-rose-soft: oklch(0.95 0.02 12);
+  --kawaii-mint-soft: oklch(0.95 0.018 165);
+  --kawaii-peach: oklch(0.84 0.05 55);
+  --kawaii-peach-soft: oklch(0.96 0.018 55);
+  --kawaii-sky: oklch(0.82 0.04 230);
+  --kawaii-sky-soft: oklch(0.95 0.016 230);
+  --kawaii-rose: oklch(0.76 0.055 12);
+  --kawaii-rose-soft: oklch(0.95 0.018 12);
 
   /* Game session (dark narrative surface) */
   --game-bg-from: oklch(0.32 0.02 330);
@@ -90,57 +90,57 @@
   --font-body: "Nunito", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
   --font-mono: "JetBrains Mono", "Consolas", monospace;
 
-  --kawaii-shell: color-mix(in srgb, var(--color-surface) 94%, #f0e6ea);
-  --kawaii-shell-strong: color-mix(in srgb, var(--color-surface) 88%, #ead8de);
-  --kawaii-line: color-mix(in srgb, var(--color-accent) 8%, #e8d8dc);
-  --kawaii-line-strong: color-mix(in srgb, var(--color-accent) 18%, #dcc4cc);
-  --kawaii-separator: color-mix(in srgb, var(--kawaii-lavender) 10%, #eadce4);
-  --kawaii-sketch: color-mix(in srgb, var(--color-accent) 22%, #dcc8d0);
-  --kawaii-fill: linear-gradient(180deg, #fffdfc 0%, #faf6f6 100%);
-  --kawaii-fill-strong: linear-gradient(180deg, #fdf9f9 0%, #f7f0f2 100%);
-  --kawaii-fill-pressed: linear-gradient(180deg, #f8f2f3 0%, #f2e8ec 100%);
-  /* Primary CTA: rose → soft peach, not neon */
-  --kawaii-primary-fill: linear-gradient(165deg, #d4a0ae 0%, #c98a9c 55%, #d4a088 100%);
+  --kawaii-shell: color-mix(in srgb, var(--color-surface) 94%, #e8e4f0);
+  --kawaii-shell-strong: color-mix(in srgb, var(--color-surface) 88%, #ddd6ec);
+  --kawaii-line: color-mix(in srgb, var(--color-accent) 10%, #e0dcec);
+  --kawaii-line-strong: color-mix(in srgb, var(--color-accent) 22%, #cdc4e4);
+  --kawaii-separator: color-mix(in srgb, var(--kawaii-lavender) 12%, #e4dcec);
+  --kawaii-sketch: color-mix(in srgb, var(--color-accent) 28%, #d0c8e4);
+  --kawaii-fill: linear-gradient(180deg, #fffeff 0%, #faf8fc 100%);
+  --kawaii-fill-strong: linear-gradient(180deg, #fdfcff 0%, #f5f2f9 100%);
+  --kawaii-fill-pressed: linear-gradient(180deg, #f6f3fa 0%, #ece8f4 100%);
+  /* Primary CTA: lavender → peach candy, no hot pink */
+  --kawaii-primary-fill: linear-gradient(165deg, #b8a8d8 0%, #a898c8 52%, #d4b09a 100%);
   --kawaii-panel-radius: 28px 24px 20px 26px;
   --kawaii-card-radius: 24px 20px 16px 22px;
   --kawaii-chip-radius: 999px 999px 18px 999px;
   --kawaii-panel-border-width: 1.5px;
   --kawaii-chip-border-width: 1.5px;
-  --kawaii-sketch-shadow: 1px 2px 0 rgba(200, 175, 185, 0.4);
+  --kawaii-sketch-shadow: 1px 2px 0 rgba(170, 160, 190, 0.35);
   --kawaii-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --kawaii-duration-fast: 160ms;
   --kawaii-duration-base: 220ms;
 }
 
 :root[data-color-scheme="kawaii"][data-theme="dark"] {
-  --color-charcoal: oklch(0.91 0.01 30);
-  --color-concrete: oklch(0.74 0.012 340);
-  --color-accent: oklch(0.78 0.065 15);
-  --color-bg: oklch(0.27 0.012 330);
-  --color-surface: oklch(0.32 0.014 335);
+  --color-charcoal: oklch(0.91 0.01 300);
+  --color-concrete: oklch(0.74 0.012 300);
+  --color-accent: oklch(0.8 0.055 300);
+  --color-bg: oklch(0.27 0.012 300);
+  --color-surface: oklch(0.32 0.014 305);
   --color-success: oklch(0.76 0.06 160);
   --color-warning: oklch(0.8 0.07 80);
   --color-error: oklch(0.74 0.09 18);
-  --color-border: oklch(0.42 0.014 335);
-  --color-border-hover: oklch(0.6 0.04 15);
-  --color-muted: oklch(0.74 0.012 340);
-  --color-subtle-bg: oklch(0.35 0.014 335);
-  --color-hover-bg: oklch(0.4 0.016 340);
+  --color-border: oklch(0.42 0.014 305);
+  --color-border-hover: oklch(0.62 0.045 300);
+  --color-muted: oklch(0.74 0.012 300);
+  --color-subtle-bg: oklch(0.35 0.014 305);
+  --color-hover-bg: oklch(0.4 0.016 300);
   --color-active-bg: color-mix(in srgb, var(--color-accent) 14%, transparent);
 
   --kawaii-lavender: oklch(0.8 0.055 300);
   --kawaii-mint: oklch(0.78 0.05 165);
   --kawaii-peach: oklch(0.82 0.05 55);
   --kawaii-sky: oklch(0.8 0.04 230);
-  --kawaii-rose: oklch(0.76 0.065 12);
+  --kawaii-rose: oklch(0.76 0.055 12);
 
-  --kawaii-shell: color-mix(in srgb, var(--color-surface) 94%, #4a3840);
-  --kawaii-shell-strong: color-mix(in srgb, var(--color-surface) 90%, #564048);
-  --kawaii-line: color-mix(in srgb, var(--color-accent) 10%, #5c4650);
-  --kawaii-line-strong: color-mix(in srgb, var(--color-accent) 18%, #6e525c);
-  --kawaii-separator: color-mix(in srgb, var(--kawaii-lavender) 12%, #56404c);
-  --kawaii-sketch: color-mix(in srgb, var(--color-accent) 22%, #745860);
-  --kawaii-sketch-shadow: 1px 2px 0 rgba(50, 36, 42, 0.45);
+  --kawaii-shell: color-mix(in srgb, var(--color-surface) 94%, #403848);
+  --kawaii-shell-strong: color-mix(in srgb, var(--color-surface) 90%, #4a4254);
+  --kawaii-line: color-mix(in srgb, var(--color-accent) 12%, #4e4658);
+  --kawaii-line-strong: color-mix(in srgb, var(--color-accent) 22%, #5e5668);
+  --kawaii-separator: color-mix(in srgb, var(--kawaii-lavender) 14%, #4a4254);
+  --kawaii-sketch: color-mix(in srgb, var(--color-accent) 26%, #665e74);
+  --kawaii-sketch-shadow: 1px 2px 0 rgba(30, 28, 36, 0.45);
 
   --shadow-sm: 0 5px 14px rgba(0, 0, 0, 0.2);
   --shadow-default: 0 10px 24px rgba(0, 0, 0, 0.24);
@@ -153,29 +153,31 @@
   color: var(--color-charcoal);
 }
 
-/* Theme picker preview (always show soft multi-accent card) */
+/* Theme picker preview — candy multi-hue, lavender-led */
 .theme-picker-preview--kawaii {
   background:
-    radial-gradient(circle at 78% 22%, color-mix(in srgb, #c4b5e8 35%, transparent), transparent 40%),
-    radial-gradient(circle at 22% 78%, color-mix(in srgb, #b8d9c8 30%, transparent), transparent 38%),
-    linear-gradient(160deg, #f8eef1, #fbf8f6);
-  border: 1px solid #e4d4da;
+    radial-gradient(circle at 78% 22%, color-mix(in srgb, #c4b5e8 40%, transparent), transparent 40%),
+    radial-gradient(circle at 22% 78%, color-mix(in srgb, #b8d9c8 32%, transparent), transparent 38%),
+    radial-gradient(circle at 50% 50%, color-mix(in srgb, #f0d0b8 22%, transparent), transparent 42%),
+    linear-gradient(160deg, #f4f0f8, #fbfaf7);
+  border: 1px solid #ddd6ec;
 }
 
 :root[data-color-scheme="kawaii"] .theme-picker-preview--kawaii {
   background:
-    radial-gradient(circle at 78% 22%, color-mix(in srgb, #c4b5e8 40%, transparent), transparent 40%),
-    radial-gradient(circle at 22% 78%, color-mix(in srgb, #b8d9c8 32%, transparent), transparent 38%),
-    linear-gradient(160deg, #f8eef1, #fbf8f6);
-  border: 1px solid #e4d4da;
+    radial-gradient(circle at 78% 22%, color-mix(in srgb, #c4b5e8 45%, transparent), transparent 40%),
+    radial-gradient(circle at 22% 78%, color-mix(in srgb, #b8d9c8 34%, transparent), transparent 38%),
+    radial-gradient(circle at 50% 50%, color-mix(in srgb, #f0d0b8 24%, transparent), transparent 42%),
+    linear-gradient(160deg, #f4f0f8, #fbfaf7);
+  border: 1px solid #ddd6ec;
 }
 
 :root[data-color-scheme="kawaii"] .theme-picker-preview--kawaii .theme-picker-preview-header {
-  background: linear-gradient(90deg, #d4a0ae 0%, #c4b5e8 55%, #d4b89a 100%);
+  background: linear-gradient(90deg, #b8a8d8 0%, #c4b5e8 40%, #d4b89a 100%);
 }
 
 :root[data-color-scheme="kawaii"] .theme-picker-preview--kawaii .theme-picker-preview-line {
-  background: color-mix(in srgb, #c4b5e8 40%, white);
+  background: color-mix(in srgb, #c4b5e8 45%, white);
 }
 
 :root[data-color-scheme="kawaii"] .theme-picker-card--active {
@@ -183,20 +185,20 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 18%, transparent);
 }
 
-/* Desktop shell wash — rose + lavender + mint, very low opacity */
+/* Desktop shell wash — lavender primary + mint/peach hints */
 :root[data-color-scheme="kawaii"] .layout-root {
   background:
-    radial-gradient(ellipse 70% 45% at 8% -8%, rgba(220, 190, 210, 0.18), transparent 52%),
-    radial-gradient(ellipse 55% 40% at 92% 8%, rgba(196, 181, 232, 0.16), transparent 50%),
-    radial-gradient(ellipse 50% 35% at 50% 100%, rgba(184, 217, 200, 0.12), transparent 48%),
-    linear-gradient(180deg, #fbf8f8 0%, #f8f4f4 100%);
+    radial-gradient(ellipse 70% 45% at 8% -8%, rgba(196, 181, 232, 0.2), transparent 52%),
+    radial-gradient(ellipse 55% 40% at 92% 8%, rgba(184, 217, 200, 0.14), transparent 50%),
+    radial-gradient(ellipse 50% 35% at 50% 100%, rgba(240, 208, 184, 0.12), transparent 48%),
+    linear-gradient(180deg, #faf8fc 0%, #f7f5fa 100%);
 }
 
 :root[data-color-scheme="kawaii"][data-theme="dark"] .layout-root {
   background:
-    radial-gradient(ellipse 70% 45% at 8% -8%, rgba(180, 140, 160, 0.07), transparent 52%),
-    radial-gradient(ellipse 55% 40% at 92% 8%, rgba(150, 130, 190, 0.06), transparent 50%),
-    linear-gradient(180deg, #2c1e24 0%, #28181e 100%);
+    radial-gradient(ellipse 70% 45% at 8% -8%, rgba(150, 130, 190, 0.08), transparent 52%),
+    radial-gradient(ellipse 55% 40% at 92% 8%, rgba(130, 160, 145, 0.05), transparent 50%),
+    linear-gradient(180deg, #261e2c 0%, #221a28 100%);
 }
 
 :root[data-color-scheme="kawaii"] .surface-panel,
@@ -253,7 +255,7 @@
 :root[data-color-scheme="kawaii"] .field-input:focus,
 :root[data-color-scheme="kawaii"] .editor-field-input:focus {
   border-color: var(--color-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--kawaii-lavender) 20%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 18%, transparent);
   outline: none;
 }
 
@@ -279,29 +281,29 @@
 @media (max-width: 767px) {
   :root[data-color-scheme="kawaii"] .layout-root {
     background:
-      radial-gradient(circle at top left, rgba(220, 190, 210, 0.2), transparent 30%),
-      radial-gradient(circle at 85% 15%, rgba(196, 181, 232, 0.18), transparent 28%),
-      radial-gradient(circle at 50% 100%, rgba(184, 217, 200, 0.14), transparent 34%),
-      linear-gradient(180deg, #fcf9f9 0%, #f9f5f5 48%, #f7f2f3 100%);
+      radial-gradient(circle at top left, rgba(196, 181, 232, 0.22), transparent 30%),
+      radial-gradient(circle at 85% 15%, rgba(184, 217, 200, 0.16), transparent 28%),
+      radial-gradient(circle at 50% 100%, rgba(240, 208, 184, 0.14), transparent 34%),
+      linear-gradient(180deg, #faf8fc 0%, #f8f6fa 48%, #f6f4f8 100%);
   }
 
   :root[data-color-scheme="kawaii"][data-theme="dark"] .layout-root {
     background:
-      radial-gradient(circle at top left, rgba(200, 150, 170, 0.08), transparent 28%),
-      radial-gradient(circle at 85% 15%, rgba(160, 140, 200, 0.06), transparent 26%),
-      linear-gradient(180deg, #2c1e24 0%, #28181e 44%, #24161c 100%);
+      radial-gradient(circle at top left, rgba(150, 130, 190, 0.09), transparent 28%),
+      radial-gradient(circle at 85% 15%, rgba(130, 160, 145, 0.05), transparent 26%),
+      linear-gradient(180deg, #261e2c 0%, #221a28 44%, #1e1624 100%);
   }
 
   :root[data-color-scheme="kawaii"] .layout-bg-scrim {
     background:
-      linear-gradient(180deg, rgba(252, 249, 249, 0.88), rgba(249, 245, 245, 0.94)),
-      linear-gradient(135deg, rgba(210, 185, 200, 0.06), rgba(255, 255, 255, 0));
+      linear-gradient(180deg, rgba(250, 248, 252, 0.88), rgba(248, 246, 250, 0.94)),
+      linear-gradient(135deg, rgba(200, 185, 220, 0.06), rgba(255, 255, 255, 0));
   }
 
   :root[data-color-scheme="kawaii"][data-theme="dark"] .layout-bg-scrim {
     background:
-      linear-gradient(180deg, rgba(42, 30, 36, 0.88), rgba(38, 24, 30, 0.94)),
-      linear-gradient(135deg, rgba(210, 185, 200, 0.04), rgba(255, 255, 255, 0));
+      linear-gradient(180deg, rgba(36, 30, 42, 0.88), rgba(32, 26, 38, 0.94)),
+      linear-gradient(135deg, rgba(200, 185, 220, 0.04), rgba(255, 255, 255, 0));
   }
 
   :root[data-color-scheme="kawaii"] .layout-inner {
@@ -323,8 +325,8 @@
     border: var(--kawaii-panel-border-width) solid var(--kawaii-sketch);
     border-radius: var(--kawaii-panel-radius);
     background:
-      radial-gradient(circle at 12% 14%, rgba(228, 210, 220, 0.2), transparent 18%),
-      radial-gradient(circle at 88% 86%, rgba(210, 200, 230, 0.14), transparent 22%),
+      radial-gradient(circle at 12% 14%, rgba(210, 198, 235, 0.22), transparent 18%),
+      radial-gradient(circle at 88% 86%, rgba(230, 210, 190, 0.12), transparent 22%),
       linear-gradient(180deg, rgba(255, 255, 255, 0.45), rgba(255, 255, 255, 0)) top/100% 1px no-repeat,
       var(--kawaii-fill);
     box-shadow: var(--kawaii-sketch-shadow), var(--shadow-default);
@@ -417,12 +419,12 @@
     border-color: color-mix(in srgb, var(--color-accent) 40%, #e0c8d0);
     background: var(--kawaii-primary-fill);
     color: oklch(0.97 0.005 30);
-    box-shadow: 1px 2px 0 rgba(160, 120, 135, 0.22), 0 8px 16px rgba(150, 110, 125, 0.12);
+    box-shadow: 1px 2px 0 rgba(130, 115, 160, 0.22), 0 8px 16px rgba(120, 105, 150, 0.12);
   }
 
   :root[data-color-scheme="kawaii"] .action-btn--danger {
     border-color: color-mix(in srgb, var(--color-error) 24%, var(--color-border));
-    background: linear-gradient(180deg, color-mix(in srgb, var(--color-error) 6%, white), #faf6f6);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--color-error) 6%, white), #faf8fc);
     color: var(--color-error);
   }
 
@@ -492,8 +494,8 @@
   :root[data-color-scheme="kawaii"] .field-input:focus,
   :root[data-color-scheme="kawaii"] .editor-field-input:focus,
   :root[data-color-scheme="kawaii"] .editor-tab-add-input:focus {
-    border-color: color-mix(in srgb, var(--kawaii-lavender) 55%, var(--color-accent));
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--kawaii-lavender) 18%, transparent);
+    border-color: var(--kawaii-lavender);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--kawaii-lavender) 20%, transparent);
     outline: none;
   }
 
@@ -514,10 +516,10 @@
   }
 
   :root[data-color-scheme="kawaii"] .editor-tab--active {
-    border-color: color-mix(in srgb, var(--kawaii-lavender) 45%, white);
-    background: linear-gradient(165deg, #c4b5e8, #b8a8d8);
+    border-color: color-mix(in srgb, var(--kawaii-lavender) 50%, white);
+    background: linear-gradient(165deg, #b8a8d8, #a898c8);
     color: oklch(0.98 0.005 300);
-    box-shadow: 0 6px 14px rgba(140, 120, 170, 0.16);
+    box-shadow: 0 6px 14px rgba(130, 115, 160, 0.16);
   }
 
   :root[data-color-scheme="kawaii"] .card-item {
@@ -530,14 +532,14 @@
 
   :root[data-color-scheme="kawaii"] .card-delete-btn {
     border-color: color-mix(in srgb, var(--color-error) 24%, var(--color-border));
-    background: color-mix(in srgb, var(--color-surface) 88%, #f5e8ea);
+    background: color-mix(in srgb, var(--color-surface) 88%, #f0e8ee);
     color: var(--color-error);
   }
 
   :root[data-color-scheme="kawaii"] .settings-upload-zone {
     border-style: dashed;
     border-width: 2px;
-    background: linear-gradient(180deg, #fffdfc 0%, #faf7f7 100%);
+    background: linear-gradient(180deg, #fffefe 0%, #faf8fc 100%);
   }
 
   :root[data-color-scheme="kawaii"] .home-mobile-center {
@@ -554,7 +556,7 @@
     border: var(--kawaii-chip-border-width) solid var(--kawaii-sketch);
     border-radius: 999px 999px 20px 999px;
     background:
-      linear-gradient(120deg, var(--kawaii-rose-soft) 0%, var(--kawaii-lavender-soft) 55%, var(--kawaii-mint-soft) 100%);
+      linear-gradient(120deg, var(--kawaii-lavender-soft) 0%, var(--kawaii-peach-soft) 50%, var(--kawaii-mint-soft) 100%);
     color: var(--color-charcoal);
     box-shadow: var(--kawaii-sketch-shadow), var(--shadow-default);
     margin-bottom: 26px;
