@@ -1,3 +1,10 @@
+/**
+ * HTTP transport for the web/dev backend.
+ *
+ * Application code must import from `./apiAdapter` only — this module is a
+ * transport implementation detail. Prefer adding new endpoints on the adapter
+ * (and `tauriApi`) rather than importing this file from pages/components.
+ */
 import type {
   AiWorldCreateRequest,
   AiWorldCreateResponse,

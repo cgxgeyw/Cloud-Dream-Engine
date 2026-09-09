@@ -303,12 +303,13 @@ impl WorldService {
         })
     }
 
-    pub fn build_world_package(
+    /// H8: 锁内只读 DB 元数据；打包/压 zip 的磁盘 IO 交给 `package_world_bundle` 在锁外执行。
+    pub fn load_world_package_inputs(
         &self,
         conn: &Connection,
-        data_dir: &Path,
         world_id: &str,
-    ) -> Result<BinaryFileResponse, String> {
+    ) -> Result<(WorldDefinition, Vec<CharacterDefinition>, Vec<crate::models::mcp_tool::McpToolDefinition>), String>
+    {
         let world_repo = WorldRepository::new(conn);
         let char_repo = CharacterRepository::new(conn);
         let world = Self::enrich_world(
@@ -320,8 +321,17 @@ impl WorldService {
         // v8：世界白名单引用到的 MCP 工具一并打包，导入方开箱即用。
         let mcp_tools =
             crate::db::repositories::mcp_tool_repo::McpToolRepository::new(conn).list()?;
+        Ok((world, characters, mcp_tools))
+    }
 
-        WorldPackageService::build_package(data_dir, &world, &characters, &mcp_tools)
+    /// H8: 无 DB 依赖的打包（读资产 + 压 zip），可在全局 DB 锁外执行。
+    pub fn package_world_bundle(
+        data_dir: &Path,
+        world: &WorldDefinition,
+        characters: &[CharacterDefinition],
+        mcp_tools: &[crate::models::mcp_tool::McpToolDefinition],
+    ) -> Result<BinaryFileResponse, String> {
+        WorldPackageService::build_package(data_dir, world, characters, mcp_tools)
     }
 
     /// H8: 解压 + 资产落盘(无 DB,可在锁外执行),与 DB 持久化分离。

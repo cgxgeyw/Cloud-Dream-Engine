@@ -3,10 +3,16 @@
 //!
 //! impl_config 两种模式：
 //! - generic（基础 HTTP 工具）：模型在调用参数里直接给 method/url/headers/params/body；
-//!   配置里可用 allowed_hosts 限制可访问域名（空 = 不限制）。
+//!   配置里可用 allowed_hosts 限制可访问域名。
 //! - template（数据接口工具）：配置里写死 method/url/query/headers，字符串中的
 //!   {{参数名}} 由调用入参替换（URL 编码）；可用 charset 指定响应编码（如 gbk），
 //!   用 extractor 把响应整理成结构化 JSON。
+//!
+//! 安全默认（SSRF 防护）：
+//! - `allowed_hosts` 缺省或为空时**不再全放行**，仅允许公网主机名。
+//! - 环回 / 私网 / link-local / 云 metadata 等目标默认拒绝；
+//!   确需访问本机服务时，在工具配置里显式 `"allow_private_network": true`。
+//! - 请求头不允许覆盖 Host / Content-Length 等传输层头。
 
 use crate::models::mcp_tool::McpToolDefinition;
 use serde_json::Value;
@@ -66,7 +72,7 @@ async fn execute_generic(config: &Value, arguments: &Value) -> Result<Value, Str
     let headers = arguments.get("headers").cloned().unwrap_or(Value::Null);
     let params = arguments.get("params").cloned().unwrap_or(Value::Null);
     let body = arguments.get("body").cloned();
-    let response = send_request(method, url, &headers, &params, body).await?;
+    let response = send_request(config, method, url, &headers, &params, body).await?;
     decode_response(response, config.get("charset").and_then(Value::as_str), &Value::Null)
         .await
 }
@@ -97,7 +103,7 @@ async fn execute_template(config: &Value, arguments: &Value) -> Result<Value, St
             query.insert(key.clone(), rendered);
         }
     }
-    let response = send_request(method, &url, &headers, &Value::Object(query), None).await?;
+    let response = send_request(config, method, &url, &headers, &Value::Object(query), None).await?;
     let extractor = config.get("extractor").cloned().unwrap_or(Value::Null);
     let extractor = substitute_extractor_placeholders(&extractor, arguments);
     decode_response(
@@ -110,7 +116,19 @@ async fn execute_template(config: &Value, arguments: &Value) -> Result<Value, St
 
 // ---- 请求与解析 ----
 
+/// 不允许由模型/调用参数覆盖的传输层头（防 Host 伪造与长度篡改）。
+const BLOCKED_REQUEST_HEADERS: &[&str] = &[
+    "host",
+    "content-length",
+    "transfer-encoding",
+    "connection",
+    "upgrade",
+    "proxy-authorization",
+    "proxy-connection",
+];
+
 async fn send_request(
+    config: &Value,
     method: &str,
     url: &str,
     headers: &Value,
@@ -120,6 +138,7 @@ async fn send_request(
     if !(url.starts_with("https://") || url.starts_with("http://")) {
         return Err(format!("仅支持 http/https 地址：{url}"));
     }
+    check_url_safety(config, url)?;
     let method = reqwest::Method::from_bytes(method.trim().to_ascii_uppercase().as_bytes())
         .map_err(|_| format!("不支持的 HTTP 方法：{method}"))?;
     let client = reqwest::Client::builder()
@@ -129,8 +148,16 @@ async fn send_request(
     let mut request = client.request(method, url);
     if let Some(object) = headers.as_object() {
         for (key, value) in object {
+            let name = key.trim();
+            if name.is_empty()
+                || BLOCKED_REQUEST_HEADERS
+                    .iter()
+                    .any(|blocked| name.eq_ignore_ascii_case(blocked))
+            {
+                continue;
+            }
             if let Some(text) = value.as_str() {
-                request = request.header(key, text);
+                request = request.header(name, text);
             }
         }
     }
@@ -321,6 +348,101 @@ fn substitute_extractor_placeholders(extractor: &Value, arguments: &Value) -> Va
     }
 }
 
+fn extract_url_host(url: &str) -> String {
+    let Some(rest) = url.split("://").nth(1) else {
+        return String::new();
+    };
+    let authority = rest
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or("")
+        // 去掉 userinfo；IPv6 字面量形如 [::1]:8080
+        .rsplit('@')
+        .next()
+        .unwrap_or("");
+    let host = if let Some(inner) = authority.strip_prefix('[') {
+        inner.split(']').next().unwrap_or("")
+    } else {
+        authority.split(':').next().unwrap_or("")
+    };
+    host.to_ascii_lowercase()
+}
+
+fn allow_private_network(config: &Value) -> bool {
+    config
+        .get("allow_private_network")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+/// 环回 / 私网 / link-local / 云 metadata / 明显内网主机名。
+fn is_private_or_local_host(host: &str) -> bool {
+    if host.is_empty() {
+        return true;
+    }
+    if matches!(
+        host,
+        "localhost"
+            | "localhost.localdomain"
+            | "ip6-localhost"
+            | "metadata"
+            | "metadata.google.internal"
+            | "instance-data"
+            | "0.0.0.0"
+    ) || host.ends_with(".local")
+        || host.ends_with(".internal")
+        || host.ends_with(".localdomain")
+    {
+        return true;
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return match ip {
+            std::net::IpAddr::V4(v4) => {
+                v4.is_loopback()
+                    || v4.is_private()
+                    || v4.is_link_local()
+                    || v4.is_broadcast()
+                    || v4.is_unspecified()
+                    || v4.octets()[0] == 0
+                    // CGNAT 100.64.0.0/10
+                    || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xc0) == 64)
+            }
+            std::net::IpAddr::V6(v6) => {
+                v6.is_loopback()
+                    || v6.is_unspecified()
+                    || v6.is_unique_local()
+                    || (v6.segments()[0] & 0xffc0) == 0xfe80
+                    || v6.to_ipv4_mapped().is_some_and(|v4| {
+                        v4.is_loopback()
+                            || v4.is_private()
+                            || v4.is_link_local()
+                            || v4.is_unspecified()
+                    })
+            }
+        };
+    }
+    // 纯数字主机名在部分解析器里会被当成 IPv4
+    if host.chars().all(|c| c.is_ascii_digit() || c == '.') && host.contains('.') {
+        return true;
+    }
+    false
+}
+
+/// URL 安全闸门：allowed_hosts 白名单 + 默认拒绝私网/环回。
+fn check_url_safety(config: &Value, url: &str) -> Result<(), String> {
+    check_allowed_hosts(config, url)?;
+    let host = extract_url_host(url);
+    if allow_private_network(config) {
+        return Ok(());
+    }
+    if is_private_or_local_host(&host) {
+        return Err(format!(
+            "目标地址属于环回/私网/本机服务，默认拒绝：{host}。如确需访问，请在工具配置中显式设置 allow_private_network: true。"
+        ));
+    }
+    Ok(())
+}
+
 fn check_allowed_hosts(config: &Value, url: &str) -> Result<(), String> {
     let Some(hosts) = config.get("allowed_hosts").and_then(Value::as_array) else {
         return Ok(());
@@ -329,14 +451,11 @@ fn check_allowed_hosts(config: &Value, url: &str) -> Result<(), String> {
     if hosts.is_empty() {
         return Ok(());
     }
-    let host = url
-        .split("://")
-        .nth(1)
-        .and_then(|rest| rest.split(['/', '?', '#']).next())
-        .and_then(|authority| authority.split(':').next())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    if hosts.iter().any(|item| host == item.to_ascii_lowercase()) {
+    let host = extract_url_host(url);
+    if hosts
+        .iter()
+        .any(|item| host == item.trim().to_ascii_lowercase())
+    {
         Ok(())
     } else {
         Err(format!("目标域名不在工具允许范围内：{host}"))
@@ -493,7 +612,35 @@ mod tests {
         let config = json!({"allowed_hosts": ["qt.gtimg.cn"]});
         assert!(check_allowed_hosts(&config, "https://qt.gtimg.cn/q=sh600519").is_ok());
         assert!(check_allowed_hosts(&config, "https://evil.test/").is_err());
-        // 未配置 allowed_hosts = 不限制。
-        assert!(check_allowed_hosts(&json!({}), "https://evil.test/").is_ok());
+    }
+
+    #[test]
+    fn private_network_targets_are_denied_by_default() {
+        assert!(is_private_or_local_host("127.0.0.1"));
+        assert!(is_private_or_local_host("localhost"));
+        assert!(is_private_or_local_host("10.0.0.8"));
+        assert!(is_private_or_local_host("192.168.1.1"));
+        assert!(is_private_or_local_host("172.16.0.1"));
+        assert!(is_private_or_local_host("169.254.169.254"));
+        assert!(is_private_or_local_host("::1"));
+        assert!(is_private_or_local_host("fd00::1"));
+        assert!(is_private_or_local_host("metadata.google.internal"));
+        assert!(!is_private_or_local_host("qt.gtimg.cn"));
+        assert!(!is_private_or_local_host("8.8.8.8"));
+
+        assert!(check_url_safety(&json!({}), "https://127.0.0.1/admin").is_err());
+        assert!(check_url_safety(&json!({}), "http://169.254.169.254/latest/meta-data/").is_err());
+        assert!(check_url_safety(&json!({}), "https://qt.gtimg.cn/q=sh600519").is_ok());
+        assert!(
+            check_url_safety(&json!({"allow_private_network": true}), "http://127.0.0.1:8080/")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn blocked_request_headers_are_ignored() {
+        assert!(BLOCKED_REQUEST_HEADERS
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case("Host")));
     }
 }

@@ -16,6 +16,7 @@ import {
   fetchSessionRuntimeAttributes,
   fetchSaves,
   fetchSession,
+  fetchWorld,
   fetchWorlds,
   fetchWorldCharacters,
   isAndroidRuntime,
@@ -697,18 +698,24 @@ export function useGameSession(
 
     async function loadWorld() {
       try {
-        const [worlds, sessionPlayer] = await Promise.all([
-          fetchWorlds(),
-          playerCharacterId
-            ? fetchCharacter(playerCharacterId).catch(() => null)
-            : Promise.resolve(null),
-        ]);
+        const sessionPlayer = playerCharacterId
+          ? await fetchCharacter(playerCharacterId).catch(() => null)
+          : null;
+        if (cancelled) {
+          return;
+        }
+        // 常规路径：从玩家角色拿 world_id，只拉单个世界，避免全量列表。
+        if (sessionPlayer?.world_id) {
+          const world = await fetchWorld(sessionPlayer.world_id).catch(() => null);
+          if (!cancelled) {
+            setThemeWorld(world);
+          }
+          return;
+        }
+        // 兜底：没有玩家角色时按世界名在列表中匹配。
+        const worlds = await fetchWorlds();
         if (!cancelled) {
-          setThemeWorld(
-            worlds.find((world) => world.id === sessionPlayer?.world_id)
-              ?? worlds.find((world) => world.name === worldName)
-              ?? null,
-          );
+          setThemeWorld(worlds.find((world) => world.name === worldName) ?? null);
         }
       } catch {
         if (!cancelled) {
@@ -1372,6 +1379,10 @@ export function useGameSession(
         }
 
         setStreamingResponseActive(true);
+        // 提交前已提交的玩家消息条数：附件消息 content 是 multipart，无法用正文字符串匹配。
+        const playerMessageCountBefore = (session?.messages ?? []).filter(
+          (message) => message.role === "player",
+        ).length;
         if (isReplay) {
           setOptimisticPlayerMessage(null);
           setInputImages([]);
@@ -1399,11 +1410,17 @@ export function useGameSession(
           },
           {
             onSnapshot: (nextSnapshot) => {
-              // 一旦服务端快照中已包含本次玩家发言，立即清除乐观消息，避免底部重复显示
+              // 服务端快照一旦包含新的已提交玩家发言（文本或附件），立即清除乐观消息。
               if (!isReplay) {
-                const alreadyInSession = nextSnapshot.messages?.some(
-                  (m) => m.role === "player" && typeof m.content === "string" && m.content.trim() === playerContent.trim(),
-                );
+                const committedPlayerCount = (nextSnapshot.messages ?? []).filter(
+                  (m) => m.role === "player",
+                ).length;
+                const alreadyInSession = committedPlayerCount > playerMessageCountBefore
+                  || nextSnapshot.messages?.some(
+                    (m) => m.role === "player"
+                      && typeof m.content === "string"
+                      && m.content.trim() === playerContent.trim(),
+                  );
                 if (alreadyInSession) {
                   setOptimisticPlayerMessage(null);
                 }
@@ -1634,80 +1651,151 @@ export function useGameSession(
     }
   }, []);
 
-  return {
-    session,
-    sessionId,
-    loading,
-    error: error ?? "",
-    themeWorld,
-    playerCharacter,
-    worldCharacters,
-    currentSave,
-    messages,
-    inputValue,
-    setInputValue,
-    inputImages,
-    setInputImages,
-    inputAudios,
-    setInputAudios,
-    chatAutoScrollEnabled,
-    setChatAutoScrollEnabled,
-    clearActionError,
-    submitting,
-    streamingResponseActive,
-    branching,
-    actionError,
-    editingTurn,
-    startEditingTurn,
-    cancelEditingTurn,
-    sideTab,
-    setSideTab,
-    switching,
-    dismissedProposalKeys,
-    dismissSwitchProposal,
-    handleAcceptSwitchProposal,
-    expandedDirectorTraceKeys,
-    setExpandedDirectorTraceKeys,
-    activeCharacterCreationKeys,
-    retryingToken,
-    dismissedRetryCardKeys,
-    dismissDirectorRetryCard,
-    handleRetryFailedStep,
-    handleBranch,
-    handleSubmitAction,
-    handleAnswerInteraction,
-    lastCompletedTurn,
-    optimisticPlayerMessage,
-    worldUiEnvelope,
-    themeStyle,
-    gameUiScopeId,
-    parsedGameUi,
-    runtimeBackgroundAsset,
-    runtimeBackgroundStyle,
-    themeCustomCss,
-    worldUiRuntimeVersion: worldUiEnvelope.runtime_version,
-    mapGraphNodes,
-    mapGraphEdges,
-    runtimeAttributes,
-    attributeSideTabs,
-    worldCharacterNameSet,
-    sideTabs,
-    activeAttributeTab,
-    activeAttributeContent,
-    activeAttributeItems,
-    latestNarration,
-    dialogueMessages,
-    renderedDialogueMessages,
-    copyableDialogueText,
-    latestSceneFocus,
-    sceneFocusSpeaker,
-    sceneFocusContent,
-    activePortraitPath,
-    showSceneFocus,
-    showSceneCharacters,
-    chatMessagesRef,
-    inputRef,
-    handleCopyDialogue,
-    handleCopyMessage,
-  };
+  // bag 作为稳定引用返回：下游 shell 的 runtime/actions memo 才能生效。
+  // 任一真实状态变化会更新对应依赖并生成新 bag 对象。
+  return useMemo(
+    () => ({
+      session,
+      sessionId,
+      loading,
+      error: error ?? "",
+      themeWorld,
+      playerCharacter,
+      worldCharacters,
+      currentSave,
+      messages,
+      inputValue,
+      setInputValue,
+      inputImages,
+      setInputImages,
+      inputAudios,
+      setInputAudios,
+      chatAutoScrollEnabled,
+      setChatAutoScrollEnabled,
+      clearActionError,
+      submitting,
+      streamingResponseActive,
+      branching,
+      actionError,
+      editingTurn,
+      startEditingTurn,
+      cancelEditingTurn,
+      sideTab,
+      setSideTab,
+      switching,
+      dismissedProposalKeys,
+      dismissSwitchProposal,
+      handleAcceptSwitchProposal,
+      expandedDirectorTraceKeys,
+      setExpandedDirectorTraceKeys,
+      activeCharacterCreationKeys,
+      retryingToken,
+      dismissedRetryCardKeys,
+      dismissDirectorRetryCard,
+      handleRetryFailedStep,
+      handleBranch,
+      handleSubmitAction,
+      handleAnswerInteraction,
+      lastCompletedTurn,
+      optimisticPlayerMessage,
+      worldUiEnvelope,
+      themeStyle,
+      gameUiScopeId,
+      parsedGameUi,
+      runtimeBackgroundAsset,
+      runtimeBackgroundStyle,
+      themeCustomCss,
+      worldUiRuntimeVersion: worldUiEnvelope.runtime_version,
+      mapGraphNodes,
+      mapGraphEdges,
+      runtimeAttributes,
+      attributeSideTabs,
+      worldCharacterNameSet,
+      sideTabs,
+      activeAttributeTab,
+      activeAttributeContent,
+      activeAttributeItems,
+      latestNarration,
+      dialogueMessages,
+      renderedDialogueMessages,
+      copyableDialogueText,
+      latestSceneFocus,
+      sceneFocusSpeaker,
+      sceneFocusContent,
+      activePortraitPath,
+      showSceneFocus,
+      showSceneCharacters,
+      chatMessagesRef,
+      inputRef,
+      handleCopyDialogue,
+      handleCopyMessage,
+    }),
+    [
+      session,
+      sessionId,
+      loading,
+      error,
+      themeWorld,
+      playerCharacter,
+      worldCharacters,
+      currentSave,
+      messages,
+      inputValue,
+      inputImages,
+      inputAudios,
+      chatAutoScrollEnabled,
+      clearActionError,
+      submitting,
+      streamingResponseActive,
+      branching,
+      actionError,
+      editingTurn,
+      startEditingTurn,
+      cancelEditingTurn,
+      sideTab,
+      switching,
+      dismissedProposalKeys,
+      dismissSwitchProposal,
+      handleAcceptSwitchProposal,
+      expandedDirectorTraceKeys,
+      activeCharacterCreationKeys,
+      retryingToken,
+      dismissedRetryCardKeys,
+      dismissDirectorRetryCard,
+      handleRetryFailedStep,
+      handleBranch,
+      handleSubmitAction,
+      handleAnswerInteraction,
+      lastCompletedTurn,
+      optimisticPlayerMessage,
+      worldUiEnvelope,
+      themeStyle,
+      gameUiScopeId,
+      parsedGameUi,
+      runtimeBackgroundAsset,
+      runtimeBackgroundStyle,
+      themeCustomCss,
+      mapGraphNodes,
+      mapGraphEdges,
+      runtimeAttributes,
+      attributeSideTabs,
+      worldCharacterNameSet,
+      sideTabs,
+      activeAttributeTab,
+      activeAttributeContent,
+      activeAttributeItems,
+      latestNarration,
+      dialogueMessages,
+      renderedDialogueMessages,
+      copyableDialogueText,
+      latestSceneFocus,
+      sceneFocusSpeaker,
+      sceneFocusContent,
+      activePortraitPath,
+      showSceneFocus,
+      showSceneCharacters,
+      handleCopyDialogue,
+      handleCopyMessage,
+    ],
+  );
 }

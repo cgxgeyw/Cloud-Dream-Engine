@@ -75,9 +75,11 @@ export const MobileGameShell: React.FC<{
     parsedGameUi,
   } = bag;
 
-  const runtime = createGameUiRuntimeContext(bag, "mobile");
-  const actions = createGameUiRuntimeActions(bag, runtime, navigate);
-  const componentRenderers = createGameUiComponentRenderers(runtime, actions);
+  // bag 在 useGameSession 内已 memo；此处再 memo runtime/actions/renderers，
+  // 避免每次 render 重建上下文导致 SidePanel/InputComposer/Sandbox 的 memo 失效。
+  const runtime = React.useMemo(() => createGameUiRuntimeContext(bag, "mobile"), [bag]);
+  const actions = React.useMemo(() => createGameUiRuntimeActions(bag, runtime, navigate), [bag, runtime, navigate]);
+  const componentRenderers = React.useMemo(() => createGameUiComponentRenderers(runtime, actions), [runtime, actions]);
   const mobileViewport = useMobileVisualViewport();
   const cspNonce = React.useMemo(() => getDocumentCspNonce(), []);
   const runtimeData = React.useMemo(

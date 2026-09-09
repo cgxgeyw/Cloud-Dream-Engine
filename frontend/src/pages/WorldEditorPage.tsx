@@ -869,8 +869,15 @@ export function WorldEditorPage() {
     };
   }, [id, isNew]);
 
-  const timeConfig = normalizeTimeConfig((world?.time_config ?? {}) as Record<string, unknown>);
-  const directorConfig = normalizeDirectorConfig((world?.director_config ?? {}) as Record<string, unknown>);
+  // normalize* 每次 render 新建对象会击穿下游 useMemo；按源字段引用 memo。
+  const timeConfig = useMemo(
+    () => normalizeTimeConfig((world?.time_config ?? {}) as Record<string, unknown>),
+    [world?.time_config],
+  );
+  const directorConfig = useMemo(
+    () => normalizeDirectorConfig((world?.director_config ?? {}) as Record<string, unknown>),
+    [world?.director_config],
+  );
   useLayoutEffect(() => {
     if (!pendingTimeSlotFocusRef.current) {
       return;
@@ -881,8 +888,14 @@ export function WorldEditorPage() {
     focusTarget?.scrollIntoView({ block: "center", behavior: "smooth" });
     focusTarget?.focus();
   }, [timeConfig.slots.length]);
-  const uiThemeConfig = normalizeUiThemeConfig((world?.ui_theme_config ?? {}) as Record<string, unknown>);
-  const openingMessages = normalizeOpeningMessages(world?.opening_messages ?? []);
+  const uiThemeConfig = useMemo(
+    () => normalizeUiThemeConfig((world?.ui_theme_config ?? {}) as Record<string, unknown>),
+    [world?.ui_theme_config],
+  );
+  const openingMessages = useMemo(
+    () => normalizeOpeningMessages(world?.opening_messages ?? []),
+    [world?.opening_messages],
+  );
   const openingCharacterIds = useMemo(
     () => normalizeOpeningCharacterIds(world?.opening_character_ids ?? [], characters),
     [characters, world?.opening_character_ids],

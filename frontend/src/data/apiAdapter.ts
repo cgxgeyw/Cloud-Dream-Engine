@@ -1,3 +1,11 @@
+/**
+ * Sole public data API for the app.
+ *
+ * Detects Tauri vs web at runtime and delegates to `tauriApi` (IPC) or `api` (HTTP).
+ * Pages, game runtime, and editors must import from this module — never from
+ * `./api` or `./tauriApi` directly. New endpoints: add the transport impls first,
+ * then re-export a single function here.
+ */
 let isTauri = false;
 let api: typeof import("./api") | null = null;
 let tauriApi: typeof import("./tauriApi") | null = null;

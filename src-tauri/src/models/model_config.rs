@@ -26,6 +26,28 @@ impl ModelConfig {
     }
 }
 
+/// IPC 回传给前端时的 API Key 掩码前缀。与真实 key 区分，update 时识别为「保留旧值」。
+pub const API_KEY_MASK_PREFIX: &str = "••••••••";
+
+/// 列表/读取模型时脱敏：避免完整密钥经 IPC 回到前端。
+pub fn mask_api_key(key: &str) -> String {
+    let trimmed = key.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if trimmed.len() <= 4 {
+        API_KEY_MASK_PREFIX.to_string()
+    } else {
+        format!("{API_KEY_MASK_PREFIX}{}", &trimmed[trimmed.len() - 4..])
+    }
+}
+
+/// 前端回传的值是否为脱敏掩码（用户未修改密钥字段）。
+pub fn is_masked_api_key(value: &str) -> bool {
+    let trimmed = value.trim();
+    trimmed == API_KEY_MASK_PREFIX || trimmed.starts_with(API_KEY_MASK_PREFIX)
+}
+
 /// 第 10 项：玩家附件（图片/音频）只允许发给声明了对应输入模态的模型。
 /// 不支持时给出中文错误，指明模型名、缺的模态与开启入口——不静默丢弃附件（红线 5）。
 pub fn ensure_media_supported(
@@ -180,5 +202,17 @@ mod tests {
         assert!(error.contains("测试模型"), "错误应点名模型: {error}");
         assert!(error.contains("图片"), "错误应指出缺的模态: {error}");
         assert!(error.contains("设置"), "错误应指出开启入口: {error}");
+    }
+
+    #[test]
+    fn api_key_is_masked_for_ipc() {
+        assert_eq!(mask_api_key(""), "");
+        assert_eq!(mask_api_key("abcd"), API_KEY_MASK_PREFIX);
+        let masked = mask_api_key("sk-secret-key-9876");
+        assert!(masked.ends_with("9876"));
+        assert!(!masked.contains("secret"));
+        assert!(is_masked_api_key(&masked));
+        assert!(!is_masked_api_key("sk-new-key"));
+        assert!(!is_masked_api_key(""));
     }
 }

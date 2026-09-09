@@ -4,6 +4,16 @@ use crate::services::llm::client::{ChatMessage, ChatRequest};
 use crate::state::AppState;
 use tauri::State;
 
+/// IPC 出口统一脱敏，避免完整密钥回传前端。
+fn mask_model_for_ipc(mut model: ModelConfig) -> ModelConfig {
+    model.api_key = mask_api_key(&model.api_key);
+    model
+}
+
+fn mask_models_for_ipc(models: Vec<ModelConfig>) -> Vec<ModelConfig> {
+    models.into_iter().map(mask_model_for_ipc).collect()
+}
+
 #[tauri::command]
 pub async fn list_models(
     state: State<'_, AppState>,
@@ -11,14 +21,15 @@ pub async fn list_models(
 ) -> Result<Vec<ModelConfig>, String> {
     let db = state.db.lock().await;
     let repo = crate::db::repositories::model_repo::ModelRepository::new(db.conn());
-    repo.list(model_type.as_deref())
+    Ok(mask_models_for_ipc(repo.list(model_type.as_deref())?))
 }
 
 #[tauri::command]
 pub async fn get_model(state: State<'_, AppState>, id: String) -> Result<ModelConfig, String> {
     let db = state.db.lock().await;
     let repo = crate::db::repositories::model_repo::ModelRepository::new(db.conn());
-    repo.get(&id)?.ok_or_else(|| "Model not found".to_string())
+    let model = repo.get(&id)?.ok_or_else(|| "Model not found".to_string())?;
+    Ok(mask_model_for_ipc(model))
 }
 
 #[tauri::command]
@@ -28,7 +39,7 @@ pub async fn create_model(
 ) -> Result<ModelConfig, String> {
     let db = state.db.lock().await;
     let repo = crate::db::repositories::model_repo::ModelRepository::new(db.conn());
-    repo.create(&request)
+    Ok(mask_model_for_ipc(repo.create(&request)?))
 }
 
 #[tauri::command]
@@ -39,7 +50,7 @@ pub async fn update_model(
 ) -> Result<ModelConfig, String> {
     let db = state.db.lock().await;
     let repo = crate::db::repositories::model_repo::ModelRepository::new(db.conn());
-    repo.update(&id, &request)
+    Ok(mask_model_for_ipc(repo.update(&id, &request)?))
 }
 
 #[tauri::command]

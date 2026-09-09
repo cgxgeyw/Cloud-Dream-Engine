@@ -312,20 +312,33 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
         updateScrollState();
       });
     resizeObserver?.observe(container);
-    const mutationObserver = typeof MutationObserver === "undefined"
-      ? null
-      : new MutationObserver(() => {
+    // 流式输出时 MutationObserver 全量 subtree+characterData 会每字符触发；
+    // 仅观察 childList，并用 rAF 合帧，避免长会话卡顿。
+    let scrollFrame = 0;
+    const scheduleFollow = () => {
+      if (scrollFrame) {
+        return;
+      }
+      scrollFrame = requestAnimationFrame(() => {
+        scrollFrame = 0;
         if (autoScroll && shouldFollowRef.current) {
           container.scrollTop = container.scrollHeight;
         }
         updateScrollState();
       });
-    mutationObserver?.observe(container, { childList: true, subtree: true, characterData: true });
+    };
+    const mutationObserver = typeof MutationObserver === "undefined"
+      ? null
+      : new MutationObserver(scheduleFollow);
+    mutationObserver?.observe(container, { childList: true });
     updateScrollState();
     return () => {
       container.removeEventListener("scroll", handleScroll);
       resizeObserver?.disconnect();
       mutationObserver?.disconnect();
+      if (scrollFrame) {
+        cancelAnimationFrame(scrollFrame);
+      }
     };
   }, [autoScroll, runtime.chat_messages_ref, updateScrollState]);
 
@@ -544,7 +557,8 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
 
         return (
           <React.Fragment
-            key={`${message.role}-${index}-${message.speaker ?? "none"}-${message.pending ? "pending" : "committed"}`}
+            key={message.message_id
+              || `${message.role}-${message.speaker ?? "none"}-${message.created_at}-${index}${message.pending ? "-pending" : ""}`}
           >
           {timestampLabel ? (
             <time className="game-message-timestamp" dateTime={message.created_at}>

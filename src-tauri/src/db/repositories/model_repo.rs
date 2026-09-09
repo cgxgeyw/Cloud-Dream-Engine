@@ -163,12 +163,12 @@ impl<'a> ModelRepository<'a> {
             .unwrap_or(existing.base_url)
             .trim()
             .to_string();
-        let api_key = req
-            .api_key
-            .clone()
-            .unwrap_or(existing.api_key)
-            .trim()
-            .to_string();
+        // 掩码回传值表示「用户未改密钥」→ 保留库中真实 key；空字符串表示显式清空。
+        let api_key = match req.api_key.as_deref() {
+            None => existing.api_key,
+            Some(value) if is_masked_api_key(value) => existing.api_key,
+            Some(value) => value.trim().to_string(),
+        };
         let max_tokens = normalize_max_tokens(req.max_tokens.unwrap_or(existing.max_tokens));
         let streaming_enabled = req.streaming_enabled.unwrap_or(existing.streaming_enabled);
         let input_modalities = normalize_input_modalities(

@@ -84,3 +84,7 @@ Thumbs.db
 
 # 内部架构手册（仅本地查阅，不上传 GitHub）
 /docs/不上传到github.md
+
+# Large embedding weights: keep on disk for local-embedding builds, do not track in git.
+# Download/copy into these paths when enabling the local-embedding feature.
+**/embedding-models/**/model.safetensors

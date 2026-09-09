@@ -1,3 +1,9 @@
+/**
+ * Tauri IPC transport.
+ *
+ * Application code must import from `./apiAdapter` only — this module is a
+ * transport implementation detail paired with `api.ts` (HTTP).
+ */
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
