@@ -2,7 +2,7 @@
    theme.ts — Theme management
    Supports two orthogonal axes:
      1. Mode: "light" | "dark"           → data-theme attribute
-     2. Style: "default" | "kawaii"      → data-color-scheme attribute
+     2. Style: "default" | "kawaii" | "mondrian" → data-color-scheme attribute
    ═══════════════════════════════════════════════════════════════ */
 
 export type ThemeMode = "light" | "dark";
@@ -13,8 +13,8 @@ export type AppTheme = ThemeMode;
 
 export const ALL_THEME_STYLES: { id: ThemeStyle; label: string; description: string }[] = [
   { id: "default", label: "默认", description: "干净明亮的现代风格" },
-  { id: "kawaii", label: "粉色可爱", description: "软糯粉色 · 圆润泡泡 · 糖果梦境" },
-  { id: "mondrian", label: "蒙德里安", description: "原色分割 · 硬朗线条 · 漫画外框" },
+  { id: "kawaii", label: "粉色可爱", description: "雾感玫瑰 · 柔和圆角 · 不刺眼" },
+  { id: "mondrian", label: "漫画外框", description: "粗墨线 · 硬阴影 · 美漫分镜" },
 ];
 
 const MODE_STORAGE_KEY = "app-theme";
