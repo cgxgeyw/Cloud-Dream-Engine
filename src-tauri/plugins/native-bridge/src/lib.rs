@@ -101,6 +101,7 @@ struct WriteFileArgs {
     data_base64: String,
 }
 
+#[cfg(not(target_os = "android"))]
 const UNSUPPORTED: &str = "该平台能力仅在安卓可用（unsupported）";
 
 /// 托管在 AppState 中的中间件句柄。安卓上持有 Kotlin 插件引用；桌面为空壳。

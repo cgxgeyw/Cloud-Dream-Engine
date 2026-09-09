@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration as StdDuration;
 
-use chrono::{DateTime, Duration, Local, NaiveDateTime, TimeZone, Timelike, Utc};
+use chrono::{DateTime, Duration, Local, NaiveDateTime, TimeZone, Utc};
 use rusqlite::params;
 use tauri::AppHandle;
 use tauri_plugin_notification::{NotificationExt, PermissionState};
@@ -344,6 +344,7 @@ impl NotificationScheduler {
         notification: &ScheduledNotification,
     ) -> Result<(), String> {
         use base64::Engine as _;
+        use chrono::Timelike;
         use std::process::Command;
 
         let task_name = windows_task_name(&notification.id);

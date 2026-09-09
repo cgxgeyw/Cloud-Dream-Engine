@@ -355,24 +355,24 @@
 .mortal-mobile-systems .game-status-handle {
   position: absolute;
   top: max(calc(env(safe-area-inset-top, 0px) + 92px), 108px);
-  right: max(env(safe-area-inset-right, 0px), 0px);
+  left: max(env(safe-area-inset-left, 0px), 0px);
   min-width: 42px;
   min-height: 88px;
   padding: 10px 8px;
   border: 1px solid #4c5c53;
-  border-right: 0;
-  border-radius: 8px 0 0 8px;
+  border-left: 0;
+  border-radius: 0 8px 8px 0;
   color: #f1eee5;
   background: #202925;
   writing-mode: vertical-rl;
   pointer-events: auto;
-  box-shadow: -4px 5px 14px rgba(24, 31, 27, 0.18);
+  box-shadow: 4px 5px 14px rgba(24, 31, 27, 0.18);
 }
 
 .mortal-mobile-systems .game-status-drawer {
   position: fixed;
   top: max(calc(env(safe-area-inset-top, 0px) + 58px), 74px);
-  right: max(env(safe-area-inset-right, 0px), 0px);
+  left: max(env(safe-area-inset-left, 0px), 0px);
   bottom: calc(env(safe-area-inset-bottom, 0px) + 106px);
   width: min(80vw, 320px);
   display: flex;
@@ -381,12 +381,12 @@
   padding: 12px;
   overflow: hidden;
   pointer-events: auto;
-  transform: translateX(calc(100% + 12px));
+  transform: translateX(calc(-100% - 12px));
   transition: transform 180ms ease;
   border: 1px solid #c5bcad;
-  border-radius: 8px 0 0 8px;
+  border-radius: 0 8px 8px 0;
   background: #f1ede2;
-  box-shadow: -12px 18px 44px rgba(24, 31, 27, 0.22);
+  box-shadow: 12px 18px 44px rgba(24, 31, 27, 0.22);
 }
 
 .mortal-mobile-systems .game-status-drawer-close {

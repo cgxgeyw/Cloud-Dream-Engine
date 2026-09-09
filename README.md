@@ -98,8 +98,7 @@ Early and actively developed. Expect rapid changes. Issues and feedback are welc
 
 ## License
 
-<!-- TODO: choose a license (e.g. MIT / Apache-2.0) and add a LICENSE file. -->
-No license file yet — all rights reserved until one is added.
+[MIT](LICENSE) © 2026 Dream Narrative Engine
 
 ---
 
@@ -152,3 +151,7 @@ npm run tauri:dev          # 开发模式运行（Tauri + Vite）
 ### 状态
 
 项目处于早期、活跃开发中，变化较快。欢迎 issue 与反馈。
+
+### 许可证
+
+[MIT](LICENSE) © 2026 Dream Narrative Engine

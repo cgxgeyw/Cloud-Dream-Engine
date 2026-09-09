@@ -1,8 +1,8 @@
 {
-  "name": "gpt54",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "name": "dream-narrative-engine-frontend",
+  "version": "0.2.4",
+  "description": "Cloud Dream Engine frontend (React + Vite)",
+  "private": true,
   "scripts": {
     "postinstall": "node ./scripts/patch-vite-net-use.js",
     "world-frame:build": "vite build --config vite.world-frame.config.ts && node ./scripts/check-world-frame-bundle.mjs",
@@ -13,10 +13,7 @@
     "preview": "vite preview --config vite.config.ts",
     "test": "vitest run"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
+  "license": "MIT",
   "devDependencies": {
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

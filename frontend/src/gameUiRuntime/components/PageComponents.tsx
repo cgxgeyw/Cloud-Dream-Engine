@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useState, type ReactNode } from "react";
+import { lazy, memo, Suspense, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { ArrowLeft, Copy } from "lucide-react";
 import type { GameUiComponentNode } from "../../data/gameUi";
 import type { GameUiRuntimeActions } from "../actions";
@@ -219,11 +219,96 @@ export function NarrationCardComponent({ runtime, actions, node }: RuntimeCompon
 
 function SidePanelTabs({ runtime, actions, node, renderSlot }: RuntimeComponentProps) {
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+  const [handleTop, setHandleTop] = useState<number | null>(null);
+  const [handleDragging, setHandleDragging] = useState(false);
+  const drawerSurfaceRef = useRef<HTMLElement | null>(null);
+  const handleRef = useRef<HTMLButtonElement | null>(null);
+  const handleDragRef = useRef<{ pointerId: number; startY: number; startTop: number; moved: boolean } | null>(null);
+  const suppressHandleClickRef = useRef(false);
   const showMapTab = readBooleanProp(node, "show_map_tab", true);
   const showAttributeTabs = readBooleanProp(node, "show_attribute_tabs", true);
   const emptyText = readStringProp(node, "empty_text", "暂无状态信息。");
   const drawerLabel = readStringProp(node, "drawer_label", "\u72b6\u6001");
   const customContent = renderSlot?.("content");
+
+  const clampHandleTop = (nextTop: number): number => {
+    const surface = drawerSurfaceRef.current;
+    const handle = handleRef.current;
+    if (!surface || !handle) {
+      return nextTop;
+    }
+    const surfaceHeight = surface.getBoundingClientRect().height;
+    const handleHeight = handle.getBoundingClientRect().height;
+    if (surfaceHeight <= 0 || handleHeight <= 0) {
+      return nextTop;
+    }
+    const maxTop = Math.max(8, surfaceHeight - handleHeight - 8);
+    return Math.min(Math.max(nextTop, 8), maxTop);
+  };
+
+  const beginHandleDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
+    const surface = drawerSurfaceRef.current;
+    if (!surface) {
+      return;
+    }
+    const surfaceRect = surface.getBoundingClientRect();
+    const handleRect = event.currentTarget.getBoundingClientRect();
+    handleDragRef.current = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startTop: handleRect.top - surfaceRect.top,
+      moved: false,
+    };
+    setHandleDragging(true);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // 指针可能已经释放，忽略即可。
+    }
+  };
+
+  const moveHandleDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = handleDragRef.current;
+    if (!drag || event.pointerId !== drag.pointerId) {
+      return;
+    }
+    if (!drag.moved && Math.abs(event.clientY - drag.startY) < 6) {
+      return;
+    }
+    drag.moved = true;
+    setHandleTop(clampHandleTop(drag.startTop + event.clientY - drag.startY));
+  };
+
+  const endHandleDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = handleDragRef.current;
+    if (!drag || event.pointerId !== drag.pointerId) {
+      return;
+    }
+    handleDragRef.current = null;
+    setHandleDragging(false);
+    suppressHandleClickRef.current = drag.moved;
+    try {
+      event.currentTarget.releasePointerCapture(drag.pointerId);
+    } catch {
+      // capture 可能已经释放，忽略即可。
+    }
+  };
+
+  // 旋转屏幕或调整窗口后，把贴边按钮拉回可视范围。
+  useEffect(() => {
+    if (handleTop === null) {
+      return;
+    }
+    const reclamp = () => {
+      setHandleTop((current) => (current === null ? current : clampHandleTop(current)));
+    };
+    window.addEventListener("resize", reclamp);
+    return () => window.removeEventListener("resize", reclamp);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handleTop]);
 
   const visibleTabs = runtime.side_tabs.filter((tab) => {
     if (tab.key === "map") {
@@ -324,14 +409,26 @@ function SidePanelTabs({ runtime, actions, node, renderSlot }: RuntimeComponentP
     ].filter(Boolean).join(" ");
 
     return (
-      <aside className={mobileDrawerClassName}>
+      <aside className={mobileDrawerClassName} ref={drawerSurfaceRef}>
         <button
+          ref={handleRef}
           type="button"
-          className="game-status-handle game-ui-button"
+          className={`game-status-handle game-ui-button${handleDragging ? " game-status-handle--dragging" : ""}`}
           data-variant="ghost"
           aria-label={mobileDrawerOpen ? "\u5173\u95ed\u72b6\u6001\u62bd\u5c49" : "\u6253\u5f00\u72b6\u6001\u62bd\u5c49"}
           aria-expanded={mobileDrawerOpen}
-          onClick={() => setMobileDrawerOpen((isOpen) => !isOpen)}
+          style={{ touchAction: "none", ...(handleTop !== null ? { top: handleTop } : null) }}
+          onPointerDown={beginHandleDrag}
+          onPointerMove={moveHandleDrag}
+          onPointerUp={endHandleDrag}
+          onPointerCancel={endHandleDrag}
+          onClick={() => {
+            if (suppressHandleClickRef.current) {
+              suppressHandleClickRef.current = false;
+              return;
+            }
+            setMobileDrawerOpen((isOpen) => !isOpen);
+          }}
         >
           {drawerLabel}
         </button>
