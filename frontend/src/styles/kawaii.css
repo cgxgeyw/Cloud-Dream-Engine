@@ -1,63 +1,79 @@
 /*
-  Kawaii shell theme — soft blush rose (not candy neon).
-  Lower chroma pinks, cream paper, muted rose accents.
+  Soft feminine shell theme (style id: kawaii).
+  Muted rose base + lavender / mint / peach accents. Cream paper, gentle glow.
   App shell only; world runtime UI stays isolated.
 */
 
 :root[data-color-scheme="kawaii"] {
-  --color-charcoal: oklch(0.42 0.04 350);
-  --color-concrete: oklch(0.68 0.025 352);
-  --color-accent: oklch(0.68 0.11 8);
-  --color-bg: oklch(0.968 0.012 355);
-  --color-surface: oklch(0.988 0.006 20);
-  --color-success: oklch(0.72 0.09 155);
-  --color-warning: oklch(0.78 0.1 78);
-  --color-error: oklch(0.64 0.13 20);
-  --color-border: oklch(0.88 0.02 355);
-  --color-border-hover: oklch(0.72 0.07 8);
-  --color-muted: oklch(0.58 0.03 352);
-  --color-faint: oklch(0.48 0.025 350);
-  --color-subtle-bg: oklch(0.952 0.012 355);
-  --color-hover-bg: oklch(0.94 0.022 358);
+  /* Ink & neutrals — warm plum-grey, not pure grey */
+  --color-charcoal: oklch(0.46 0.025 340);
+  --color-concrete: oklch(0.7 0.015 340);
+  --color-muted: oklch(0.6 0.018 340);
+  --color-faint: oklch(0.5 0.015 338);
+
+  /* Primary: quiet rose (much lower chroma than candy pink) */
+  --color-accent: oklch(0.72 0.07 12);
+  --color-bg: oklch(0.972 0.008 350);
+  --color-surface: oklch(0.99 0.004 30);
+  --color-success: oklch(0.78 0.06 160);
+  --color-warning: oklch(0.82 0.07 80);
+  --color-error: oklch(0.7 0.09 20);
+  --color-border: oklch(0.9 0.012 350);
+  --color-border-hover: oklch(0.78 0.045 12);
+  --color-subtle-bg: oklch(0.962 0.008 350);
+  --color-hover-bg: oklch(0.952 0.012 355);
   --color-active-bg: color-mix(in srgb, var(--color-accent) 10%, transparent);
 
-  --game-bg-from: oklch(0.28 0.03 348);
-  --game-bg-via: oklch(0.32 0.04 352);
-  --game-bg-to: oklch(0.26 0.025 348);
-  --game-bg-accent: color-mix(in srgb, var(--color-accent) 14%, transparent);
-  --game-text: oklch(0.94 0.015 20);
-  --game-text-dim: oklch(0.84 0.02 355);
-  --game-text-muted: oklch(0.78 0.02 355);
-  --game-text-faint: oklch(0.88 0.015 20);
-  --game-text-weak: oklch(0.8 0.015 355);
-  --game-text-weaker: oklch(0.74 0.015 355);
-  --game-border: color-mix(in srgb, var(--color-accent) 18%, white 10%);
-  --game-border-dim: color-mix(in srgb, var(--color-accent) 10%, transparent);
-  --game-border-light: color-mix(in srgb, var(--color-accent) 24%, transparent);
-  --game-border-medium: color-mix(in srgb, var(--color-accent) 32%, transparent);
-  --game-bg-panel: rgba(255, 248, 250, 0.07);
-  --game-bg-subtle: rgba(255, 248, 250, 0.04);
-  --game-bg-hover: rgba(255, 230, 236, 0.1);
-  --game-bg-active: rgba(255, 230, 236, 0.15);
-  --game-bg-overlay: rgba(42, 24, 30, 0.45);
-  --game-bg-input: rgba(255, 248, 250, 0.07);
-  --game-player-bg: color-mix(in srgb, var(--color-accent) 14%, rgba(255, 255, 255, 0.06));
-  --game-speaker-blue: oklch(0.84 0.05 355);
-  --game-node-current: oklch(0.88 0.035 8);
-  --game-tag-bg: rgba(255, 236, 240, 0.1);
-  --game-tag-border: rgba(255, 220, 228, 0.14);
-  --game-tag-text: oklch(0.92 0.015 20);
-  --game-delete: oklch(0.8 0.07 18);
-  --game-delete-border: rgba(255, 200, 208, 0.24);
-  --game-delete-bg: rgba(255, 200, 208, 0.1);
-  --game-avatar-from: rgba(214, 148, 168, 0.75);
-  --game-avatar-to: rgba(58, 34, 42, 0.88);
-  --game-map-center: rgba(214, 148, 168, 0.18);
-  --game-gradient-overlay-from: rgba(58, 34, 42, 0.4);
-  --game-gradient-overlay-to: rgba(58, 34, 42, 0.12);
-  --game-gradient-cover-from: rgba(36, 22, 28, 0.82);
-  --game-gradient-cover-via: rgba(36, 22, 28, 0.3);
-  --game-gradient-cover-to: rgba(36, 22, 28, 0.88);
+  /* Secondary accents — lavender / mint / peach / sky */
+  --kawaii-lavender: oklch(0.78 0.06 300);
+  --kawaii-lavender-soft: oklch(0.94 0.025 300);
+  --kawaii-mint: oklch(0.8 0.05 165);
+  --kawaii-mint-soft: oklch(0.95 0.02 165);
+  --kawaii-peach: oklch(0.84 0.055 55);
+  --kawaii-peach-soft: oklch(0.96 0.02 55);
+  --kawaii-sky: oklch(0.82 0.045 230);
+  --kawaii-sky-soft: oklch(0.95 0.018 230);
+  --kawaii-rose: oklch(0.72 0.07 12);
+  --kawaii-rose-soft: oklch(0.95 0.02 12);
+
+  /* Game session (dark narrative surface) */
+  --game-bg-from: oklch(0.32 0.02 330);
+  --game-bg-via: oklch(0.36 0.025 340);
+  --game-bg-to: oklch(0.3 0.018 330);
+  --game-bg-accent: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  --game-text: oklch(0.95 0.01 30);
+  --game-text-dim: oklch(0.86 0.012 340);
+  --game-text-muted: oklch(0.8 0.012 340);
+  --game-text-faint: oklch(0.9 0.01 30);
+  --game-text-weak: oklch(0.82 0.012 340);
+  --game-text-weaker: oklch(0.76 0.012 340);
+  --game-border: color-mix(in srgb, var(--kawaii-lavender) 16%, white 8%);
+  --game-border-dim: color-mix(in srgb, var(--kawaii-lavender) 8%, transparent);
+  --game-border-light: color-mix(in srgb, var(--kawaii-lavender) 18%, transparent);
+  --game-border-medium: color-mix(in srgb, var(--kawaii-lavender) 26%, transparent);
+  --game-bg-panel: rgba(255, 250, 252, 0.06);
+  --game-bg-subtle: rgba(255, 250, 252, 0.035);
+  --game-bg-hover: rgba(230, 220, 240, 0.08);
+  --game-bg-active: rgba(230, 220, 240, 0.12);
+  --game-bg-overlay: rgba(40, 28, 36, 0.48);
+  --game-bg-input: rgba(255, 250, 252, 0.06);
+  --game-player-bg: color-mix(in srgb, var(--kawaii-lavender) 12%, rgba(255, 255, 255, 0.05));
+  --game-speaker-blue: oklch(0.86 0.035 300);
+  --game-node-current: oklch(0.9 0.025 55);
+  --game-tag-bg: rgba(235, 228, 245, 0.08);
+  --game-tag-border: rgba(220, 210, 235, 0.12);
+  --game-tag-text: oklch(0.93 0.01 30);
+  --game-delete: oklch(0.82 0.05 18);
+  --game-delete-border: rgba(240, 200, 205, 0.2);
+  --game-delete-bg: rgba(240, 200, 205, 0.08);
+  --game-avatar-from: rgba(196, 160, 180, 0.7);
+  --game-avatar-to: rgba(50, 36, 44, 0.88);
+  --game-map-center: rgba(180, 160, 210, 0.16);
+  --game-gradient-overlay-from: rgba(50, 36, 44, 0.4);
+  --game-gradient-overlay-to: rgba(50, 36, 44, 0.12);
+  --game-gradient-cover-from: rgba(32, 24, 30, 0.84);
+  --game-gradient-cover-via: rgba(32, 24, 30, 0.32);
+  --game-gradient-cover-to: rgba(32, 24, 30, 0.9);
 
   --radius-sm: 0.75rem;
   --radius-default: 1rem;
@@ -65,64 +81,71 @@
   --radius-lg: 1.6rem;
   --radius-full: 9999px;
 
-  --shadow-sm: 0 4px 12px rgba(120, 72, 88, 0.06);
-  --shadow-default: 0 10px 24px rgba(120, 72, 88, 0.08);
-  --shadow-md: 0 14px 34px rgba(120, 72, 88, 0.1);
-  --shadow-lg: 0 20px 48px rgba(120, 72, 88, 0.13);
+  --shadow-sm: 0 3px 10px rgba(100, 80, 90, 0.05);
+  --shadow-default: 0 8px 20px rgba(100, 80, 90, 0.07);
+  --shadow-md: 0 12px 28px rgba(100, 80, 90, 0.09);
+  --shadow-lg: 0 18px 40px rgba(100, 80, 90, 0.11);
 
   --font-display: "Nunito", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
   --font-body: "Nunito", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
   --font-mono: "JetBrains Mono", "Consolas", monospace;
 
-  --kawaii-shell: color-mix(in srgb, var(--color-surface) 92%, #f3e4e8);
-  --kawaii-shell-strong: color-mix(in srgb, var(--color-surface) 84%, #ecd2d8);
-  --kawaii-line: color-mix(in srgb, var(--color-accent) 12%, #e8d0d6);
-  --kawaii-line-strong: color-mix(in srgb, var(--color-accent) 26%, #e0b8c2);
-  --kawaii-separator: color-mix(in srgb, var(--color-accent) 8%, #eedce0);
-  --kawaii-sketch: color-mix(in srgb, var(--color-accent) 34%, #e4bcc6);
-  --kawaii-fill: linear-gradient(180deg, #fffcfb 0%, #faf4f5 100%);
-  --kawaii-fill-strong: linear-gradient(180deg, #fdf7f7 0%, #f7ebee 100%);
-  --kawaii-fill-pressed: linear-gradient(180deg, #f8eeee 0%, #f2e2e6 100%);
-  --kawaii-primary-fill: linear-gradient(180deg, #d989a0 0%, #c96f8a 58%, #bc627e 100%);
+  --kawaii-shell: color-mix(in srgb, var(--color-surface) 94%, #f0e6ea);
+  --kawaii-shell-strong: color-mix(in srgb, var(--color-surface) 88%, #ead8de);
+  --kawaii-line: color-mix(in srgb, var(--color-accent) 8%, #e8d8dc);
+  --kawaii-line-strong: color-mix(in srgb, var(--color-accent) 18%, #dcc4cc);
+  --kawaii-separator: color-mix(in srgb, var(--kawaii-lavender) 10%, #eadce4);
+  --kawaii-sketch: color-mix(in srgb, var(--color-accent) 22%, #dcc8d0);
+  --kawaii-fill: linear-gradient(180deg, #fffdfc 0%, #faf6f6 100%);
+  --kawaii-fill-strong: linear-gradient(180deg, #fdf9f9 0%, #f7f0f2 100%);
+  --kawaii-fill-pressed: linear-gradient(180deg, #f8f2f3 0%, #f2e8ec 100%);
+  /* Primary CTA: rose → soft peach, not neon */
+  --kawaii-primary-fill: linear-gradient(165deg, #d4a0ae 0%, #c98a9c 55%, #d4a088 100%);
   --kawaii-panel-radius: 28px 24px 20px 26px;
   --kawaii-card-radius: 24px 20px 16px 22px;
   --kawaii-chip-radius: 999px 999px 18px 999px;
   --kawaii-panel-border-width: 1.5px;
   --kawaii-chip-border-width: 1.5px;
-  --kawaii-sketch-shadow: 1px 2px 0 rgba(220, 180, 192, 0.55);
+  --kawaii-sketch-shadow: 1px 2px 0 rgba(200, 175, 185, 0.4);
   --kawaii-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --kawaii-duration-fast: 160ms;
   --kawaii-duration-base: 220ms;
 }
 
 :root[data-color-scheme="kawaii"][data-theme="dark"] {
-  --color-charcoal: oklch(0.9 0.012 20);
-  --color-concrete: oklch(0.72 0.02 355);
-  --color-accent: oklch(0.74 0.1 10);
-  --color-bg: oklch(0.25 0.015 348);
-  --color-surface: oklch(0.3 0.018 350);
-  --color-success: oklch(0.74 0.09 155);
-  --color-warning: oklch(0.78 0.1 78);
-  --color-error: oklch(0.7 0.12 18);
-  --color-border: oklch(0.4 0.02 350);
-  --color-border-hover: oklch(0.58 0.06 8);
-  --color-muted: oklch(0.72 0.02 355);
-  --color-subtle-bg: oklch(0.33 0.018 350);
-  --color-hover-bg: oklch(0.38 0.022 352);
-  --color-active-bg: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  --color-charcoal: oklch(0.91 0.01 30);
+  --color-concrete: oklch(0.74 0.012 340);
+  --color-accent: oklch(0.78 0.065 15);
+  --color-bg: oklch(0.27 0.012 330);
+  --color-surface: oklch(0.32 0.014 335);
+  --color-success: oklch(0.76 0.06 160);
+  --color-warning: oklch(0.8 0.07 80);
+  --color-error: oklch(0.74 0.09 18);
+  --color-border: oklch(0.42 0.014 335);
+  --color-border-hover: oklch(0.6 0.04 15);
+  --color-muted: oklch(0.74 0.012 340);
+  --color-subtle-bg: oklch(0.35 0.014 335);
+  --color-hover-bg: oklch(0.4 0.016 340);
+  --color-active-bg: color-mix(in srgb, var(--color-accent) 14%, transparent);
 
-  --kawaii-shell: color-mix(in srgb, var(--color-surface) 92%, #4a3038);
-  --kawaii-shell-strong: color-mix(in srgb, var(--color-surface) 88%, #563640);
-  --kawaii-line: color-mix(in srgb, var(--color-accent) 14%, #5c3a44);
-  --kawaii-line-strong: color-mix(in srgb, var(--color-accent) 26%, #6e4450);
-  --kawaii-separator: color-mix(in srgb, var(--color-accent) 10%, #55343c);
-  --kawaii-sketch: color-mix(in srgb, var(--color-accent) 30%, #744854);
-  --kawaii-sketch-shadow: 1px 2px 0 rgba(70, 42, 50, 0.55);
+  --kawaii-lavender: oklch(0.8 0.055 300);
+  --kawaii-mint: oklch(0.78 0.05 165);
+  --kawaii-peach: oklch(0.82 0.05 55);
+  --kawaii-sky: oklch(0.8 0.04 230);
+  --kawaii-rose: oklch(0.76 0.065 12);
 
-  --shadow-sm: 0 6px 16px rgba(0, 0, 0, 0.22);
-  --shadow-default: 0 12px 28px rgba(0, 0, 0, 0.26);
-  --shadow-md: 0 18px 40px rgba(0, 0, 0, 0.3);
-  --shadow-lg: 0 24px 56px rgba(0, 0, 0, 0.36);
+  --kawaii-shell: color-mix(in srgb, var(--color-surface) 94%, #4a3840);
+  --kawaii-shell-strong: color-mix(in srgb, var(--color-surface) 90%, #564048);
+  --kawaii-line: color-mix(in srgb, var(--color-accent) 10%, #5c4650);
+  --kawaii-line-strong: color-mix(in srgb, var(--color-accent) 18%, #6e525c);
+  --kawaii-separator: color-mix(in srgb, var(--kawaii-lavender) 12%, #56404c);
+  --kawaii-sketch: color-mix(in srgb, var(--color-accent) 22%, #745860);
+  --kawaii-sketch-shadow: 1px 2px 0 rgba(50, 36, 42, 0.45);
+
+  --shadow-sm: 0 5px 14px rgba(0, 0, 0, 0.2);
+  --shadow-default: 0 10px 24px rgba(0, 0, 0, 0.24);
+  --shadow-md: 0 14px 34px rgba(0, 0, 0, 0.28);
+  --shadow-lg: 0 20px 48px rgba(0, 0, 0, 0.34);
 }
 
 :root[data-color-scheme="kawaii"] body {
@@ -130,54 +153,155 @@
   color: var(--color-charcoal);
 }
 
+/* Theme picker preview (always show soft multi-accent card) */
 .theme-picker-preview--kawaii {
-  background: linear-gradient(180deg, #f7ecef, #fbf7f7);
-  border: 1px solid color-mix(in srgb, var(--color-accent) 18%, var(--color-border));
+  background:
+    radial-gradient(circle at 78% 22%, color-mix(in srgb, #c4b5e8 35%, transparent), transparent 40%),
+    radial-gradient(circle at 22% 78%, color-mix(in srgb, #b8d9c8 30%, transparent), transparent 38%),
+    linear-gradient(160deg, #f8eef1, #fbf8f6);
+  border: 1px solid #e4d4da;
 }
 
 :root[data-color-scheme="kawaii"] .theme-picker-preview--kawaii {
-  background: linear-gradient(180deg, #f7ecef, #fbf7f7);
-  border: 1px solid color-mix(in srgb, var(--color-accent) 18%, var(--color-border));
+  background:
+    radial-gradient(circle at 78% 22%, color-mix(in srgb, #c4b5e8 40%, transparent), transparent 40%),
+    radial-gradient(circle at 22% 78%, color-mix(in srgb, #b8d9c8 32%, transparent), transparent 38%),
+    linear-gradient(160deg, #f8eef1, #fbf8f6);
+  border: 1px solid #e4d4da;
 }
 
 :root[data-color-scheme="kawaii"] .theme-picker-preview--kawaii .theme-picker-preview-header {
-  background: linear-gradient(180deg, #d4899e, #c46f88);
+  background: linear-gradient(90deg, #d4a0ae 0%, #c4b5e8 55%, #d4b89a 100%);
 }
 
 :root[data-color-scheme="kawaii"] .theme-picker-preview--kawaii .theme-picker-preview-line {
-  background: color-mix(in srgb, var(--color-accent) 22%, white);
+  background: color-mix(in srgb, #c4b5e8 40%, white);
 }
 
 :root[data-color-scheme="kawaii"] .theme-picker-card--active {
   border-color: var(--color-accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 24%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 18%, transparent);
+}
+
+/* Desktop shell wash — rose + lavender + mint, very low opacity */
+:root[data-color-scheme="kawaii"] .layout-root {
+  background:
+    radial-gradient(ellipse 70% 45% at 8% -8%, rgba(220, 190, 210, 0.18), transparent 52%),
+    radial-gradient(ellipse 55% 40% at 92% 8%, rgba(196, 181, 232, 0.16), transparent 50%),
+    radial-gradient(ellipse 50% 35% at 50% 100%, rgba(184, 217, 200, 0.12), transparent 48%),
+    linear-gradient(180deg, #fbf8f8 0%, #f8f4f4 100%);
+}
+
+:root[data-color-scheme="kawaii"][data-theme="dark"] .layout-root {
+  background:
+    radial-gradient(ellipse 70% 45% at 8% -8%, rgba(180, 140, 160, 0.07), transparent 52%),
+    radial-gradient(ellipse 55% 40% at 92% 8%, rgba(150, 130, 190, 0.06), transparent 50%),
+    linear-gradient(180deg, #2c1e24 0%, #28181e 100%);
+}
+
+:root[data-color-scheme="kawaii"] .surface-panel,
+:root[data-color-scheme="kawaii"] .card-item,
+:root[data-color-scheme="kawaii"] .settings-model-item,
+:root[data-color-scheme="kawaii"] .mcp-tool-card,
+:root[data-color-scheme="kawaii"] .newgame-world-card,
+:root[data-color-scheme="kawaii"] .toast-card {
+  border: var(--kawaii-panel-border-width) solid var(--kawaii-sketch);
+  border-radius: var(--kawaii-panel-radius);
+  background: var(--kawaii-fill);
+  box-shadow: var(--kawaii-sketch-shadow), var(--shadow-default);
+}
+
+:root[data-color-scheme="kawaii"] .action-btn,
+:root[data-color-scheme="kawaii"] .card-action-btn {
+  border: var(--kawaii-chip-border-width) solid var(--kawaii-sketch);
+  border-radius: var(--kawaii-chip-radius);
+  background: var(--kawaii-fill);
+  color: var(--color-charcoal);
+  font-weight: 700;
+  box-shadow: var(--kawaii-sketch-shadow), var(--shadow-sm);
+}
+
+:root[data-color-scheme="kawaii"] .action-btn:hover,
+:root[data-color-scheme="kawaii"] .card-action-btn:hover {
+  border-color: var(--kawaii-line-strong);
+  background: var(--kawaii-fill-strong);
+  box-shadow: var(--shadow-default);
+}
+
+:root[data-color-scheme="kawaii"] .action-btn--primary,
+:root[data-color-scheme="kawaii"] .action-btn--accent {
+  border-color: color-mix(in srgb, var(--color-accent) 40%, #e0c8d0);
+  background: var(--kawaii-primary-fill);
+  color: oklch(0.97 0.005 30);
+}
+
+:root[data-color-scheme="kawaii"] .menu-btn {
+  border: var(--kawaii-panel-border-width) solid var(--kawaii-sketch);
+  border-radius: var(--kawaii-panel-radius);
+  background: linear-gradient(180deg, var(--kawaii-shell-strong), var(--color-surface));
+  box-shadow: var(--kawaii-sketch-shadow), var(--shadow-default);
+}
+
+:root[data-color-scheme="kawaii"] .field-input,
+:root[data-color-scheme="kawaii"] .editor-field-input {
+  border: 1.5px solid var(--kawaii-line);
+  border-radius: 16px;
+  background: #fffdfc;
+  color: var(--color-charcoal);
+}
+
+:root[data-color-scheme="kawaii"] .field-input:focus,
+:root[data-color-scheme="kawaii"] .editor-field-input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--kawaii-lavender) 20%, transparent);
+  outline: none;
+}
+
+/* Icon tiles cycle soft accents */
+:root[data-color-scheme="kawaii"] .menu-btn-icon {
+  border-radius: 16px 16px 12px 16px;
+  background: var(--kawaii-lavender-soft);
+  color: color-mix(in srgb, var(--kawaii-lavender) 70%, var(--color-charcoal));
+}
+
+:root[data-color-scheme="kawaii"] .card-item-icon {
+  border-radius: 16px 16px 12px 16px;
+  background: var(--kawaii-mint-soft);
+  color: color-mix(in srgb, var(--kawaii-mint) 75%, var(--color-charcoal));
+}
+
+:root[data-color-scheme="kawaii"] .mobile-theme-btn-icon {
+  border-radius: 14px 14px 10px 14px;
+  background: var(--kawaii-peach-soft);
+  color: color-mix(in srgb, var(--kawaii-peach) 70%, var(--color-charcoal));
 }
 
 @media (max-width: 767px) {
   :root[data-color-scheme="kawaii"] .layout-root {
     background:
-      radial-gradient(circle at top left, rgba(232, 196, 206, 0.28), transparent 32%),
-      radial-gradient(circle at bottom right, rgba(240, 214, 220, 0.4), transparent 36%),
-      linear-gradient(180deg, #fbf7f7 0%, #f8f2f3 48%, #f6edef 100%);
+      radial-gradient(circle at top left, rgba(220, 190, 210, 0.2), transparent 30%),
+      radial-gradient(circle at 85% 15%, rgba(196, 181, 232, 0.18), transparent 28%),
+      radial-gradient(circle at 50% 100%, rgba(184, 217, 200, 0.14), transparent 34%),
+      linear-gradient(180deg, #fcf9f9 0%, #f9f5f5 48%, #f7f2f3 100%);
   }
 
   :root[data-color-scheme="kawaii"][data-theme="dark"] .layout-root {
     background:
-      radial-gradient(circle at top left, rgba(200, 140, 160, 0.1), transparent 28%),
-      radial-gradient(circle at bottom right, rgba(220, 180, 190, 0.05), transparent 34%),
-      linear-gradient(180deg, #2a1a20 0%, #2e1c22 44%, #26161c 100%);
+      radial-gradient(circle at top left, rgba(200, 150, 170, 0.08), transparent 28%),
+      radial-gradient(circle at 85% 15%, rgba(160, 140, 200, 0.06), transparent 26%),
+      linear-gradient(180deg, #2c1e24 0%, #28181e 44%, #24161c 100%);
   }
 
   :root[data-color-scheme="kawaii"] .layout-bg-scrim {
     background:
-      linear-gradient(180deg, rgba(251, 247, 247, 0.86), rgba(248, 242, 243, 0.94)),
-      linear-gradient(135deg, rgba(220, 180, 192, 0.08), rgba(255, 255, 255, 0));
+      linear-gradient(180deg, rgba(252, 249, 249, 0.88), rgba(249, 245, 245, 0.94)),
+      linear-gradient(135deg, rgba(210, 185, 200, 0.06), rgba(255, 255, 255, 0));
   }
 
   :root[data-color-scheme="kawaii"][data-theme="dark"] .layout-bg-scrim {
     background:
-      linear-gradient(180deg, rgba(40, 26, 32, 0.86), rgba(36, 22, 28, 0.94)),
-      linear-gradient(135deg, rgba(220, 180, 192, 0.05), rgba(255, 255, 255, 0));
+      linear-gradient(180deg, rgba(42, 30, 36, 0.88), rgba(38, 24, 30, 0.94)),
+      linear-gradient(135deg, rgba(210, 185, 200, 0.04), rgba(255, 255, 255, 0));
   }
 
   :root[data-color-scheme="kawaii"] .layout-inner {
@@ -199,8 +323,9 @@
     border: var(--kawaii-panel-border-width) solid var(--kawaii-sketch);
     border-radius: var(--kawaii-panel-radius);
     background:
-      radial-gradient(circle at 12% 16%, rgba(236, 210, 216, 0.28), transparent 18%),
-      linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0)) top/100% 1px no-repeat,
+      radial-gradient(circle at 12% 14%, rgba(228, 210, 220, 0.2), transparent 18%),
+      radial-gradient(circle at 88% 86%, rgba(210, 200, 230, 0.14), transparent 22%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.45), rgba(255, 255, 255, 0)) top/100% 1px no-repeat,
       var(--kawaii-fill);
     box-shadow: var(--kawaii-sketch-shadow), var(--shadow-default);
     backdrop-filter: none;
@@ -214,17 +339,6 @@
   :root[data-color-scheme="kawaii"] .mcp-tool-card,
   :root[data-color-scheme="kawaii"] .newgame-world-card {
     border-radius: var(--kawaii-card-radius);
-  }
-
-  :root[data-color-scheme="kawaii"] .surface-panel,
-  :root[data-color-scheme="kawaii"] .card-item,
-  :root[data-color-scheme="kawaii"] .settings-model-item,
-  :root[data-color-scheme="kawaii"] .mcp-tool-card,
-  :root[data-color-scheme="kawaii"] .newgame-world-card,
-  :root[data-color-scheme="kawaii"] .settings-nav-item {
-    background:
-      radial-gradient(circle at top left, rgba(236, 210, 216, 0.24), transparent 18%),
-      linear-gradient(180deg, #fffcfb 0%, #f9f3f4 100%);
   }
 
   :root[data-color-scheme="kawaii"] .layout-header {
@@ -259,7 +373,7 @@
     border: var(--kawaii-chip-border-width) solid var(--kawaii-sketch);
     border-radius: var(--kawaii-chip-radius);
     background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0)) top/100% 1px no-repeat,
+      linear-gradient(180deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0)) top/100% 1px no-repeat,
       var(--kawaii-fill);
     color: var(--color-charcoal);
     font-weight: 700;
@@ -300,16 +414,15 @@
   :root[data-color-scheme="kawaii"] .mobile-nav-item--active,
   :root[data-color-scheme="kawaii"] .settings-model-badge,
   :root[data-color-scheme="kawaii"] .mcp-tool-state--enabled {
-    border-color: color-mix(in srgb, var(--color-accent) 50%, #e8c4ce);
+    border-color: color-mix(in srgb, var(--color-accent) 40%, #e0c8d0);
     background: var(--kawaii-primary-fill);
-    color: oklch(0.97 0.005 20);
-    box-shadow: 1px 2px 0 rgba(170, 100, 120, 0.28), 0 10px 20px rgba(160, 90, 110, 0.18);
+    color: oklch(0.97 0.005 30);
+    box-shadow: 1px 2px 0 rgba(160, 120, 135, 0.22), 0 8px 16px rgba(150, 110, 125, 0.12);
   }
 
   :root[data-color-scheme="kawaii"] .action-btn--danger {
-    border-color: color-mix(in srgb, var(--color-error) 30%, var(--color-border));
-    background:
-      linear-gradient(180deg, color-mix(in srgb, var(--color-error) 8%, white), #faf4f5);
+    border-color: color-mix(in srgb, var(--color-error) 24%, var(--color-border));
+    background: linear-gradient(180deg, color-mix(in srgb, var(--color-error) 6%, white), #faf6f6);
     color: var(--color-error);
   }
 
@@ -317,7 +430,7 @@
     border: var(--kawaii-panel-border-width) solid var(--kawaii-sketch);
     border-radius: var(--kawaii-panel-radius);
     background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0)) top/100% 1px no-repeat,
+      linear-gradient(180deg, rgba(255, 255, 255, 0.45), rgba(255, 255, 255, 0)) top/100% 1px no-repeat,
       linear-gradient(180deg, var(--kawaii-shell-strong), var(--color-surface));
     color: var(--color-charcoal);
     box-shadow: var(--kawaii-sketch-shadow), var(--shadow-default);
@@ -333,12 +446,22 @@
     box-shadow: var(--shadow-md);
   }
 
-  :root[data-color-scheme="kawaii"] .menu-btn-icon,
-  :root[data-color-scheme="kawaii"] .card-item-icon,
-  :root[data-color-scheme="kawaii"] .mobile-theme-btn-icon {
+  :root[data-color-scheme="kawaii"] .menu-btn-icon {
     border-radius: 16px 16px 12px 16px;
-    background: color-mix(in srgb, var(--color-accent) 10%, var(--color-surface));
-    color: var(--color-accent);
+    background: var(--kawaii-lavender-soft);
+    color: color-mix(in srgb, var(--kawaii-lavender) 70%, var(--color-charcoal));
+  }
+
+  :root[data-color-scheme="kawaii"] .card-item-icon {
+    border-radius: 16px 16px 12px 16px;
+    background: var(--kawaii-mint-soft);
+    color: color-mix(in srgb, var(--kawaii-mint) 75%, var(--color-charcoal));
+  }
+
+  :root[data-color-scheme="kawaii"] .mobile-theme-btn-icon {
+    border-radius: 14px 14px 10px 14px;
+    background: var(--kawaii-peach-soft);
+    color: color-mix(in srgb, var(--kawaii-peach) 70%, var(--color-charcoal));
   }
 
   :root[data-color-scheme="kawaii"] .menu-btn-title,
@@ -356,11 +479,11 @@
   :root[data-color-scheme="kawaii"] .field-input,
   :root[data-color-scheme="kawaii"] .editor-field-input,
   :root[data-color-scheme="kawaii"] .editor-tab-add-input {
-    border: 1.5px solid color-mix(in srgb, var(--kawaii-sketch) 80%, white);
+    border: 1.5px solid color-mix(in srgb, var(--kawaii-sketch) 70%, white);
     border-radius: 18px 18px 14px 18px;
-    background: linear-gradient(180deg, #fffefe 0%, #faf5f6 100%);
+    background: linear-gradient(180deg, #fffefe 0%, #fbf8f8 100%);
     color: var(--color-charcoal);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
     transition:
       border-color var(--kawaii-duration-fast) ease,
       box-shadow var(--kawaii-duration-fast) ease;
@@ -369,8 +492,8 @@
   :root[data-color-scheme="kawaii"] .field-input:focus,
   :root[data-color-scheme="kawaii"] .editor-field-input:focus,
   :root[data-color-scheme="kawaii"] .editor-tab-add-input:focus {
-    border-color: var(--color-accent);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 16%, transparent);
+    border-color: color-mix(in srgb, var(--kawaii-lavender) 55%, var(--color-accent));
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--kawaii-lavender) 18%, transparent);
     outline: none;
   }
 
@@ -384,17 +507,17 @@
   :root[data-color-scheme="kawaii"] .editor-tab-add,
   :root[data-color-scheme="kawaii"] .editor-tab-add-confirm,
   :root[data-color-scheme="kawaii"] .editor-tab-add-cancel {
-    border: 1.5px solid color-mix(in srgb, var(--kawaii-sketch) 85%, white);
+    border: 1.5px solid color-mix(in srgb, var(--kawaii-sketch) 75%, white);
     border-radius: 16px 16px 12px 16px;
     background: var(--kawaii-fill);
     color: var(--color-charcoal);
   }
 
   :root[data-color-scheme="kawaii"] .editor-tab--active {
-    border-color: color-mix(in srgb, var(--color-accent) 50%, white);
-    background: linear-gradient(180deg, #d4899e, #c46f88);
-    color: white;
-    box-shadow: 0 8px 18px rgba(160, 90, 110, 0.2);
+    border-color: color-mix(in srgb, var(--kawaii-lavender) 45%, white);
+    background: linear-gradient(165deg, #c4b5e8, #b8a8d8);
+    color: oklch(0.98 0.005 300);
+    box-shadow: 0 6px 14px rgba(140, 120, 170, 0.16);
   }
 
   :root[data-color-scheme="kawaii"] .card-item {
@@ -402,19 +525,19 @@
   }
 
   :root[data-color-scheme="kawaii"] .card-item--world-bg::before {
-    background: linear-gradient(180deg, rgba(52, 30, 36, 0.08), rgba(52, 30, 36, 0.72));
+    background: linear-gradient(180deg, rgba(48, 34, 40, 0.06), rgba(48, 34, 40, 0.7));
   }
 
   :root[data-color-scheme="kawaii"] .card-delete-btn {
-    border-color: color-mix(in srgb, var(--color-error) 30%, var(--color-border));
-    background: color-mix(in srgb, var(--color-surface) 86%, #f5e4e8);
+    border-color: color-mix(in srgb, var(--color-error) 24%, var(--color-border));
+    background: color-mix(in srgb, var(--color-surface) 88%, #f5e8ea);
     color: var(--color-error);
   }
 
   :root[data-color-scheme="kawaii"] .settings-upload-zone {
     border-style: dashed;
     border-width: 2px;
-    background: linear-gradient(180deg, #fffcfb 0%, #f9f3f4 100%);
+    background: linear-gradient(180deg, #fffdfc 0%, #faf7f7 100%);
   }
 
   :root[data-color-scheme="kawaii"] .home-mobile-center {
@@ -430,7 +553,8 @@
     padding: 12px 20px;
     border: var(--kawaii-chip-border-width) solid var(--kawaii-sketch);
     border-radius: 999px 999px 20px 999px;
-    background: var(--kawaii-fill);
+    background:
+      linear-gradient(120deg, var(--kawaii-rose-soft) 0%, var(--kawaii-lavender-soft) 55%, var(--kawaii-mint-soft) 100%);
     color: var(--color-charcoal);
     box-shadow: var(--kawaii-sketch-shadow), var(--shadow-default);
     margin-bottom: 26px;
@@ -442,78 +566,6 @@
     max-width: 304px;
     gap: 14px;
   }
-}
-
-/* Desktop / shared shell pieces (also used on larger screens) */
-:root[data-color-scheme="kawaii"] .layout-root {
-  background:
-    radial-gradient(ellipse 80% 50% at 10% -10%, rgba(232, 196, 206, 0.22), transparent 50%),
-    radial-gradient(ellipse 60% 40% at 90% 100%, rgba(240, 214, 220, 0.28), transparent 48%),
-    linear-gradient(180deg, #fbf8f8 0%, #f7f1f2 100%);
-}
-
-:root[data-color-scheme="kawaii"][data-theme="dark"] .layout-root {
-  background:
-    radial-gradient(ellipse 80% 50% at 10% -10%, rgba(200, 140, 160, 0.08), transparent 50%),
-    linear-gradient(180deg, #2a1a20 0%, #26161c 100%);
-}
-
-:root[data-color-scheme="kawaii"] .surface-panel,
-:root[data-color-scheme="kawaii"] .card-item,
-:root[data-color-scheme="kawaii"] .settings-model-item,
-:root[data-color-scheme="kawaii"] .mcp-tool-card,
-:root[data-color-scheme="kawaii"] .newgame-world-card,
-:root[data-color-scheme="kawaii"] .toast-card {
-  border: var(--kawaii-panel-border-width) solid var(--kawaii-sketch);
-  border-radius: var(--kawaii-panel-radius);
-  background: var(--kawaii-fill);
-  box-shadow: var(--kawaii-sketch-shadow), var(--shadow-default);
-}
-
-:root[data-color-scheme="kawaii"] .action-btn,
-:root[data-color-scheme="kawaii"] .card-action-btn {
-  border: var(--kawaii-chip-border-width) solid var(--kawaii-sketch);
-  border-radius: var(--kawaii-chip-radius);
-  background: var(--kawaii-fill);
-  color: var(--color-charcoal);
-  font-weight: 700;
-  box-shadow: var(--kawaii-sketch-shadow), var(--shadow-sm);
-}
-
-:root[data-color-scheme="kawaii"] .action-btn:hover,
-:root[data-color-scheme="kawaii"] .card-action-btn:hover {
-  border-color: var(--kawaii-line-strong);
-  background: var(--kawaii-fill-strong);
-  box-shadow: var(--shadow-default);
-}
-
-:root[data-color-scheme="kawaii"] .action-btn--primary,
-:root[data-color-scheme="kawaii"] .action-btn--accent {
-  border-color: color-mix(in srgb, var(--color-accent) 50%, #e8c4ce);
-  background: var(--kawaii-primary-fill);
-  color: oklch(0.97 0.005 20);
-}
-
-:root[data-color-scheme="kawaii"] .menu-btn {
-  border: var(--kawaii-panel-border-width) solid var(--kawaii-sketch);
-  border-radius: var(--kawaii-panel-radius);
-  background: linear-gradient(180deg, var(--kawaii-shell-strong), var(--color-surface));
-  box-shadow: var(--kawaii-sketch-shadow), var(--shadow-default);
-}
-
-:root[data-color-scheme="kawaii"] .field-input,
-:root[data-color-scheme="kawaii"] .editor-field-input {
-  border: 1.5px solid var(--kawaii-line);
-  border-radius: 16px;
-  background: #fffcfb;
-  color: var(--color-charcoal);
-}
-
-:root[data-color-scheme="kawaii"] .field-input:focus,
-:root[data-color-scheme="kawaii"] .editor-field-input:focus {
-  border-color: var(--color-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 16%, transparent);
-  outline: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -13,7 +13,7 @@ export type AppTheme = ThemeMode;
 
 export const ALL_THEME_STYLES: { id: ThemeStyle; label: string; description: string }[] = [
   { id: "default", label: "默认", description: "干净明亮的现代风格" },
-  { id: "kawaii", label: "粉色可爱", description: "雾感玫瑰 · 柔和圆角 · 不刺眼" },
+  { id: "kawaii", label: "粉色可爱", description: "雾感玫瑰 · 薰衣草薄荷点缀 · 柔和" },
   { id: "mondrian", label: "漫画外框", description: "粗墨线 · 硬阴影 · 美漫分镜" },
 ];
 
