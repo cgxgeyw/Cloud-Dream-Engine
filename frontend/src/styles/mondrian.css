@@ -1,19 +1,19 @@
 /*
-  Comic / pop-art shell theme (style id: mondrian).
-  Thick irregular ink outlines, hard offset shadows, primary color punches.
-  Not a rigid De Stijl grid — American comic panel language.
+  Mondrian / De Stijl shell theme (style id: mondrian).
+  Classic asymmetric black grid, primary red / blue / yellow blocks,
+  off-white paper — with a light modern hard-shadow lift.
   App shell only; world runtime UI stays isolated.
 */
 
 .theme-picker-preview--mondrian {
   border: 3px solid #111;
-  border-radius: 6px 4px 7px 5px;
+  border-radius: 0;
   background:
-    radial-gradient(circle at 18% 30%, #f5c518 0 18%, transparent 19%),
-    radial-gradient(circle at 78% 70%, #2f6fed 0 22%, transparent 23%),
-    linear-gradient(135deg, #e23b2e 0 28%, #f7f4ec 28% 72%, #111 72% 100%);
+    linear-gradient(#111, #111) 0 42% / 100% 3px no-repeat,
+    linear-gradient(90deg, #111, #111) 58% 0 / 3px 100% no-repeat,
+    linear-gradient(90deg, #c62828 0 28%, transparent 28% 58%, #1565c0 58% 100%),
+    linear-gradient(180deg, #f7f4ea 0 42%, #f7f4ea 42% 100%);
   box-shadow: 3px 3px 0 #111;
-  transform: rotate(-0.6deg);
 }
 
 .theme-picker-preview--mondrian .theme-picker-preview-header,
@@ -23,88 +23,85 @@
 
 :root[data-color-scheme="mondrian"] {
   --color-charcoal: #141414;
-  --color-concrete: #5c5c5c;
-  --color-accent: #2f6fed;
-  --color-bg: #f4f1e8;
-  --color-surface: #fffcf5;
-  --color-success: #1f9d55;
-  --color-warning: #e0a100;
-  --color-error: #d93025;
-  --color-border: #1a1a1a;
+  --color-concrete: #5a5a5a;
+  --color-accent: #1565c0;
+  --color-bg: #f3efe4;
+  --color-surface: #fffcf3;
+  --color-success: #2e7d32;
+  --color-warning: #f9a825;
+  --color-error: #c62828;
+  --color-border: #141414;
   --color-border-hover: #000;
   --color-muted: #4a4a4a;
-  --color-faint: #2e2e2e;
-  --color-subtle-bg: #ebe6d8;
-  --color-hover-bg: #e5dfd0;
-  --color-active-bg: rgba(47, 111, 237, 0.12);
+  --color-faint: #2a2a2a;
+  --color-subtle-bg: #e8e2d2;
+  --color-hover-bg: #e0d9c8;
+  --color-active-bg: rgba(21, 101, 192, 0.12);
 
-  --radius-sm: 4px;
-  --radius-default: 6px;
-  --radius-md: 8px;
-  --radius-lg: 10px;
-  --radius-full: 999px;
+  /* Classic orthogonal — no soft radii */
+  --radius-sm: 0;
+  --radius-default: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-full: 0;
 
-  --shadow-sm: 2px 2px 0 #111;
-  --shadow-default: 4px 4px 0 #111;
-  --shadow-md: 6px 6px 0 #111;
-  --shadow-lg: 8px 8px 0 #111;
+  --shadow-sm: 3px 3px 0 #111;
+  --shadow-default: 5px 5px 0 #111;
+  --shadow-md: 7px 7px 0 #111;
+  --shadow-lg: 10px 10px 0 #111;
 
-  --font-display: "Arial Black", "Arial Narrow", "PingFang SC", "Microsoft YaHei", sans-serif;
-  --font-body: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-display: "Arial Black", "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-body: "Helvetica Neue", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-mono: "JetBrains Mono", Consolas, monospace;
 
-  --comic-ink: #111;
-  --comic-paper: #fffcf5;
-  --comic-paper-deep: #f0ebdc;
-  --comic-red: #e23b2e;
-  --comic-blue: #2f6fed;
-  --comic-yellow: #f5c518;
-  --comic-green: #1f9d55;
-  /* Slightly uneven radii read as hand-inked panels */
-  --comic-panel-radius: 8px 6px 10px 7px;
-  --comic-btn-radius: 7px 5px 8px 6px;
-  --comic-ink-width: 3px;
-  --comic-ink-width-thick: 4px;
-  --comic-offset: 4px 4px 0 var(--comic-ink);
-  --comic-offset-sm: 2px 2px 0 var(--comic-ink);
-  --comic-offset-lg: 7px 7px 0 var(--comic-ink);
-  /* Tiny halftone for paper feel */
-  --comic-halftone: radial-gradient(circle, rgba(17, 17, 17, 0.08) 0.7px, transparent 0.9px);
+  /* De Stijl tokens */
+  --mondrian-ink: #141414;
+  --mondrian-paper: #fffcf3;
+  --mondrian-paper-deep: #f0ead8;
+  --mondrian-red: #c62828;
+  --mondrian-blue: #1565c0;
+  --mondrian-yellow: #f9c31b;
+  --mondrian-white: #fffdf6;
+  --mondrian-line: 3px solid var(--mondrian-ink);
+  --mondrian-line-thick: 4px solid var(--mondrian-ink);
+  --mondrian-line-thin: 2px solid var(--mondrian-ink);
+  --mondrian-offset: 4px 4px 0 var(--mondrian-ink);
+  --mondrian-offset-sm: 2px 2px 0 var(--mondrian-ink);
+  --mondrian-offset-lg: 8px 8px 0 var(--mondrian-ink);
 }
 
 :root[data-color-scheme="mondrian"][data-theme="dark"] {
   --color-charcoal: #f3efe4;
   --color-concrete: #b0aa9a;
-  --color-accent: #7aa2ff;
+  --color-accent: #64b5f6;
   --color-bg: #1a1a18;
   --color-surface: #242420;
-  --color-success: #3ecf7a;
+  --color-success: #66bb6a;
   --color-warning: #f0c14a;
-  --color-error: #ff6b5e;
+  --color-error: #ef5350;
   --color-border: #e8e2d4;
   --color-border-hover: #fffaf0;
   --color-muted: #c4bdad;
   --color-faint: #ddd6c6;
   --color-subtle-bg: #2c2c28;
   --color-hover-bg: #33332e;
-  --color-active-bg: rgba(122, 162, 255, 0.16);
+  --color-active-bg: rgba(100, 181, 246, 0.16);
 
-  --shadow-sm: 2px 2px 0 #000;
-  --shadow-default: 4px 4px 0 #000;
-  --shadow-md: 6px 6px 0 #000;
-  --shadow-lg: 8px 8px 0 #000;
+  --shadow-sm: 3px 3px 0 #000;
+  --shadow-default: 5px 5px 0 #000;
+  --shadow-md: 7px 7px 0 #000;
+  --shadow-lg: 10px 10px 0 #000;
 
-  --comic-ink: #f3efe4;
-  --comic-paper: #242420;
-  --comic-paper-deep: #2e2e28;
-  --comic-red: #ff6b5e;
-  --comic-blue: #7aa2ff;
-  --comic-yellow: #f5c518;
-  --comic-green: #3ecf7a;
-  --comic-offset: 4px 4px 0 #000;
-  --comic-offset-sm: 2px 2px 0 #000;
-  --comic-offset-lg: 7px 7px 0 #000;
-  --comic-halftone: radial-gradient(circle, rgba(243, 239, 228, 0.06) 0.7px, transparent 0.9px);
+  --mondrian-ink: #f3efe4;
+  --mondrian-paper: #242420;
+  --mondrian-paper-deep: #2e2e28;
+  --mondrian-red: #ef5350;
+  --mondrian-blue: #64b5f6;
+  --mondrian-yellow: #f9c31b;
+  --mondrian-white: #2a2a26;
+  --mondrian-offset: 4px 4px 0 #000;
+  --mondrian-offset-sm: 2px 2px 0 #000;
+  --mondrian-offset-lg: 8px 8px 0 #000;
 }
 
 :root[data-color-scheme="mondrian"] body {
@@ -112,14 +109,37 @@
   color: var(--color-charcoal);
 }
 
+/* Canvas: asymmetric black grid + primary fields (Composition homage) */
 :root[data-color-scheme="mondrian"] .layout-root {
   background-color: var(--color-bg);
   background-image:
-    var(--comic-halftone),
-    linear-gradient(118deg, transparent 0 62%, color-mix(in srgb, var(--comic-blue) 18%, transparent) 62% 100%),
-    linear-gradient(0deg, transparent 0 78%, color-mix(in srgb, var(--comic-red) 10%, transparent) 78% 100%);
-  background-size: 6px 6px, 100% 100%, 100% 100%;
-  background-position: 0 0, 0 0, 0 0;
+    /* horizontal bars */
+    linear-gradient(var(--mondrian-ink), var(--mondrian-ink)),
+    linear-gradient(var(--mondrian-ink), var(--mondrian-ink)),
+    /* vertical bars */
+    linear-gradient(var(--mondrian-ink), var(--mondrian-ink)),
+    linear-gradient(var(--mondrian-ink), var(--mondrian-ink)),
+    /* primary cells */
+    linear-gradient(var(--mondrian-red), var(--mondrian-red)),
+    linear-gradient(var(--mondrian-blue), var(--mondrian-blue)),
+    linear-gradient(var(--mondrian-yellow), var(--mondrian-yellow));
+  background-position:
+    0 18%,
+    0 72%,
+    22% 0,
+    78% 0,
+    0 0,
+    100% 100%,
+    100% 0;
+  background-repeat: no-repeat;
+  background-size:
+    100% 3px,
+    100% 3px,
+    3px 100%,
+    3px 100%,
+    18% 14%,
+    16% 18%,
+    10% 10%;
 }
 
 :root[data-color-scheme="mondrian"] .layout-inner {
@@ -127,41 +147,41 @@
 }
 
 :root[data-color-scheme="mondrian"] .layout-header {
-  border: var(--comic-ink-width-thick) solid var(--comic-ink);
-  border-radius: 10px 8px 12px 9px;
+  border: var(--mondrian-line-thick);
+  border-radius: 0;
   background:
-    linear-gradient(90deg, var(--comic-red) 0 18px, transparent 18px),
-    linear-gradient(90deg, transparent calc(100% - 22px), var(--comic-yellow) calc(100% - 22px)),
-    var(--comic-paper);
-  box-shadow: var(--comic-offset);
+    linear-gradient(90deg, var(--mondrian-red) 0 48px, var(--mondrian-ink) 48px 52px, transparent 52px),
+    linear-gradient(90deg, transparent calc(100% - 36px), var(--mondrian-ink) calc(100% - 36px) calc(100% - 32px), var(--mondrian-blue) calc(100% - 32px)),
+    var(--mondrian-paper);
+  box-shadow: var(--mondrian-offset);
   padding: 18px 20px;
 }
 
 :root[data-color-scheme="mondrian"] .layout-header--has-bg,
 :root[data-color-scheme="mondrian"] .layout-inner--has-bg .surface-panel,
 :root[data-color-scheme="mondrian"] .layout-inner--has-bg .menu-btn {
-  background: var(--comic-paper);
+  background: var(--mondrian-paper);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
 :root[data-color-scheme="mondrian"] .layout-brand {
-  color: var(--comic-red);
+  color: var(--mondrian-red);
   font-weight: 900;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  text-shadow: 1px 1px 0 color-mix(in srgb, var(--comic-yellow) 70%, transparent);
 }
 
 :root[data-color-scheme="mondrian"] .layout-title,
 :root[data-color-scheme="mondrian"] .settings-section-title,
 :root[data-color-scheme="mondrian"] .theme-picker-heading {
-  color: var(--comic-ink);
+  color: var(--mondrian-ink);
   font-weight: 900;
-  letter-spacing: 0;
+  letter-spacing: 0.02em;
   font-family: var(--font-display);
 }
 
+/* Panels: white field + thick black frame; cycle primary edge bars */
 :root[data-color-scheme="mondrian"] .surface-panel,
 :root[data-color-scheme="mondrian"] .card-item,
 :root[data-color-scheme="mondrian"] .settings-model-item,
@@ -170,80 +190,131 @@
 :root[data-color-scheme="mondrian"] .settings-upload-zone,
 :root[data-color-scheme="mondrian"] .newgame-world-card,
 :root[data-color-scheme="mondrian"] .toast-card {
-  border: var(--comic-ink-width) solid var(--comic-ink);
-  border-radius: var(--comic-panel-radius);
+  border: var(--mondrian-line);
+  border-radius: 0;
   background:
-    var(--comic-halftone),
-    var(--comic-paper);
-  background-size: 6px 6px, auto;
-  box-shadow: var(--comic-offset);
+    linear-gradient(90deg, var(--mondrian-bar, var(--mondrian-yellow)) 0 14px, transparent 14px),
+    var(--mondrian-paper);
+  box-shadow: var(--mondrian-offset);
 }
 
-/* Small primary color punch on card corners — comic accent, not full Mondrian grid */
-:root[data-color-scheme="mondrian"] .surface-panel,
-:root[data-color-scheme="mondrian"] .card-item,
-:root[data-color-scheme="mondrian"] .settings-model-item {
-  background-image:
-    var(--comic-halftone),
-    linear-gradient(135deg, color-mix(in srgb, var(--comic-yellow) 55%, transparent) 0 12px, transparent 12px);
-  background-size: 6px 6px, auto;
-  background-repeat: repeat, no-repeat;
+:root[data-color-scheme="mondrian"] .card-item:nth-child(4n + 1),
+:root[data-color-scheme="mondrian"] .surface-panel:nth-child(4n + 1) {
+  --mondrian-bar: var(--mondrian-red);
+}
+:root[data-color-scheme="mondrian"] .card-item:nth-child(4n + 2) {
+  --mondrian-bar: var(--mondrian-blue);
+}
+:root[data-color-scheme="mondrian"] .card-item:nth-child(4n + 3) {
+  --mondrian-bar: var(--mondrian-yellow);
+}
+:root[data-color-scheme="mondrian"] .card-item:nth-child(4n + 4) {
+  --mondrian-bar: var(--mondrian-ink);
 }
 
+/* Menu: white tile with primary icon square */
 :root[data-color-scheme="mondrian"] .menu-btn {
-  border: var(--comic-ink-width) solid var(--comic-ink);
-  border-radius: var(--comic-btn-radius);
-  background: var(--comic-paper);
-  box-shadow: var(--comic-offset-sm);
+  border: var(--mondrian-line);
+  border-radius: 0;
+  background: var(--mondrian-paper);
+  box-shadow: var(--mondrian-offset-sm);
   overflow: visible;
-  /* Slight hand-drawn lean */
-  transform: rotate(-0.4deg);
+  --mondrian-menu-accent: var(--mondrian-blue);
+}
+
+:root[data-color-scheme="mondrian"] .menu-btn:nth-child(4n + 1) {
+  --mondrian-menu-accent: var(--mondrian-red);
+}
+:root[data-color-scheme="mondrian"] .menu-btn:nth-child(4n + 2) {
+  --mondrian-menu-accent: var(--mondrian-blue);
+}
+:root[data-color-scheme="mondrian"] .menu-btn:nth-child(4n + 3) {
+  --mondrian-menu-accent: var(--mondrian-yellow);
+}
+:root[data-color-scheme="mondrian"] .menu-btn:nth-child(4n + 4) {
+  --mondrian-menu-accent: var(--mondrian-ink);
 }
 
 :root[data-color-scheme="mondrian"] .menu-btn::after {
-  background: var(--comic-blue);
-  border-radius: 2px;
+  background: var(--mondrian-menu-accent);
 }
 
 :root[data-color-scheme="mondrian"] .menu-btn:hover {
-  border-color: var(--comic-ink);
-  color: var(--comic-paper);
-  background: var(--comic-ink);
-  transform: translate(-1px, -1px) rotate(-0.8deg);
-  box-shadow: var(--comic-offset);
+  border-color: var(--mondrian-ink);
+  background: var(--mondrian-menu-accent);
+  color: var(--mondrian-white);
+  transform: translate(-1px, -1px);
+  box-shadow: var(--mondrian-offset);
+}
+
+:root[data-color-scheme="mondrian"] .menu-btn:hover .menu-btn-icon {
+  background: var(--mondrian-paper);
+  color: var(--mondrian-ink);
+  border-color: var(--mondrian-ink);
+}
+
+:root[data-color-scheme="mondrian"] .menu-btn:hover .menu-btn-desc {
+  color: color-mix(in srgb, var(--mondrian-white) 75%, transparent);
 }
 
 :root[data-color-scheme="mondrian"] .menu-btn-icon {
-  border: 2px solid var(--comic-ink);
-  border-radius: 4px 3px 5px 4px;
-  background: var(--comic-yellow);
-  color: var(--comic-ink);
-  box-shadow: 1px 1px 0 var(--comic-ink);
+  border: var(--mondrian-line-thin);
+  border-radius: 0;
+  background: var(--mondrian-menu-accent, var(--mondrian-yellow));
+  color: var(--mondrian-ink);
 }
 
-/* Buttons: thick ink, irregular corners, hard shadow, slight rotation */
+:root[data-color-scheme="mondrian"] .menu-btn:nth-child(4n + 1) .menu-btn-icon,
+:root[data-color-scheme="mondrian"] .menu-btn:nth-child(4n + 4) .menu-btn-icon {
+  color: var(--mondrian-white);
+}
+
+/* Primary CTA: full blue block + white type */
+:root[data-color-scheme="mondrian"] .menu-btn--primary,
+:root[data-color-scheme="mondrian"] .menu-btn.menu-btn--primary {
+  background: var(--mondrian-blue);
+  border-color: var(--mondrian-ink);
+  color: var(--mondrian-white);
+  box-shadow: var(--mondrian-offset);
+}
+
+:root[data-color-scheme="mondrian"] .menu-btn--primary .menu-btn-title,
+:root[data-color-scheme="mondrian"] .menu-btn--primary .menu-btn-desc,
+:root[data-color-scheme="mondrian"] .menu-btn--primary .menu-btn-arrow {
+  color: var(--mondrian-white) !important;
+}
+
+:root[data-color-scheme="mondrian"] .menu-btn--primary .menu-btn-icon {
+  background: var(--mondrian-yellow) !important;
+  color: var(--mondrian-ink) !important;
+  border-color: var(--mondrian-ink) !important;
+}
+
+:root[data-color-scheme="mondrian"] .menu-btn--primary:hover {
+  background: var(--mondrian-red);
+  color: var(--mondrian-white) !important;
+}
+
+:root[data-color-scheme="mondrian"] .menu-btn--primary:hover .menu-btn-icon {
+  background: var(--mondrian-paper) !important;
+  color: var(--mondrian-ink) !important;
+}
+
+/* Buttons: primary color blocks */
 :root[data-color-scheme="mondrian"] .action-btn,
 :root[data-color-scheme="mondrian"] .card-action-btn,
 :root[data-color-scheme="mondrian"] .editor-tab,
 :root[data-color-scheme="mondrian"] .editor-tab-add,
 :root[data-color-scheme="mondrian"] .editor-tab-add-confirm,
 :root[data-color-scheme="mondrian"] .editor-tab-add-cancel {
-  border: var(--comic-ink-width) solid var(--comic-ink);
-  border-radius: var(--comic-btn-radius);
-  background: var(--comic-paper);
-  box-shadow: var(--comic-offset-sm);
-  color: var(--comic-ink);
+  border: var(--mondrian-line);
+  border-radius: 0;
+  background: var(--mondrian-paper);
+  box-shadow: var(--mondrian-offset-sm);
+  color: var(--mondrian-ink);
   font-weight: 800;
-  letter-spacing: 0.01em;
-  transform: rotate(-0.35deg);
-  overflow: visible;
+  letter-spacing: 0.02em;
   transition: transform 140ms ease-out, box-shadow 140ms ease-out, background-color 140ms ease-out, color 140ms ease-out;
-}
-
-:root[data-color-scheme="mondrian"] .action-btn:nth-child(even),
-:root[data-color-scheme="mondrian"] .card-action-btn:nth-child(even) {
-  transform: rotate(0.4deg);
-  border-radius: 6px 8px 5px 9px;
 }
 
 :root[data-color-scheme="mondrian"] .action-btn::after,
@@ -255,16 +326,16 @@
 :root[data-color-scheme="mondrian"] .card-action-btn:hover:not([disabled]),
 :root[data-color-scheme="mondrian"] .editor-tab:hover,
 :root[data-color-scheme="mondrian"] .editor-tab-add:hover {
-  background: var(--comic-yellow);
-  color: var(--comic-ink);
-  transform: translate(-2px, -2px) rotate(-1deg);
-  box-shadow: 5px 5px 0 var(--comic-ink);
+  background: var(--mondrian-yellow);
+  color: var(--mondrian-ink);
+  transform: translate(-2px, -2px);
+  box-shadow: 5px 5px 0 var(--mondrian-ink);
 }
 
 :root[data-color-scheme="mondrian"] .action-btn:active:not([disabled]),
 :root[data-color-scheme="mondrian"] .card-action-btn:active:not([disabled]) {
-  transform: translate(1px, 1px) rotate(0.2deg);
-  box-shadow: 1px 1px 0 var(--comic-ink);
+  transform: translate(1px, 1px);
+  box-shadow: 1px 1px 0 var(--mondrian-ink);
 }
 
 :root[data-color-scheme="mondrian"] .action-btn--primary,
@@ -273,36 +344,36 @@
 :root[data-color-scheme="mondrian"] .menu-btn--primary,
 :root[data-color-scheme="mondrian"] .home-mobile-btn--primary,
 :root[data-color-scheme="mondrian"] .mobile-nav-item--active {
-  background: var(--comic-blue);
-  border-color: var(--comic-ink);
-  color: #fffcf5;
-  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.25);
+  background: var(--mondrian-blue);
+  border-color: var(--mondrian-ink);
+  color: var(--mondrian-white);
 }
 
 :root[data-color-scheme="mondrian"] .action-btn--primary:hover:not([disabled]),
 :root[data-color-scheme="mondrian"] .action-btn--accent:hover:not([disabled]),
 :root[data-color-scheme="mondrian"] .editor-tab--active:hover {
-  background: var(--comic-red);
-  color: #fffcf5;
+  background: var(--mondrian-red);
+  color: var(--mondrian-white);
 }
 
 :root[data-color-scheme="mondrian"] .action-btn--danger {
-  background: var(--comic-red);
-  color: #fffcf5;
-  border-color: var(--comic-ink);
+  background: var(--mondrian-red);
+  color: var(--mondrian-white);
+  border-color: var(--mondrian-ink);
 }
 
+/* Fields: white + inset black, yellow focus ring (classic accent) */
 :root[data-color-scheme="mondrian"] .field-input,
 :root[data-color-scheme="mondrian"] .editor-field-input,
 :root[data-color-scheme="mondrian"] .editor-tab-add-input,
 :root[data-color-scheme="mondrian"] .mcp-editor-panel input:not([type="checkbox"]),
 :root[data-color-scheme="mondrian"] .mcp-editor-panel textarea,
 :root[data-color-scheme="mondrian"] .mcp-editor-panel select {
-  border: var(--comic-ink-width) solid var(--comic-ink);
-  border-radius: 5px 7px 4px 8px;
-  background: var(--comic-paper);
-  box-shadow: inset 2px 2px 0 color-mix(in srgb, var(--comic-ink) 8%, transparent);
-  color: var(--comic-ink);
+  border: var(--mondrian-line);
+  border-radius: 0;
+  background: var(--mondrian-paper);
+  box-shadow: inset 2px 2px 0 color-mix(in srgb, var(--mondrian-ink) 8%, transparent);
+  color: var(--mondrian-ink);
 }
 
 :root[data-color-scheme="mondrian"] .field-input:focus,
@@ -311,89 +382,83 @@
 :root[data-color-scheme="mondrian"] .mcp-editor-panel input:not([type="checkbox"]):focus,
 :root[data-color-scheme="mondrian"] .mcp-editor-panel textarea:focus,
 :root[data-color-scheme="mondrian"] .mcp-editor-panel select:focus {
-  border-color: var(--comic-blue);
-  outline: 3px solid color-mix(in srgb, var(--comic-yellow) 80%, transparent);
+  border-color: var(--mondrian-blue);
+  outline: 3px solid var(--mondrian-yellow);
   outline-offset: 2px;
   box-shadow: none;
 }
 
 :root[data-color-scheme="mondrian"] .settings-tabs,
 :root[data-color-scheme="mondrian"] .editor-tabs {
-  border-color: var(--comic-ink);
+  border-color: var(--mondrian-ink);
 }
 
 :root[data-color-scheme="mondrian"] .settings-tab {
-  border: var(--comic-ink-width) solid var(--comic-ink);
-  border-radius: 6px 6px 0 0;
-  background: var(--comic-paper);
-  color: var(--comic-ink);
+  border: var(--mondrian-line);
+  border-radius: 0;
+  background: var(--mondrian-paper);
+  color: var(--mondrian-ink);
   font-weight: 800;
 }
 
 :root[data-color-scheme="mondrian"] .settings-tab::after {
-  background: var(--comic-yellow);
-  height: 3px;
+  background: var(--mondrian-yellow);
+  height: 4px;
 }
 
 :root[data-color-scheme="mondrian"] .settings-tab--active {
-  background: var(--comic-red);
-  color: #fffcf5;
-  border-color: var(--comic-ink);
+  background: var(--mondrian-red);
+  color: var(--mondrian-white);
+  border-color: var(--mondrian-ink);
 }
 
 :root[data-color-scheme="mondrian"] .theme-picker-card {
-  border: var(--comic-ink-width) solid var(--comic-ink);
-  border-radius: var(--comic-panel-radius);
-  background: var(--comic-paper);
-  box-shadow: var(--comic-offset-sm);
-  transform: rotate(-0.3deg);
+  border: var(--mondrian-line);
+  border-radius: 0;
+  background: var(--mondrian-paper);
+  box-shadow: var(--mondrian-offset-sm);
 }
 
 :root[data-color-scheme="mondrian"] .theme-picker-card:hover,
 :root[data-color-scheme="mondrian"] .theme-picker-card--active {
-  border-color: var(--comic-ink);
-  background: var(--comic-paper);
-  box-shadow: var(--comic-offset);
-  transform: translate(-1px, -1px) rotate(-0.6deg);
+  border-color: var(--mondrian-ink);
+  background: var(--mondrian-paper);
+  box-shadow: var(--mondrian-offset);
 }
 
 :root[data-color-scheme="mondrian"] .settings-nav-item,
 :root[data-color-scheme="mondrian"] .mobile-nav-item {
-  border: var(--comic-ink-width) solid var(--comic-ink);
-  border-radius: var(--comic-btn-radius);
-  background: var(--comic-paper);
-  box-shadow: var(--comic-offset-sm);
+  border: var(--mondrian-line);
+  border-radius: 0;
+  background: var(--mondrian-paper);
+  box-shadow: var(--mondrian-offset-sm);
 }
 
 :root[data-color-scheme="mondrian"] .settings-nav-item:hover,
 :root[data-color-scheme="mondrian"] .mobile-nav-item:hover {
-  border-color: var(--comic-ink);
-  background: var(--comic-yellow);
+  border-color: var(--mondrian-ink);
+  background: var(--mondrian-yellow);
+  color: var(--mondrian-ink);
 }
 
 :root[data-color-scheme="mondrian"] .modal-backdrop,
 :root[data-color-scheme="mondrian"] .mobile-overlay {
-  background:
-    repeating-linear-gradient(
-      -12deg,
-      rgba(0, 0, 0, 0.45) 0 2px,
-      rgba(0, 0, 0, 0.38) 2px 4px
-    );
+  background: color-mix(in srgb, var(--mondrian-ink) 42%, transparent);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
 :root[data-color-scheme="mondrian"] .modal-dialog,
 :root[data-color-scheme="mondrian"] .mobile-sidebar {
-  border: var(--comic-ink-width-thick) solid var(--comic-ink);
-  border-radius: 12px 10px 14px 11px;
-  background: var(--comic-paper);
-  box-shadow: var(--comic-offset-lg);
+  border: var(--mondrian-line-thick);
+  border-radius: 0;
+  background: var(--mondrian-paper);
+  box-shadow: var(--mondrian-offset-lg);
 }
 
 :root[data-color-scheme="mondrian"] .mobile-sidebar-brand,
 :root[data-color-scheme="mondrian"] .mobile-sidebar-footer {
-  border-color: var(--comic-ink);
+  border-color: var(--mondrian-ink);
 }
 
 :root[data-color-scheme="mondrian"] .mobile-sidebar-brand-icon-btn,
@@ -401,39 +466,41 @@
 :root[data-color-scheme="mondrian"] .mobile-back-btn,
 :root[data-color-scheme="mondrian"] .mobile-close-btn,
 :root[data-color-scheme="mondrian"] .mobile-fab {
-  border: var(--comic-ink-width) solid var(--comic-ink);
-  border-radius: var(--comic-btn-radius);
-  box-shadow: var(--comic-offset-sm);
+  border: var(--mondrian-line);
+  border-radius: 0;
+  box-shadow: var(--mondrian-offset-sm);
 }
 
 :root[data-color-scheme="mondrian"] .mobile-fab {
-  background: var(--comic-red);
-  color: #fffcf5;
-  transform: rotate(-2deg);
+  background: var(--mondrian-red);
+  color: var(--mondrian-white);
 }
 
 :root[data-color-scheme="mondrian"] .mobile-fab:hover {
-  background: var(--comic-blue);
-  transform: translate(-1px, -2px) rotate(-3deg);
-  box-shadow: var(--comic-offset);
+  background: var(--mondrian-blue);
+  transform: translate(-1px, -2px);
+  box-shadow: var(--mondrian-offset);
 }
 
 @media (max-width: 767px) {
   :root[data-color-scheme="mondrian"] .layout-root {
     background-image:
-      var(--comic-halftone),
-      linear-gradient(180deg, color-mix(in srgb, var(--comic-yellow) 12%, transparent) 0 8px, transparent 8px);
-    background-size: 6px 6px, 100% 100%;
+      linear-gradient(var(--mondrian-ink), var(--mondrian-ink)),
+      linear-gradient(var(--mondrian-ink), var(--mondrian-ink)),
+      linear-gradient(90deg, var(--mondrian-ink), var(--mondrian-ink)),
+      linear-gradient(var(--mondrian-red), var(--mondrian-red)),
+      linear-gradient(var(--mondrian-yellow), var(--mondrian-yellow));
+    background-position: 0 22%, 0 78%, 70% 0, 0 0, 100% 100%;
+    background-size: 100% 2px, 100% 2px, 2px 100%, 14% 8%, 12% 10%;
   }
 
   :root[data-color-scheme="mondrian"] .layout-header {
     border-width: 3px;
     padding: 16px 16px 16px 72px;
     background:
-      linear-gradient(90deg, var(--comic-red) 0 12px, transparent 12px),
-      linear-gradient(90deg, transparent calc(100% - 16px), var(--comic-yellow) calc(100% - 16px)),
-      var(--comic-paper);
-    border-radius: 8px 6px 9px 7px;
+      linear-gradient(90deg, var(--mondrian-red) 0 28px, var(--mondrian-ink) 28px 31px, transparent 31px),
+      linear-gradient(90deg, transparent calc(100% - 24px), var(--mondrian-ink) calc(100% - 24px) calc(100% - 21px), var(--mondrian-yellow) calc(100% - 21px)),
+      var(--mondrian-paper);
   }
 
   :root[data-color-scheme="mondrian"] .layout-header--compact {
@@ -449,7 +516,7 @@
   :root[data-color-scheme="mondrian"] .settings-model-item,
   :root[data-color-scheme="mondrian"] .mcp-tool-card,
   :root[data-color-scheme="mondrian"] .settings-nav-item {
-    box-shadow: var(--comic-offset-sm);
+    box-shadow: var(--mondrian-offset-sm);
   }
 
   :root[data-color-scheme="mondrian"] .action-btn,
@@ -462,7 +529,6 @@
     border-left: 0;
     border-top: 0;
     border-bottom: 0;
-    border-radius: 0;
   }
 }
 

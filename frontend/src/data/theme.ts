@@ -14,7 +14,7 @@ export type AppTheme = ThemeMode;
 export const ALL_THEME_STYLES: { id: ThemeStyle; label: string; description: string }[] = [
   { id: "default", label: "默认", description: "干净明亮的现代风格" },
   { id: "kawaii", label: "糖果梦境", description: "奶油底色 · 紫薄荷桃多色糖果 · 柔和" },
-  { id: "mondrian", label: "漫画外框", description: "粗墨线 · 硬阴影 · 美漫分镜" },
+  { id: "mondrian", label: "蒙德里安", description: "黑线网格 · 红蓝黄原色 · 几何分割" },
 ];
 
 const MODE_STORAGE_KEY = "app-theme";
