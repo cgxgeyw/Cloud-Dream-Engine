@@ -9,7 +9,6 @@ pub(crate) mod session_materialization;
 pub mod speaker_loop;
 pub mod turn_context;
 pub mod writeback;
-
 pub(crate) use agent_chat::*;
 pub(crate) use character_prompt::build_character_prompt_artifacts;
 pub(crate) use request_building::{build_character_response_schema, resolve_text_model};
