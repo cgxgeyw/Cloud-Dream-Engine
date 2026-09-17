@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import {
   GameUiRenderer,
   type GameUiComponentRenderer,
@@ -43,6 +43,8 @@ export type GameUiPreviewProps = {
   statusTabs?: PreviewStatusTab[];
   parseError?: string | null;
   usedFallback?: boolean;
+  /** 显示关键 CSS 变量与输入区 computed 宽度（世界工坊调试） */
+  showStyleDebug?: boolean;
 };
 
 export function GameUiPreview({
@@ -64,6 +66,7 @@ export function GameUiPreview({
   statusTabs = [],
   parseError,
   usedFallback = false,
+  showStyleDebug = false,
 }: GameUiPreviewProps) {
   const orderedStatusTabs = resolveSidePanelTabOrder(document, statusTabs);
 
@@ -181,7 +184,7 @@ export function GameUiPreview({
       </div>
     ),
     input_area: (
-      <div className="game-input-area game-ui-panel">
+      <div className="game-input-area game-ui-panel" data-component="input_composer">
         <div className="game-input-compose">
           <textarea
             className="game-textarea game-ui-textarea"
@@ -226,7 +229,66 @@ export function GameUiPreview({
         mounts={mounts}
         componentRenderers={componentRenderers}
       />
+      {showStyleDebug ? <StyleDebugPanel scopeId={scopeId} /> : null}
     </div>
+  );
+}
+
+/** 读取 game-root 上的关键 --game-ui-* 变量，便于世界包作者确认是否生效。 */
+function StyleDebugPanel({ scopeId }: { scopeId?: string }) {
+  const [vars, setVars] = useState<Array<[string, string]>>([]);
+  const [textareaWidth, setTextareaWidth] = useState<string>("");
+
+  useEffect(() => {
+    const root = scopeId
+      ? document.querySelector<HTMLElement>(`[data-game-ui-scope="${scopeId}"]`)
+      : document.querySelector<HTMLElement>(".game-root--preview");
+    if (!root) return;
+    const style = getComputedStyle(root);
+    const keys = [
+      "--game-ui-input-max-width",
+      "--game-ui-composer-max-width",
+      "--game-ui-message-max-width",
+      "--game-ui-action-btn-bg",
+      "--game-ui-scroll-btn-size",
+      "--game-ui-typing-max-width",
+      "--game-ui-avatar-w",
+      "--game-ui-map-min-height",
+    ];
+    setVars(keys.map((key) => [key, style.getPropertyValue(key).trim() || "(unset)"] as [string, string]));
+    const ta = root.querySelector<HTMLElement>(".game-textarea, [data-component='input_composer'] textarea");
+    if (ta) {
+      setTextareaWidth(`${Math.round(ta.getBoundingClientRect().width)}px`);
+    }
+  }, [scopeId]);
+
+  if (!vars.length) return null;
+  return (
+    <aside
+      className="game-style-debug"
+      style={{
+        position: "absolute",
+        right: 8,
+        bottom: 8,
+        zIndex: 40,
+        maxWidth: 280,
+        padding: "8px 10px",
+        borderRadius: 10,
+        background: "rgba(15,18,28,0.88)",
+        color: "#e8ecf4",
+        font: "11px/1.45 ui-monospace, monospace",
+        pointerEvents: "none",
+        boxShadow: "0 8px 24px rgba(0,0,0,.35)",
+      }}
+    >
+      <div style={{ fontWeight: 700, marginBottom: 4 }}>Style debug</div>
+      {textareaWidth ? <div>textarea.width: {textareaWidth}</div> : null}
+      {vars.map(([key, value]) => (
+        <div key={key}>
+          {key}: {value}
+        </div>
+      ))}
+    </aside>
   );
 }
 

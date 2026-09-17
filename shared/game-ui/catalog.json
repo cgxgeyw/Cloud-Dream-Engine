@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "comment": "世界包 UI 组件目录（唯一来源）。前端渲染注册表、结构编辑器与后端校验清单都从本文件生成；新增组件/动作/能力只改这里。组件集合变更不影响现有世界包。",
+  "comment": "世界包 UI 组件目录（唯一来源）。前端渲染注册表、结构编辑器与后端校验清单都从本文件生成；新增组件/动作/能力只改这里。组件集合变更不影响现有世界包。可样式化：宿主组件尺寸/装饰优先 --game-ui-* 变量（见 docs/game-ui-input-alignment-rfc.md），世界包可用 CSS 覆盖。",
   "supported_document_schema_versions": [2],
   "supported_ui_runtime_versions": [2, 3],
   "capabilities": [

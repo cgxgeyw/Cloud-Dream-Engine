@@ -44,6 +44,41 @@
     }
 
     #[test]
+    fn warns_on_unknown_game_class_in_stylesheet() {
+        let service = GameUiService::new();
+        let desktop = include_str!("../../db/seeds/assets/gwtw-desktop-ui.jsonc");
+        let mobile = include_str!("../../db/seeds/assets/gwtw-mobile-ui.jsonc");
+        let bundle = service.validate_world_ui_bundle(WorldUiBundleValidationRequest {
+            desktop_file: desktop.to_string(),
+            mobile_file: mobile.to_string(),
+            runtime_version: Some(3),
+            desktop_stylesheet: ".game-textarea { width: 100%; }\n.game-not-a-real-thing { color: red; }\n"
+                .to_string(),
+            mobile_stylesheet: String::new(),
+            capabilities: Vec::new(),
+            storage: serde_json::json!({}),
+            logic: serde_json::json!({}),
+        });
+        assert!(bundle.ok);
+        assert!(
+            bundle
+                .warnings
+                .iter()
+                .any(|w| w.code == "unknown_game_class" && w.message.contains("game-not-a-real-thing")),
+            "warnings: {:?}",
+            bundle.warnings
+        );
+        assert!(
+            !bundle
+                .warnings
+                .iter()
+                .any(|w| w.code == "unknown_game_class" && w.message.contains("game-textarea")),
+            "game-textarea should be known; warnings: {:?}",
+            bundle.warnings
+        );
+    }
+
+    #[test]
     fn validates_additional_mobile_seed_documents() {
         let service = GameUiService::new();
         for mobile in [

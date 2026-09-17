@@ -13,10 +13,15 @@ pub const BUILTIN_RESPONSE_CONTRACT: &str = "【回复格式】你的回复必�
 完整示例(照此格式写,包括引号和逗号):\n\
 {\"speaker\":\"韩立\",\"content\":\"前辈放心,我自有分寸。\",\"narration\":\"韩立拱了拱手,神色不变。\"}\n\
 \n\
+若本回合你没有值得说出口的话、不应抢戏或只需保持沉默,输出可选字段 \"pass\": true,\
+并把 content 与 narration 写成空字符串。示例:\n\
+{\"speaker\":\"韩立\",\"content\":\"\",\"narration\":\"\",\"pass\":true}\n\
+不要为了显得礼貌而硬编一句空话;确实该开口时不要 pass。\n\
+\n\
 写 JSON 的规则:\n\
 - 字符串值里的换行必须写成 \\n 两个字符,值内部的英文双引号必须写成 \\\",不要直接换行或直接写引号\n\
 - 不要在 JSON 之外写任何解释或开场白,不要用 Markdown 代码围栏(```)包裹 JSON\n\
-- 除了这三个字段和下方说明的可选字段外,不要输出任何其它内容。";
+- 除了必填字段和下方说明的可选字段外,不要输出任何其它内容。";
 
 pub const BUILTIN_MEMORY_CONTRACT: &str = "【记忆提取】如果你的回复中出现对剧情有长期价值的事实(物品位置、人物关系、秘密、约定、状态变化等),在 JSON 里额外输出两个可选字段:\n\
 \"memory_entries\": [{\"content\": \"值得记住的事\", \"character_names\": [\"知道这件事的角色名\"]}],\n\
@@ -31,7 +36,24 @@ pub struct ParsedCharacterResponse {
     pub speaker: String,
     pub content: String,
     pub narration: String,
+    /// 角色自主跳过本回合发言（Hermes 式 pass）；为 true 时不写入可见台词。
+    pub pass: bool,
     pub raw_payload: Option<serde_json::Value>,
+}
+
+/// 解析角色 JSON 里的自主跳过标记：`"pass": true`，或字符串 "pass"/"skip"。
+pub fn payload_requests_pass(payload: &serde_json::Value) -> bool {
+    match payload.get("pass") {
+        Some(serde_json::Value::Bool(true)) => true,
+        Some(serde_json::Value::String(value)) => {
+            let trimmed = value
+                .trim()
+                .trim_matches(|c| matches!(c, '(' | ')' | '（' | '）' | '.' | '。'))
+                .trim();
+            trimmed.eq_ignore_ascii_case("pass") || trimmed.eq_ignore_ascii_case("skip")
+        }
+        _ => false,
+    }
 }
 
 impl DialoguePipeline {
@@ -92,18 +114,24 @@ impl DialoguePipeline {
                 .map(clean_dialogue_text_value)
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or_else(|| default_speaker.to_string());
-            let content = payload
-                .get("content")
-                .or_else(|| payload.get("response"))
-                .or_else(|| payload.get("message"))
-                .or_else(|| payload.get("text"))
-                .map(clean_dialogue_text_value)
-                .filter(|value| !value.trim().is_empty())
-                .or_else(|| structured_payload_content_fallback(&payload))
-                // 标准字段都取不到时，先尽力从原始文本里按字段名打捞，
-                // 实在打捞不到才用安全兜底文案，避免结构外泄。
-                .or_else(|| salvage_dialogue_content(raw_response_content))
-                .unwrap_or_else(|| SAFE_EMPTY_DIALOGUE.to_string());
+            let pass = payload_requests_pass(&payload);
+            // pass 时正文必须为空：不要落到「没有可显示的台词」占位，否则会伪装成台词。
+            let content = if pass {
+                String::new()
+            } else {
+                payload
+                    .get("content")
+                    .or_else(|| payload.get("response"))
+                    .or_else(|| payload.get("message"))
+                    .or_else(|| payload.get("text"))
+                    .map(clean_dialogue_text_value)
+                    .filter(|value| !value.trim().is_empty())
+                    .or_else(|| structured_payload_content_fallback(&payload))
+                    // 标准字段都取不到时，先尽力从原始文本里按字段名打捞，
+                    // 实在打捞不到才用安全兜底文案，避免结构外泄。
+                    .or_else(|| salvage_dialogue_content(raw_response_content))
+                    .unwrap_or_else(|| SAFE_EMPTY_DIALOGUE.to_string())
+            };
             let narration = payload
                 .get("narration")
                 .or_else(|| payload.get("scene_narration"))
@@ -111,8 +139,9 @@ impl DialoguePipeline {
                 .unwrap_or_default();
             return ParsedCharacterResponse {
                 speaker,
-                content,
-                narration,
+                content: if pass { String::new() } else { content },
+                narration: if pass { String::new() } else { narration },
+                pass,
                 raw_payload: Some(payload),
             };
         }
@@ -129,6 +158,7 @@ impl DialoguePipeline {
             speaker: default_speaker.to_string(),
             content,
             narration: String::new(),
+            pass: false,
             raw_payload: None,
         }
     }
@@ -154,6 +184,7 @@ impl DialoguePipeline {
             speaker,
             content,
             narration,
+            pass: false,
             raw_payload: None,
         })
     }
@@ -497,6 +528,7 @@ fn extract_recoverable_character_response(
         speaker,
         content,
         narration,
+        pass: false,
         raw_payload: None,
     })
 }
@@ -647,6 +679,37 @@ mod tests {
     }
 
     #[test]
+    fn pass_true_skips_visible_dialogue_and_keeps_payload() {
+        let pipeline = DialoguePipeline::new();
+        let parsed = pipeline.parse_character_response(
+            r#"{"speaker":"韩立","content":"","narration":"","pass":true}"#,
+            "韩立",
+        );
+        assert!(parsed.pass);
+        assert!(parsed.content.is_empty());
+        assert!(parsed.narration.is_empty());
+        assert!(parsed.raw_payload.is_some());
+        assert!(!parsed.content.contains("没有可显示"));
+    }
+
+    #[test]
+    fn pass_string_tokens_are_recognized() {
+        let pipeline = DialoguePipeline::new();
+        for token in ["pass", "PASS", "skip", "(pass)", "pass。"] {
+            let raw = format!(r#"{{"speaker":"韩立","content":"","narration":"","pass":"{token}"}}"#);
+            let parsed = pipeline.parse_character_response(&raw, "韩立");
+            assert!(parsed.pass, "token {token} should request pass");
+        }
+    }
+
+    #[test]
+    fn payload_requests_pass_rejects_false_and_unknown() {
+        assert!(!super::payload_requests_pass(&serde_json::json!({ "pass": false })));
+        assert!(!super::payload_requests_pass(&serde_json::json!({ "pass": "speak" })));
+        assert!(!super::payload_requests_pass(&serde_json::json!({})));
+    }
+
+    #[test]
     fn builtin_response_contract_embeds_parseable_example() {
         // 契约里的完整示例必须永远是合法 JSON 且含三个必填字段,
         // 否则模型会学到一个坏样子。
@@ -682,6 +745,8 @@ mod tests {
         assert!(prompt.contains("fact_extractions"));
         assert!(prompt.contains("memory_entries"));
         assert!(prompt.contains("invalidate"));
+        // 自主 pass 契约也必须送达，否则角色不知道可以沉默。
+        assert!(prompt.contains("\"pass\""));
     }
 
     #[test]

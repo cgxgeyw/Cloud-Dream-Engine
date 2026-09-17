@@ -314,6 +314,41 @@ pub fn validate_character_payload(
     let mut schema_errors = Vec::new();
     let mut domain_errors = Vec::new();
 
+    // 角色自主 pass：允许 content/narration 为空，只要求 speaker。
+    if parsed.pass {
+        if parsed.speaker.trim().is_empty() {
+            schema_errors.push("speaker is required".to_string());
+        } else if parsed.speaker.trim() != expected_speaker.trim() {
+            domain_errors.push(format!(
+                "speaker must match the requested character: expected {}, got {}",
+                expected_speaker.trim(),
+                parsed.speaker.trim()
+            ));
+        }
+
+        if !schema_errors.is_empty() || !domain_errors.is_empty() {
+            return Err(build_failure(
+                StructuredFailureStage::SpeakerResponse,
+                if !schema_errors.is_empty() {
+                    "schema_validation_failed"
+                } else {
+                    "domain_validation_failed"
+                },
+                "角色结构化输出校验失败",
+                provider,
+                model_id,
+                turn_index,
+                Some(expected_speaker.to_string()),
+                raw_text,
+                None,
+                schema_errors,
+                domain_errors,
+            ));
+        }
+
+        return Ok(());
+    }
+
     if parsed.content.trim().is_empty() {
         schema_errors.push("content is required".to_string());
     }
@@ -477,6 +512,52 @@ mod tests {
             "文案要指明该调哪个设置: {}",
             failure.display_content()
         );
+    }
+
+    #[test]
+    fn character_pass_allows_empty_content() {
+        let parsed = ParsedCharacterResponse {
+            speaker: "韩立".to_string(),
+            content: String::new(),
+            narration: String::new(),
+            pass: true,
+            raw_payload: Some(serde_json::json!({ "pass": true })),
+        };
+
+        let result = validate_character_payload(
+            &parsed,
+            "韩立",
+            "openai",
+            "test-model",
+            1,
+            r#"{"speaker":"韩立","content":"","narration":"","pass":true}"#,
+        );
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn character_non_pass_still_requires_content() {
+        let parsed = ParsedCharacterResponse {
+            speaker: "韩立".to_string(),
+            content: String::new(),
+            narration: String::new(),
+            pass: false,
+            raw_payload: None,
+        };
+
+        let failure = validate_character_payload(
+            &parsed,
+            "韩立",
+            "openai",
+            "test-model",
+            1,
+            r#"{"speaker":"韩立","content":"","narration":""}"#,
+        )
+        .expect_err("empty content without pass must fail");
+
+        assert_eq!(failure.failure_code, "schema_validation_failed");
+        assert!(failure.schema_errors.iter().any(|value| value == "content is required"));
     }
 
     /// 截断但已解析出可用对象时不作废整轮：宽松解析常能补全尾部被截的 JSON。

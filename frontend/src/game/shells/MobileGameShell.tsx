@@ -18,6 +18,7 @@ import { createGameUiRuntimeContext } from "../../gameUiRuntime/runtimeContext";
 import { getDocumentCspNonce } from "../cspNonce";
 import type { GameSessionStateBag } from "../useGameSession";
 import { resolvePlayerActionMode } from "../utils";
+import { runShellLogicAction } from "./shellLogicAction";
 
 type MobileViewportState = {
   height: number;
@@ -97,16 +98,21 @@ export const MobileGameShell: React.FC<{
   );
   const handleDslAction = React.useCallback(
     async (action: GameUiActionReference, context: GameUiRenderContext) => {
-      if (action.id !== "@submit_message" && action.id !== "submit_message") {
-        return;
+      const actionId = action.id.replace(/^@/, "");
+      if (actionId === "submit_message") {
+        const content = renderActionText(action.content_template ?? action.content ?? "", context).trim();
+        if (!content) {
+          return undefined;
+        }
+        await actions.submitMessage({ mode: resolvePlayerActionMode(action.mode), content });
+        return undefined;
       }
-      const content = renderActionText(action.content_template ?? action.content ?? "", context).trim();
-      if (!content) {
-        return;
+      if (actionId === "logic.run") {
+        return runShellLogicAction(action, bag.worldUiEnvelope.logic);
       }
-      await actions.submitMessage({ mode: resolvePlayerActionMode(action.mode), content });
+      return undefined;
     },
-    [actions],
+    [actions, bag.worldUiEnvelope],
   );
   const viewportHeight = mobileViewport.height > 0 ? `${mobileViewport.height}px` : "100dvh";
   const mobileViewportStyle = React.useMemo(

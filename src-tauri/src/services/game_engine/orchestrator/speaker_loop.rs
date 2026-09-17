@@ -69,6 +69,11 @@ impl SessionOrchestrator {
                     recovery_journal,
                     &format!("speaker_{}_completed", journal_step_index),
                 ) {
+                    let recovered_pass = payload
+                        .get("llm_output")
+                        .and_then(|value| value.get("pass"))
+                        .and_then(|value| value.as_bool())
+                        .unwrap_or(false);
                     let recovered_content = payload
                         .get("llm_output")
                         .and_then(|value| value.get("content"))
@@ -82,19 +87,22 @@ impl SessionOrchestrator {
                         .map(|value| value.trim().to_string())
                         .filter(|value| !value.is_empty())
                         .unwrap_or_else(|| speaker_name.clone());
-                    messages.push(ChatMessage {
-                        message_id: ChatMessage::generate_id(),
-                        created_at: chrono::Utc::now().to_rfc3339(),
-                        parent_message_id: None,
-                        role: "agent".to_string(),
-                        content: MessageContent::Text(recovered_content),
-                        speaker: Some(recovered_speaker),
-                        metadata: Some(serde_json::json!({
-                            "turn_index": turn_index,
-                            "recovered": true,
-                            "message_kind": "agent_response"
-                        })),
-                    });
+                    // 自主 pass 的发言在恢复路径上同样不写入可见台词。
+                    if !recovered_pass {
+                        messages.push(ChatMessage {
+                            message_id: ChatMessage::generate_id(),
+                            created_at: chrono::Utc::now().to_rfc3339(),
+                            parent_message_id: None,
+                            role: "agent".to_string(),
+                            content: MessageContent::Text(recovered_content),
+                            speaker: Some(recovered_speaker),
+                            metadata: Some(serde_json::json!({
+                                "turn_index": turn_index,
+                                "recovered": true,
+                                "message_kind": "agent_response"
+                            })),
+                        });
+                    }
                     pending_notifications.extend(parse_recovered_pending_notifications(&payload));
                     continue;
                 }
@@ -618,41 +626,54 @@ impl SessionOrchestrator {
                     if let Some(raw_payload) = parsed_response.raw_payload.clone() {
                         runtime_payloads.push(raw_payload);
                     }
-                    let mut message_metadata = serde_json::json!({
-                        "turn_index": turn_index,
-                        "narration": parsed_response.narration.clone(),
-                        "message_kind": "agent_response",
-                        "reasoning": reasoning_text,
-                        "reasoning_expanded": false,
-                        "raw_response": raw_response.clone()
-                    });
-                    // 本回合实际执行过的工具记入最终消息 metadata，
-                    // 前端在回复下方显示「已调用：…」。
-                    if !notification_tool_results.is_empty() {
-                        let done_calls = notification_tool_results
-                            .iter()
-                            .map(|item| item.call.clone())
-                            .collect::<Vec<_>>();
-                        message_metadata.as_object_mut().unwrap().insert(
-                            "tool_activity".to_string(),
-                            build_tool_activity_value(&done_calls, mcp_tools, "done"),
-                        );
-                    }
-                    messages.push(ChatMessage {
-                        message_id: ChatMessage::generate_id(),
-                        created_at: chrono::Utc::now().to_rfc3339(),
-                        parent_message_id: None,
-                        role: "agent".to_string(),
-                        content: MessageContent::Text(parsed_response.content.clone()),
-                        speaker: Some(parsed_response.speaker.clone()),
-                        metadata: Some(message_metadata),
-                    });
-                    if let Some(callback) = progress_callback.as_deref_mut() {
+                    // 自主 pass：本回合不写入可见台词，但仍保留 journal / prompt trace / llm call，
+                    // 便于调试与恢复；runtime_payload（属性/记忆等）照常进入后续写回。
+                    if !parsed_response.pass {
+                        let mut message_metadata = serde_json::json!({
+                            "turn_index": turn_index,
+                            "narration": parsed_response.narration.clone(),
+                            "message_kind": "agent_response",
+                            "reasoning": reasoning_text,
+                            "reasoning_expanded": false,
+                            "raw_response": raw_response.clone()
+                        });
+                        // 本回合实际执行过的工具记入最终消息 metadata，
+                        // 前端在回复下方显示「已调用：…」。
+                        if !notification_tool_results.is_empty() {
+                            let done_calls = notification_tool_results
+                                .iter()
+                                .map(|item| item.call.clone())
+                                .collect::<Vec<_>>();
+                            message_metadata.as_object_mut().unwrap().insert(
+                                "tool_activity".to_string(),
+                                build_tool_activity_value(&done_calls, mcp_tools, "done"),
+                            );
+                        }
+                        messages.push(ChatMessage {
+                            message_id: ChatMessage::generate_id(),
+                            created_at: chrono::Utc::now().to_rfc3339(),
+                            parent_message_id: None,
+                            role: "agent".to_string(),
+                            content: MessageContent::Text(parsed_response.content.clone()),
+                            speaker: Some(parsed_response.speaker.clone()),
+                            metadata: Some(message_metadata),
+                        });
+                        if let Some(callback) = progress_callback.as_deref_mut() {
+                            callback(SpeakerTurnProgress {
+                                messages: messages.clone(),
+                                speaker_name: parsed_response.speaker.clone(),
+                                narration: Some(parsed_response.narration.clone())
+                                    .filter(|value| !value.trim().is_empty()),
+                                is_placeholder: false,
+                                is_error: false,
+                            });
+                        }
+                    } else if let Some(callback) = progress_callback.as_deref_mut() {
+                        // pass 也要刷新一次，清掉该角色的「正在说话」占位。
                         callback(SpeakerTurnProgress {
                             messages: messages.clone(),
                             speaker_name: parsed_response.speaker.clone(),
-                            narration: Some(parsed_response.narration.clone())
-                                .filter(|value| !value.trim().is_empty()),
+                            narration: None,
                             is_placeholder: false,
                             is_error: false,
                         });
@@ -686,6 +707,8 @@ impl SessionOrchestrator {
                                 "speaker": parsed_response.speaker.clone(),
                                 "content": parsed_response.content.clone(),
                                 "narration": parsed_response.narration.clone(),
+                                "pass": parsed_response.pass,
+                                "reasoning": reasoning_text,
                                 "raw_content": response.content.clone(),
                                 "pending_notifications": speaker_pending_notifications,
                                 "notification_tool_results": notification_tool_results.iter().map(|item| item.result.clone()).collect::<Vec<_>>(),

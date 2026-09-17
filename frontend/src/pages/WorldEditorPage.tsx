@@ -729,6 +729,7 @@ export function WorldEditorPage() {
               statusTabs={previewStatusTabs}
               parseError={parsedPreview.error}
               usedFallback={parsedPreview.usedFallback}
+              showStyleDebug
             />
           </div>
         </div>

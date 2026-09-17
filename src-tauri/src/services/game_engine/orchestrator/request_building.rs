@@ -170,7 +170,11 @@ pub(crate) fn build_character_response_schema() -> serde_json::Value {
         "properties": {
             "speaker": { "type": "string" },
             "content": { "type": "string" },
-            "narration": { "type": "string" }
+            "narration": { "type": "string" },
+            "pass": {
+                "type": "boolean",
+                "description": "Set true when this character intentionally stays silent this turn. content and narration must then be empty strings."
+            }
         }
     })
 }

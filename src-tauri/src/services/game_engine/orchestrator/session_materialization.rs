@@ -158,6 +158,14 @@ pub(crate) fn materialize_completed_speaker_messages(
             }
             let payload = entry.get("payload")?;
             let llm_output = payload.get("llm_output")?;
+            // 角色自主 pass：恢复时同样不物化为可见台词。
+            let passed = llm_output
+                .get("pass")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            if passed {
+                return None;
+            }
             let speaker = llm_output
                 .get("speaker")
                 .and_then(|value| value.as_str())

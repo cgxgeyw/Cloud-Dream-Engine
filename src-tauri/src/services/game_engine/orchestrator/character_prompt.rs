@@ -117,6 +117,7 @@ pub(crate) fn build_character_prompt_artifacts(
         "speaker",
         "content",
         "narration",
+        "pass",
         "session_attribute_updates",
         "character_attribute_updates",
         "memory_entries",

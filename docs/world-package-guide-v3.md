@@ -4,7 +4,9 @@
 
 如果目标是模型驱动的剧情、冒险或角色扮演世界，请先按[叙事 RPG 世界包制作手册](world-package-rpg-cookbook.md)完成玩法闭环，再回到本文查字段。可复制的工程模板位于 [`examples/world-packages/narrative-rpg-starter`](../examples/world-packages/narrative-rpg-starter/)。
 
-v3 的核心原则是：世界包拥有游戏页面的结构和视觉设计，应用拥有可信能力与数据写入。世界包可以提供 JSONC、CSS、资源和可选的受限 Worker 逻辑，但不能在宿主页面执行 JavaScript。
+v3 的核心原则是：**世界包拥有游戏页面的结构和视觉设计**，应用拥有可信能力与数据写入。世界包可以提供 JSONC、CSS、资源和可选的受限 Worker 逻辑，但不能在宿主页面执行 JavaScript。
+
+**可样式化（Stylability）是核心思想之一，必须可执行：** 游戏页内颜色、尺寸、间距、圆角、阴影、字体、动效等视觉表现，世界包作者应能通过 stylesheet / `custom_css` / tokens 修改；宿主基线与 `theme.css` 只提供默认值与无障碍最小尺寸，不得锁死主题视觉。完整契约、组件等级与整改清单见 [game-ui-input-alignment-rfc.md](./game-ui-input-alignment-rfc.md)。
 
 ## 1. 先理解两个版本号
 
@@ -1094,6 +1096,135 @@ v3 stylesheet 在世界 iframe 内原样注入，不做 selector 前缀改写。
 
 世界文档中的 `class_name` 是最稳定的作者自定义 CSS 锚点。复杂主题应优先给关键节点添加自己的 class，而不是依赖很深的内部 DOM 层级。
 
+### 宿主组件 DOM 契约（输入区 / 消息操作）
+
+`class_name` 只加在**组件外层 wrapper** 上，内部结构由宿主渲染。若只改 wrapper 的 `width`/`padding`，常**改不到真正决定宽度的节点**（例如 `.game-textarea`），会表现为「CSS 写了却不生效」。
+
+> **契约：** 世界包作者应能修改游戏页内一切视觉表现；改不了按框架问题处理，整改方案见 [game-ui-input-alignment-rfc.md](./game-ui-input-alignment-rfc.md)。
+
+聊天链路可用的 `--game-ui-*` 变量（Phase A 已落地，写在 `.game-root` 上）：
+
+| 变量 | 作用 |
+|---|---|
+| `--game-ui-input-max-width` | 输入框最大宽（`none` 为不限制） |
+| `--game-ui-composer-max-width` / `--game-ui-composer-margin-inline` | 整条输入区宽与水平外边距 |
+| `--game-ui-message-max-width` | 消息气泡最大宽 |
+| `--game-ui-action-btn-bg` / `-fg` / `-min-h` | 消息下复制/分支/重发等按钮 |
+| `--game-ui-scroll-btn-size` | 聊天滚动钮尺寸 |
+| `--game-ui-typing-max-width` | typing 气泡宽 |
+| `--game-ui-avatar-w` / `-h` | 场景立绘默认尺寸 |
+| `--game-ui-map-min-height` / `--game-ui-map-node-w` | 地图画布高 / 节点宽 |
+| `--game-ui-error-accent` / `-bg` / `-fg` / `-btn-*` | 错误条与重试按钮 |
+| `--game-ui-diagnostic-width` / `-min-h` | 会话诊断条 |
+| `--game-ui-fab-size` | 悬浮操作按钮 |
+| `--game-ui-status-handle-w` / `-h` | 移动状态抽屉把手 |
+
+stylesheet 引用未知 `game-*` 类时，界面治理会给出 `unknown_game_class` warning。
+
+示例：
+
+```css
+.game-root {
+  --game-ui-input-max-width: 480px;
+  --game-ui-message-max-width: 520px;
+  --game-ui-action-btn-bg: #b436f2;
+  --game-ui-action-btn-fg: #fff;
+}
+[data-component="input_composer"] { max-width: 720px; margin-inline: auto; }
+```
+
+**`input_composer` 实际 DOM（桌面与移动相同骨架）：**
+
+```text
+div.game-ui-component[data-component="input_composer"]  ← 你的 class_name 在这里
+  div.game-input-area.game-ui-panel
+    div.game-input-compose
+      textarea.game-textarea.game-ui-textarea
+      div.game-input-toolbar | div.game-input-actions
+        button.game-input-attach-btn | .game-input-icon-btn   // 图片 / 语音
+        button.game-submit-btn                                 // 发送
+```
+
+**`message_list` 消息下操作按钮：**
+
+```text
+div.game-ui-component[data-component="message_list"]  ← class_name
+  div.game-chat-messages-shell > div.game-chat-messages
+    div.game-message-row
+      div.game-message
+      div.game-message-actions | .game-message-inline-actions
+        button.game-message-action-btn.game-message-action-btn--copy
+        button.game-message-action-btn--branch
+        button.game-message-action-btn--resend
+```
+
+#### 改输入区宽度（推荐）
+
+优先打在组件锚点或真实输入节点上：
+
+```css
+/* 整条输入区限制宽度并居中 */
+[data-component="input_composer"] {
+  width: min(720px, 100%);
+  margin-inline: auto;
+}
+
+/* 或只限制文本框最大宽 */
+[data-component="input_composer"] .game-textarea {
+  max-width: 520px;
+  width: 100%;
+}
+```
+
+当前版本内层可能仍有默认 padding / 非 100% 宽度，若上述不生效，需同时清内层（过渡期写法）：
+
+```css
+.my-composer .game-input-area,
+.my-composer .game-input-compose {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0; /* 水平 padding 放到 wrapper 或与消息区统一的变量上 */
+}
+.my-composer .game-textarea,
+.my-composer .game-ui-textarea {
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+}
+```
+
+反例：只给 wrapper 设 `width: 400px`，内层 `game-textarea` 仍按旧盒模型撑满或被默认 `max-width` 卡住，看起来「改了没用」。
+
+#### 与 theme.css 抢优先级
+
+应用全局 `theme.css`（及 `@media (hover:none)` 触控规则）会写死部分按钮样式，例如：
+
+```css
+.game-root--mobile-session .game-message-actions .game-message-action-btn { ... }
+.game-root--mobile-session .game-message-action-btn--branch { background: transparent; }
+```
+
+世界包要盖住时，提高特异性或加 `!important`，并用 `data-component` 锚定：
+
+```css
+[data-component="message_list"].my-messages .game-message-action-btn--branch {
+  background: #b436f2 !important;
+  color: #fff !important;
+}
+[data-component="input_composer"].my-composer .game-submit-btn {
+  background: #2563eb !important;
+}
+```
+
+#### 注入顺序
+
+`themeCustomCss` 顺序为：**生成的 scoped 基线 → 文档 `custom_css`（经 scope）→ v3 stylesheet 原文**。同等特异性下后写的赢；`custom_css` 的 `&` 会变成 `[data-game-ui-scope="…"]` 前缀，利于压过全局 theme，但仍可能压不过带 `!important` 或更高特异性的宿主规则。
+
+改完世界包样式后必须**退出对局并重新进入**（或重启会话）才会重新拉取 `ui_theme_config` 里的 stylesheet。
+
+> 框架层「可轻易改宽」方案与组件可样式化审计见 [game-ui-input-alignment-rfc.md](./game-ui-input-alignment-rfc.md)。
+
 ### Token
 
 文档 `tokens` 会转换为 CSS 变量：
@@ -1341,6 +1472,9 @@ v3 stylesheet 在世界 iframe 内原样注入，不做 selector 前缀改写。
 | `Invalid prompt scope` | 使用了 `always`、`keyword` 等不存在的 scope | scope 只填 `director`、`character`、`both`；常驻模块不填 keywords |
 | `references assets that are not declared` | world/character 引用了 ZIP 中未声明的资源 | 把真实文件加入 ZIP，并在 `manifest.assets` 中逐项声明 |
 | 导入报 `Unknown platform feature` | `platform_features` 含目录外的 action | 只用 `file.pick` / `file.read` / `file.write` / `file.share` |
+| 输入框比聊天区窄/宽 | 只改了 wrapper 的 `class_name` padding，未清 `game-input-area` / `game-textarea` 默认盒模型 | 见第 11 节「宿主组件 DOM 契约」：内层 `width:100%` + 与消息区同一水平 padding |
+| 分支/复制/重发按钮样式不生效 | `theme.css`（含触控 media）特异性更高 | 用 `[data-component="message_list"]` 锚定并 `!important` |
+| 改了 stylesheet 但界面没变 | 会话未重新加载 `ui_theme_config` | 退出对局再进，或重新导入世界包 |
 | 运行时 `not_declared:` / `not_granted:` / `unsupported:` 前缀错误 | 平台能力未声明 / 玩家未允许 / 当前平台不支持 | 见第 10 节「平台能力」的可用性表 |
 | `missing_world_storage_capability` | 使用通用存储或沙箱逻辑但未声明能力 | 在 `ui_capabilities` 中加入 `supports_world_storage` |
 | `world_records_require_runtime_v3` | 记录组件运行在 v2 | 将 `runtime_version` 改为 `3` |

@@ -147,6 +147,16 @@ impl GameUiService {
                     path: Some(format!("bundle.{platform}_stylesheet")),
                 });
             }
+            for unknown in find_unknown_game_classes(stylesheet) {
+                diagnostics.push(WorldUiDiagnostic {
+                    severity: "warning".to_string(),
+                    code: "unknown_game_class".to_string(),
+                    message: format!(
+                        "{platform} stylesheet references `.{unknown}`, which is not a known game-ui class. Check docs/game-ui-input-alignment-rfc.md anchors."
+                    ),
+                    path: Some(format!("bundle.{platform}_stylesheet")),
+                });
+            }
         }
         for capability in &request.capabilities {
             if !is_supported_capability(capability.as_str()) {
@@ -1469,6 +1479,165 @@ fn dedupe_u32_list(values: Vec<u32>) -> Vec<u32> {
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
+}
+
+/// 世界包 stylesheet 里引用的、看起来像宿主游戏 UI 的 class。
+/// 已知集合来自 theme.css / 生成基线 / 注册组件内部 DOM；未知仅 warning，
+/// 避免误伤作者自定义 class（作者 class 不会以 game- 开头时不会命中）。
+fn find_unknown_game_classes(stylesheet: &str) -> Vec<String> {
+    // 粗提 `.game-foo` / `.game-foo-bar`（含 BEM `--`）
+    let class_re = match Regex::new(r"\.((?:game-)[a-zA-Z0-9_-]+)") {
+        Ok(re) => re,
+        Err(_) => return Vec::new(),
+    };
+    let mut unknown = BTreeSet::new();
+    for cap in class_re.captures_iter(stylesheet) {
+        let Some(name) = cap.get(1) else {
+            continue;
+        };
+        let name = name.as_str();
+        if !is_known_game_class(name) {
+            unknown.insert(name.to_string());
+        }
+    }
+    unknown.into_iter().collect()
+}
+
+fn is_known_game_class(name: &str) -> bool {
+    // 稳定族前缀：theme.css / 生成基线 / 注册组件内部 DOM。
+    // 未知 game-* 仅 warning，不阻断导入。
+    const FAMILIES: &[&str] = &[
+        "game-root",
+        "game-ui-",
+        "game-message",
+        "game-chat",
+        "game-input-",
+        "game-submit",
+        "game-send",
+        "game-textarea",
+        "game-status",
+        "game-side-",
+        "game-tab",
+        "game-attribute",
+        "game-map",
+        "game-avatar",
+        "game-typing",
+        "game-cot",
+        "game-agent",
+        "game-director",
+        "game-tool-",
+        "game-narration",
+        "game-markdown",
+        "game-md-",
+        "game-simple-",
+        "game-scene",
+        "game-header",
+        "game-back",
+        "game-quick-",
+        "game-mobile-",
+        "game-loading",
+        "game-error",
+        "game-panel",
+        "game-card",
+        "game-badge",
+        "game-session-diagnostic",
+        "game-voice",
+        "game-composer",
+        "game-speaker",
+        "game-content",
+        "game-time",
+        "game-place",
+        "game-world",
+        "game-meta",
+        "game-title",
+        "game-location",
+        "game-player",
+        "game-empty",
+        "game-item",
+        "game-list",
+        "game-grid",
+        "game-row",
+        "game-stack",
+        "game-shell",
+        "game-main",
+        "game-dock",
+        "game-drawer",
+        "game-handle",
+        "game-close",
+        "game-edit",
+        "game-resend",
+        "game-branch",
+        "game-copy",
+        "game-retry",
+        "game-confirm",
+        "game-ghost",
+        "game-primary",
+        "game-danger",
+        "game-success",
+        "game-warning",
+        "game-info",
+        "game-muted",
+        "game-dim",
+        "game-center",
+        "game-left",
+        "game-right",
+        "game-top",
+        "game-bottom",
+        "game-full",
+        "game-auto",
+        "game-none",
+        "game-hidden",
+        "game-visible",
+        "game-flex",
+        "game-block",
+        "game-inline",
+        "game-absolute",
+        "game-relative",
+        "game-fixed",
+        "game-sticky",
+        "game-z-",
+        "game-p-",
+        "game-m-",
+        "game-w-",
+        "game-h-",
+        "game-min-",
+        "game-max-",
+        "game-gap-",
+        "game-rounded",
+        "game-border",
+        "game-bg-",
+        "game-text-",
+        "game-font-",
+        "game-shadow",
+        "game-opacity",
+        "game-transition",
+        "game-cursor",
+        "game-select",
+        "game-pointer",
+        "game-events",
+        "game-overflow",
+        "game-truncate",
+        "game-whitespace",
+        "game-break",
+        "game-underline",
+        "game-uppercase",
+        "game-lowercase",
+        "game-capitalize",
+        "game-italic",
+        "game-antialiased",
+        "game-sr-only",
+        "game-focus",
+        "game-hover",
+        "game-active",
+        "game-disabled",
+        "game-checked",
+        "game-selected",
+        "game-expanded",
+        "game-collapsed",
+        "game-open",
+        "game-closed",
+    ];
+    FAMILIES.iter().any(|prefix| name.starts_with(prefix))
 }
 
 
