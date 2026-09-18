@@ -179,7 +179,7 @@ impl<'a> McpToolRepository<'a> {
 
         match rows.next() {
             Some(row) => Ok(row.map_err(|e| e.to_string())?),
-            None => Err("MCP tool not found".to_string()),
+            None => Err("MCP 工具不存在".to_string()),
         }
     }
 

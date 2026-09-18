@@ -1,6 +1,6 @@
 # 世界包开发指南
 
-当前 UI runtime 规范已经升级到 v3，世界包格式为 version 7。请阅读：[Cloud Dream Engine 世界包开发指南 v3](world-package-guide-v3.md)。
+当前 UI runtime 规范已经升级到 v3，世界包格式为 version 8。请阅读：[Cloud Dream Engine 世界包开发指南 v3](world-package-guide-v3.md)。
 
 制作模型驱动的剧情、冒险或角色扮演世界时，先阅读：[叙事 RPG 世界包制作手册](world-package-rpg-cookbook.md)。
 

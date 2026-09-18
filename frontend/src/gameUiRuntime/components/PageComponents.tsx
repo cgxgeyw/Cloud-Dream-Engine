@@ -217,13 +217,57 @@ export function NarrationCardComponent({ runtime, actions, node }: RuntimeCompon
   );
 }
 
+// 把手位置（边缘 + 纵向偏移）跨会话记忆；side 为 null 时交回世界包 CSS 决定停靠边。
+type GameStatusHandlePos = { side: "left" | "right"; top: number };
+const GAME_STATUS_HANDLE_POS_KEY = "game-ui-status-handle-pos";
+
+function readStoredHandlePos(): { side: "left" | "right" | null; top: number | null } {
+  if (typeof window === "undefined") {
+    return { side: null, top: null };
+  }
+  try {
+    const raw = window.localStorage.getItem(GAME_STATUS_HANDLE_POS_KEY);
+    if (!raw) {
+      return { side: null, top: null };
+    }
+    const parsed = JSON.parse(raw) as Partial<GameStatusHandlePos>;
+    const side = parsed.side === "left" || parsed.side === "right" ? parsed.side : null;
+    const top = typeof parsed.top === "number" && Number.isFinite(parsed.top) ? parsed.top : null;
+    return { side, top };
+  } catch {
+    return { side: null, top: null };
+  }
+}
+
+function writeStoredHandlePos(pos: GameStatusHandlePos) {
+  try {
+    window.localStorage.setItem(GAME_STATUS_HANDLE_POS_KEY, JSON.stringify(pos));
+  } catch {
+    // 隐私模式等场景下 localStorage 不可用，位置只在当前会话生效。
+  }
+}
+
 function SidePanelTabs({ runtime, actions, node, renderSlot }: RuntimeComponentProps) {
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
-  const [handleTop, setHandleTop] = useState<number | null>(null);
+  const storedHandlePos = useRef(readStoredHandlePos());
+  const [handleSide, setHandleSide] = useState<"left" | "right" | null>(storedHandlePos.current.side);
+  const [handleTop, setHandleTop] = useState<number | null>(storedHandlePos.current.top);
+  // 拖动过程中的自由横向位置；非拖动时横向停靠交回 CSS/内联 side 规则。
+  const [handleFreeLeft, setHandleFreeLeft] = useState<number | null>(null);
   const [handleDragging, setHandleDragging] = useState(false);
   const drawerSurfaceRef = useRef<HTMLElement | null>(null);
   const handleRef = useRef<HTMLButtonElement | null>(null);
-  const handleDragRef = useRef<{ pointerId: number; startY: number; startTop: number; moved: boolean } | null>(null);
+  const handleDragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startTop: number;
+    startLeft: number;
+    lastTop: number;
+    lastLeft: number;
+    moved: boolean;
+  } | null>(null);
+  const removeWindowDragListenersRef = useRef<(() => void) | null>(null);
   const suppressHandleClickRef = useRef(false);
   const showMapTab = readBooleanProp(node, "show_map_tab", true);
   const showAttributeTabs = readBooleanProp(node, "show_attribute_tabs", true);
@@ -246,6 +290,21 @@ function SidePanelTabs({ runtime, actions, node, renderSlot }: RuntimeComponentP
     return Math.min(Math.max(nextTop, 8), maxTop);
   };
 
+  const clampHandleLeft = (nextLeft: number): number => {
+    const surface = drawerSurfaceRef.current;
+    const handle = handleRef.current;
+    if (!surface || !handle) {
+      return nextLeft;
+    }
+    const surfaceWidth = surface.getBoundingClientRect().width;
+    const handleWidth = handle.getBoundingClientRect().width;
+    if (surfaceWidth <= 0 || handleWidth <= 0) {
+      return nextLeft;
+    }
+    const maxLeft = Math.max(8, surfaceWidth - handleWidth - 8);
+    return Math.min(Math.max(nextLeft, 8), maxLeft);
+  };
+
   const beginHandleDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
     if (event.pointerType === "mouse" && event.button !== 0) {
       return;
@@ -256,10 +315,16 @@ function SidePanelTabs({ runtime, actions, node, renderSlot }: RuntimeComponentP
     }
     const surfaceRect = surface.getBoundingClientRect();
     const handleRect = event.currentTarget.getBoundingClientRect();
+    const startTop = handleRect.top - surfaceRect.top;
+    const startLeft = handleRect.left - surfaceRect.left;
     handleDragRef.current = {
       pointerId: event.pointerId,
+      startX: event.clientX,
       startY: event.clientY,
-      startTop: handleRect.top - surfaceRect.top,
+      startTop,
+      startLeft,
+      lastTop: startTop,
+      lastLeft: startLeft,
       moved: false,
     };
     setHandleDragging(true);
@@ -268,34 +333,77 @@ function SidePanelTabs({ runtime, actions, node, renderSlot }: RuntimeComponentP
     } catch {
       // 指针可能已经释放，忽略即可。
     }
+    // 安卓 WebView 的 iframe 里指针捕获偶发失效（手指一拖出按钮就丢 move/up 事件），
+    // 统一再挂一份 window 级监听兜底；pointerId + ref 判重保证与元素 handler 不会串。
+    const onWindowMove = (nativeEvent: PointerEvent) => moveHandleDrag(nativeEvent);
+    const onWindowUp = (nativeEvent: PointerEvent) => endHandleDrag(nativeEvent);
+    const removeWindowDragListeners = () => {
+      window.removeEventListener("pointermove", onWindowMove);
+      window.removeEventListener("pointerup", onWindowUp);
+      window.removeEventListener("pointercancel", onWindowUp);
+    };
+    removeWindowDragListenersRef.current?.();
+    removeWindowDragListenersRef.current = removeWindowDragListeners;
+    window.addEventListener("pointermove", onWindowMove);
+    window.addEventListener("pointerup", onWindowUp);
+    window.addEventListener("pointercancel", onWindowUp);
   };
 
-  const moveHandleDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+  const moveHandleDrag = (event: { pointerId: number; clientX: number; clientY: number }) => {
     const drag = handleDragRef.current;
     if (!drag || event.pointerId !== drag.pointerId) {
       return;
     }
-    if (!drag.moved && Math.abs(event.clientY - drag.startY) < 6) {
+    const dx = event.clientX - drag.startX;
+    const dy = event.clientY - drag.startY;
+    if (!drag.moved && Math.hypot(dx, dy) < 6) {
       return;
     }
     drag.moved = true;
-    setHandleTop(clampHandleTop(drag.startTop + event.clientY - drag.startY));
+    drag.lastTop = clampHandleTop(drag.startTop + dy);
+    drag.lastLeft = clampHandleLeft(drag.startLeft + dx);
+    setHandleTop(drag.lastTop);
+    setHandleFreeLeft(drag.lastLeft);
   };
 
-  const endHandleDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+  const endHandleDrag = (event: { pointerId: number }) => {
     const drag = handleDragRef.current;
     if (!drag || event.pointerId !== drag.pointerId) {
       return;
     }
+    removeWindowDragListenersRef.current?.();
+    removeWindowDragListenersRef.current = null;
     handleDragRef.current = null;
     setHandleDragging(false);
     suppressHandleClickRef.current = drag.moved;
     try {
-      event.currentTarget.releasePointerCapture(drag.pointerId);
+      handleRef.current?.releasePointerCapture(drag.pointerId);
     } catch {
       // capture 可能已经释放，忽略即可。
     }
+    if (!drag.moved) {
+      return;
+    }
+    // 松手后吸附到最近的边缘；抽屉跟随把手从该侧滑出，并记住位置。
+    // 位置从 drag ref 读取而非 state，避免闭包时序问题。
+    const surface = drawerSurfaceRef.current;
+    const handle = handleRef.current;
+    let nextSide: "left" | "right" = handleSide ?? "right";
+    if (surface && handle) {
+      const centerLeft = drag.lastLeft + handle.getBoundingClientRect().width / 2;
+      nextSide = centerLeft < surface.getBoundingClientRect().width / 2 ? "left" : "right";
+    }
+    setHandleFreeLeft(null);
+    setHandleSide(nextSide);
+    setHandleTop(drag.lastTop);
+    writeStoredHandlePos({ side: nextSide, top: drag.lastTop });
   };
+
+  // 卸载时摘掉 window 级拖动监听，避免泄漏。
+  useEffect(() => () => {
+    removeWindowDragListenersRef.current?.();
+    removeWindowDragListenersRef.current = null;
+  }, []);
 
   // 旋转屏幕或调整窗口后，把贴边按钮拉回可视范围。
   useEffect(() => {
@@ -305,6 +413,7 @@ function SidePanelTabs({ runtime, actions, node, renderSlot }: RuntimeComponentP
     const reclamp = () => {
       setHandleTop((current) => (current === null ? current : clampHandleTop(current)));
     };
+    reclamp();
     window.addEventListener("resize", reclamp);
     return () => window.removeEventListener("resize", reclamp);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -404,9 +513,29 @@ function SidePanelTabs({ runtime, actions, node, renderSlot }: RuntimeComponentP
       "game-status",
       "game-status--mobile-drawer",
       mobileDrawerOpen ? "game-status--mobile-drawer-open" : "",
+      handleSide === "left" ? "game-status--mobile-drawer--left" : "",
       runtime.active_side_tab === "map" ? "game-status--map-active" : "",
       runtime.active_side_tab.startsWith("attribute:") ? "game-status--attribute-active" : "",
     ].filter(Boolean).join(" ");
+    // 拖动中自由跟随手指；松手后横向停靠 + 圆角由运行时接管（内联样式，优先于世界包 CSS）。
+    // 未拖过（handleSide 为 null）时横向完全交回世界包 CSS。
+    const handleStyle: React.CSSProperties = { touchAction: "none" };
+    if (handleFreeLeft !== null) {
+      handleStyle.left = `${handleFreeLeft}px`;
+      handleStyle.right = "auto";
+      handleStyle.borderRadius = "8px 0 0 8px";
+    } else if (handleSide === "left") {
+      handleStyle.left = "max(env(safe-area-inset-left, 0px), 0px)";
+      handleStyle.right = "auto";
+      handleStyle.borderRadius = "0 8px 8px 0";
+    } else if (handleSide === "right") {
+      handleStyle.right = "max(env(safe-area-inset-right, 0px), 0px)";
+      handleStyle.left = "auto";
+      handleStyle.borderRadius = "8px 0 0 8px";
+    }
+    if (handleTop !== null) {
+      handleStyle.top = handleTop;
+    }
 
     return (
       <aside className={mobileDrawerClassName} ref={drawerSurfaceRef}>
@@ -417,7 +546,7 @@ function SidePanelTabs({ runtime, actions, node, renderSlot }: RuntimeComponentP
           data-variant="ghost"
           aria-label={mobileDrawerOpen ? "\u5173\u95ed\u72b6\u6001\u62bd\u5c49" : "\u6253\u5f00\u72b6\u6001\u62bd\u5c49"}
           aria-expanded={mobileDrawerOpen}
-          style={{ touchAction: "none", ...(handleTop !== null ? { top: handleTop } : null) }}
+          style={handleStyle}
           onPointerDown={beginHandleDrag}
           onPointerMove={moveHandleDrag}
           onPointerUp={endHandleDrag}

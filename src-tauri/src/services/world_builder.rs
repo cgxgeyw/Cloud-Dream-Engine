@@ -73,7 +73,7 @@ impl AiWorldBuilderService {
     ) -> Result<AiWorldDraft, String> {
         let concept = request.concept.trim();
         if concept.is_empty() {
-            return Err("World concept is required".to_string());
+            return Err("请先填写世界概念".to_string());
         }
         generate_world_draft(
             llm,
@@ -94,7 +94,7 @@ impl AiWorldBuilderService {
     ) -> Result<AiWorldCreateResponse, String> {
         let concept = request.concept.trim();
         if concept.is_empty() {
-            return Err("World concept is required".to_string());
+            return Err("请先填写世界概念".to_string());
         }
         persist_world_draft(conn, model, normalize_mode(&request.mode), concept, draft)
     }
@@ -404,10 +404,10 @@ fn parse_draft_json(raw: &str) -> Result<AiWorldDraft, String> {
     }
     let start = trimmed
         .find('{')
-        .ok_or_else(|| "AI response did not contain JSON".to_string())?;
+        .ok_or_else(|| "AI 响应中没有 JSON".to_string())?;
     let end = trimmed
         .rfind('}')
-        .ok_or_else(|| "AI response did not contain complete JSON".to_string())?;
+        .ok_or_else(|| "AI 响应中的 JSON 不完整".to_string())?;
     serde_json::from_str(&trimmed[start..=end]).map_err(|error| {
         // A missing closing brace / unterminated string almost always means the
         // model hit the output token limit and the JSON was cut off. Multi-agent

@@ -28,7 +28,7 @@ pub async fn list_models(
 pub async fn get_model(state: State<'_, AppState>, id: String) -> Result<ModelConfig, String> {
     let db = state.db.lock().await;
     let repo = crate::db::repositories::model_repo::ModelRepository::new(db.conn());
-    let model = repo.get(&id)?.ok_or_else(|| "Model not found".to_string())?;
+    let model = repo.get(&id)?.ok_or_else(|| "模型不存在".to_string())?;
     Ok(mask_model_for_ipc(model))
 }
 
@@ -66,7 +66,7 @@ pub async fn set_default_model(state: State<'_, AppState>, id: String) -> Result
     let repo = crate::db::repositories::model_repo::ModelRepository::new(db.conn());
     let model = repo
         .get(&id)?
-        .ok_or_else(|| "Model not found".to_string())?;
+        .ok_or_else(|| "模型不存在".to_string())?;
     repo.set_default(&id)?;
     if model.model_type == "text" || model.model_type == "image" {
         let settings = crate::commands::settings::load_app_settings(db.conn())?;
@@ -115,14 +115,14 @@ pub async fn test_model(
         let db = state.db.lock().await;
         let repo = crate::db::repositories::model_repo::ModelRepository::new(db.conn());
         repo.get(&id)?
-            .ok_or_else(|| "Model not found".to_string())?
+            .ok_or_else(|| "模型不存在".to_string())?
     };
 
     let test_request = ChatRequest {
         model: model.model_id.clone(),
         messages: vec![ChatMessage {
             role: "user".to_string(),
-            content: serde_json::Value::String("Say 'hello' in one word.".to_string()),
+            content: serde_json::Value::String("用一句话说「你好」。".to_string()),
             reasoning_content: None,
             speaker: None,
             tool_call_id: None,
@@ -186,13 +186,13 @@ pub async fn test_image_model(
         let db = state.db.lock().await;
         let repo = crate::db::repositories::model_repo::ModelRepository::new(db.conn());
         repo.get(&id)?
-            .ok_or_else(|| "Model not found".to_string())?
+            .ok_or_else(|| "模型不存在".to_string())?
     };
 
     if model.model_type != "image" {
         return Ok(ImageModelTestResponse {
             ok: false,
-            detail: "Only image models support image test generation.".to_string(),
+            detail: "只有图像模型支持图片测试生成。".to_string(),
             debug_lines: vec![format!(
                 "ModelImageTest unsupported_model_type type={}",
                 model.model_type
@@ -207,8 +207,8 @@ pub async fn test_image_model(
     if prompt.is_empty() {
         return Ok(ImageModelTestResponse {
             ok: false,
-            detail: "Prompt is required.".to_string(),
-            debug_lines: vec!["ModelImageTest empty_prompt".to_string()],
+            detail: "请输入提示词。".to_string(),
+            debug_lines: vec!["模型图片测试：提示词为空".to_string()],
             asset_path: None,
             image_url: None,
             seed: None,

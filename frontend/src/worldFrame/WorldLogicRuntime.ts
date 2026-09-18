@@ -27,12 +27,12 @@ export async function invokeWorldLogic(
   sendAction: SendAction,
 ): Promise<unknown> {
   if (config.runtime !== "sandbox-js-v1" || !config.source.trim()) {
-    throw new Error("This world package does not provide sandbox JavaScript logic.");
+    throw new Error("该世界包没有提供沙箱 JavaScript 逻辑。");
   }
   if (!/^[a-zA-Z0-9._-]{1,128}$/.test(handler)) {
-    throw new Error("World logic handler name is invalid.");
+    throw new Error("世界逻辑处理函数名无效。");
   }
-  assertMessageSize(input, "World logic input");
+  assertMessageSize(input, "世界逻辑输入");
 
   const workerSource = createWorkerSource(config.source);
   const objectUrl = URL.createObjectURL(new Blob([workerSource], { type: "text/javascript" }));
@@ -51,11 +51,11 @@ export async function invokeWorldLogic(
       callback();
     };
     const timer = window.setTimeout(() => {
-      finish(() => reject(new Error(`World logic exceeded ${config.timeout_ms} ms and was terminated.`)));
+      finish(() => reject(new Error(`世界逻辑超过 ${config.timeout_ms} 毫秒，已被终止。`)));
     }, config.timeout_ms);
 
     worker.onerror = (event) => {
-      finish(() => reject(new Error(event.message || "World logic worker failed.")));
+      finish(() => reject(new Error(event.message || "世界逻辑 Worker 运行失败。")));
     };
     worker.onmessage = (event: MessageEvent<unknown>) => {
       const message = asRecord(event.data);
@@ -92,7 +92,7 @@ export async function invokeWorldLogic(
       if (result.ok) {
         finish(() => resolve(result.result));
       } else {
-        finish(() => reject(new Error(result.error || "World logic failed.")));
+        finish(() => reject(new Error(result.error || "世界逻辑执行失败。")));
       }
     };
     worker.postMessage({ type: "invoke", handler, input });
@@ -164,7 +164,7 @@ async function handleStorageRequest(
         params: payload.params,
       });
     default:
-      throw new Error(`Unsupported world logic operation: ${request.operation}`);
+      throw new Error(`不支持的世界逻辑操作：${request.operation}`);
   }
 }
 
@@ -270,7 +270,7 @@ const __worldApi = Object.freeze({ records: __worldRecords, kv: __worldKv, platf
 const world = Object.freeze({
   register(name, handler) {
     if (typeof name !== "string" || typeof handler !== "function") {
-      throw new Error("world.register(name, handler) requires a function handler.");
+      throw new Error("world.register(name, handler) 需要传入函数。");
     }
     __worldHandlers.set(name, handler);
   },
@@ -289,7 +289,7 @@ self.onmessage = async (event) => {
     if (!pending) return;
     __worldPending.delete(message.requestId);
     if (message.ok) pending.resolve(message.result);
-    else pending.reject(new Error(message.error || "World storage request failed."));
+    else pending.reject(new Error(message.error || "世界存储请求失败。"));
     return;
   }
   if (message.type !== "invoke") return;
@@ -302,7 +302,7 @@ self.onmessage = async (event) => {
     const result = await handler(message.input, __worldApi);
     const encoded = JSON.stringify(result === undefined ? null : result);
     if (encoded && encoded.length > ${MAX_LOGIC_MESSAGE_BYTES}) {
-      throw new Error("World logic result exceeds the ${MAX_LOGIC_MESSAGE_BYTES} byte limit.");
+      throw new Error("世界逻辑结果超过 ${MAX_LOGIC_MESSAGE_BYTES} 字节上限。");
     }
     self.postMessage({ type: "result", ok: true, result });
   } catch (error) {
@@ -319,7 +319,7 @@ self.onmessage = async (event) => {
 
 function readString(value: unknown, label: string): string {
   if (typeof value !== "string" || !value.trim()) {
-    throw new Error(`World logic ${label} must be a non-empty string.`);
+    throw new Error(`世界逻辑 ${label} 不能为空字符串。`);
   }
   return value.trim();
 }
@@ -327,7 +327,7 @@ function readString(value: unknown, label: string): string {
 function readData(value: unknown): Record<string, unknown> {
   const record = asRecord(value);
   if (!record) {
-    throw new Error("World logic record data must be an object.");
+    throw new Error("世界逻辑记录数据必须是对象。");
   }
   return record;
 }
@@ -341,6 +341,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 function assertMessageSize(value: unknown, label: string) {
   const encoded = JSON.stringify(value);
   if (encoded && encoded.length > MAX_LOGIC_MESSAGE_BYTES) {
-    throw new Error(`${label} exceeds the ${MAX_LOGIC_MESSAGE_BYTES} byte limit.`);
+    throw new Error(`${label} 超过 ${MAX_LOGIC_MESSAGE_BYTES} 字节上限。`);
   }
 }

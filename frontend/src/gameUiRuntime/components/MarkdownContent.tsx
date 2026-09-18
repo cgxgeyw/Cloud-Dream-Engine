@@ -94,7 +94,8 @@ function preProcessMathDelimiters(content: string): string {
 /**
  * 消息正文的 Markdown 渲染。支持：GFM 表格、代码高亮（shiki）、KaTeX 公式、
  * Mermaid 图、内嵌 HTML（经 sanitize+harden，脚本与危险协议被剔除）。
- * streaming 时启用半截 Markdown 容错与逐词淡入。
+ * streaming 时启用半截 Markdown 容错；**不**做全文逐词淡入——每个 token
+ * 都会重排/重放动画，在安卓 WebView 上表现为整页闪烁。
  */
 export function MarkdownMessageContent({
   text,
@@ -111,8 +112,8 @@ export function MarkdownMessageContent({
     <Streamdown
       className="game-markdown"
       mode={streaming ? "streaming" : "static"}
-      isAnimating={streaming}
-      animated={streaming ? { animation: "fadeIn", sep: "word", duration: 100 } : false}
+      isAnimating={false}
+      animated={false}
       plugins={{ cjk, math, mermaid }}
       controls={false}
       components={MARKDOWN_COMPONENTS}

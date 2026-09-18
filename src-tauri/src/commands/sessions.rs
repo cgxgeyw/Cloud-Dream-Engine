@@ -955,7 +955,7 @@ pub async fn get_session_generation_params(
     let conn = db.conn();
     let session = crate::db::repositories::session_repo::SessionRepository::new(conn)
         .get(&session_id)?
-        .ok_or_else(|| "Session not found".to_string())?;
+        .ok_or_else(|| "会话不存在".to_string())?;
     let world = crate::services::game_engine::orchestrator::resolve_world_for_session(conn, &session)?;
     let settings = crate::commands::settings::load_app_settings(conn)?;
     Ok(build_session_generation_params_response(
@@ -976,7 +976,7 @@ pub async fn update_session_generation_params(
     let repo = crate::db::repositories::session_repo::SessionRepository::new(conn);
     let mut session = repo
         .get(&session_id)?
-        .ok_or_else(|| "Session not found".to_string())?;
+        .ok_or_else(|| "会话不存在".to_string())?;
     // 入库前夹到合法区间，与应用/世界两层一致。
     session.generation_params = params.sanitized().0;
     repo.upsert(&session)?;

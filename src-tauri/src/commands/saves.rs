@@ -16,10 +16,10 @@ pub async fn branch_save(state: State<'_, AppState>, id: String) -> Result<SaveS
     let session_repo = crate::db::repositories::session_repo::SessionRepository::new(db.conn());
     let save = save_repo
         .get(&id)?
-        .ok_or_else(|| "Save not found".to_string())?;
+        .ok_or_else(|| "存档不存在".to_string())?;
     let session = session_repo
         .get(&save.session_id)?
-        .ok_or_else(|| "Session not found".to_string())?;
+        .ok_or_else(|| "会话不存在".to_string())?;
     save_repo.branch_save(&id, &session)
 }
 

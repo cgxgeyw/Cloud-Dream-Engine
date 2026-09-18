@@ -1945,7 +1945,7 @@ impl WorldDirectorService {
                 native_tool_calling: previous_request.native_tool_calling,
             });
         }
-        Err("Director tool follow-up requires native tool_calls".to_string())
+        Err("导演工具追问需要原生 tool_calls 响应".to_string())
     }
 
     pub fn resolve_tool_loop_limit(&self, world: &WorldDefinition) -> usize {

@@ -233,7 +233,7 @@ export async function updateWorld(worldId: string, payload: WorldUpsertRequest) 
 
 export async function listWorldRecords(worldId: string, collection: string): Promise<WorldRecord[]> {
   if (!isTauri) {
-    throw new Error("World record storage is only available in the local application.");
+    throw new Error("世界记录存储仅在本机应用内可用。");
   }
   return (await getTauri()).listWorldRecords(worldId, collection);
 }
@@ -243,7 +243,7 @@ export async function createWorldRecord(
   payload: WorldRecordWriteRequest,
 ): Promise<WorldRecord> {
   if (!isTauri) {
-    throw new Error("World record storage is only available in the local application.");
+    throw new Error("世界记录存储仅在本机应用内可用。");
   }
   return (await getTauri()).createWorldRecord(worldId, payload);
 }
@@ -254,7 +254,7 @@ export async function updateWorldRecord(
   payload: WorldRecordWriteRequest,
 ): Promise<WorldRecord> {
   if (!isTauri) {
-    throw new Error("World record storage is only available in the local application.");
+    throw new Error("世界记录存储仅在本机应用内可用。");
   }
   return (await getTauri()).updateWorldRecord(worldId, recordId, payload);
 }
@@ -265,14 +265,14 @@ export async function deleteWorldRecord(
   recordId: string,
 ): Promise<void> {
   if (!isTauri) {
-    throw new Error("World record storage is only available in the local application.");
+    throw new Error("世界记录存储仅在本机应用内可用。");
   }
   return (await getTauri()).deleteWorldRecord(worldId, collection, recordId);
 }
 
 export async function listWorldKv(worldId: string, namespace: string, scope?: KvScope): Promise<WorldKvEntry[]> {
   if (!isTauri) {
-    throw new Error("World KV storage is only available in the local application.");
+    throw new Error("世界 KV 存储仅在本机应用内可用。");
   }
   return (await getTauri()).listWorldKv(worldId, namespace, scope);
 }
@@ -284,7 +284,7 @@ export async function getWorldKv(
   scope?: KvScope,
 ): Promise<WorldKvEntry | null> {
   if (!isTauri) {
-    throw new Error("World KV storage is only available in the local application.");
+    throw new Error("世界 KV 存储仅在本机应用内可用。");
   }
   return (await getTauri()).getWorldKv(worldId, namespace, key, scope);
 }
@@ -297,14 +297,14 @@ export async function setWorldKv(
   scope?: KvScope,
 ): Promise<WorldKvEntry> {
   if (!isTauri) {
-    throw new Error("World KV storage is only available in the local application.");
+    throw new Error("世界 KV 存储仅在本机应用内可用。");
   }
   return (await getTauri()).setWorldKv(worldId, namespace, key, value, scope);
 }
 
 export async function deleteWorldKv(worldId: string, namespace: string, key: string, scope?: KvScope): Promise<void> {
   if (!isTauri) {
-    throw new Error("World KV storage is only available in the local application.");
+    throw new Error("世界 KV 存储仅在本机应用内可用。");
   }
   return (await getTauri()).deleteWorldKv(worldId, namespace, key, scope);
 }
@@ -317,14 +317,14 @@ export async function invokeWorldPlatformFeature(
   params: unknown,
 ): Promise<unknown> {
   if (!isTauri) {
-    throw new Error("World platform features are only available in the local application.");
+    throw new Error("世界平台能力仅在本机应用内可用。");
   }
   return (await getTauri()).invokeWorldPlatformFeature(worldId, feature, params);
 }
 
 export async function listWorldFeatureGrants(worldId: string): Promise<WorldFeatureGrantStatus[]> {
   if (!isTauri) {
-    throw new Error("World platform features are only available in the local application.");
+    throw new Error("世界平台能力仅在本机应用内可用。");
   }
   return (await getTauri()).listWorldFeatureGrants(worldId);
 }
@@ -335,7 +335,7 @@ export async function setWorldFeatureGrant(
   granted: boolean,
 ): Promise<void> {
   if (!isTauri) {
-    throw new Error("World platform features are only available in the local application.");
+    throw new Error("世界平台能力仅在本机应用内可用。");
   }
   return (await getTauri()).setWorldFeatureGrant(worldId, feature, granted);
 }
@@ -347,7 +347,7 @@ export async function answerInteraction(
   answer: unknown,
 ): Promise<AnswerInteractionResponse> {
   if (!isTauri) {
-    throw new Error("Interactions are only available in the local application.");
+    throw new Error("交互功能仅在本机应用内可用。");
   }
   return (await getTauri()).answerInteraction(sessionId, messageId, interactionId, answer);
 }
@@ -467,7 +467,7 @@ export async function importWorldPackage(file: File) {
 
 export async function importWorldPackageFromPath(path: string) {
   if (!isTauri) {
-    throw new Error("Importing a world package from a local path requires the Tauri runtime.");
+    throw new Error("从本地路径导入世界包需要在应用内运行。");
   }
   return (await getTauri()).importWorldPackageFromPath(path);
 }
@@ -752,7 +752,7 @@ export async function onSessionSnapshot(sessionId: string, callback: (snapshot: 
 
 export function toSessionWebSocketUrl(sessionId: string): string {
   if (isTauri) {
-    throw new Error("WebSocket URL is unavailable in Tauri mode; use Tauri events instead.");
+    throw new Error("Tauri 模式下无法使用 WebSocket URL，请改用 Tauri 事件。");
   }
   return getHttpSync().toSessionWebSocketUrl(sessionId);
 }

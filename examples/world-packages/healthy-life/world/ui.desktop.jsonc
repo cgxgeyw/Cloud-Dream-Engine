@@ -1,0 +1,709 @@
+{
+  "schema_version": 2,
+  "meta": {
+    "name": "健康生活桌面界面",
+    "author": "Cloud Dream Engine",
+    "description": "冷灰纸面轻拟物桌面：与手机同构精修——顶部 Tab、无侧栏、气泡仅阴影、发送键与图标同高"
+  },
+  "tokens": {
+    "color-bg": "#E9EDF3",
+    "color-panel": "#FFFFFF",
+    "color-ink": "#1B2233",
+    "color-muted": "#5A657A",
+    "color-gray": "#E2E7EF",
+    "color-orange": "#C4682A",
+    "color-green": "#0E7C57",
+    "color-purple": "#6A4BC4",
+    "color-blue": "#2B5FE3",
+    "radius-md": "14px",
+    "radius-lg": "16px",
+    "font-body": "\"PingFang SC\", \"Microsoft YaHei\", system-ui, sans-serif"
+  },
+  "components": {},
+  "state": {
+    "active_tab": "chat",
+    "checked_health_items": []
+  },
+  "layout": {
+    "root": {
+      "type": "stack",
+      "class_name": "hl-desktop-shell",
+      "direction": "vertical",
+      "gap": "0",
+      "padding": "0",
+      "style": {
+        "height": "100%",
+        "min_height": "0",
+        "overflow": "hidden"
+      },
+      "children": [
+        {
+          "type": "stack",
+          "class_name": "hl-desktop-topbar",
+          "direction": "horizontal",
+          "gap": "0",
+          "style": {
+            "flex": "0 0 auto",
+            "min_width": "0"
+          },
+          "children": [
+            {
+              "type": "component",
+              "component": "scene_header",
+              "class_name": "hl-desktop-header",
+              "style": {
+                "flex": "1 1 0",
+                "min_width": "0"
+              },
+              "props": {
+                "show_world_name": false,
+                "show_location": true,
+                "show_time_label": false,
+                "show_player_identity": false,
+                "show_visible_characters": false,
+                "show_copy_button": false,
+                "show_session_id": false,
+                "title_mode": "desktop"
+              }
+            },
+            {
+              "type": "component",
+              "component": "floating_actions",
+              "class_name": "hl-desktop-actions",
+              "props": {
+                "show_back": true,
+                "show_debug": false,
+                "show_settings": false,
+                "back_label": "",
+                "layout": "row"
+              }
+            }
+          ]
+        },
+        {
+          "type": "stack",
+          "class_name": "hl-tabbar hl-tabbar--desktop-top",
+          "direction": "horizontal",
+          "gap": "0",
+          "style": {
+            "flex": "0 0 auto",
+            "min_height": "0"
+          },
+          "children": [
+            {
+              "type": "stack",
+              "class_name": "hl-tab-item-wrap",
+              "style": {
+                "flex": "1 1 0"
+              },
+              "children": [
+                {
+                  "type": "when",
+                  "expr": "state.active_tab == 'chat' || state.active_tab == null",
+                  "child": {
+                    "type": "button",
+                    "class_name": "hl-tab-btn hl-tab-btn--active hl-tab-btn--chat",
+                    "label": "对话",
+                    "variant": "ghost",
+                    "action": {
+                      "id": "logic.run",
+                      "args": {
+                        "handler": "ui.setTab",
+                        "input": {
+                          "tab": "chat"
+                        }
+                      },
+                      "result_state": "active_tab",
+                      "error_state": "tab_error",
+                      "pending_state": "tab_pending"
+                    }
+                  }
+                },
+                {
+                  "type": "when",
+                  "expr": "state.active_tab != 'chat' && state.active_tab != null",
+                  "child": {
+                    "type": "button",
+                    "class_name": "hl-tab-btn hl-tab-btn--chat",
+                    "label": "对话",
+                    "variant": "ghost",
+                    "action": {
+                      "id": "logic.run",
+                      "args": {
+                        "handler": "ui.setTab",
+                        "input": {
+                          "tab": "chat"
+                        }
+                      },
+                      "result_state": "active_tab",
+                      "error_state": "tab_error",
+                      "pending_state": "tab_pending"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "stack",
+              "class_name": "hl-tab-item-wrap",
+              "style": {
+                "flex": "1 1 0"
+              },
+              "children": [
+                {
+                  "type": "when",
+                  "expr": "state.active_tab == 'growth'",
+                  "child": {
+                    "type": "button",
+                    "class_name": "hl-tab-btn hl-tab-btn--active hl-tab-btn--growth",
+                    "label": "成长",
+                    "variant": "ghost",
+                    "action": {
+                      "id": "logic.run",
+                      "args": {
+                        "handler": "ui.setTab",
+                        "input": {
+                          "tab": "growth"
+                        }
+                      },
+                      "result_state": "active_tab",
+                      "error_state": "tab_error",
+                      "pending_state": "tab_pending"
+                    }
+                  }
+                },
+                {
+                  "type": "when",
+                  "expr": "state.active_tab != 'growth'",
+                  "child": {
+                    "type": "button",
+                    "class_name": "hl-tab-btn hl-tab-btn--growth",
+                    "label": "成长",
+                    "variant": "ghost",
+                    "action": {
+                      "id": "logic.run",
+                      "args": {
+                        "handler": "ui.setTab",
+                        "input": {
+                          "tab": "growth"
+                        }
+                      },
+                      "result_state": "active_tab",
+                      "error_state": "tab_error",
+                      "pending_state": "tab_pending"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "stack",
+              "class_name": "hl-tab-item-wrap",
+              "style": {
+                "flex": "1 1 0"
+              },
+              "children": [
+                {
+                  "type": "when",
+                  "expr": "state.active_tab == 'profile'",
+                  "child": {
+                    "type": "button",
+                    "class_name": "hl-tab-btn hl-tab-btn--active hl-tab-btn--profile",
+                    "label": "我的",
+                    "variant": "ghost",
+                    "action": {
+                      "id": "logic.run",
+                      "args": {
+                        "handler": "ui.setTab",
+                        "input": {
+                          "tab": "profile"
+                        }
+                      },
+                      "result_state": "active_tab",
+                      "error_state": "tab_error",
+                      "pending_state": "tab_pending"
+                    }
+                  }
+                },
+                {
+                  "type": "when",
+                  "expr": "state.active_tab != 'profile'",
+                  "child": {
+                    "type": "button",
+                    "class_name": "hl-tab-btn hl-tab-btn--profile",
+                    "label": "我的",
+                    "variant": "ghost",
+                    "action": {
+                      "id": "logic.run",
+                      "args": {
+                        "handler": "ui.setTab",
+                        "input": {
+                          "tab": "profile"
+                        }
+                      },
+                      "result_state": "active_tab",
+                      "error_state": "tab_error",
+                      "pending_state": "tab_pending"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "stack",
+          "class_name": "hl-desktop-body",
+          "direction": "vertical",
+          "gap": "0",
+          "style": {
+            "flex": "1 1 0",
+            "min_height": "0"
+          },
+          "children": [
+            {
+              "type": "when",
+              "expr": "state.active_tab == 'chat' || state.active_tab == null",
+              "child": {
+                "type": "stack",
+                "class_name": "hl-pane hl-pane--chat",
+                "direction": "vertical",
+                "gap": "0",
+                "style": {
+                  "flex": "1 1 0",
+                  "min_height": "0",
+                  "height": "100%"
+                },
+                "children": [
+                  {
+                    "type": "component",
+                    "component": "message_list",
+                    "class_name": "hl-desktop-messages",
+                    "style": {
+                      "flex": "1 1 0",
+                      "min_height": "0"
+                    },
+                    "props": {
+                      "auto_scroll": true,
+                      "show_pending_state": true,
+                      "show_agent_reasoning": false,
+                      "show_typing_indicator": true,
+                      "mobile_simple": false,
+                      "show_scroll_controls": true
+                    }
+                  },
+                  {
+                    "type": "component",
+                    "component": "input_composer",
+                    "class_name": "hl-desktop-composer",
+                    "style": {
+                      "flex": "0 0 auto",
+                      "min_height": "0"
+                    },
+                    "props": {
+                      "placeholder": "说说今天的饮食、训练或目标…",
+                      "submit_label": "发送",
+                      "editing_submit_label": "更新",
+                      "show_image_button": true,
+                      "show_audio_button": true,
+                      "show_session_meta": false,
+                      "enter_to_submit": true
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "when",
+              "expr": "state.active_tab == 'growth'",
+              "child": {
+                "type": "stack",
+                "class_name": "hl-pane hl-pane--growth",
+                "direction": "vertical",
+                "gap": "12px",
+                "style": {
+                  "flex": "1 1 0",
+                  "min_height": "0",
+                  "overflow_y": "auto",
+                  "padding": "12px 14px 16px"
+                },
+                "children": [
+                  {
+                    "type": "stack",
+                    "class_name": "hl-growth-head",
+                    "direction": "vertical",
+                    "gap": "6px",
+                    "children": [
+                      {
+                        "type": "text",
+                        "class_name": "hl-growth-kicker",
+                        "text": "当前目标"
+                      },
+                      {
+                        "type": "text",
+                        "class_name": "hl-growth-title",
+                        "text": "{{ attributes.health_goal_type }}"
+                      },
+                      {
+                        "type": "text",
+                        "class_name": "hl-growth-sub",
+                        "text": "{{ attributes.health_goal_detail }}"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "stack",
+                    "class_name": "hl-energy-card",
+                    "direction": "vertical",
+                    "gap": "12px",
+                    "children": [
+                      {
+                        "type": "stack",
+                        "class_name": "hl-ring-core",
+                        "direction": "vertical",
+                        "gap": "4px",
+                        "style": {
+                          "align_self": "center"
+                        },
+                        "children": [
+                          {
+                            "type": "text",
+                            "class_name": "hl-ring-label",
+                            "text": "净能量平衡"
+                          },
+                          {
+                            "type": "text",
+                            "class_name": "hl-ring-value",
+                            "text": "{{ attributes.health_energy_net }}"
+                          },
+                          {
+                            "type": "text",
+                            "class_name": "hl-ring-unit",
+                            "text": "kcal"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "text",
+                        "class_name": "hl-ring-legend",
+                        "text": "摄入 − 消耗。负值表示今日有热量缺口。"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "stack",
+                    "class_name": "hl-stat-grid",
+                    "direction": "horizontal",
+                    "gap": "10px",
+                    "wrap": true,
+                    "children": [
+                      {
+                        "type": "stack",
+                        "class_name": "hl-stat-card hl-stat-card--in",
+                        "direction": "vertical",
+                        "gap": "6px",
+                        "style": {
+                          "flex": "1 1 140px",
+                          "min_width": "140px"
+                        },
+                        "children": [
+                          {
+                            "type": "text",
+                            "class_name": "hl-stat-label",
+                            "text": "今日摄入"
+                          },
+                          {
+                            "type": "text",
+                            "class_name": "hl-stat-value",
+                            "text": "{{ attributes.health_intake_kcal }} kcal"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "stack",
+                        "class_name": "hl-stat-card hl-stat-card--out",
+                        "direction": "vertical",
+                        "gap": "6px",
+                        "style": {
+                          "flex": "1 1 140px",
+                          "min_width": "140px"
+                        },
+                        "children": [
+                          {
+                            "type": "text",
+                            "class_name": "hl-stat-label",
+                            "text": "今日消耗"
+                          },
+                          {
+                            "type": "text",
+                            "class_name": "hl-stat-value",
+                            "text": "{{ attributes.health_burn_kcal }} kcal"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "stack",
+                    "class_name": "hl-check-card",
+                    "direction": "vertical",
+                    "gap": "10px",
+                    "children": [
+                      {
+                        "type": "text",
+                        "class_name": "hl-section-label",
+                        "text": "今日行动清单"
+                      },
+                      {
+                        "type": "for_each",
+                        "source": "$attributes.health_checklist",
+                        "item_as": "task",
+                        "empty": {
+                          "type": "text",
+                          "class_name": "hl-check-empty",
+                          "text": "还没有今日清单，在对话里让小助手帮你列 1-3 条今天要做的事。"
+                        },
+                        "child": {
+                          "type": "checkbox",
+                          "class_name": "hl-check-item",
+                          "label": "$task",
+                          "value": "$task",
+                          "bind_checked_list": "checked_health_items"
+                        }
+                      },
+                      {
+                        "type": "button",
+                        "class_name": "hl-check-confirm",
+                        "label": "确认完成",
+                        "variant": "ghost",
+                        "disabled_when_empty_state": "checked_health_items",
+                        "action": {
+                          "id": "submit_message",
+                          "mode": "submit",
+                          "content_template": "【清单确认】我已完成以下行动清单事项：{{state.checked_health_items}}。请从 health_checklist 中移除这些条目，并简短鼓励；若清单为空可再给 1-2 条新建议。"
+                        }
+                      },
+                      {
+                        "type": "text",
+                        "class_name": "hl-caption",
+                        "text": "勾选后点「确认完成」，会发给小助手更新清单。"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "text",
+                    "class_name": "hl-caption",
+                    "text": "在「对话」里告知小助手今日饮食或运动，这里的数据会同步更新。"
+                  }
+                ]
+              }
+            },
+            {
+              "type": "when",
+              "expr": "state.active_tab == 'profile'",
+              "child": {
+                "type": "stack",
+                "class_name": "hl-pane hl-pane--profile",
+                "direction": "vertical",
+                "gap": "12px",
+                "style": {
+                  "flex": "1 1 0",
+                  "min_height": "0",
+                  "overflow_y": "auto",
+                  "padding": "12px 14px 16px"
+                },
+                "children": [
+                  {
+                    "type": "stack",
+                    "class_name": "hl-metric-pair",
+                    "direction": "horizontal",
+                    "gap": "10px",
+                    "wrap": true,
+                    "children": [
+                      {
+                        "type": "stack",
+                        "class_name": "hl-metric-hero hl-metric-hero--bmi",
+                        "direction": "vertical",
+                        "gap": "6px",
+                        "style": {
+                          "flex": "1 1 140px",
+                          "min_width": "140px"
+                        },
+                        "children": [
+                          {
+                            "type": "text",
+                            "class_name": "hl-metric-hero-label",
+                            "text": "BMI"
+                          },
+                          {
+                            "type": "text",
+                            "class_name": "hl-metric-hero-num",
+                            "text": "{{ attributes.health_bmi }}"
+                          },
+                          {
+                            "type": "text",
+                            "class_name": "hl-metric-hero-tag",
+                            "text": "{{ attributes.health_bmi_label }}"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "stack",
+                        "class_name": "hl-metric-hero hl-metric-hero--bmr",
+                        "direction": "vertical",
+                        "gap": "6px",
+                        "style": {
+                          "flex": "1 1 140px",
+                          "min_width": "140px"
+                        },
+                        "children": [
+                          {
+                            "type": "text",
+                            "class_name": "hl-metric-hero-label",
+                            "text": "基础代谢 BMR"
+                          },
+                          {
+                            "type": "text",
+                            "class_name": "hl-metric-hero-num",
+                            "text": "{{ attributes.health_bmr }}"
+                          },
+                          {
+                            "type": "text",
+                            "class_name": "hl-metric-hero-tag",
+                            "text": "kcal / 天"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "stack",
+                    "class_name": "hl-card hl-card--metrics",
+                    "direction": "vertical",
+                    "gap": "0",
+                    "children": [
+                      {
+                        "type": "stack",
+                        "class_name": "hl-metric",
+                        "direction": "horizontal",
+                        "gap": "8px",
+                        "children": [
+                          {
+                            "type": "text",
+                            "class_name": "hl-metric-label",
+                            "text": "身高"
+                          },
+                          {
+                            "type": "text",
+                            "class_name": "hl-metric-value",
+                            "text": "{{ attributes.health_height_cm }} cm"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "stack",
+                        "class_name": "hl-metric",
+                        "direction": "horizontal",
+                        "gap": "8px",
+                        "children": [
+                          {
+                            "type": "text",
+                            "class_name": "hl-metric-label",
+                            "text": "体重"
+                          },
+                          {
+                            "type": "text",
+                            "class_name": "hl-metric-value",
+                            "text": "{{ attributes.health_weight_kg }} kg"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "stack",
+                        "class_name": "hl-metric",
+                        "direction": "horizontal",
+                        "gap": "8px",
+                        "children": [
+                          {
+                            "type": "text",
+                            "class_name": "hl-metric-label",
+                            "text": "年龄"
+                          },
+                          {
+                            "type": "text",
+                            "class_name": "hl-metric-value",
+                            "text": "{{ attributes.health_age }} 岁"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "stack",
+                        "class_name": "hl-metric",
+                        "direction": "horizontal",
+                        "gap": "8px",
+                        "children": [
+                          {
+                            "type": "text",
+                            "class_name": "hl-metric-label",
+                            "text": "性别"
+                          },
+                          {
+                            "type": "text",
+                            "class_name": "hl-metric-value",
+                            "text": "{{ attributes.health_gender }}"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "stack",
+                        "class_name": "hl-metric",
+                        "direction": "horizontal",
+                        "gap": "8px",
+                        "children": [
+                          {
+                            "type": "text",
+                            "class_name": "hl-metric-label",
+                            "text": "目标体重"
+                          },
+                          {
+                            "type": "text",
+                            "class_name": "hl-metric-value",
+                            "text": "{{ attributes.health_target_weight }} kg"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "stack",
+                    "class_name": "hl-card",
+                    "direction": "vertical",
+                    "gap": "8px",
+                    "children": [
+                      {
+                        "type": "text",
+                        "class_name": "hl-card-title",
+                        "text": "BMR 怎么算"
+                      },
+                      {
+                        "type": "text",
+                        "class_name": "hl-card-body",
+                        "text": "Mifflin-St Jeor：男 10×体重 + 6.25×身高 − 5×年龄 + 5；女 − 161。"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "text",
+                    "class_name": "hl-caption",
+                    "text": "在「对话」中告知小助手身高、体重、年龄、性别，档案与 BMI/BMR 会自动更新。"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "custom_css": "&.game-root,&.game-root--desktop-session{color:#1b2233;background:#e9edf3;font-family:\"PingFang SC\",\"Microsoft YaHei\",system-ui,sans-serif;}"
+}

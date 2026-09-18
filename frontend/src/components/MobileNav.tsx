@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft, Globe, Menu, Moon, Play, Save, Settings, Sun, Wrench, X } from "lucide-react";
 import appIconUrl from "../assets/app-icon.svg";
@@ -28,6 +28,12 @@ const navItems = [
   { path: "/settings", label: "设置", Icon: Settings },
   { path: "/mcp-tools", label: "MCP 工具", Icon: Wrench },
 ];
+
+const EDGE_OPEN_PX = 28;
+const EDGE_OPEN_THRESHOLD = 52;
+const FAB_DRAG_OPEN_THRESHOLD = 44;
+const SIDEBAR_CLOSE_RATIO = 0.28;
+const SIDEBAR_CLOSE_MAX_PX = 96;
 
 function resolveParentPath(pathname: string, search: string) {
   const params = new URLSearchParams(search);
@@ -104,6 +110,8 @@ function useMobileVisualViewport(): MobileViewportState {
 export function MobileNav({ children }: MobileNavProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [mode, setMode] = useState<ThemeMode>(() => resolveInitialMode());
+  const [sidebarDragX, setSidebarDragX] = useState(0);
+  const [sidebarDragging, setSidebarDragging] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const mobileViewport = useMobileVisualViewport();
@@ -118,9 +126,26 @@ export function MobileNav({ children }: MobileNavProps) {
   const isImmersiveRoute = location.pathname.startsWith("/game/");
   const showBackButton = !isImmersiveRoute && location.pathname !== "/";
 
+  const sidebarRef = useRef<HTMLElement | null>(null);
+  const suppressClickRef = useRef(false);
+  const edgeGestureRef = useRef({ armed: false, startX: 0, startY: 0 });
+  const sidebarDragRef = useRef({ active: false, pointerId: -1, startX: 0 });
+  const fabDragRef = useRef({ active: false, pointerId: -1, startX: 0, startY: 0, moved: false });
+
+  const markSuppressClick = useCallback(() => {
+    suppressClickRef.current = true;
+    window.setTimeout(() => {
+      suppressClickRef.current = false;
+    }, 80);
+  }, []);
+
   const handleNavigate = (path: string) => {
+    if (suppressClickRef.current) {
+      return;
+    }
     navigate(path);
     setIsOpen(false);
+    setSidebarDragX(0);
   };
 
   const handleBack = () => {
@@ -151,6 +176,154 @@ export function MobileNav({ children }: MobileNavProps) {
     return location.pathname === path || location.pathname.startsWith(path + "/");
   };
 
+  // 左缘右滑打开侧栏（关闭时）
+  useEffect(() => {
+    if (isOpen) {
+      return undefined;
+    }
+
+    const onTouchStart = (event: TouchEvent) => {
+      const touch = event.touches[0];
+      if (!touch) return;
+      if (touch.clientX <= EDGE_OPEN_PX) {
+        edgeGestureRef.current = {
+          armed: true,
+          startX: touch.clientX,
+          startY: touch.clientY,
+        };
+      }
+    };
+
+    const onTouchMove = (event: TouchEvent) => {
+      const gesture = edgeGestureRef.current;
+      if (!gesture.armed) return;
+      const touch = event.touches[0];
+      if (!touch) return;
+      const dx = touch.clientX - gesture.startX;
+      const dy = Math.abs(touch.clientY - gesture.startY);
+      if (dy > 40 && dy > Math.abs(dx)) {
+        gesture.armed = false;
+        return;
+      }
+      if (dx >= EDGE_OPEN_THRESHOLD) {
+        gesture.armed = false;
+        setSidebarDragX(0);
+        setIsOpen(true);
+        markSuppressClick();
+      }
+    };
+
+    const onTouchEnd = () => {
+      edgeGestureRef.current.armed = false;
+    };
+
+    window.addEventListener("touchstart", onTouchStart, { passive: true });
+    window.addEventListener("touchmove", onTouchMove, { passive: true });
+    window.addEventListener("touchend", onTouchEnd, { passive: true });
+    window.addEventListener("touchcancel", onTouchEnd, { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", onTouchStart);
+      window.removeEventListener("touchmove", onTouchMove);
+      window.removeEventListener("touchend", onTouchEnd);
+      window.removeEventListener("touchcancel", onTouchEnd);
+    };
+  }, [isOpen, markSuppressClick]);
+
+  // 把手：按住右拖也可打开（与左缘滑动手势一致）
+  const onFabPointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    fabDragRef.current = {
+      active: true,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
+    };
+  };
+
+  const onFabPointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = fabDragRef.current;
+    if (!drag.active || drag.pointerId !== event.pointerId || isOpen) return;
+    const dx = event.clientX - drag.startX;
+    const dy = Math.abs(event.clientY - drag.startY);
+    if (dy > 48 && dy > Math.abs(dx)) {
+      drag.active = false;
+      return;
+    }
+    if (dx >= FAB_DRAG_OPEN_THRESHOLD) {
+      drag.moved = true;
+      drag.active = false;
+      setIsOpen(true);
+      markSuppressClick();
+    }
+  };
+
+  const onFabPointerUp = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = fabDragRef.current;
+    if (drag.pointerId === event.pointerId) {
+      drag.active = false;
+    }
+  };
+
+  const onFabClick = () => {
+    if (fabDragRef.current.moved) {
+      fabDragRef.current.moved = false;
+      return;
+    }
+    if (suppressClickRef.current) return;
+    setIsOpen(!isOpen);
+    setSidebarDragX(0);
+  };
+
+  // 侧栏：向左拖关闭
+  const onSidebarPointerDown = (event: ReactPointerEvent<HTMLElement>) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    sidebarDragRef.current = {
+      active: true,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+    };
+    setSidebarDragging(true);
+    setSidebarDragX(0);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // 某些 WebView 不支持 pointer capture 时忽略，仍可拖
+    }
+  };
+
+  const onSidebarPointerMove = (event: ReactPointerEvent<HTMLElement>) => {
+    const drag = sidebarDragRef.current;
+    if (!drag.active || drag.pointerId !== event.pointerId) return;
+    const dx = event.clientX - drag.startX;
+    if (Math.abs(dx) > 6) {
+      markSuppressClick();
+    }
+    // 只允许向左拉出关闭位移
+    setSidebarDragX(Math.min(0, dx));
+  };
+
+  const onSidebarPointerEnd = (event: ReactPointerEvent<HTMLElement>) => {
+    const drag = sidebarDragRef.current;
+    if (!drag.active || drag.pointerId !== event.pointerId) return;
+    drag.active = false;
+    setSidebarDragging(false);
+
+    const width = sidebarRef.current?.offsetWidth ?? 280;
+    const threshold = Math.min(SIDEBAR_CLOSE_MAX_PX, width * SIDEBAR_CLOSE_RATIO);
+    if (sidebarDragX <= -threshold) {
+      markSuppressClick();
+      setIsOpen(false);
+    }
+    setSidebarDragX(0);
+  };
+
+  const onOverlayClick = () => {
+    if (suppressClickRef.current) return;
+    setIsOpen(false);
+    setSidebarDragX(0);
+  };
+
   return (
     <div
       className={`mobile-nav-container${isImmersiveRoute ? " mobile-nav-container--immersive" : ""}`}
@@ -159,10 +332,17 @@ export function MobileNav({ children }: MobileNavProps) {
       <button
         type="button"
         className="mobile-fab"
-        onClick={() => setIsOpen(!isOpen)}
-        aria-label="Toggle menu"
+        onClick={onFabClick}
+        onPointerDown={onFabPointerDown}
+        onPointerMove={onFabPointerMove}
+        onPointerUp={onFabPointerUp}
+        onPointerCancel={onFabPointerUp}
+        aria-label={isOpen ? "收起导航菜单" : "展开导航菜单"}
+        aria-expanded={isOpen}
+        title={isOpen ? "收起导航菜单" : "展开导航菜单"}
+        style={{ touchAction: "none" }}
       >
-        <span className="mobile-fab-icon">{isOpen ? <X size={20} /> : <Menu size={20} />}</span>
+        <span className="mobile-fab-icon">{isOpen ? <X size={16} /> : <Menu size={16} />}</span>
       </button>
       {showBackButton ? (
         <button
@@ -177,13 +357,34 @@ export function MobileNav({ children }: MobileNavProps) {
       ) : null}
 
       {isOpen ? (
-        <div className="mobile-overlay" onClick={() => setIsOpen(false)}>
-          <nav className="mobile-sidebar" onClick={(event) => event.stopPropagation()}>
+        <div className="mobile-overlay" onClick={onOverlayClick}>
+          <nav
+            ref={sidebarRef}
+            className={`mobile-sidebar${sidebarDragging ? " is-dragging" : ""}`}
+            onClick={(event) => {
+              if (suppressClickRef.current) {
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+              }
+              event.stopPropagation();
+            }}
+            onPointerDown={onSidebarPointerDown}
+            onPointerMove={onSidebarPointerMove}
+            onPointerUp={onSidebarPointerEnd}
+            onPointerCancel={onSidebarPointerEnd}
+            style={{
+              transform: `translateX(${sidebarDragX}px)`,
+            }}
+          >
             <div className="mobile-sidebar-brand">
               <button
                 type="button"
                 className="mobile-sidebar-brand-icon-btn"
-                onClick={() => setIsOpen(false)}
+                onClick={() => {
+                  if (suppressClickRef.current) return;
+                  setIsOpen(false);
+                }}
                   aria-label="关闭菜单"
               >
                 <CloudIcon size={36} />

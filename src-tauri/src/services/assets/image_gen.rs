@@ -83,7 +83,7 @@ impl ImageGenerator {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(format!("API error {}: {}", status, body));
+            return Err(format!("接口错误 {}: {}", status, body));
         }
 
         let content_type = response
@@ -105,12 +105,12 @@ impl ImageGenerator {
 
         let images = result["images"]
             .as_array()
-            .ok_or_else(|| "No images in response".to_string())?;
+            .ok_or_else(|| "响应中没有图片".to_string())?;
 
         let image_b64 = images
             .first()
             .and_then(|v| v.as_str())
-            .ok_or_else(|| "Empty image data".to_string())?;
+            .ok_or_else(|| "图片数据为空".to_string())?;
 
         use base64::Engine;
         let image_data = base64::engine::general_purpose::STANDARD
@@ -160,7 +160,7 @@ impl ImageGenerator {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(format!("API error {}: {}", status, body));
+            return Err(format!("接口错误 {}: {}", status, body));
         }
 
         let content_type = response
@@ -232,7 +232,7 @@ fn openai_image_source(result: &serde_json::Value) -> Result<OpenAiImageSource, 
         .get("data")
         .and_then(serde_json::Value::as_array)
         .and_then(|images| images.first())
-        .ok_or_else(|| "No image data in response".to_string())?;
+        .ok_or_else(|| "响应中没有图片数据".to_string())?;
     if let Some(image_b64) = image.get("b64_json").and_then(serde_json::Value::as_str) {
         return Ok(OpenAiImageSource::Base64(image_b64.to_string()));
     }

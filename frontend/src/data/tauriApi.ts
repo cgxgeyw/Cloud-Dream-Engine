@@ -748,7 +748,7 @@ async function waitForSessionSnapshotListener(
 }
 
 export function toSessionWebSocketUrl(sessionId: string): string {
-  throw new Error("WebSocket URL is unavailable in Tauri mode; use Tauri events instead.");
+  throw new Error("Tauri 模式下无法使用 WebSocket URL，请改用 Tauri 事件。");
 }
 
 export function assetUrl(path: string | null | undefined): string {

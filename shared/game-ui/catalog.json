@@ -13,11 +13,11 @@
       "requires_runtime_version": 3,
       "runtime_version_error": {
         "code": "world_records_require_runtime_v3",
-        "message": "World record storage is only available in UI runtime version 3."
+        "message": "世界记录存储仅在 UI 运行时版本 3 中可用。"
       },
       "missing_declaration_error": {
         "code": "missing_world_records_capability",
-        "message": "Worlds using ledger_book must declare supports_world_records."
+        "message": "使用 ledger_book 的世界必须声明 supports_world_records。"
       }
     },
     {
@@ -26,11 +26,16 @@
       "required_when_bundle_features": ["storage_config", "sandbox_logic"],
       "missing_declaration_error": {
         "code": "missing_world_storage_capability",
-        "message": "Worlds using storage or sandbox logic must declare supports_world_storage."
+        "message": "使用存储或沙箱逻辑的世界必须声明 supports_world_storage。"
       }
     }
   ],
   "actions": [
+    {
+      "id": "set_state",
+      "description": "写入世界 UI 本地 state（不经过 Worker / 模型）。用 result_state 或 args.key 作为状态键，args.value 为值。",
+      "input": { "key": "string?", "value": "any?" }
+    },
     { "id": "submit_message", "description": "提交当前输入草稿", "input": { "mode": "submit|edit|resend", "content": "string?", "turn_index": "number?" } },
     { "id": "edit_turn_start", "description": "开始编辑某个玩家回合", "input": { "content": "string", "turn_index": "number" } },
     { "id": "edit_turn_cancel", "description": "取消当前编辑状态", "input": {} },

@@ -550,7 +550,7 @@ impl SessionOrchestrator {
         let session_repo = crate::db::repositories::session_repo::SessionRepository::new(conn);
         let session = session_repo
             .get(session_id)?
-            .ok_or_else(|| "Session not found".to_string())?;
+            .ok_or_else(|| "会话不存在".to_string())?;
         let world = resolve_world_for_session(conn, &session)?;
         let character_names = crate::db::repositories::character_repo::CharacterRepository::new(conn)
             .list_by_world(&world.id)?
@@ -645,14 +645,14 @@ impl SessionOrchestrator {
         let replay_turn_index = if request.action_mode.requires_replay() {
             let turn_index = request
                 .resend_from_turn_index
-                .ok_or_else(|| "Replay action requires resend_from_turn_index".to_string())?;
+                .ok_or_else(|| "重发操作缺少 resend_from_turn_index".to_string())?;
             if turn_index <= 0 {
-                return Err("Replay action requires a positive resend_from_turn_index".to_string());
+                return Err("resend_from_turn_index 必须为正整数".to_string());
             }
             Some(turn_index)
         } else {
             if request.resend_from_turn_index.is_some() {
-                return Err("Submit action does not accept resend_from_turn_index".to_string());
+                return Err("提交操作不接受 resend_from_turn_index".to_string());
             }
             None
         };
@@ -660,7 +660,7 @@ impl SessionOrchestrator {
             let session_repo = crate::db::repositories::session_repo::SessionRepository::new(conn);
             session_repo
                 .get(session_id)?
-                .ok_or_else(|| "Session not found".to_string())?
+                .ok_or_else(|| "会话不存在".to_string())?
         };
         let recovery_journal = if let Some(turn_index) = replay_turn_index {
             load_turn_journal(conn, session_id, turn_index)?

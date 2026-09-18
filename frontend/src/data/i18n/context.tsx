@@ -57,7 +57,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
 export function useLanguage(): LanguageContextValue {
   const ctx = useContext(LanguageContext);
   if (!ctx) {
-    throw new Error("useLanguage must be used within a LanguageProvider");
+    throw new Error("useLanguage 必须在 LanguageProvider 内使用");
   }
   return ctx;
 }

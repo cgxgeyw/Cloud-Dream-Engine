@@ -293,7 +293,7 @@ pub async fn chat_completion(
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("API error {}: {}", status, body));
+        return Err(format!("接口错误 {}: {}", status, body));
     }
 
     let anthropic_response: AnthropicResponse = response
@@ -399,7 +399,7 @@ where
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("API error {}: {}", status, body));
+        return Err(format!("接口错误 {}: {}", status, body));
     }
 
     let mut content = String::new();
@@ -420,7 +420,7 @@ where
             Err(error) => {
                 // 与 openai 路径一致:已推送过内容则按部分完成返回,避免 UI 与落库不一致。
                 if content.trim().is_empty() && reasoning.trim().is_empty() && tool_uses.is_empty() {
-                    return Err(format!("Failed to read stream: {}", error));
+                    return Err(format!("读取响应流失败：{}", error));
                 }
                 break;
             }

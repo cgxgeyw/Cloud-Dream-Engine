@@ -529,6 +529,7 @@ async function executeAction(
   const pendingState = action.pending_state?.trim();
   const errorState = action.error_state?.trim();
   const resultState = action.result_state?.trim();
+  const actionId = action.id.replace(/^@/, "");
   if (pendingState) {
     actions.setUiState((current) => ({ ...current, [pendingState]: true }));
   }
@@ -536,6 +537,18 @@ async function executeAction(
     actions.setUiState((current) => ({ ...current, [errorState]: null }));
   }
   try {
+    // Built-in pure state write: no Worker, no host bridge, no LLM.
+    if (actionId === "set_state") {
+      const key = (resultState || readActionArgString(action, context, "key")).trim();
+      if (key) {
+        const value = resolveActionArgValue(action, context, "value");
+        actions.setUiState((current) => ({ ...current, [key]: value }));
+        if (resultState && resultState !== key) {
+          actions.setUiState((current) => ({ ...current, [resultState]: value }));
+        }
+        return;
+      }
+    }
     const result = await actions.onAction?.(action, context);
     if (resultState) {
       actions.setUiState((current) => ({ ...current, [resultState]: result }));
@@ -554,6 +567,50 @@ async function executeAction(
       actions.setUiState((current) => ({ ...current, [pendingState]: false }));
     }
   }
+}
+
+function readActionArgString(
+  action: GameUiActionReference,
+  context: GameUiRenderContext,
+  name: string,
+): string {
+  const raw = resolveActionArgValue(action, context, name);
+  return raw == null ? "" : String(raw);
+}
+
+function resolveActionArgValue(
+  action: GameUiActionReference,
+  context: GameUiRenderContext,
+  name: string,
+): unknown {
+  const args = (action.args ?? {}) as Record<string, unknown>;
+  const value = args[name];
+  if (typeof value === "string") {
+    if (value.startsWith("$")) {
+      return resolveTemplatePath(context, value.slice(1));
+    }
+    return resolveText(value, context);
+  }
+  return value;
+}
+
+function resolveTemplatePath(context: GameUiRenderContext, expression: string): unknown {
+  const normalized = expression.startsWith("$") ? expression.slice(1) : expression;
+  const [root, ...parts] = normalized.split(".").filter(Boolean);
+  let current: unknown = root === "state"
+    ? context.state
+    : root === "data"
+      ? context.data
+      : root in context.locals
+        ? context.locals[root]
+        : (context.data as Record<string, unknown>)[root];
+  for (const part of parts) {
+    if (current == null || typeof current !== "object") {
+      return "";
+    }
+    current = (current as Record<string, unknown>)[part];
+  }
+  return current;
 }
 
 function renderCheckboxNode(

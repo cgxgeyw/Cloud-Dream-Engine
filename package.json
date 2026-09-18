@@ -1,6 +1,6 @@
 {
   "name": "dream-narrative-engine-desktop",
-  "version": "0.2.5",
+  "version": "0.2.7",
   "private": true,
   "scripts": {
     "tauri": "tauri",

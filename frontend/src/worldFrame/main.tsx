@@ -8,7 +8,7 @@ import "./worldFrame.css";
 const rootElement = document.getElementById("world-frame-root");
 
 if (!rootElement) {
-  throw new Error("World frame root element was not found.");
+  throw new Error("未找到世界界面根节点。");
 }
 
 createRoot(rootElement).render(

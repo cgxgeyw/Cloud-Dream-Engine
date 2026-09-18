@@ -17,7 +17,7 @@ pub async fn list_rules(
 pub async fn get_rule(state: State<'_, AppState>, id: String) -> Result<RuleDefinition, String> {
     let db = state.db.lock().await;
     let repo = crate::db::repositories::rule_repo::RuleRepository::new(db.conn());
-    repo.get(&id)?.ok_or_else(|| "Rule not found".to_string())
+    repo.get(&id)?.ok_or_else(|| "规则不存在".to_string())
 }
 
 #[tauri::command]

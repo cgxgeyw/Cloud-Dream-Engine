@@ -62,7 +62,7 @@ impl NotificationScheduler {
     ) -> Result<ScheduledNotification, String> {
         let body = input.content.trim();
         if body.is_empty() {
-            return Err("Notification content is required".to_string());
+            return Err("通知内容不能为空".to_string());
         }
         ensure_notification_permission(app)?;
 
@@ -112,7 +112,7 @@ impl NotificationScheduler {
             "delete" => Self::execute_delete(conn, app, &context, arguments),
             "list" => Self::execute_list(conn, &context, arguments),
             "get" => Self::execute_get(conn, &context, arguments),
-            _ => Err(format!("Unsupported notification action: {action}")),
+            _ => Err(format!("不支持的通知操作：{action}")),
         };
         match result {
             Ok(value) => serde_json::json!({
@@ -144,11 +144,11 @@ impl NotificationScheduler {
     ) -> Result<serde_json::Value, String> {
         let requested_time = arg_text(arguments, "time")
             .or_else(|| arg_text(arguments, "scheduled_at"))
-            .ok_or_else(|| "Notification time is required".to_string())?;
+            .ok_or_else(|| "通知时间不能为空".to_string())?;
         let body = arg_text(arguments, "content")
             .or_else(|| arg_text(arguments, "body"))
             .or_else(|| arg_text(arguments, "message"))
-            .ok_or_else(|| "Notification content is required".to_string())?;
+            .ok_or_else(|| "通知内容不能为空".to_string())?;
         let title = arg_text(arguments, "title")
             .or_else(|| context.speaker_name.map(str::to_string))
             .unwrap_or_else(|| APP_DISPLAY_NAME.to_string());
@@ -217,7 +217,7 @@ impl NotificationScheduler {
         Self::cancel_delivery(app, &existing)?;
         let updated = repo
             .replace_scheduled(&existing.id, &title, &body, &scheduled_at, &metadata)?
-            .ok_or_else(|| "Notification was not updated".to_string())?;
+            .ok_or_else(|| "通知更新失败".to_string())?;
         Self::schedule_delivery(conn, app.clone(), data_dir.to_path_buf(), updated.clone())?;
         sync_session_schedule_attribute(conn, context.session_id)?;
         Ok(notification_result(&updated))
@@ -241,7 +241,7 @@ impl NotificationScheduler {
         let reason = arg_text(arguments, "reason").unwrap_or_else(|| "tool_delete".to_string());
         let canceled = repo
             .cancel(&existing.id, &reason)?
-            .ok_or_else(|| "Notification was not canceled".to_string())?;
+            .ok_or_else(|| "通知取消失败".to_string())?;
         sync_session_schedule_attribute(conn, context.session_id)?;
         Ok(notification_result(&canceled))
     }
@@ -391,7 +391,7 @@ impl NotificationScheduler {
             .status()
             .map_err(|error| format!("failed to invoke Windows Task Scheduler: {error}"))?;
         if !status.success() {
-            return Err(format!("Windows Task Scheduler exited with status {status}"));
+            return Err(format!("Windows 任务计划程序退出码：{status}"));
         }
         ScheduledNotificationRepository::new(conn)
             .mark_native_scheduled(&notification.id, None)?;
@@ -552,7 +552,7 @@ fn cancel_windows_task(notification_id: &str) -> Result<(), String> {
     if status.success() || status.code() == Some(1) {
         Ok(())
     } else {
-        Err(format!("Windows Task Scheduler exited with status {status}"))
+        Err(format!("Windows 任务计划程序退出码：{status}"))
     }
 }
 
@@ -1117,7 +1117,7 @@ fn ensure_notification_permission(app: &AppHandle) -> Result<(), String> {
         .map_err(|error| error.to_string())?
     {
         PermissionState::Granted => Ok(()),
-        PermissionState::Denied => Err("Notification permission denied".to_string()),
+        PermissionState::Denied => Err("通知权限被拒绝".to_string()),
         PermissionState::Prompt | PermissionState::PromptWithRationale => Err(
             "Notification permission is not granted yet. Please allow notifications and try again."
                 .to_string(),
@@ -1134,7 +1134,7 @@ fn ensure_notification_permission(app: &AppHandle) -> Result<(), String> {
     let state = match state {
         PermissionState::Granted => return Ok(()),
         PermissionState::Denied => {
-            return Err("Notification permission denied".to_string());
+            return Err("通知权限被拒绝".to_string());
         }
         PermissionState::Prompt | PermissionState::PromptWithRationale => notification
             .request_permission()
@@ -1143,7 +1143,7 @@ fn ensure_notification_permission(app: &AppHandle) -> Result<(), String> {
     if state == PermissionState::Granted {
         Ok(())
     } else {
-        Err(format!("Notification permission not granted: {state}"))
+        Err(format!("通知权限未授予：{state}"))
     }
 }
 
@@ -1213,11 +1213,11 @@ pub fn pending_notification_from_tool_call(
     }
     let requested_time = arg_text(arguments, "time")
         .or_else(|| arg_text(arguments, "scheduled_at"))
-        .ok_or_else(|| "Notification time is required".to_string())?;
+        .ok_or_else(|| "通知时间不能为空".to_string())?;
     let body = arg_text(arguments, "content")
         .or_else(|| arg_text(arguments, "body"))
         .or_else(|| arg_text(arguments, "message"))
-        .ok_or_else(|| "Notification content is required".to_string())?;
+        .ok_or_else(|| "通知内容不能为空".to_string())?;
     let scheduled_at = parse_notification_time(&requested_time)?.to_rfc3339();
     let title = arg_text(arguments, "title").unwrap_or_else(|| APP_DISPLAY_NAME.to_string());
     Ok(PendingScheduledNotification {
@@ -1251,9 +1251,9 @@ fn resolve_notification(
     if let Some(id) = arg_text(arguments, "notification_id").or_else(|| arg_text(arguments, "id")) {
         let notification = repo
             .get(&id)?
-            .ok_or_else(|| format!("Notification not found: {id}"))?;
+            .ok_or_else(|| format!("通知不存在：{id}"))?;
         if notification.session_id != session_id {
-            return Err("Notification belongs to another session".to_string());
+            return Err("通知属于其他会话".to_string());
         }
         return Ok(notification);
     }
@@ -1264,7 +1264,7 @@ fn resolve_notification(
     {
         return repo
             .get_by_session_source(session_id, &source)?
-            .ok_or_else(|| format!("Notification not found for source: {source}"));
+            .ok_or_else(|| format!("找不到对应来源的通知：{source}"));
     }
 
     Err("notification_id or source is required".to_string())
@@ -1372,7 +1372,7 @@ fn notification_result(notification: &ScheduledNotification) -> serde_json::Valu
 pub fn parse_notification_time(input: &str) -> Result<DateTime<Utc>, String> {
     let raw = input.trim();
     if raw.is_empty() {
-        return Err("Notification time is required".to_string());
+        return Err("通知时间不能为空".to_string());
     }
     if let Ok(value) = DateTime::parse_from_rfc3339(raw) {
         return Ok(value.with_timezone(&Utc));
@@ -1427,7 +1427,7 @@ fn local_naive_to_utc(value: NaiveDateTime) -> Result<DateTime<Utc>, String> {
         .single()
         .or_else(|| Local.from_local_datetime(&value).earliest())
         .map(|value| value.with_timezone(&Utc))
-        .ok_or_else(|| "Invalid local notification time".to_string())
+        .ok_or_else(|| "本地通知时间无效".to_string())
 }
 
 fn parse_stored_notification_time(scheduled_at: &str) -> Result<DateTime<Utc>, String> {

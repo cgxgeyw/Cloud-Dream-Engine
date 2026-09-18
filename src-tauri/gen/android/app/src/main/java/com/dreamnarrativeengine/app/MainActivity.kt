@@ -4,6 +4,8 @@ import android.os.Bundle
 import android.view.MotionEvent
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -37,5 +39,24 @@ class MainActivity : TauriActivity() {
       }
       false
     }
+
+    // 安卓 WebView 里 env(safe-area-inset-top) 恒为 0，JS 只能保守猜测 88px，全面屏上留白过高。
+    // 这里把真实的 statusBars/displayCutout inset 换算成 CSS px 注入 __nativeSafeAreaInsets，
+    // 并派发 native-safe-area 事件让前端重新测量；返回 insets 原样，不改变 edge-to-edge 行为。
+    // 首次 inset 分发可能早于页面资源加载完，延迟补发两次保证 JS 端能拿到初值。
+    ViewCompat.setOnApplyWindowInsetsListener(webView) { view, insets ->
+      val bars = insets.getInsets(
+        WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.displayCutout()
+      )
+      val topCss = bars.top.coerceAtLeast(0) / view.resources.displayMetrics.density
+      webView.evaluateJavascript(
+        "window.__nativeSafeAreaInsets={top:$topCss};window.dispatchEvent(new Event('native-safe-area'))",
+        null,
+      )
+      insets
+    }
+    val reinject = Runnable { ViewCompat.requestApplyInsets(webView) }
+    webView.postDelayed(reinject, 1500)
+    webView.postDelayed(reinject, 4000)
   }
 }

@@ -72,7 +72,7 @@ export function useSettings() {
       settings: null,
       loading: false,
       refresh: async () => {},
-      save: async () => { throw new Error("SettingsProvider not available"); },
+      save: async () => { throw new Error("SettingsProvider 不可用"); },
       backgroundUrl: "",
       backgroundIsVideo: false,
     } as SettingsContextValue;

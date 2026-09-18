@@ -64,7 +64,7 @@ impl CompilationState {
             None => {
                 self.error(
                     "unknown_action",
-                    format!("Unknown action id `{action_id}`."),
+                    format!("未知的动作 ID：{action_id}。"),
                     "action",
                 );
             }
@@ -131,7 +131,7 @@ impl GameUiService {
             diagnostics.push(WorldUiDiagnostic {
                 severity: "error".to_string(),
                 code: "unsupported_ui_runtime_version".to_string(),
-                message: format!("Unsupported UI runtime version: {runtime_version}."),
+                message: format!("不支持的 UI 运行时版本：{runtime_version}。"),
                 path: Some("bundle.runtime_version".to_string()),
             });
         }
@@ -163,7 +163,7 @@ impl GameUiService {
                 diagnostics.push(WorldUiDiagnostic {
                     severity: "error".to_string(),
                     code: "unsupported_declared_capability".to_string(),
-                    message: format!("Unsupported declared capability: {capability}."),
+                    message: format!("不支持的能力声明：{capability}。"),
                     path: Some("bundle.capabilities".to_string()),
                 });
             }
@@ -239,7 +239,7 @@ impl GameUiService {
             diagnostics.push(WorldUiDiagnostic {
                 severity: "warning".to_string(),
                 code: "mixed_schema_versions".to_string(),
-                message: "Desktop and mobile UI documents currently use different schema versions."
+                message: "桌面端与移动端 UI 文档目前使用了不同的 schema 版本。"
                     .to_string(),
                 path: Some("bundle".to_string()),
             });
@@ -334,7 +334,7 @@ impl GameUiService {
                     severity: "error".to_string(),
                     code: "unsupported_schema_version".to_string(),
                     message: format!(
-                        "Target `{}` does not support schema_version {}.",
+                        "目标 `{}` 不支持 schema 版本 {}。",
                         target.name, schema_version
                     ),
                     path: Some(format!("{platform}.schema_version")),
@@ -354,7 +354,7 @@ impl GameUiService {
                     severity: "error".to_string(),
                     code: "unsupported_component".to_string(),
                     message: format!(
-                        "Target `{}` does not support component `{component}`.",
+                        "目标 `{}` 不支持组件 `{component}`。",
                         target.name
                     ),
                     path: Some(format!("{platform}.component:{component}")),
@@ -374,7 +374,7 @@ impl GameUiService {
                     severity: "error".to_string(),
                     code: "unsupported_action".to_string(),
                     message: format!(
-                        "Target `{}` does not support action `{action}`.",
+                        "目标 `{}` 不支持动作 `{action}`。",
                         target.name
                     ),
                     path: Some(format!("{platform}.action:{action}")),
@@ -394,7 +394,7 @@ impl GameUiService {
                     severity: "error".to_string(),
                     code: "unsupported_capability".to_string(),
                     message: format!(
-                        "Target `{}` does not expose capability `{capability}`.",
+                        "目标 `{}` 未声明能力 `{capability}`。",
                         target.name
                     ),
                     path: Some(format!("{platform}.capability:{capability}")),
@@ -458,7 +458,7 @@ impl GameUiService {
                 diagnostics: vec![WorldUiDiagnostic {
                     severity: "error".to_string(),
                     code: "invalid_document_root".to_string(),
-                    message: "UI document root must be an object.".to_string(),
+                    message: "UI 文档根节点必须是对象。".to_string(),
                     path: Some("document".to_string()),
                 }],
                 components: Vec::new(),
@@ -496,7 +496,7 @@ impl GameUiService {
             {
                 state.error(
                     "unsupported_schema_version",
-                    format!("Unsupported schema_version {version}."),
+                    format!("不支持的 schema_version：{version}。"),
                     "schema_version",
                 );
             }
@@ -562,7 +562,7 @@ impl GameUiService {
 
     fn validate_v2_node(&self, node: &Value, path: &str, state: &mut CompilationState) {
         let Some(object) = node.as_object() else {
-            state.error("invalid_node", "Layout node must be an object.", path);
+            state.error("invalid_node", "布局节点必须是对象。", path);
             return;
         };
 
@@ -711,7 +711,7 @@ impl GameUiService {
             }
             Some(other) => state.error(
                 "unsupported_v2_node",
-                format!("Node type `{other}` is not valid for schema_version 2."),
+                format!("节点类型 `{other}` 在 schema_version 2 中无效。"),
                 path,
             ),
             None => {}
@@ -742,7 +742,7 @@ impl GameUiService {
                     state.error(
                         "misplaced_component_prop",
                         format!(
-                            "Component prop `{prop_key}` must be nested inside the `props` object."
+                            "组件属性 `{prop_key}` 必须放在 `props` 对象内。"
                         ),
                         format!("{path}.{prop_key}"),
                     );
@@ -764,7 +764,7 @@ impl GameUiService {
                         state.error(
                             "unknown_component_prop",
                             format!(
-                                "Component `{component_id}` does not support prop `{prop_key}`."
+                                "组件 `{component_id}` 不支持属性 `{prop_key}`。"
                             ),
                             format!("{path}.props.{prop_key}"),
                         );
@@ -798,7 +798,7 @@ impl GameUiService {
                         state.error(
                             "unknown_component_slot",
                             format!(
-                                "Component `{component_id}` does not expose slot `{slot_name}`."
+                                "组件 `{component_id}` 没有插槽 `{slot_name}`。"
                             ),
                             format!("{path}.slots.{slot_name}"),
                         );
@@ -823,7 +823,7 @@ impl GameUiService {
         } else {
             state.error(
                 "unknown_component",
-                format!("Unknown component `{component_id}`."),
+                format!("未知组件：{component_id}。"),
                 format!("{path}.component"),
             );
         }
@@ -854,7 +854,7 @@ fn build_snapshot(
 fn parse_document_source(source: &str) -> Result<Value, String> {
     let trimmed = source.trim();
     if trimmed.is_empty() {
-        return Err("UI document source is empty.".to_string());
+        return Err("UI 文档内容为空。".to_string());
     }
     json5::from_str::<Value>(trimmed).map_err(|error| error.to_string())
 }
@@ -1000,7 +1000,7 @@ fn validate_grid_fields(object: &Map<String, Value>, path: &str, state: &mut Com
             let Some(columns) = row.as_array() else {
                 state.error(
                     "invalid_areas_row",
-                    "Each areas row must be an array of strings.",
+                    "areas 的每一行都必须是字符串数组。",
                     format!("{path}.areas[{row_index}]"),
                 );
                 continue;
@@ -1010,7 +1010,7 @@ fn validate_grid_fields(object: &Map<String, Value>, path: &str, state: &mut Com
                 if expected != columns.len() {
                     state.error(
                         "inconsistent_grid_areas",
-                        "Every areas row must have the same number of columns.",
+                        "areas 的每一行列数必须一致。",
                         format!("{path}.areas[{row_index}]"),
                     );
                 }
@@ -1026,7 +1026,7 @@ fn validate_grid_fields(object: &Map<String, Value>, path: &str, state: &mut Com
                 {
                     state.error(
                         "invalid_grid_area_name",
-                        "Grid area names must be non-empty strings.",
+                        "网格区域名不能为空字符串。",
                         format!("{path}.areas[{row_index}][{column_index}]"),
                     );
                 }
@@ -1085,7 +1085,7 @@ fn validate_string_array(value: Option<&Value>, path: &str, state: &mut Compilat
     let Some(items) = value.as_array() else {
         state.error(
             "invalid_string_array",
-            "Value must be an array of strings.",
+            "取值必须是字符串数组。",
             path,
         );
         return;
@@ -1098,7 +1098,7 @@ fn validate_string_array(value: Option<&Value>, path: &str, state: &mut Compilat
         {
             state.error(
                 "invalid_string_array_item",
-                "Array items must be non-empty strings.",
+                "数组项不能为空字符串。",
                 format!("{path}[{index}]"),
             );
         }
@@ -1118,7 +1118,7 @@ fn validate_style_object(value: &Value, path: &str, state: &mut CompilationState
         ) {
             state.error(
                 "invalid_style_value",
-                format!("Style value `{key}` must be a primitive or null."),
+                format!("样式值 `{key}` 必须是基础类型或 null。"),
                 format!("{path}.{key}"),
             );
         }
@@ -1161,7 +1161,7 @@ fn validate_mobile_document_rules(
     {
         state.warn(
             "mobile_missing_side_panel_tabs",
-            "Mobile UI documents should provide side_panel_tabs for status and map access instead of inline chat content.",
+            "移动端 UI 文档应提供 side_panel_tabs 承载状态与地图，而不是把内容内联进聊天列。",
             "layout.root",
         );
     }
@@ -1327,6 +1327,9 @@ fn validate_action_reference(value: &Value, path: &str, state: &mut CompilationS
     for key in [
         "content",
         "content_template",
+        "set_state",
+        "key",
+        "value",
         "mode",
         "result_state",
         "error_state",
@@ -1413,7 +1416,7 @@ fn validate_binding(binding: &str, path: &str, state: &mut CompilationState) {
     if !binding_pattern.is_match(binding.trim()) {
         state.error(
             "invalid_binding",
-            "Binding values must use a simple dotted path such as `$session.location`.",
+            "绑定值必须使用简单点路径，例如 $session.location。",
             path,
         );
     }

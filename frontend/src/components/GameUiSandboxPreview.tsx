@@ -164,7 +164,7 @@ async function handleFrameAction(
 ) {
   try {
     if (!handler) {
-      throw new Error("This frame does not expose runtime actions.");
+      throw new Error("该预览不包含运行时操作。");
     }
     const result = await handler(action);
     connection.port.postMessage({

@@ -46,7 +46,7 @@ impl WorldService {
         let repo = WorldRepository::new(conn);
         repo.get(id)?
             .map(Self::enrich_world)
-            .ok_or_else(|| "World not found".to_string())
+            .ok_or_else(|| "世界不存在".to_string())
     }
 
     pub fn create_world(
@@ -120,7 +120,7 @@ impl WorldService {
 
         let source_world = world_repo
             .get(id)?
-            .ok_or_else(|| "World not found".to_string())?;
+            .ok_or_else(|| "世界不存在".to_string())?;
         let source_characters = char_repo.list_by_world(id)?;
 
         let duplicated_world = world_repo.create(&WorldCreateRequest {
@@ -238,7 +238,7 @@ impl WorldService {
         let world = Self::enrich_world(
             world_repo
                 .get(world_id)?
-                .ok_or_else(|| "World not found".to_string())?,
+                .ok_or_else(|| "世界不存在".to_string())?,
         );
         let characters = char_repo.list_by_world(world_id)?;
 
@@ -296,9 +296,9 @@ impl WorldService {
                 .collect(),
             opening_messages,
             notes: vec![
-                "Opening preview does not call the LLM when the session is first created; opening messages come directly from world.opening_messages.".to_string(),
-                "This preview shows the first director and character prompts after the player sends the first input.".to_string(),
-                "The preview includes runtime prompt assembly, recent dialogue, and visual context, but does not execute tools or write back state.".to_string(),
+                "创建会话时的开场预览不会调用 LLM；开场消息直接来自 world.opening_messages。".to_string(),
+                "此预览展示玩家首次输入后生成的第一轮导演与角色提示词。".to_string(),
+                "预览包含运行时提示词组装、近期对话与视觉上下文，但不会执行工具或写回状态。".to_string(),
             ],
         })
     }
@@ -315,7 +315,7 @@ impl WorldService {
         let world = Self::enrich_world(
             world_repo
                 .get(world_id)?
-                .ok_or_else(|| "World not found".to_string())?,
+                .ok_or_else(|| "世界不存在".to_string())?,
         );
         let characters = char_repo.list_by_world(world_id)?;
         // v8：世界白名单引用到的 MCP 工具一并打包，导入方开箱即用。
@@ -448,19 +448,19 @@ impl WorldService {
                         .and_then(|value| value.as_str())
                         .map(|value| value.trim().to_string())
                         .filter(|value| !value.is_empty())
-                        .unwrap_or_else(|| "Default Turn".to_string()),
+                        .unwrap_or_else(|| "默认回合".to_string()),
                     "tool_loop_turn": labels
                         .get("tool_loop_turn")
                         .and_then(|value| value.as_str())
                         .map(|value| value.trim().to_string())
                         .filter(|value| !value.is_empty())
-                        .unwrap_or_else(|| "Tool Loop Turn".to_string()),
+                        .unwrap_or_else(|| "工具循环回合".to_string()),
                 })
             })
             .unwrap_or_else(|| {
                 serde_json::json!({
-                    "default_turn": "Default Turn",
-                    "tool_loop_turn": "Tool Loop Turn",
+                    "default_turn": "默认回合",
+                    "tool_loop_turn": "工具循环回合",
                 })
             });
         let world_director_prompt = object
@@ -792,11 +792,9 @@ impl WorldService {
                 if same_definition {
                     continue;
                 }
-                return Err(format!(
-                    "Attribute schema key conflicts with an existing definition for scope {}: {}. World package keys must be globally namespaced.",
-                    schema.scope.trim(),
-                    schema.key.trim(),
-                ));
+                // 世界包更新同名属性时以包内定义为准（标签/说明/策略），避免二次导入被旧 schema 挡住。
+                attribute_repo.update_schema(&existing.id, schema)?;
+                continue;
             }
             attribute_repo.create_schema(schema)?;
         }
@@ -948,7 +946,7 @@ impl WorldService {
             .unwrap_or_default();
         let player_character_name = player_character
             .map(|character| character.name.clone())
-            .unwrap_or_else(|| "Player".to_string());
+            .unwrap_or_else(|| "玩家".to_string());
         let visible_characters = planned_characters
             .iter()
             .map(|character| character.name.clone())
@@ -1183,13 +1181,13 @@ impl WorldService {
             return label;
         }
 
-        "Opening".to_string()
+        "开场".to_string()
     }
 
     fn normalize_opening_scene(world: &WorldDefinition) -> String {
         let scene = world.opening_scene.trim();
         if scene.is_empty() {
-            "Opening".to_string()
+            "开场场景".to_string()
         } else {
             scene.to_string()
         }
@@ -1286,7 +1284,7 @@ mod tests {
             "
             CREATE TRIGGER fail_imported_character
             BEFORE INSERT ON characters
-            WHEN NEW.name = 'Imported Failure'
+            WHEN NEW.name = '导入失败样例'
             BEGIN
                 SELECT RAISE(ABORT, 'forced import failure');
             END;
@@ -1302,10 +1300,10 @@ mod tests {
             .expect("character count");
         let imported = ImportedWorldPackage {
             world: WorldPackageWorldData {
-                name: "Transactional Import".to_string(),
+                name: "事务式导入".to_string(),
                 genre: String::new(),
                 background_prompt: String::new(),
-                opening_scene: "Opening".to_string(),
+                opening_scene: "开场场景".to_string(),
                 summary: String::new(),
                 time_system: String::new(),
                 map_nodes: serde_json::json!({ "version": 1, "nodes": [] }),
@@ -1322,8 +1320,8 @@ mod tests {
                 ui_logic_config: serde_json::json!({}),
                 opening_messages: Vec::new(),
                 opening_character_names: vec![
-                    "Imported Good".to_string(),
-                    "Imported Failure".to_string(),
+                    "导入成功样例".to_string(),
+                    "导入失败样例".to_string(),
                 ],
                 player_character_name: None,
                 opening_character_source_ids: vec!["good".to_string(), "failure".to_string()],
@@ -1336,8 +1334,8 @@ mod tests {
             ui_runtime_version: 2,
             ui_capabilities: Vec::new(),
             characters: vec![
-                imported_character("good", "Imported Good"),
-                imported_character("failure", "Imported Failure"),
+                imported_character("good", "导入成功样例"),
+                imported_character("failure", "导入失败样例"),
             ],
             asset_map: HashMap::new(),
             mcp_tools: Vec::new(),
@@ -1363,7 +1361,7 @@ mod tests {
         );
         assert_eq!(
             conn.query_row(
-                "SELECT COUNT(*) FROM worlds WHERE name = 'Transactional Import'",
+                "SELECT COUNT(*) FROM worlds WHERE name = '事务式导入'",
                 [],
                 |row| row.get::<_, i64>(0),
             )

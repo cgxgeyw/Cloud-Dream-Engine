@@ -16,10 +16,10 @@ pub async fn upload_file(
     data: Vec<u8>,
 ) -> Result<serde_json::Value, String> {
     if data.is_empty() {
-        return Err("Upload file is empty".to_string());
+        return Err("上传文件为空".to_string());
     }
     if data.len() > MAX_UPLOAD_BYTES {
-        return Err("File too large (max 50MB)".to_string());
+        return Err("文件过大（最大 50MB）".to_string());
     }
     save_asset_file(&state.data_dir, &filename, &data)
 }
@@ -32,7 +32,7 @@ pub async fn get_asset_base_dir(state: State<'_, AppState>) -> Result<String, St
 #[tauri::command]
 pub async fn delete_asset(state: State<'_, AppState>, filename: String) -> Result<(), String> {
     let relative =
-        normalize_asset_relative_path(&filename).ok_or_else(|| "Invalid asset path".to_string())?;
+        normalize_asset_relative_path(&filename).ok_or_else(|| "资源路径无效".to_string())?;
     let canonical_refs = canonical_asset_refs(&relative);
     let file_path = asset_root(&state.data_dir).join(&relative);
     // H4: 先清理 DB 引用,成功后再删物理文件。否则若引用清理失败(DB 锁/序列化错误),

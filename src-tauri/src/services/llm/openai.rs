@@ -537,7 +537,7 @@ pub async fn chat_completion(
                 continue;
             }
         }
-        return Err(format!("API error {}: {}", status, body));
+        return Err(format!("接口错误 {}: {}", status, body));
     }
 
     let openai_response: OpenAIResponse = response
@@ -548,7 +548,7 @@ pub async fn chat_completion(
     // 空 choices 说明服务端以 200 包装了异常（内容过滤、配额、上游错误等），
     // 不能当作“正常的空回复”静默返回，否则调用方无法区分成功与失败。
     if openai_response.choices.is_empty() {
-        return Err("API returned no choices".to_string());
+        return Err("接口未返回候选回复".to_string());
     }
 
     let content = openai_response
@@ -631,12 +631,12 @@ where
                 StructuredOutputMode::JsonObject => StructuredOutputMode::JsonSchema,
                 StructuredOutputMode::JsonSchema => StructuredOutputMode::Omit,
                 StructuredOutputMode::Omit => {
-                    return Err(format!("API error {}: {}", status, body));
+                    return Err(format!("接口错误 {}: {}", status, body));
                 }
             };
             continue;
         }
-        return Err(format!("API error {}: {}", status, body));
+        return Err(format!("接口错误 {}: {}", status, body));
     };
 
     let mut content = String::new();
@@ -660,7 +660,7 @@ where
                     && reasoning.trim().is_empty()
                     && tool_calls.is_empty()
                 {
-                    return Err(format!("Failed to read stream: {}", error));
+                    return Err(format!("读取响应流失败：{}", error));
                 }
                 break;
             }
@@ -746,7 +746,7 @@ pub async fn list_models(
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("API error {}: {}", status, body));
+        return Err(format!("接口错误 {}: {}", status, body));
     }
 
     let model_list: OpenAIModelListResponse = response

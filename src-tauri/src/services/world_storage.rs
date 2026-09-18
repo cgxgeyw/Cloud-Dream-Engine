@@ -68,13 +68,13 @@ pub fn validate_record_against_schema(data: &Value, schema: Option<&Value>) -> R
         return Ok(());
     };
     let Some(data) = data.as_object() else {
-        return Err("World record data must be a JSON object".to_string());
+        return Err("世界记录数据必须是 JSON 对象".to_string());
     };
 
     if let Some(required) = schema.get("required").and_then(Value::as_array) {
         for field in required.iter().filter_map(Value::as_str) {
             if !data.contains_key(field) {
-                return Err(format!("World record is missing required field `{field}`"));
+                return Err(format!("世界记录缺少必填字段 {field}"));
             }
         }
     }
@@ -87,7 +87,7 @@ pub fn validate_record_against_schema(data: &Value, schema: Option<&Value>) -> R
     {
         if let Some(properties) = properties {
             if let Some(field) = data.keys().find(|field| !properties.contains_key(*field)) {
-                return Err(format!("World record field `{field}` is not declared"));
+                return Err(format!("世界记录字段 {field} 未声明"));
             }
         }
     }
@@ -146,7 +146,7 @@ pub fn validate_logic_config(logic: &Value) -> Result<(), String> {
         .and_then(Value::as_str)
         .unwrap_or("disabled");
     if !matches!(runtime, "disabled" | "sandbox-js-v1") {
-        return Err(format!("Unsupported world logic runtime `{runtime}`"));
+        return Err(format!("不支持的世界逻辑运行时：{runtime}"));
     }
     if let Some(events) = object.get("events") {
         let events = events
@@ -155,7 +155,7 @@ pub fn validate_logic_config(logic: &Value) -> Result<(), String> {
         const KNOWN_EVENTS: [&str; 3] = ["session_start", "turn_completed", "interaction_answered"];
         for (name, handler) in events {
             if !KNOWN_EVENTS.contains(&name.as_str()) {
-                return Err(format!("Unknown world logic event `{name}`"));
+                return Err(format!("未知的世界逻辑事件：{name}"));
             }
             let handler = handler
                 .as_str()
@@ -176,7 +176,7 @@ pub fn validate_logic_config(logic: &Value) -> Result<(), String> {
             return Err("sandbox-js-v1 requires a logic source file".to_string());
         }
         if source.len() > 256 * 1024 {
-            return Err("World logic exceeds the 262144 byte limit".to_string());
+            return Err("世界逻辑脚本超过 262144 字节上限".to_string());
         }
     }
     Ok(())
@@ -191,7 +191,7 @@ fn load_world_ui_theme(conn: &Connection, world_id: &str) -> Result<Value, Strin
         )
         .optional()
         .map_err(|error| error.to_string())?
-        .ok_or_else(|| "World not found".to_string())?;
+        .ok_or_else(|| "世界不存在".to_string())?;
     serde_json::from_str(&raw).map_err(|error| format!("Invalid world UI config: {error}"))
 }
 
@@ -234,12 +234,12 @@ fn validate_field(field: &str, value: &Value, schema: &Value) -> Result<(), Stri
             _ => false,
         };
         if !matches {
-            return Err(format!("World record field `{field}` must be {expected}"));
+            return Err(format!("世界记录字段 {field} 必须为 {expected}"));
         }
     }
     if let Some(allowed) = schema.get("enum").and_then(Value::as_array) {
         if !allowed.contains(value) {
-            return Err(format!("World record field `{field}` has an unsupported value"));
+            return Err(format!("世界记录字段 {field} 的值不受支持"));
         }
     }
     if let Some(text) = value.as_str() {
@@ -250,7 +250,7 @@ fn validate_field(field: &str, value: &Value, schema: &Value) -> Result<(), Stri
             .map(|min| length < min)
             .unwrap_or(false)
         {
-            return Err(format!("World record field `{field}` is too short"));
+            return Err(format!("世界记录字段 {field} 过短"));
         }
         if schema
             .get("maxLength")
@@ -258,7 +258,7 @@ fn validate_field(field: &str, value: &Value, schema: &Value) -> Result<(), Stri
             .map(|max| length > max)
             .unwrap_or(false)
         {
-            return Err(format!("World record field `{field}` is too long"));
+            return Err(format!("世界记录字段 {field} 过长"));
         }
     }
     if let Some(number) = value.as_f64() {
@@ -268,7 +268,7 @@ fn validate_field(field: &str, value: &Value, schema: &Value) -> Result<(), Stri
             .map(|min| number < min)
             .unwrap_or(false)
         {
-            return Err(format!("World record field `{field}` is below its minimum"));
+            return Err(format!("世界记录字段 {field} 低于最小值"));
         }
         if schema
             .get("maximum")
@@ -276,7 +276,7 @@ fn validate_field(field: &str, value: &Value, schema: &Value) -> Result<(), Stri
             .map(|max| number > max)
             .unwrap_or(false)
         {
-            return Err(format!("World record field `{field}` is above its maximum"));
+            return Err(format!("世界记录字段 {field} 超过最大值"));
         }
     }
     Ok(())

@@ -35,7 +35,7 @@ impl SessionOrchestrator {
                     .and_then(|value| value.as_str())
                     .map(|value| value.trim().to_string())
                     .filter(|value| !value.is_empty())
-                    .ok_or_else(|| "Incomplete turn has no player input".to_string())?;
+                    .ok_or_else(|| "未完成回合缺少玩家输入".to_string())?;
                 return Ok(Some(PlayerActionRequest {
                     content: MessageContent::Text(content),
                     action_mode: PlayerActionMode::Resend,
@@ -45,7 +45,7 @@ impl SessionOrchestrator {
             // 未完成但缺 created 的错位回合:跳过,继续向前找。
             turn_index -= 1;
         }
-        Err("Missing created payload for incomplete turn".to_string())
+        Err("未完成回合缺少创建载荷".to_string())
     }
 
     pub fn record_structured_output_failure(
@@ -212,7 +212,7 @@ impl SessionOrchestrator {
         )
         .map_err(|e| e.to_string())?;
         if conn.changes() == 0 {
-            return Err("Retry token is missing or no longer active".to_string());
+            return Err("重试令牌缺失或已失效".to_string());
         }
         Ok(())
     }

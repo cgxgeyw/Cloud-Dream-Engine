@@ -80,7 +80,7 @@ impl<'a> RuleRepository<'a> {
             ],
         ).map_err(|e| e.to_string())?;
         self.get(&id)?
-            .ok_or_else(|| "Failed to create rule".to_string())
+            .ok_or_else(|| "创建规则失败".to_string())
     }
 
     pub fn update(&self, id: &str, request: &RuleCreateRequest) -> Result<RuleDefinition, String> {
@@ -100,7 +100,7 @@ impl<'a> RuleRepository<'a> {
                 id,
             ],
         ).map_err(|e| e.to_string())?;
-        self.get(id)?.ok_or_else(|| "Rule not found".to_string())
+        self.get(id)?.ok_or_else(|| "规则不存在".to_string())
     }
 
     pub fn delete(&self, id: &str) -> Result<(), String> {

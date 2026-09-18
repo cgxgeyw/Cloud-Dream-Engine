@@ -125,7 +125,7 @@
 | ID | 项 | 整改 |
 |---|---|---|
 | B1 | 地图 canvas `min-height:260px`、node `width:150px` | 变量化 |
-| B2 | `game-status-handle` inline 拖拽 | 尺寸/颜色仍走 class；文档说明 inline 仅 top |
+| B2 | `game-status-handle` inline 拖拽 | 尺寸/颜色仍走 class；拖动后 inline 接管 top、停靠边与圆角（`--left` 变体 + localStorage 记忆），文档已同步 |
 | B3 | `floating_actions` 按钮尺寸散落 | `--game-ui-fab-size` |
 | B4 | `game-mobile-error-retry` 写死红底 | `--game-ui-error-bg/fg` |
 | B5 | `game-session-diagnostic` 280px | 变量（低影响） |

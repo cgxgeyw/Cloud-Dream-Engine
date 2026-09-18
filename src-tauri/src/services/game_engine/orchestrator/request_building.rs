@@ -82,13 +82,13 @@ pub(crate) fn resolve_text_model(
         .cloned()
         .or_else(|| text_models.iter().find(|model| model.is_default).cloned())
         .or_else(|| text_models.first().cloned())
-        .ok_or_else(|| "No text model configured".to_string())?;
+        .ok_or_else(|| "未配置文本模型".to_string())?;
 
     if model.base_url.trim().is_empty() {
-        return Err("Selected text model base_url is empty".to_string());
+        return Err("所选文本模型的 base_url 为空".to_string());
     }
     if model.model_id.trim().is_empty() {
-        return Err("Selected text model model_id is empty".to_string());
+        return Err("所选文本模型的 model_id 为空".to_string());
     }
     Ok(model)
 }

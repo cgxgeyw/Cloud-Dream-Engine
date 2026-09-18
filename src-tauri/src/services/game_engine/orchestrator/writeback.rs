@@ -378,12 +378,12 @@ pub(crate) fn rollback_session_to_turn(
     turn_index: i32,
 ) -> Result<SessionSnapshot, String> {
     let snapshot_payload = load_turn_snapshot_payload(conn, &session.id, turn_index)?
-        .ok_or_else(|| "Missing rollback snapshot for requested turn".to_string())?;
+        .ok_or_else(|| "缺少目标回合的回滚快照".to_string())?;
     let mut restored_session = serde_json::from_value::<SessionSnapshot>(
         snapshot_payload
             .get("session_snapshot")
             .cloned()
-            .ok_or_else(|| "Missing session snapshot payload".to_string())?,
+            .ok_or_else(|| "缺少会话快照数据".to_string())?,
     )
     .map_err(|e| e.to_string())?;
     // 采样参数是玩家当前偏好，不是回合状态：重新生成不该把它退回旧快照里的值。
@@ -875,14 +875,14 @@ impl SessionOrchestrator {
     ) -> Result<SwitchPlayerCharacterContext, String> {
         let session = crate::db::repositories::session_repo::SessionRepository::new(conn)
             .get(session_id)?
-            .ok_or_else(|| "Session not found".to_string())?;
+            .ok_or_else(|| "会话不存在".to_string())?;
         let world = resolve_world_for_session(conn, &session)?;
         let characters = crate::db::repositories::character_repo::CharacterRepository::new(conn)
             .list_by_world(&world.id)?;
         let new_character = characters
             .iter()
             .find(|character| character.id == request.player_character_id)
-            .ok_or_else(|| "Character not found".to_string())?
+            .ok_or_else(|| "角色不存在".to_string())?
             .clone();
         let settings = resolve_settings(conn)?;
         let image_model = resolve_default_image_model(conn, &settings)?;
@@ -1292,7 +1292,7 @@ mod rollback_tests {
         let (conn, session) = setup();
         let error = rollback_session_to_turn(&conn, &session, 9).expect_err("should fail");
         assert!(
-            error.contains("Missing rollback snapshot"),
+            error.contains("回滚快照"),
             "unexpected: {error}"
         );
     }

@@ -761,7 +761,7 @@ impl MemoryService {
             .filter(|value| !value.is_empty())
             .unwrap_or(BUILTIN_LOCAL_EMBEDDING_MODEL_ID);
         if model_id != BUILTIN_LOCAL_EMBEDDING_MODEL_ID {
-            return Err(format!("Unsupported builtin embedding model: {}", model_id));
+            return Err(format!("不支持的内置向量模型：{}", model_id));
         }
 
         let model_dir = self.builtin_model_dir(model_id);
@@ -794,7 +794,7 @@ impl MemoryService {
         let installed = files.iter().all(|item| item.exists && item.size_bytes > 0);
         let total_size_bytes = files.iter().map(|item| item.size_bytes).sum::<u64>();
         let detail = if installed {
-            "Built-in embedding model is ready.".to_string()
+            "内置向量模型已就绪。".to_string()
         } else {
             "Built-in embedding model is not fully downloaded; falling back to non-embedding retrieval.".to_string()
         };
@@ -854,7 +854,7 @@ impl MemoryService {
             .send()
             .map_err(|e| e.to_string())?;
         if !response.status().is_success() {
-            return Err(format!("HTTP {} while downloading", response.status()));
+            return Err(format!("下载失败（HTTP {}）", response.status()));
         }
         let temp_path = target_path.with_extension("part");
         let mut file = fs::File::create(&temp_path).map_err(|e| e.to_string())?;
@@ -951,13 +951,13 @@ impl MemoryService {
 
         let status = self.builtin_model_status(model_id)?;
         if !status.installed {
-            return Err("Builtin local embedding model is not downloaded".to_string());
+            return Err("内置本地向量模型尚未下载".to_string());
         }
 
         let mut guard = self
             .local_embedding
             .lock()
-            .map_err(|_| "Local embedding lock poisoned".to_string())?;
+            .map_err(|_| "本地向量模型锁异常".to_string())?;
         if guard
             .as_ref()
             .map(|item| item.model_key.as_str() != model.id.trim())
@@ -993,7 +993,7 @@ impl MemoryService {
 
         let instance = guard
             .as_mut()
-            .ok_or_else(|| "Local embedding model not loaded".to_string())?;
+            .ok_or_else(|| "本地向量模型未加载".to_string())?;
         embed_texts_with_candle(instance, texts)
     }
 
@@ -1015,7 +1015,7 @@ impl MemoryService {
         texts: &[String],
     ) -> Result<Vec<Vec<f32>>, String> {
         if model.base_url.trim().is_empty() {
-            return Err("Embedding model base_url is empty".to_string());
+            return Err("向量模型 base_url 为空".to_string());
         }
 
         let url = format!("{}/embeddings", model.base_url.trim_end_matches('/'));
@@ -1055,13 +1055,13 @@ impl MemoryService {
         let data = payload
             .get("data")
             .and_then(|value| value.as_array())
-            .ok_or_else(|| "Embedding response missing data array".to_string())?;
+            .ok_or_else(|| "向量响应缺少 data 数组".to_string())?;
         let mut vectors = Vec::with_capacity(data.len());
         for item in data {
             let vector = item
                 .get("embedding")
                 .and_then(|value| value.as_array())
-                .ok_or_else(|| "Embedding item missing vector".to_string())?
+                .ok_or_else(|| "向量响应条目缺少向量".to_string())?
                 .iter()
                 .filter_map(|value| value.as_f64().map(|item| item as f32))
                 .collect::<Vec<_>>();
@@ -1101,7 +1101,7 @@ impl MemoryService {
         let embeddings = payload
             .get("embeddings")
             .and_then(|value| value.as_array())
-            .ok_or_else(|| "Ollama embedding response missing embeddings".to_string())?;
+            .ok_or_else(|| "Ollama 向量响应缺少 embeddings".to_string())?;
         Ok(embeddings
             .iter()
             .map(|item| {

@@ -112,7 +112,7 @@ export function WorldFrameApp() {
       connectionRef.current?.port.close();
       connectionRef.current = null;
       for (const pending of pendingActionsRef.current.values()) {
-        pending.reject(new Error("World UI frame disconnected."));
+        pending.reject(new Error("世界界面与宿主失去连接。"));
       }
       pendingActionsRef.current.clear();
     };
@@ -121,7 +121,7 @@ export function WorldFrameApp() {
   const sendAction = useCallback((action: WorldFrameAction): Promise<unknown> => {
     const connection = connectionRef.current;
     if (!connection) {
-      return Promise.reject(new Error("World UI frame is not connected."));
+      return Promise.reject(new Error("世界界面尚未连接。"));
     }
     const requestId = createRequestId();
     return new Promise<unknown>((resolve, reject) => {

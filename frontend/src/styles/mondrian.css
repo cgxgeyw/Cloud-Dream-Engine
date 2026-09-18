@@ -493,14 +493,17 @@
 :root[data-color-scheme="mondrian"] .mobile-sidebar-brand-icon-btn,
 :root[data-color-scheme="mondrian"] .mobile-theme-btn,
 :root[data-color-scheme="mondrian"] .mobile-back-btn,
-:root[data-color-scheme="mondrian"] .mobile-close-btn,
-:root[data-color-scheme="mondrian"] .mobile-fab {
+:root[data-color-scheme="mondrian"] .mobile-close-btn {
   border: var(--mondrian-line);
   border-radius: 12px;
   box-shadow: var(--mondrian-offset-sm);
 }
 
 :root[data-color-scheme="mondrian"] .mobile-fab {
+  border: var(--mondrian-line);
+  border-left: 0;
+  border-radius: 0 8px 8px 0;
+  box-shadow: var(--mondrian-offset-sm);
   background:
     var(--mondrian-dot),
     var(--mondrian-red);
@@ -513,8 +516,8 @@
     var(--mondrian-dot),
     var(--mondrian-blue);
   background-size: 7px 7px, auto;
-  transform: translate(-1px, -2px);
-  box-shadow: var(--mondrian-offset);
+  transform: none;
+  box-shadow: 2px 2px 0 var(--mondrian-ink);
 }
 
 @media (max-width: 767px) {

@@ -9,6 +9,7 @@ import {
 } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { showToast } from "../components/Toast";
+import { compressImageForChat, fileToDataUrl } from "./imageCompress";
 import {
   assetUrl,
   branchSave,
@@ -1030,12 +1031,8 @@ export function useGameSession(
           const parts: ContentPart[] = [];
           // 添加图片部分
           for (const file of images) {
-            const base64 = await new Promise<string>((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onload = () => resolve(reader.result as string);
-              reader.onerror = reject;
-              reader.readAsDataURL(file);
-            });
+            const packed = await compressImageForChat(file);
+            const base64 = await fileToDataUrl(packed);
             parts.push({
               type: "image_url",
               image_url: { url: base64 }

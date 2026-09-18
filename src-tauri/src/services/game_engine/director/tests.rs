@@ -209,7 +209,7 @@
             .build_tool_followup_request(&request, &parsed, &tool_enriched, false, None)
             .expect_err("response body tool calls should be rejected");
 
-        assert!(error.contains("native tool_calls"));
+        assert!(error.contains("tool_calls"));
     }
 
     #[test]

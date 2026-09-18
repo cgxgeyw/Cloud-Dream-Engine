@@ -132,11 +132,11 @@ impl<'a> WorldRepository<'a> {
         .map_err(|e| e.to_string())?;
 
         self.get(&id)?
-            .ok_or_else(|| "Failed to create world".to_string())
+            .ok_or_else(|| "创建世界失败".to_string())
     }
 
     pub fn update(&self, id: &str, req: &WorldUpdateRequest) -> Result<WorldDefinition, String> {
-        let existing = self.get(id)?.ok_or_else(|| "World not found".to_string())?;
+        let existing = self.get(id)?.ok_or_else(|| "世界不存在".to_string())?;
         let name = req
             .name
             .as_ref()
@@ -220,7 +220,7 @@ impl<'a> WorldRepository<'a> {
         .map_err(|e| e.to_string())?;
 
         self.get(id)?
-            .ok_or_else(|| "Failed to update world".to_string())
+            .ok_or_else(|| "更新世界失败".to_string())
     }
 
     pub fn delete(&self, id: &str) -> Result<(), String> {

@@ -545,7 +545,7 @@ export async function copyTextToClipboard(text: string): Promise<void> {
   }
 
   if (typeof document === "undefined") {
-    throw new Error("clipboard unavailable");
+    throw new Error("剪贴板不可用");
   }
 
   const textArea = document.createElement("textarea");
@@ -559,7 +559,7 @@ export async function copyTextToClipboard(text: string): Promise<void> {
   const copied = document.execCommand("copy");
   document.body.removeChild(textArea);
   if (!copied) {
-    throw new Error("copy failed");
+    throw new Error("复制失败");
   }
 }
 

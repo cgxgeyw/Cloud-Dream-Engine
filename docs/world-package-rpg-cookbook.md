@@ -161,7 +161,7 @@ starter_stamina。不能只在叙事中描述变化。
 
 `class_name`、`area`、尺寸和 `style` 属于节点；`placeholder`、`show_back`、`show_map_tab` 等属于组件 `props`。导入器会拒绝放错层级的已知 prop。
 
-桌面和移动端必须分别提供完整 UI。移动端至少包含 `side_panel_tabs` 和可返回的 `floating_actions`，并为状态栏、右侧抽屉把手、软键盘和底部手势区留空间。
+桌面和移动端必须分别提供完整 UI。移动端至少包含 `side_panel_tabs` 和可返回的 `floating_actions`。顶部安全区由宿主基线统一预留（不要自己再叠加 safe-area padding，见 v3 指南第 11 节）；状态抽屉把手默认在右侧且可被玩家拖到任意一侧，标题需截断避让；软键盘与底部手势区由世界包自理。
 
 ## 8. 资源必须真实存在
 

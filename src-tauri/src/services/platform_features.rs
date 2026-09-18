@@ -89,7 +89,7 @@ pub fn set_grant(
     granted: bool,
 ) -> Result<(), String> {
     if !KNOWN_FEATURES.contains(&feature) {
-        return Err(format!("Unknown platform feature `{feature}`."));
+        return Err(format!("未知平台能力：{feature}。"));
     }
     if granted {
         conn.execute(

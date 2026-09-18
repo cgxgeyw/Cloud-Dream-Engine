@@ -691,7 +691,11 @@ Props：`placeholder`、`submit_label`、`editing_submit_label`、`show_image_bu
 
 Props：`show_map_tab`、`show_attribute_tabs`、`empty_text`、`drawer_label`。
 
+移动端抽屉默认停靠**右缘**：把手贴在右屏幕边缘，抽屉从右侧滑出。把手支持自由拖动——纵向拖动调整位置，横向拖动松手后吸附到左/右较近的一侧，抽屉随之换边；位置记入本地存储，重启后保持。玩家拖动过后，把手的停靠边与圆角由运行时内联接管（优先于世界包 CSS）；未拖动时横向停靠仍由世界包样式决定。抽屉跟随把手换边：把手在左时容器会挂上 `game-status--mobile-drawer--left` 修饰类，宿主按该类以 `!important` 覆盖方向属性。世界包 CSS 只应调整把手与抽屉的**观感**（颜色、尺寸、圆角、阴影、字号），不要写死停靠边。
+
 移动端抽屉内顶部自带"收起"关闭按钮（`.game-status-drawer-close`），世界包 CSS 可以按需覆盖其样式；不要依赖抽屉把手来关闭抽屉，抽屉展开后会盖住把手。
+
+不需要状态抽屉的世界（例如全部数据都在自定义标签页里呈现时）可以直接隐藏整个容器：`.game-status--mobile-drawer { display: none !important; }`。真实 DOM 为 `aside.game-status--mobile-drawer > button.game-status-handle + div.game-status-drawer`，隐藏容器即可同时藏起把手和面板。
 
 支持 `content` slot，用于自定义当前标签内容。
 
@@ -776,6 +780,7 @@ Props：
 
 | Action | 参数 | 用途 |
 |---|---|---|
+| `set_state` | `value?` | 纯前端状态写入：把 `value` 写入 `result_state` 指定的 state 字段；不创建 Worker、不走 IPC，适合本地开关与页签切换 |
 | `submit_message` | `mode?`、`content?`、`turn_index?` | 发送、编辑或重发输入 |
 | `edit_turn_start` | `content`、`turn_index` | 开始编辑玩家回合 |
 | `edit_turn_cancel` | 无 | 取消编辑 |
@@ -804,6 +809,8 @@ Props：
 | `storage.kv.set` | `namespace`、`key`、`value`、`scope?` | 写入一个 KV 值 |
 | `storage.kv.delete` | `namespace`、`key`、`scope?` | 删除一个 KV 值 |
 | `logic.run` | `handler`、`input` | 在受限 Worker 中执行已注册逻辑 |
+
+`logic.run` 有一条内置快速通道：`handler` 为 `ui.setTab` 时由前端直接完成页签切换（返回 `input.tab`，当前仅接受 `chat` / `growth` / `profile`，其他值回落 `chat`），**不创建 Worker**。Android WebView 的 sandbox iframe 内 Worker 创建偶发失败，世界自建底部页签时建议用 `ui.setTab` 或 `set_state` 承担纯状态切换，把真正的计算留给 `logic.js` 的自定义 handler。需要任意键值的状态写入时用 `set_state`，不受这三个键限制。
 
 动作参数支持 `$binding` 和 `{{ }}` 模板：
 
@@ -1247,27 +1254,32 @@ div.game-ui-component[data-component="message_list"]  ← class_name
 
 ### Safe area 与键盘
 
-父页面向移动 iframe 提供：
+**移动端顶层避让已由宿主完成，世界包不要重复做一遍。** 宿主基线会注入：
 
 ```css
---game-visual-viewport-height
---world-safe-area-top
---world-safe-area-right
---world-safe-area-bottom
---world-safe-area-left
-```
-
-移动端建议：
-
-```css
+/* 宿主生成，世界包无需手写 */
 .game-root--mobile-session {
-  height: var(--game-visual-viewport-height, 100dvh);
-  padding-top: max(var(--world-safe-area-top, 0px), env(safe-area-inset-top, 0px));
-  padding-right: max(var(--world-safe-area-right, 0px), env(safe-area-inset-right, 0px));
-  padding-bottom: max(var(--world-safe-area-bottom, 0px), env(safe-area-inset-bottom, 0px));
-  overflow: hidden;
+  padding-top: max(var(--world-safe-area-top, 0px), env(safe-area-inset-top, 0px), 0px);
+  box-sizing: border-box;
 }
 ```
+
+安卓上 `--world-safe-area-top` 来自原生 WindowInsets（真实状态栏高度，含挖孔；由宿主注入 JS 后换算成 CSS px），取不到原生值时才回落 88px 估算；iOS 桌面预览则直接用 `env(safe-area-inset-top)`。因此：
+
+- **世界包的顶栏、页签条不要再吃一次 `--world-safe-area-top`**。否则会叠出「根节点灰条 + 顶栏白条」两大块顶部空白（这是真实踩过的坑）。顶栏的 `padding-top` 写固定内容间距（如 `10px`）即可。
+- 移动根节点的 `height` 由宿主按可视视口内联设置。布局根节点（根节点下第一个子元素）请用 `height: 100%` 相对根内容盒排版；**不要写 `var(--game-visual-viewport-height)`**——那是全视口高，会比根内容盒高出一个安全区，底部被 `overflow: hidden` 裁掉（典型症状：输入框下面的按钮行看不见）。
+- 底部手势区由世界包自理：输入区容器加 `padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px))`（安卓上 `env` 通常为 0，写上无害）。
+
+父页面向移动 iframe 提供的变量（可用于把手、浮层等绝对定位锚点）：
+
+```css
+--game-visual-viewport-height   /* 可视视口高度，软键盘弹出时会变小 */
+--world-safe-area-top / -right / -bottom / -left   /* 原生精确安全区，见上 */
+```
+
+宿主自身组件（如状态抽屉把手 `top: max(var(--world-safe-area-top, 0px), env(safe-area-inset-top, 0px), 80px)`）用它们做定位；世界包的自有浮层也可以用，但不要用它们给根节点或顶栏再加 padding。
+
+此外，宿主已全局设置 `-webkit-tap-highlight-color: transparent`（宿主页面与游戏 iframe 都覆盖），世界包无需自行处理点按高亮；移动端长按复制也已由宿主放行（消息正文基线即 `user-select: text`，contextmenu 不再被全局拦截），世界包不要在根节点上阻止 contextmenu 或把消息内容设为 `user-select: none`。
 
 ### 资源背景
 
@@ -1294,7 +1306,7 @@ div.game-ui-component[data-component="message_list"]  ← class_name
 ### 移动端
 
 - 使用独立 mobile document 和 stylesheet。
-- 顶部必须预留 safe area，标题文字应截断，不得进入右侧状态/抽屉把手区域。
+- 顶部安全区由宿主基线统一预留（见第 11 节），世界包不要给根节点或顶栏再叠加 safe-area padding。标题文字应截断，避开抽屉把手所在的一侧（把手默认在右，玩家可拖到左）。
 - 自定义属性放入状态抽屉，不要挤在聊天列顶部。
 - **必须提供地图/属性入口**：使用 `side_panel_tabs`；没有它时玩家在手机上看不到地图、背包和角色状态。
 - **必须包含 `floating_actions`（至少 `show_back`）**：玩家需要能退出世界返回应用。
@@ -1473,6 +1485,8 @@ div.game-ui-component[data-component="message_list"]  ← class_name
 | `references assets that are not declared` | world/character 引用了 ZIP 中未声明的资源 | 把真实文件加入 ZIP，并在 `manifest.assets` 中逐项声明 |
 | 导入报 `Unknown platform feature` | `platform_features` 含目录外的 action | 只用 `file.pick` / `file.read` / `file.write` / `file.share` |
 | 输入框比聊天区窄/宽 | 只改了 wrapper 的 `class_name` padding，未清 `game-input-area` / `game-textarea` 默认盒模型 | 见第 11 节「宿主组件 DOM 契约」：内层 `width:100%` + 与消息区同一水平 padding |
+| 顶部出现「灰色 + 白色」两大块空白 | 顶栏/页签条又吃了一次 `--world-safe-area-top`，与宿主基线的根节点 padding 叠加 | 顶栏 `padding-top` 用固定内容间距（如 `10px`），不要吃安全区变量（第 11 节） |
+| 底部输入区按钮行被裁掉、只看到文本框 | 布局根写了 `height: var(--game-visual-viewport-height)`，比根内容盒高出一个安全区 | 布局根改 `height: 100%`（第 11 节） |
 | 分支/复制/重发按钮样式不生效 | `theme.css`（含触控 media）特异性更高 | 用 `[data-component="message_list"]` 锚定并 `!important` |
 | 改了 stylesheet 但界面没变 | 会话未重新加载 `ui_theme_config` | 退出对局再进，或重新导入世界包 |
 | 运行时 `not_declared:` / `not_granted:` / `unsupported:` 前缀错误 | 平台能力未声明 / 玩家未允许 / 当前平台不支持 | 见第 10 节「平台能力」的可用性表 |
@@ -1621,10 +1635,11 @@ v2 数据不会被删除。当前迁移层会：
 移动 stylesheet：
 
 ```css
+/* 顶部安全区已由宿主基线垫在 .game-root--mobile-session 上，
+   布局根相对根内容盒排版即可；写视口全高会在底部裁掉按钮行。 */
 .mobile-shell {
-  height: var(--game-visual-viewport-height, 100dvh);
+  height: 100%;
   min-height: 0;
-  padding-top: max(var(--world-safe-area-top, 0px), env(safe-area-inset-top, 0px));
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
@@ -1648,7 +1663,8 @@ v2 数据不会被删除。当前迁移层会：
 - 没有 JavaScript、远程脚本或本机绝对路径。
 - 所有组件、props、actions 和 capabilities 均通过治理校验。
 - 桌面窗口缩放后没有横向溢出。
-- Android 状态栏、右侧把手和底部手势区没有遮挡内容。
+- Android 状态栏与底部手势区没有遮挡内容；顶部只有一段状态栏高度的空隙（出现「灰色 + 白色」两大块即重复预留了 safe area，见第 15 节）。
+- 抽屉把手拖到左、右两侧时，顶栏和标题都不会被遮挡（把手可被玩家拖动换边）。
 - 软键盘打开时消息区和输入区仍可用。
 - 图片、录音、复制、编辑、重发、分支和重试经过真实会话测试。
 - 两份文档都包含 `floating_actions`（返回）和 `side_panel_tabs`（移动端地图/属性入口）。

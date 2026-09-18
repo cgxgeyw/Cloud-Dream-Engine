@@ -43,7 +43,7 @@ pub async fn create_world_with_ai(
             .cloned()
             .or_else(|| models.first().cloned())
             .ok_or_else(|| {
-                "No text model configured. Please add a text model in Settings first.".to_string()
+                "尚未配置文本模型，请先在设置里添加文本模型。".to_string()
             })?;
         // 世界生成器是宿主辅助调用，只吃应用级生成参数（还没有世界可覆盖）。
         let app_generation =

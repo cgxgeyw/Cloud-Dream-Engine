@@ -75,7 +75,7 @@ impl<'a> WorldRecordRepository<'a> {
             )
             .map_err(|error| error.to_string())?;
         self.get(&world_id, &collection, &id)?
-            .ok_or_else(|| "World record was not created".to_string())
+            .ok_or_else(|| "世界记录创建失败".to_string())
     }
 
     pub fn update(
@@ -91,7 +91,7 @@ impl<'a> WorldRecordRepository<'a> {
         let data_json = validate_data(&request.data)?;
         let (_, existing_bytes) = self
             .get_with_size(&world_id, &collection, &id)?
-            .ok_or_else(|| "World record not found".to_string())?;
+            .ok_or_else(|| "世界记录不存在".to_string())?;
         let usage = self.scope_usage(&world_id, &collection)?;
         validate_update_quota(&usage, existing_bytes, data_json.len() as i64)?;
         let affected = self
@@ -105,10 +105,10 @@ impl<'a> WorldRecordRepository<'a> {
             )
             .map_err(|error| error.to_string())?;
         if affected == 0 {
-            return Err("World record not found".to_string());
+            return Err("世界记录不存在".to_string());
         }
         self.get(&world_id, &collection, &id)?
-            .ok_or_else(|| "World record not found".to_string())
+            .ok_or_else(|| "世界记录不存在".to_string())
     }
 
     pub fn delete(&self, world_id: &str, collection: &str, id: &str) -> Result<(), String> {
@@ -125,7 +125,7 @@ impl<'a> WorldRecordRepository<'a> {
             )
             .map_err(|error| error.to_string())?;
         if affected == 0 {
-            return Err("World record not found".to_string());
+            return Err("世界记录不存在".to_string());
         }
         Ok(())
     }
@@ -140,7 +140,7 @@ impl<'a> WorldRecordRepository<'a> {
             )
             .map_err(|error| error.to_string())?;
         if !exists {
-            return Err("World not found".to_string());
+            return Err("世界不存在".to_string());
         }
         Ok(())
     }
@@ -243,7 +243,7 @@ fn validate_world_id(value: &str) -> Result<String, String> {
 }
 
 fn validate_record_id(value: &str) -> Result<String, String> {
-    uuid::Uuid::parse_str(value).map_err(|_| "World record id must be a valid UUID".to_string())?;
+    uuid::Uuid::parse_str(value).map_err(|_| "世界记录 ID 必须是有效 UUID".to_string())?;
     Ok(value.to_string())
 }
 
@@ -267,7 +267,7 @@ fn validate_collection(value: &str) -> Result<String, String> {
 
 fn validate_data(value: &serde_json::Value) -> Result<String, String> {
     let Some(fields) = value.as_object() else {
-        return Err("World record data must be a JSON object".to_string());
+        return Err("世界记录数据必须是 JSON 对象".to_string());
     };
     if fields.len() > MAX_TOP_LEVEL_FIELDS {
         return Err(format!(
@@ -442,13 +442,13 @@ mod tests {
             repository
                 .update("world-b", &record.id, &request)
                 .unwrap_err(),
-            "World record not found"
+            "世界记录不存在"
         );
         assert_eq!(
             repository
                 .delete("world-b", "ledger.entries", &record.id)
                 .unwrap_err(),
-            "World record not found"
+            "世界记录不存在"
         );
     }
 
@@ -478,13 +478,13 @@ mod tests {
                     &request("ledger.notes", serde_json::json!({"note": "moved"})),
                 )
                 .unwrap_err(),
-            "World record not found"
+            "世界记录不存在"
         );
         assert_eq!(
             repository
                 .delete("world-a", "ledger.notes", &record.id)
                 .unwrap_err(),
-            "World record not found"
+            "世界记录不存在"
         );
     }
 
@@ -496,7 +496,7 @@ mod tests {
             repository
                 .list("missing-world", "ledger.entries")
                 .unwrap_err(),
-            "World not found"
+            "世界不存在"
         );
         assert!(repository
             .list(" invalid-world ", "ledger.entries")
@@ -508,13 +508,13 @@ mod tests {
             repository
                 .update("world-a", "not-a-uuid", &request)
                 .unwrap_err(),
-            "World record id must be a valid UUID"
+            "世界记录 ID 必须是有效 UUID"
         );
         assert_eq!(
             repository
                 .delete("world-a", "ledger.entries", "not-a-uuid")
                 .unwrap_err(),
-            "World record id must be a valid UUID"
+            "世界记录 ID 必须是有效 UUID"
         );
     }
 
@@ -533,7 +533,7 @@ mod tests {
                     &request("ledger.entries", serde_json::json!([1, 2, 3])),
                 )
                 .unwrap_err(),
-            "World record data must be a JSON object"
+            "世界记录数据必须是 JSON 对象"
         );
         assert!(repository
             .create(

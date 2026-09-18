@@ -62,7 +62,7 @@ impl<'a> WorldKvRepository<'a> {
         let key = validate_key(key)?;
         let encoded = serde_json::to_string(value).map_err(|error| error.to_string())?;
         if encoded.len() > MAX_VALUE_BYTES {
-            return Err(format!("KV value exceeds the {MAX_VALUE_BYTES} byte limit"));
+            return Err(format!("KV 值超过 {MAX_VALUE_BYTES} 字节上限"));
         }
         let (entries, bytes, existing_bytes): (i64, i64, i64) = self.conn.query_row(
             "SELECT COUNT(*), COALESCE(SUM(length(CAST(value_json AS BLOB))), 0),
@@ -73,10 +73,10 @@ impl<'a> WorldKvRepository<'a> {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         ).map_err(|error| error.to_string())?;
         if existing_bytes == 0 && entries >= MAX_OWNER_ENTRIES {
-            return Err(format!("KV storage reached the {MAX_OWNER_ENTRIES} entry limit"));
+            return Err(format!("KV 存储已达 {MAX_OWNER_ENTRIES} 条上限"));
         }
         if bytes.saturating_sub(existing_bytes).saturating_add(encoded.len() as i64) > MAX_OWNER_BYTES {
-            return Err(format!("KV storage would exceed the {MAX_OWNER_BYTES} byte limit"));
+            return Err(format!("KV 存储将超过 {MAX_OWNER_BYTES} 字节上限"));
         }
         self.conn.execute(
             "INSERT INTO scoped_kv (owner_type, owner_id, namespace, key, value_json, updated_at)
@@ -87,7 +87,7 @@ impl<'a> WorldKvRepository<'a> {
             params![owner_type, owner_id, namespace, key, encoded],
         ).map_err(|error| error.to_string())?;
         self.get(owner_type, owner_id, namespace, &key)?
-            .ok_or_else(|| "KV entry was not saved".to_string())
+            .ok_or_else(|| "KV 条目保存失败".to_string())
     }
 
     pub fn delete(

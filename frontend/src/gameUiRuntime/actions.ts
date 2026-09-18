@@ -3,6 +3,7 @@ import type { SubmitActionOptions, SwitchProposalView } from "../game/utils";
 import type { GameSessionStateBag } from "../game/useGameSession";
 import type { GameUiRuntimeContext } from "./runtimeContext";
 import { formatInteractionAnswer } from "./interactions";
+import { compressImagesForChat } from "../game/imageCompress";
 
 type InputComposerBridge = {
   openImagePicker: () => void;
@@ -83,7 +84,9 @@ export function createGameUiRuntimeActions(
     },
     pickImage: (files) => {
       if (files && files.length > 0) {
-        bag.setInputImages((previous) => [...previous, ...files]);
+        void compressImagesForChat(files).then((packed) => {
+          bag.setInputImages((previous) => [...previous, ...packed]);
+        });
         return;
       }
       inputComposerBridge?.openImagePicker();

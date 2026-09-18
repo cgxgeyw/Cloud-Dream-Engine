@@ -891,7 +891,7 @@ pub(crate) fn resolve_world_for_session(
         .list()?
         .into_iter()
         .find(|world| world.name == session.world_name)
-        .ok_or_else(|| "World not found".to_string())
+        .ok_or_else(|| "世界不存在".to_string())
 }
 
 #[cfg(test)]

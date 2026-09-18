@@ -70,7 +70,7 @@ impl<'a> AttributeRepository<'a> {
     ) -> Result<AttributeSchema, String> {
         let id = uuid::Uuid::new_v4().to_string();
         let scope = normalize_attribute_scope(req.scope.as_str())
-            .ok_or_else(|| format!("Unsupported attribute scope: {}", req.scope.trim()))?;
+            .ok_or_else(|| format!("不支持的属性作用域：{}", req.scope.trim()))?;
         let key = req.key.trim().to_string();
         let label = req.label.trim().to_string();
         let value_type = normalize_attribute_value_type(req.value_type.as_str()).ok_or_else(|| {
@@ -125,7 +125,7 @@ impl<'a> AttributeRepository<'a> {
         req: &AttributeSchemaCreateRequest,
     ) -> Result<AttributeSchema, String> {
         let scope = normalize_attribute_scope(req.scope.as_str())
-            .ok_or_else(|| format!("Unsupported attribute scope: {}", req.scope.trim()))?;
+            .ok_or_else(|| format!("不支持的属性作用域：{}", req.scope.trim()))?;
         let key = req.key.trim().to_string();
         let label = req.label.trim().to_string();
         let value_type = normalize_attribute_value_type(req.value_type.as_str()).ok_or_else(|| {
@@ -190,7 +190,7 @@ impl<'a> AttributeRepository<'a> {
 
         match rows.next() {
             Some(row) => Ok(row.map_err(|e| e.to_string())?),
-            None => Err("Attribute schema not found".to_string()),
+            None => Err("属性模板不存在".to_string()),
         }
     }
 
@@ -202,7 +202,7 @@ impl<'a> AttributeRepository<'a> {
             .execute("DELETE FROM attribute_schemas WHERE id = ?1", params![id])
             .map_err(|e| e.to_string())?;
         if affected == 0 {
-            return Err("Attribute schema not found".to_string());
+            return Err("属性模板不存在".to_string());
         }
         Ok(())
     }
@@ -309,7 +309,7 @@ fn validate_attribute_value(
     if valid {
         Ok(())
     } else {
-        Err(format!("Value does not match attribute value_type: {value_type}"))
+        Err(format!("取值与属性类型不匹配：{value_type}"))
     }
 }
 

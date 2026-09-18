@@ -22,7 +22,7 @@ impl SessionOrchestrator {
         player_character_id: Option<&str>,
     ) -> Result<SessionSnapshot, String> {
         let world_repo = crate::db::repositories::world_repo::WorldRepository::new(conn);
-        let world = world_repo.get(world_id)?.ok_or("World not found")?;
+        let world = world_repo.get(world_id)?.ok_or("世界不存在")?;
 
         let char_repo = crate::db::repositories::character_repo::CharacterRepository::new(conn);
         let characters = char_repo.list_by_world(world_id)?;
@@ -54,7 +54,7 @@ impl SessionOrchestrator {
                             .and_then(|cid| characters.iter().find(|c| c.id == cid).cloned())
                     })
                     .or_else(|| characters.first().cloned())
-                    .ok_or("No player character found")?;
+                    .ok_or("未找到玩家角色")?;
                 let visible_chars = characters
                     .iter()
                     .filter(|c| c.id != player_char.id)
@@ -142,7 +142,7 @@ impl SessionOrchestrator {
                     schema.scope.trim() == declared.scope.trim()
                         && schema.key.trim() == declared.key.trim()
                 }) else {
-                    return Err(format!("World attribute schema is not registered: {}", declared.key));
+                    return Err(format!("世界属性模板未注册：{}", declared.key));
                 };
                 let (owner_type, owner_id) = match schema.scope.as_str() {
                     "session" => ("session", session.id.clone()),
@@ -210,7 +210,7 @@ impl SessionOrchestrator {
         let session_repo = crate::db::repositories::session_repo::SessionRepository::new(conn);
         let mut session = session_repo
             .get(session_id)?
-            .ok_or_else(|| "Session not found".to_string())?;
+            .ok_or_else(|| "会话不存在".to_string())?;
         let world = resolve_world_for_session(conn, &session)?;
         let canonical_location = resolve_map_label(&world.map_nodes, &session.location)
             .unwrap_or_else(|| session.location.trim().to_string());
@@ -304,7 +304,7 @@ impl SessionOrchestrator {
         let repo = crate::db::repositories::session_repo::SessionRepository::new(conn);
         let mut latest = repo
             .get(session_id)?
-            .ok_or_else(|| "Session not found".to_string())?;
+            .ok_or_else(|| "会话不存在".to_string())?;
         latest.assets = resolved.assets.clone();
         repo.upsert(&latest)?;
         Ok(latest)

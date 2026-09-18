@@ -111,7 +111,6 @@ export function HomePage() {
           <span className="home-mobile-btn-text">{t("home.mobileContinue")}</span>
         </button>
       </div>
-      <div className="home-mobile-hint">{t("home.mobileNavHint")}</div>
       <div style={{ marginTop: 32 }}>
         <p style={{ fontSize: 12, color: "var(--color-muted)", margin: 0 }}>{t("home.freeNote")}</p>
       </div>

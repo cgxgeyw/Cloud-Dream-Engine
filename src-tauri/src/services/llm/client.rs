@@ -160,7 +160,7 @@ impl LlmClient {
             "anthropic" => {
                 anthropic::chat_completion(&self.http_client, base_url, api_key, request).await
             }
-            _ => Err(format!("Unsupported provider: {}", provider)),
+            _ => Err(format!("不支持的模型供应商：{}", provider)),
         }
     }
 
@@ -200,7 +200,7 @@ impl LlmClient {
                 )
                 .await
             }
-            _ => Err(format!("Unsupported provider: {}", provider)),
+            _ => Err(format!("不支持的模型供应商：{}", provider)),
         }
     }
 

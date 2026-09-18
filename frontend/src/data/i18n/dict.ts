@@ -208,7 +208,7 @@ const zh: Dict = {
   "home.brand": "云朵梦境",
   "home.mobileNewGame": "新的游戏",
   "home.mobileContinue": "继续游戏",
-  "home.mobileNavHint": "点击左上角菜单展开导航",
+
   "newGame.title": "新游戏",
   "newGame.subtitle": "选择一个世界，进入开局设定。",
   "newGame.home": "首页",
@@ -474,7 +474,7 @@ const en: Dict = {
   "home.brand": "Cloud Dream Engine",
   "home.mobileNewGame": "New Game",
   "home.mobileContinue": "Continue",
-  "home.mobileNavHint": "Tap the top-left menu to open navigation.",
+
   "newGame.title": "New Game",
   "newGame.subtitle": "Pick a world and set up your opening.",
   "newGame.home": "Home",

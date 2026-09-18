@@ -278,6 +278,8 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
   const [scrollState, setScrollState] = useState({ atTop: true, atBottom: true });
   const initializedScrollSessionRef = useRef<string | null>(null);
   const shouldFollowRef = useRef(true);
+  // 手指/鼠标按住拖动列表时暂停自动跟随，避免新消息把视口拽回底部。
+  const isPointerInteractingRef = useRef(false);
 
   useEffect(() => {
     actions.setAutoScrollEnabled(autoScroll);
@@ -301,12 +303,25 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
     if (!container) {
       return undefined;
     }
+    const markInteracting = () => {
+      isPointerInteractingRef.current = true;
+    };
+    const clearInteracting = () => {
+      isPointerInteractingRef.current = false;
+      updateScrollState();
+    };
     const handleScroll = () => updateScrollState();
     container.addEventListener("scroll", handleScroll, { passive: true });
+    container.addEventListener("pointerdown", markInteracting, { passive: true });
+    container.addEventListener("pointerup", clearInteracting, { passive: true });
+    container.addEventListener("pointercancel", clearInteracting, { passive: true });
+    container.addEventListener("touchstart", markInteracting, { passive: true });
+    container.addEventListener("touchend", clearInteracting, { passive: true });
+    container.addEventListener("touchcancel", clearInteracting, { passive: true });
     const resizeObserver = typeof ResizeObserver === "undefined"
       ? null
       : new ResizeObserver(() => {
-        if (autoScroll && shouldFollowRef.current) {
+        if (autoScroll && shouldFollowRef.current && !isPointerInteractingRef.current) {
           container.scrollTop = container.scrollHeight;
         }
         updateScrollState();
@@ -321,7 +336,7 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
       }
       scrollFrame = requestAnimationFrame(() => {
         scrollFrame = 0;
-        if (autoScroll && shouldFollowRef.current) {
+        if (autoScroll && shouldFollowRef.current && !isPointerInteractingRef.current) {
           container.scrollTop = container.scrollHeight;
         }
         updateScrollState();
@@ -330,10 +345,18 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
     const mutationObserver = typeof MutationObserver === "undefined"
       ? null
       : new MutationObserver(scheduleFollow);
-    mutationObserver?.observe(container, { childList: true });
+    // 流式常见是改节点文本而非插入子节点；必须观察 characterData+subtree，
+    // 否则模型回复时列表不会跟着往下滚。rAF 合帧避免每字符强制 layout。
+    mutationObserver?.observe(container, { childList: true, characterData: true, subtree: true });
     updateScrollState();
     return () => {
       container.removeEventListener("scroll", handleScroll);
+      container.removeEventListener("pointerdown", markInteracting);
+      container.removeEventListener("pointerup", clearInteracting);
+      container.removeEventListener("pointercancel", clearInteracting);
+      container.removeEventListener("touchstart", markInteracting);
+      container.removeEventListener("touchend", clearInteracting);
+      container.removeEventListener("touchcancel", clearInteracting);
       resizeObserver?.disconnect();
       mutationObserver?.disconnect();
       if (scrollFrame) {
@@ -341,6 +364,18 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
       }
     };
   }, [autoScroll, runtime.chat_messages_ref, updateScrollState]);
+
+  // 快照驱动：messages 每帧更新时，只要仍在底部且没有按住拖动，就贴底。
+  useLayoutEffect(() => {
+    const container = runtime.chat_messages_ref.current;
+    if (!container || !autoScroll || isPointerInteractingRef.current) {
+      return;
+    }
+    if (!shouldFollowRef.current) {
+      return;
+    }
+    container.scrollTop = container.scrollHeight;
+  }, [autoScroll, runtime.chat_messages_ref, runtime.messages]);
 
   useLayoutEffect(() => {
     const container = runtime.chat_messages_ref.current;
@@ -569,12 +604,12 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
             data-game-message-row
             className={`game-message-row game-message-row--${visualRole}${message.pending ? " game-message-row--pending" : ""}`}
           >
+            {visualRole !== "system" ? (
+              <div className={`game-message-speaker${visualRole === "player" ? " game-message-speaker--player" : ""} game-ui-message-speaker`} data-variant={visualRole}>
+                {message.pending ? `${speakerLabel} / 发送中` : speakerLabel}
+              </div>
+            ) : null}
             <div className={`game-message game-message--${visualRole}${message.pending ? " game-message--pending" : ""} game-ui-message-bubble`} data-variant={visualRole}>
-              {visualRole !== "system" ? (
-                <div className={`game-message-speaker${visualRole === "player" ? " game-message-speaker--player" : ""} game-ui-message-speaker`} data-variant={visualRole}>
-                  {message.pending ? `${speakerLabel} / 发送中` : speakerLabel}
-                </div>
-              ) : null}
               {agentToolActivity?.status === "calling" ? (
                 <div className="game-tool-activity">
                   {agentToolActivity.tools.map((tool, toolIndex) => (
@@ -743,8 +778,15 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
           </React.Fragment>
         );
       })}
-      {showTypingIndicator && runtime.ui_state.submitting && !runtime.ui_state.streaming_response_active && !hasActiveAgentStream && (() => {
+      {showTypingIndicator && runtime.ui_state.submitting && (() => {
         const lastAgent = [...runtime.messages].reverse().find((m) => m.role === "agent");
+        const agentText = lastAgent ? getMessageText(lastAgent.content).trim() : "";
+        const agentMeta = (lastAgent?.metadata ?? {}) as Record<string, unknown>;
+        const agentHasOutput = agentMeta.streaming === true && agentText.length > 0;
+        // 思考点：尚无流式正文时也显示「思考中」动画（含仅有思维链的阶段）。
+        if (agentHasOutput || hasActiveAgentStream && agentText.length > 0) {
+          return null;
+        }
         const speakerName = lastAgent?.speaker || runtime.session?.player_character_name || "";
         return <TypingIndicator speakerName={speakerName} />;
       })()}

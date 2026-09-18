@@ -40,7 +40,7 @@ function createParser(tokens: Token[], scope: GameUiExpressionScope) {
   function consume(): Token {
     const token = tokens[index];
     if (!token) {
-      throw new Error("Unexpected end of expression.");
+      throw new Error("表达式意外结束。");
     }
     index += 1;
     return token;
@@ -89,7 +89,7 @@ function createParser(tokens: Token[], scope: GameUiExpressionScope) {
       const value = parseExpression();
       const next = consume();
       if (next.type !== "paren" || next.value !== ")") {
-        throw new Error("Expected closing parenthesis.");
+        throw new Error("表达式缺少右括号。");
       }
       return value;
     }
@@ -106,7 +106,7 @@ function createParser(tokens: Token[], scope: GameUiExpressionScope) {
       return null;
     }
 
-    throw new Error("Unexpected token in expression.");
+    throw new Error("表达式中出现意外标记。");
   }
 
   return {
@@ -199,7 +199,7 @@ function readQuotedString(source: string, start: number, quote: string) {
     cursor += 1;
   }
 
-  throw new Error("Unterminated string literal in expression.");
+  throw new Error("表达式中字符串字面量未闭合。");
 }
 
 function resolveExpressionPath(scope: GameUiExpressionScope, path: string): unknown {

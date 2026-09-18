@@ -231,7 +231,7 @@ impl WorldPackageService {
 
             for asset in &manifest.assets {
                 let relative = normalize_asset_relative_path(&asset.source_path)
-                    .ok_or_else(|| format!("Invalid asset path: {}", asset.source_path))?;
+                    .ok_or_else(|| format!("资源路径无效：{}", asset.source_path))?;
                 let file_path = assets_root.join(relative);
                 if file_path.is_file() {
                     archive
@@ -279,7 +279,7 @@ impl WorldPackageService {
             || !(manifest.version == WORLD_PACKAGE_VERSION
                 || LEGACY_WORLD_PACKAGE_VERSIONS.contains(&manifest.version))
         {
-            return Err("Unsupported world package format".to_string());
+            return Err("不支持的世界包格式".to_string());
         }
 
         let mut asset_map = HashMap::new();
@@ -356,7 +356,7 @@ impl WorldPackageService {
             package_characters.push(character);
         }
         if package_characters.is_empty() {
-            return Err("World package is missing character files".to_string());
+            return Err("世界包缺少角色文件".to_string());
         }
 
         validate_world_package_director_config(&package_world.director_config)?;
@@ -396,7 +396,7 @@ impl WorldPackageService {
                 })
                 .collect::<Vec<_>>()
                 .join("; ");
-            return Err(format!("Invalid world UI bundle: {details}"));
+            return Err(format!("世界 UI 包无效：{details}"));
         }
 
         let ui_capabilities = package_world.ui_capabilities.clone();
@@ -1202,6 +1202,80 @@ mod tests {
         assert_eq!(imported.characters.len(), 1);
         assert_eq!(imported.characters[0].name, "记账助手");
         assert!(imported.characters[0].model.is_empty());
+    }
+
+    #[test]
+    fn imports_healthy_life_example_package() {
+        let files = [
+            (
+                "manifest.json",
+                include_str!("../../../examples/world-packages/healthy-life/manifest.json"),
+            ),
+            (
+                "world/world.json",
+                include_str!("../../../examples/world-packages/healthy-life/world/world.json"),
+            ),
+            (
+                "world/ui.desktop.jsonc",
+                include_str!(
+                    "../../../examples/world-packages/healthy-life/world/ui.desktop.jsonc"
+                ),
+            ),
+            (
+                "world/ui.mobile.jsonc",
+                include_str!(
+                    "../../../examples/world-packages/healthy-life/world/ui.mobile.jsonc"
+                ),
+            ),
+            (
+                "world/ui.desktop.css",
+                include_str!(
+                    "../../../examples/world-packages/healthy-life/world/ui.desktop.css"
+                ),
+            ),
+            (
+                "world/ui.mobile.css",
+                include_str!("../../../examples/world-packages/healthy-life/world/ui.mobile.css"),
+            ),
+            (
+                "world/logic.js",
+                include_str!("../../../examples/world-packages/healthy-life/world/logic.js"),
+            ),
+            (
+                "characters/health-coach/character.json",
+                include_str!(
+                    "../../../examples/world-packages/healthy-life/characters/health-coach/character.json"
+                ),
+            ),
+        ];
+        let mut buffer = Cursor::new(Vec::new());
+        {
+            let mut archive = zip::ZipWriter::new(&mut buffer);
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            for (path, source) in files {
+                archive.start_file(path, options).expect("start zip entry");
+                archive
+                    .write_all(source.as_bytes())
+                    .expect("write zip entry");
+            }
+            archive.finish().expect("finish package");
+        }
+        let result =
+            WorldPackageService::import_package_archive(Path::new("."), buffer.into_inner());
+        match result {
+            Ok(imported) => {
+                println!("healthy-life world={}", imported.world.name);
+                println!(
+                    "characters={:?}",
+                    imported.characters.iter().map(|c| &c.name).collect::<Vec<_>>()
+                );
+                assert_eq!(imported.world.name, "健康生活");
+                assert_eq!(imported.characters[0].name, "健康小助手");
+                assert!(imported.desktop_ui_source.contains("logic.run"));
+            }
+            Err(e) => panic!("healthy-life import failed: {e}"),
+        }
     }
 
     /// stock-analyst 是单智能体 + 自定义 MCP 工具的组合，导入器必须完整保留

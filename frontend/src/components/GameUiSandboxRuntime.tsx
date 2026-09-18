@@ -19,6 +19,7 @@ import {
 import type { GameUiLayoutNodeV2, GameUiPlatform
 } from "../data/gameUi";
 import type { GameSessionStateBag } from "../game/useGameSession";
+import { compressImagesForChat } from "../game/imageCompress";
 import type { WorldFrameAction } from "../worldFrame/protocol";
 import { formatInteractionAnswer } from "../gameUiRuntime/interactions";
 import {
@@ -366,12 +367,15 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
         onChange={(event) => {
           const files = Array.from(event.target.files ?? []);
           if (files.length > 0) {
-            bag.setInputImages((previous) => [...previous, ...files]);
+            void compressImagesForChat(files).then((packed) => {
+              bag.setInputImages((previous) => [...previous, ...packed]);
+            });
           }
           event.target.value = "";
         }}
       />
-      {activeSessionId && hostSessionDiagnosticMode === "fallback" ? (
+      {/* 手机端不展示框架附带的会话 ID 诊断条 */}
+      {activeSessionId && platform !== "mobile" && hostSessionDiagnosticMode === "fallback" ? (
         <button
           type="button"
           className="world-session-diagnostic"
@@ -463,7 +467,7 @@ function resolveKvScope(bag: GameSessionStateBag, scope?: KvScope): KvScope | un
 function requireWorldId(bag: GameSessionStateBag): string {
   const worldId = bag.themeWorld?.id?.trim();
   if (!worldId) {
-    throw new Error("The current world is unavailable.");
+    throw new Error("当前世界不可用。");
   }
   return worldId;
 }
@@ -493,11 +497,13 @@ function useWorldFrameViewport(platform: GameUiPlatform): WorldFrameViewportSnap
     update();
     window.addEventListener("resize", update);
     window.addEventListener("orientationchange", update);
+    window.addEventListener("native-safe-area", update);
     window.visualViewport?.addEventListener("resize", update);
     window.visualViewport?.addEventListener("scroll", update);
     return () => {
       window.removeEventListener("resize", update);
       window.removeEventListener("orientationchange", update);
+      window.removeEventListener("native-safe-area", update);
       window.visualViewport?.removeEventListener("resize", update);
       window.visualViewport?.removeEventListener("scroll", update);
     };
@@ -515,22 +521,38 @@ function readViewport(platform: GameUiPlatform): WorldFrameViewportSnapshot {
     height,
     offset_top: offsetTop,
     keyboard_height: platform === "mobile" ? Math.max(0, Math.round(window.innerHeight - height - offsetTop)) : 0,
-    safe_area: measureSafeAreaInsets(),
+    safe_area: measureSafeAreaInsets(platform),
   };
 }
 
-function measureSafeAreaInsets() {
+function measureSafeAreaInsets(platform: GameUiPlatform) {
   const probe = document.createElement("div");
   probe.style.cssText = "position:fixed;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)";
   document.body.appendChild(probe);
   const style = getComputedStyle(probe);
+  let top = parseFloat(style.paddingTop) || 0;
   const result = {
-    top: parseFloat(style.paddingTop) || 0,
+    top,
     right: parseFloat(style.paddingRight) || 0,
     bottom: parseFloat(style.paddingBottom) || 0,
     left: parseFloat(style.paddingLeft) || 0,
   };
   probe.remove();
+  if (platform !== "mobile") {
+    return result;
+  }
+  // 安卓 WebView 里 env(safe-area-inset-top) 恒为 0；MainActivity 会经 evaluateJavascript
+  // 把真实 statusBars/displayCutout inset（CSS px）注入 __nativeSafeAreaInsets，优先采用。
+  const nativeTop = (window as { __nativeSafeAreaInsets?: { top?: unknown } }).__nativeSafeAreaInsets?.top;
+  const parsedNativeTop = typeof nativeTop === "number" ? nativeTop : Number(nativeTop);
+  if (Number.isFinite(parsedNativeTop) && parsedNativeTop > 0) {
+    result.top = Math.round(parsedNativeTop);
+    return result;
+  }
+  // 取不到原生值（如浏览器调试）时退回保守猜测：全面屏状态栏/挖孔仍挡住顶部 UI。
+  if (result.top < 72) {
+    result.top = 88;
+  }
   return result;
 }
 

@@ -19,7 +19,7 @@ pub fn query_session(
     let session_repo = crate::db::repositories::session_repo::SessionRepository::new(db);
     session_repo
         .get(session_id)?
-        .ok_or_else(|| "Session not found".to_string())
+        .ok_or_else(|| "会话不存在".to_string())
 }
 
 /// M11: 调试面板应按 id 关联世界,而非按名字(重名/复制世界会加载错误世界的数据)。

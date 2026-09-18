@@ -143,7 +143,7 @@ impl<'a> SaveRepository<'a> {
     ) -> Result<SaveSummary, String> {
         let source_save = self
             .get(save_id)?
-            .ok_or_else(|| "Save not found".to_string())?;
+            .ok_or_else(|| "存档不存在".to_string())?;
         let branched_session_id = format!("session-{}", uuid::Uuid::new_v4().simple());
         let branched_save_id = format!("save-{}", uuid::Uuid::new_v4().simple());
         let branch_label = "新分支".to_string();
@@ -393,7 +393,7 @@ impl<'a> SaveRepository<'a> {
                 let character_id = owner_id
                     .split_once(':')
                     .map(|(_, suffix)| suffix.to_string())
-                    .ok_or_else(|| "Invalid session_character owner_id".to_string())?;
+                    .ok_or_else(|| "会话角色归属无效".to_string())?;
                 format!("{}:{}", branched_session_id, character_id)
             };
 

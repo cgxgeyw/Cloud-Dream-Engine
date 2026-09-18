@@ -1,0 +1,633 @@
+{
+  "name": "健康生活",
+  "genre": "单智能体 / 健康管理 / 目标追踪",
+  "background_prompt": "这是一个以活力轻拟物界面呈现的个人健康生活工作台。用户与一位健康小助手对话，维护身高体重等身体数据，设定减重、健身、长高等目标，并根据数据变化获得可执行建议。所有结论基于用户自己填写或口述的数据，不提供医疗诊断。",
+  "opening_scene": "健康生活",
+  "summary": "对话页与健康小助手交流；成长页展示今日能量与今日行动清单；我的页展示身高体重与 BMI/BMR。助手按「今日」维护清单与重点；今日消耗 = 基础代谢 BMR + 运动消耗。",
+  "time_system": "真实日期",
+  "map_nodes": {
+    "version": 1,
+    "root": {
+      "id": "healthy-life-root",
+      "label": "健康生活",
+      "children": [
+        {
+          "id": "chat-bay",
+          "label": "对话角"
+        },
+        {
+          "id": "growth-garden",
+          "label": "成长花园"
+        },
+        {
+          "id": "profile-desk",
+          "label": "我的档案"
+        }
+      ]
+    },
+    "edges": [
+      {
+        "source": "对话角",
+        "target": "成长花园"
+      },
+      {
+        "source": "成长花园",
+        "target": "我的档案"
+      }
+    ]
+  },
+  "triggers": [],
+  "time_config": {
+    "mode": "realtime",
+    "label": "真实日期"
+  },
+  "director_config": {
+    "service_mode": "agent_chat",
+    "default_agent_id": "health-coach",
+    "allow_scene_transition": false,
+    "allow_npc_spawn": false,
+    "allow_player_character_switch": false,
+    "history_dialogue_rounds": 12,
+    "director_tool_loop_limit": 0,
+    "director_interaction_kinds": [
+      "form",
+      "choice"
+    ],
+    "runtime_context_prompt": "当前用户身体与目标数据（来自 runtime_attributes，以数据库为准）：身高 {{attributes.health_height_cm}} cm，体重 {{attributes.health_weight_kg}} kg，年龄 {{attributes.health_age}}，性别 {{attributes.health_gender}}，BMI {{attributes.health_bmi}}（{{attributes.health_bmi_label}}），BMR {{attributes.health_bmr}}，今日摄入 {{attributes.health_intake_kcal}}，今日消耗 {{attributes.health_burn_kcal}}，净能量 {{attributes.health_energy_net}}，今日重点 {{attributes.health_weekly_focus}}，今日清单 {{attributes.health_checklist}}，目标类型 {{attributes.health_goal_type}}，进度 {{attributes.health_progress_pct}}%。\n\n数据维护规则（必须遵守）：\n(1) 用户提供身高、体重、年龄、性别时，用 session_attribute_updates 写回对应 health_* 键。\n(2) 身高体重均 >0 时计算 BMI 与 health_bmi_label。\n(3) 设定减重/健身/长高/维持目标时更新 goal 相关字段。\n(4) 成长页/我的页只展示属性；所有更新发生在对话。\n(5) 更新属性时角色 JSON 必须含 content 与 session_attribute_updates。\n(6) 不提供医疗诊断；伤病建议就医。\n(7) 【今日摄入】health_intake_kcal；【今日消耗】health_burn_kcal = health_bmr + 运动消耗。\n(8) health_energy_net = intake − burn。\n(9) 性别已知时写 health_bmr（Mifflin-St Jeor）。\n(10) 【计划口径】界面为每日：health_checklist 是**今日** 1-3 条动作；health_weekly_focus 字段名虽带 weekly，在本世界中表示**今日重点**（一天 1 条）。助手 content 默认说「今天」，不要默认输出每周计划。\n(11) 「【清单确认】我已完成以下行动清单事项：」时，从 health_checklist 移除对应条目并写回完整数组。\n(12) 属性为空时在对话里引导口述，不要指向成长/我的页按钮。\n",
+    "world_director_prompt": "",
+    "prompt_presets": [
+      {
+        "name": "健康边界",
+        "content": "你不做医疗诊断。用户描述疼痛、伤病、极端节食或进食障碍倾向时，先关心风险并建议寻求专业医疗帮助，再给出温和的一般生活建议。不承诺具体减重斤数或增高厘米数。",
+        "position": "system_prefix",
+        "scope": "both",
+        "enabled": true,
+        "order": 10
+      },
+      {
+        "name": "目标节奏",
+        "content": "设定目标后，每次用户更新数据时检查进度：减重看体重与目标体重差值；健身看训练频次与体感；长高看年龄阶段与睡眠运动。给出下一周 1-3 条可执行动作，不堆砌理论。",
+        "position": "system_suffix",
+        "scope": "both",
+        "enabled": true,
+        "order": 20
+      }
+    ],
+    "return_processing_rules": [],
+    "generation_params": {
+      "temperature": 0.7,
+      "top_p": 0.9,
+      "max_tokens": 4000
+    },
+    "runtime_policy": {
+      "memory_write_mode": "session"
+    },
+    "allowed_mcp_tool_ids": []
+  },
+  "ui_assets_config": {
+    "background_source_mode": "local-first",
+    "portrait_source_mode": "local-first",
+    "runtime_image_generation_enabled": false,
+    "local_background_assets": [],
+    "local_scene_backgrounds": {}
+  },
+  "attribute_schemas": [
+    {
+      "scope": "session",
+      "key": "health_height_cm",
+      "label": "身高(cm)",
+      "value_type": "number",
+      "description": "用户身高，单位厘米。0 表示未填写。",
+      "default_value": 0,
+      "display_policy": {
+        "group": "身体档案",
+        "order": 10
+      },
+      "access_policy": {
+        "agent_self_read": true,
+        "creator_read": true,
+        "director_read": true,
+        "player_read": true,
+        "plugin_read": true
+      },
+      "mutation_policy": {
+        "allowed_ops": [
+          "set"
+        ],
+        "creator_write": true,
+        "player_action_write": true,
+        "rule_write": true,
+        "trigger_write": true
+      }
+    },
+    {
+      "scope": "session",
+      "key": "health_weight_kg",
+      "label": "体重(kg)",
+      "value_type": "number",
+      "description": "用户体重，单位千克。0 表示未填写。",
+      "default_value": 0,
+      "display_policy": {
+        "group": "身体档案",
+        "order": 20
+      },
+      "access_policy": {
+        "agent_self_read": true,
+        "creator_read": true,
+        "director_read": true,
+        "player_read": true,
+        "plugin_read": true
+      },
+      "mutation_policy": {
+        "allowed_ops": [
+          "set"
+        ],
+        "creator_write": true,
+        "player_action_write": true,
+        "rule_write": true,
+        "trigger_write": true
+      }
+    },
+    {
+      "scope": "session",
+      "key": "health_age",
+      "label": "年龄",
+      "value_type": "number",
+      "description": "用户年龄。0 表示未填写。",
+      "default_value": 0,
+      "display_policy": {
+        "group": "身体档案",
+        "order": 30
+      },
+      "access_policy": {
+        "agent_self_read": true,
+        "creator_read": true,
+        "director_read": true,
+        "player_read": true,
+        "plugin_read": true
+      },
+      "mutation_policy": {
+        "allowed_ops": [
+          "set"
+        ],
+        "creator_write": true,
+        "player_action_write": true,
+        "rule_write": true,
+        "trigger_write": true
+      }
+    },
+    {
+      "scope": "session",
+      "key": "health_gender",
+      "label": "性别",
+      "value_type": "text",
+      "description": "用户性别，可填写保密。",
+      "default_value": "未填写",
+      "display_policy": {
+        "group": "身体档案",
+        "order": 40
+      },
+      "access_policy": {
+        "agent_self_read": true,
+        "creator_read": true,
+        "director_read": true,
+        "player_read": true,
+        "plugin_read": true
+      },
+      "mutation_policy": {
+        "allowed_ops": [
+          "set"
+        ],
+        "creator_write": true,
+        "player_action_write": true,
+        "rule_write": true,
+        "trigger_write": true
+      }
+    },
+    {
+      "scope": "session",
+      "key": "health_bmi",
+      "label": "BMI",
+      "value_type": "number",
+      "description": "由身高体重自动计算的 BMI，一位小数。",
+      "default_value": 0,
+      "display_policy": {
+        "group": "身体档案",
+        "order": 50
+      },
+      "access_policy": {
+        "agent_self_read": true,
+        "creator_read": true,
+        "director_read": true,
+        "player_read": true,
+        "plugin_read": true
+      },
+      "mutation_policy": {
+        "allowed_ops": [
+          "set"
+        ],
+        "creator_write": true,
+        "player_action_write": true,
+        "rule_write": true,
+        "trigger_write": true
+      }
+    },
+    {
+      "scope": "session",
+      "key": "health_bmi_label",
+      "label": "BMI 分类",
+      "value_type": "text",
+      "description": "偏瘦 / 正常 / 超重 / 肥胖 / 待测量。",
+      "default_value": "待测量",
+      "display_policy": {
+        "group": "身体档案",
+        "order": 60
+      },
+      "access_policy": {
+        "agent_self_read": true,
+        "creator_read": true,
+        "director_read": true,
+        "player_read": true,
+        "plugin_read": true
+      },
+      "mutation_policy": {
+        "allowed_ops": [
+          "set"
+        ],
+        "creator_write": true,
+        "player_action_write": true,
+        "rule_write": true,
+        "trigger_write": true
+      }
+    },
+    {
+      "scope": "session",
+      "key": "health_goal_type",
+      "label": "目标类型",
+      "value_type": "text",
+      "description": "减重 / 健身 / 长高 / 维持 / 未设定。",
+      "default_value": "未设定",
+      "display_policy": {
+        "group": "成长目标",
+        "order": 10
+      },
+      "access_policy": {
+        "agent_self_read": true,
+        "creator_read": true,
+        "director_read": true,
+        "player_read": true,
+        "plugin_read": true
+      },
+      "mutation_policy": {
+        "allowed_ops": [
+          "set"
+        ],
+        "creator_write": true,
+        "player_action_write": true,
+        "rule_write": true,
+        "trigger_write": true
+      }
+    },
+    {
+      "scope": "session",
+      "key": "health_goal_detail",
+      "label": "目标说明",
+      "value_type": "text",
+      "description": "用户目标的具体描述。",
+      "default_value": "还没有设定目标，去成长页或对话里告诉教练吧。",
+      "display_policy": {
+        "group": "成长目标",
+        "order": 20
+      },
+      "access_policy": {
+        "agent_self_read": true,
+        "creator_read": true,
+        "director_read": true,
+        "player_read": true,
+        "plugin_read": true
+      },
+      "mutation_policy": {
+        "allowed_ops": [
+          "set"
+        ],
+        "creator_write": true,
+        "player_action_write": true,
+        "rule_write": true,
+        "trigger_write": true
+      }
+    },
+    {
+      "scope": "session",
+      "key": "health_target_weight",
+      "label": "目标体重(kg)",
+      "value_type": "number",
+      "description": "减重或维持目标体重。0 表示未设定。",
+      "default_value": 0,
+      "display_policy": {
+        "group": "成长目标",
+        "order": 30
+      },
+      "access_policy": {
+        "agent_self_read": true,
+        "creator_read": true,
+        "director_read": true,
+        "player_read": true,
+        "plugin_read": true
+      },
+      "mutation_policy": {
+        "allowed_ops": [
+          "set"
+        ],
+        "creator_write": true,
+        "player_action_write": true,
+        "rule_write": true,
+        "trigger_write": true
+      }
+    },
+    {
+      "scope": "session",
+      "key": "health_target_height",
+      "label": "目标身高(cm)",
+      "value_type": "number",
+      "description": "长高目标身高。0 表示未设定。",
+      "default_value": 0,
+      "display_policy": {
+        "group": "成长目标",
+        "order": 40
+      },
+      "access_policy": {
+        "agent_self_read": true,
+        "creator_read": true,
+        "director_read": true,
+        "player_read": true,
+        "plugin_read": true
+      },
+      "mutation_policy": {
+        "allowed_ops": [
+          "set"
+        ],
+        "creator_write": true,
+        "player_action_write": true,
+        "rule_write": true,
+        "trigger_write": true
+      }
+    },
+    {
+      "scope": "session",
+      "key": "health_progress_pct",
+      "label": "目标进度",
+      "value_type": "number",
+      "description": "当前目标完成百分比 0-100。",
+      "default_value": 0,
+      "display_policy": {
+        "group": "成长目标",
+        "presentation": "meter",
+        "max": 100,
+        "order": 50
+      },
+      "access_policy": {
+        "agent_self_read": true,
+        "creator_read": true,
+        "director_read": true,
+        "player_read": true,
+        "plugin_read": true
+      },
+      "mutation_policy": {
+        "allowed_ops": [
+          "set"
+        ],
+        "creator_write": true,
+        "player_action_write": true,
+        "rule_write": true,
+        "trigger_write": true
+      }
+    },
+    {
+      "scope": "session",
+      "key": "health_weekly_focus",
+      "label": "今日重点",
+      "value_type": "text",
+      "description": "今天最重要的一条重点（字段名历史原因含 weekly，本世界按今日用）。",
+      "default_value": "先填写身高体重，再选一个目标",
+      "display_policy": {
+        "group": "成长目标",
+        "order": 60
+      },
+      "access_policy": {
+        "agent_self_read": true,
+        "creator_read": true,
+        "director_read": true,
+        "player_read": true,
+        "plugin_read": true
+      },
+      "mutation_policy": {
+        "allowed_ops": [
+          "set"
+        ],
+        "creator_write": true,
+        "player_action_write": true,
+        "rule_write": true,
+        "trigger_write": true
+      }
+    },
+    {
+      "scope": "session",
+      "key": "health_tip_today",
+      "label": "今日提示",
+      "value_type": "text",
+      "description": "根据当前数据生成的今日提示。",
+      "default_value": "欢迎来到健康生活，先在对话里告诉小助手身高体重吧。",
+      "display_policy": {
+        "group": "成长目标",
+        "order": 70
+      },
+      "access_policy": {
+        "agent_self_read": true,
+        "creator_read": true,
+        "director_read": true,
+        "player_read": true,
+        "plugin_read": true
+      },
+      "mutation_policy": {
+        "allowed_ops": [
+          "set"
+        ],
+        "creator_write": true,
+        "player_action_write": true,
+        "rule_write": true,
+        "trigger_write": true
+      }
+    },
+    {
+      "scope": "session",
+      "key": "health_bmr",
+      "label": "基础代谢BMR",
+      "value_type": "number",
+      "description": "Mifflin-St Jeor 静息代谢（kcal/天）。",
+      "default_value": 0,
+      "display_policy": {
+        "group": "身体档案",
+        "order": 70
+      },
+      "access_policy": {
+        "agent_self_read": true,
+        "creator_read": true,
+        "director_read": true,
+        "player_read": true,
+        "plugin_read": true
+      },
+      "mutation_policy": {
+        "allowed_ops": [
+          "set"
+        ],
+        "creator_write": true,
+        "player_action_write": true,
+        "rule_write": true,
+        "trigger_write": true
+      }
+    },
+    {
+      "scope": "session",
+      "key": "health_intake_kcal",
+      "label": "今日摄入",
+      "value_type": "number",
+      "description": "今日饮食摄入（kcal），可在对话中更新或累加。",
+      "default_value": 0,
+      "display_policy": {
+        "group": "能量",
+        "order": 10
+      },
+      "access_policy": {
+        "agent_self_read": true,
+        "creator_read": true,
+        "director_read": true,
+        "player_read": true,
+        "plugin_read": true
+      },
+      "mutation_policy": {
+        "allowed_ops": [
+          "set"
+        ],
+        "creator_write": true,
+        "player_action_write": true,
+        "rule_write": true,
+        "trigger_write": true
+      }
+    },
+    {
+      "scope": "session",
+      "key": "health_burn_kcal",
+      "label": "今日消耗",
+      "value_type": "number",
+      "description": "今日总消耗 = 基础代谢 BMR + 运动/活动消耗（kcal）。",
+      "default_value": 0,
+      "display_policy": {
+        "group": "能量",
+        "order": 20
+      },
+      "access_policy": {
+        "agent_self_read": true,
+        "creator_read": true,
+        "director_read": true,
+        "player_read": true,
+        "plugin_read": true
+      },
+      "mutation_policy": {
+        "allowed_ops": [
+          "set"
+        ],
+        "creator_write": true,
+        "player_action_write": true,
+        "rule_write": true,
+        "trigger_write": true
+      }
+    },
+    {
+      "scope": "session",
+      "key": "health_energy_net",
+      "label": "能量净平衡",
+      "value_type": "number",
+      "description": "摄入−消耗。正盈余，负缺口。",
+      "default_value": 0,
+      "display_policy": {
+        "group": "能量",
+        "order": 30
+      },
+      "access_policy": {
+        "agent_self_read": true,
+        "creator_read": true,
+        "director_read": true,
+        "player_read": true,
+        "plugin_read": true
+      },
+      "mutation_policy": {
+        "allowed_ops": [
+          "set"
+        ],
+        "creator_write": true,
+        "player_action_write": true,
+        "rule_write": true,
+        "trigger_write": true
+      }
+    },
+    {
+      "scope": "session",
+      "key": "health_checklist",
+      "label": "今日行动清单",
+      "value_type": "list",
+      "description": "小助手维护的今日可执行动作字符串数组（1-3 条）。",
+      "default_value": [],
+      "display_policy": {
+        "group": "成长目标",
+        "order": 50
+      },
+      "access_policy": {
+        "agent_self_read": true,
+        "creator_read": true,
+        "director_read": true,
+        "player_read": true,
+        "plugin_read": true
+      },
+      "mutation_policy": {
+        "allowed_ops": [
+          "set"
+        ],
+        "creator_write": true,
+        "player_action_write": true,
+        "rule_write": true,
+        "trigger_write": true
+      }
+    }
+  ],
+  "initial_inventory_items": [],
+  "ui_runtime_version": 3,
+  "ui_capabilities": [
+    "supports_world_storage"
+  ],
+  "platform_features": [],
+  "storage": {
+    "kv_namespaces": [
+      "health.ui"
+    ],
+    "collections": {}
+  },
+  "logic": {
+    "runtime": "sandbox-js-v1",
+    "timeout_ms": 1000
+  },
+  "opening_messages": [
+    {
+      "role": "assistant",
+      "speaker": "健康小助手",
+      "content": "嗨，我是你的健康小助手！这里可以聊饮食、训练、睡眠，也可以设定减重、健身或长高目标。\n\n先做两件事会更顺：\n1. 打开底部「我的」，告诉我身高体重，我帮你算 BMI；\n2. 打开「成长」，选一个目标，我给你拆成今天就能做的 1-3 件小事。\n\n今天想先从哪块开始？"
+    }
+  ],
+  "opening_character_names": [
+    "健康小助手"
+  ],
+  "player_character_name": null,
+  "opening_character_source_ids": [
+    "health-coach"
+  ],
+  "player_character_source_id": null
+}

@@ -46,7 +46,7 @@ impl CharacterService {
         let repo = CharacterRepository::new(conn);
         repo.get(id)?
             .map(Self::enrich_character)
-            .ok_or_else(|| "Character not found".to_string())
+            .ok_or_else(|| "角色不存在".to_string())
     }
 
     pub fn create_world_character(
@@ -76,10 +76,10 @@ impl CharacterService {
 
         let character = repo
             .get(id)?
-            .ok_or_else(|| "Character not found".to_string())?;
+            .ok_or_else(|| "角色不存在".to_string())?;
         let world = world_repo
             .get(&character.world_id)?
-            .ok_or_else(|| "World not found".to_string())?;
+            .ok_or_else(|| "世界不存在".to_string())?;
 
         repo.delete(id)?;
         // H1: 清理该角色的属性(角色级 + 各会话内角色级)与记忆,避免孤儿数据
@@ -195,13 +195,13 @@ impl CharacterService {
         let world_repo = WorldRepository::new(conn);
         world_repo
             .get(world_id)?
-            .ok_or_else(|| "World not found".to_string())?;
+            .ok_or_else(|| "世界不存在".to_string())?;
         let repo = CharacterRepository::new(conn);
         let character = repo
             .get(character_id)?
-            .ok_or_else(|| "Character not found".to_string())?;
+            .ok_or_else(|| "角色不存在".to_string())?;
         if character.world_id != world_id {
-            return Err("Character not found in this world".to_string());
+            return Err("当前世界中不存在该角色".to_string());
         }
         repo.export_template(character_id)
     }
@@ -216,16 +216,16 @@ impl CharacterService {
         let world_repo = WorldRepository::new(conn);
         world_repo
             .get(world_id)?
-            .ok_or_else(|| "World not found".to_string())?;
+            .ok_or_else(|| "世界不存在".to_string())?;
         world_repo
             .get(&request.target_world_id)?
-            .ok_or_else(|| "Target world not found".to_string())?;
+            .ok_or_else(|| "目标世界不存在".to_string())?;
         let repo = CharacterRepository::new(conn);
         let character = repo
             .get(character_id)?
-            .ok_or_else(|| "Character not found".to_string())?;
+            .ok_or_else(|| "角色不存在".to_string())?;
         if character.world_id != world_id {
-            return Err("Character not found in this world".to_string());
+            return Err("当前世界中不存在该角色".to_string());
         }
         repo.create_from_template(character_id, &request.target_world_id, &request.name)
             .map(Self::enrich_character)
@@ -240,7 +240,7 @@ impl CharacterService {
         let world_repo = WorldRepository::new(conn);
         world_repo
             .get(world_id)?
-            .ok_or_else(|| "World not found".to_string())?;
+            .ok_or_else(|| "世界不存在".to_string())?;
         let repo = CharacterRepository::new(conn);
         repo.create(
             world_id,

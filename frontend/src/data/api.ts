@@ -443,7 +443,7 @@ export async function streamPlayerAction(
     throw new Error(await readErrorMessage(response));
   }
   if (!response.body) {
-    throw new Error("Stream unavailable");
+    throw new Error("流式连接不可用");
   }
 
   const reader = response.body.getReader();

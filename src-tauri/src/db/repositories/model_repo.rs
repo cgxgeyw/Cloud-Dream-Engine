@@ -134,11 +134,11 @@ impl<'a> ModelRepository<'a> {
         .map_err(|e| e.to_string())?;
 
         self.get(&id)?
-            .ok_or_else(|| "Failed to create model".to_string())
+            .ok_or_else(|| "创建模型失败".to_string())
     }
 
     pub fn update(&self, id: &str, req: &ModelConfigUpdateRequest) -> Result<ModelConfig, String> {
-        let existing = self.get(id)?.ok_or_else(|| "Model not found".to_string())?;
+        let existing = self.get(id)?.ok_or_else(|| "模型不存在".to_string())?;
         let name = req.name.clone().unwrap_or(existing.name).trim().to_string();
         let model_type = req
             .model_type
@@ -215,7 +215,7 @@ impl<'a> ModelRepository<'a> {
         }
 
         self.get(id)?
-            .ok_or_else(|| "Failed to update model".to_string())
+            .ok_or_else(|| "更新模型失败".to_string())
     }
 
     pub fn delete(&self, id: &str) -> Result<(), String> {
@@ -226,7 +226,7 @@ impl<'a> ModelRepository<'a> {
     }
 
     pub fn set_default(&self, id: &str) -> Result<(), String> {
-        let model = self.get(id)?.ok_or_else(|| "Model not found".to_string())?;
+        let model = self.get(id)?.ok_or_else(|| "模型不存在".to_string())?;
         // L6: 清空同类默认 + 置位本行,放进事务内原子完成,避免中间态出现 0 或多个默认。
         let tx = self.conn.unchecked_transaction().map_err(|e| e.to_string())?;
         self.conn

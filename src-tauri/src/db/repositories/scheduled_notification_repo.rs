@@ -67,7 +67,7 @@ impl<'a> ScheduledNotificationRepository<'a> {
             )
             .map_err(|error| error.to_string())?;
         self.get_by_session_source(&notification.session_id, &notification.source)?
-            .ok_or_else(|| "Scheduled notification was not persisted".to_string())
+            .ok_or_else(|| "定时通知保存失败".to_string())
     }
 
     pub fn list_pending(&self) -> Result<Vec<ScheduledNotification>, String> {

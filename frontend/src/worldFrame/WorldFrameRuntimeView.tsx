@@ -30,30 +30,51 @@ export function WorldFrameRuntimeView({ payload, sendAction }: Props) {
   const forceMessageFollow = useCallback(() => {
     shouldFollowMessagesRef.current = true;
   }, []);
+  const isPointerInteractingRef = useRef(false);
   const actions = useMemo(() => createFrameActions(sendAction, forceMessageFollow), [forceMessageFollow, sendAction]);
 
   useEffect(() => {
     const container = messagesRef.current;
     if (!container) return undefined;
-    const updateFollowState = () => {
-      shouldFollowMessagesRef.current = container.scrollHeight - container.scrollTop - container.clientHeight <= 24;
+    const markInteracting = () => {
+      isPointerInteractingRef.current = true;
     };
-    updateFollowState();
-    container.addEventListener("scroll", updateFollowState, { passive: true });
-    return () => container.removeEventListener("scroll", updateFollowState);
+    const clearInteracting = () => {
+      isPointerInteractingRef.current = false;
+      updateFollowFromContainer();
+    };
+    const updateFollowFromContainer = () => {
+      const el = messagesRef.current;
+      if (!el) return;
+      shouldFollowMessagesRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 24;
+    };
+    updateFollowFromContainer();
+    container.addEventListener("scroll", updateFollowFromContainer, { passive: true });
+    container.addEventListener("pointerdown", markInteracting, { passive: true });
+    container.addEventListener("pointerup", clearInteracting, { passive: true });
+    container.addEventListener("pointercancel", clearInteracting, { passive: true });
+    container.addEventListener("touchstart", markInteracting, { passive: true });
+    container.addEventListener("touchend", clearInteracting, { passive: true });
+    container.addEventListener("touchcancel", clearInteracting, { passive: true });
+    return () => {
+      container.removeEventListener("scroll", updateFollowFromContainer);
+      container.removeEventListener("pointerdown", markInteracting);
+      container.removeEventListener("pointerup", clearInteracting);
+      container.removeEventListener("pointercancel", clearInteracting);
+      container.removeEventListener("touchstart", markInteracting);
+      container.removeEventListener("touchend", clearInteracting);
+      container.removeEventListener("touchcancel", clearInteracting);
+    };
   }, [runtime.messages.length]);
 
   useLayoutEffect(() => {
     if (!runtime.message_preferences.auto_scroll_enabled || !shouldFollowMessagesRef.current) return;
-    let innerFrame = requestAnimationFrame(() => {
-      innerFrame = requestAnimationFrame(() => {
-        const container = messagesRef.current;
-        if (container && shouldFollowMessagesRef.current) {
-          container.scrollTop = container.scrollHeight;
-        }
-      });
-    });
-    return () => cancelAnimationFrame(innerFrame);
+    if (isPointerInteractingRef.current) return;
+    // 流式时 messages 对象每帧都可能变；直接贴底，避免只靠 scroll 事件漏跟。
+    const container = messagesRef.current;
+    if (container && shouldFollowMessagesRef.current && !isPointerInteractingRef.current) {
+      container.scrollTop = container.scrollHeight;
+    }
   }, [runtime.message_preferences.auto_scroll_enabled, runtime.messages]);
   const componentRenderers = useMemo(() => ({
     ...createGameUiComponentRenderers(runtime, actions),
@@ -106,7 +127,9 @@ export function WorldFrameRuntimeView({ payload, sendAction }: Props) {
       data-game-ui-scope={payload.scopeId}
       data-world-frame-runtime="3"
       style={viewportStyle}
-      onContextMenu={(event) => event.preventDefault()}
+      /* 桌面端压掉右键菜单；移动端必须放行 contextmenu——
+         安卓 WebView 的长按复制/全选工具条正是由该事件触发的，preventDefault 会一并杀掉。 */
+      onContextMenu={payload.platform === "mobile" ? undefined : (event) => event.preventDefault()}
     >
       {payload.stylesheet ? <style>{payload.stylesheet}</style> : null}
       {runtime.ui_state.loading ? <div className="game-loading">{"\u6b63\u5728\u52a0\u8f7d\u4f1a\u8bdd..."}</div> : null}
@@ -145,6 +168,12 @@ async function dispatchDslAction(
   const content = renderActionText(contentTemplate, context).trim();
 
   switch (actionId) {
+    case "set_state": {
+      // Built-in pure state write — no Worker, no IPC. Used by world-owned tab bars.
+      const key = (action.result_state?.trim() || readStringArg(args, "key")).trim();
+      const value = key === "" ? undefined : ("value" in args ? args.value : args);
+      return key ? value : undefined;
+    }
     case "submit_message":
       await actions.submitMessage({
         mode: resolvePlayerActionMode(action.mode || readStringArg(args, "mode")),
@@ -234,13 +263,24 @@ async function dispatchDslAction(
         key: readStringArg(args, "key"),
         scope: readKvScopeArg(args),
       });
-    case "logic.run":
+    case "logic.run": {
+      // Pure compute handlers must not spawn a Worker: Android WebView + sandboxed
+      // iframe often fails Worker creation, which breaks world-owned tab bars.
+      const handler = readStringArg(args, "handler");
+      if (handler === "ui.setTab") {
+        const rawInput = (args.input ?? args) as { tab?: unknown };
+        const raw = rawInput && typeof rawInput === "object" && rawInput.tab != null
+          ? String(rawInput.tab)
+          : "chat";
+        return ["chat", "growth", "profile"].includes(raw) ? raw : "chat";
+      }
       return invokeWorldLogic(
         logic,
-        readStringArg(args, "handler"),
+        handler,
         args.input ?? args,
         sendAction,
       );
+    }
   }
   throw new Error(`Unsupported world UI action: ${actionId}`);
 }
