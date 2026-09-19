@@ -1140,17 +1140,34 @@ stylesheet 引用未知 `game-*` 类时，界面治理会给出 `unknown_game_cl
 [data-component="input_composer"] { max-width: 720px; margin-inline: auto; }
 ```
 
-**`input_composer` 实际 DOM（桌面与移动相同骨架）：**
+**`input_composer` 实际 DOM（按钮行的包装在桌面与移动端不同）：**
 
 ```text
 div.game-ui-component[data-component="input_composer"]  ← 你的 class_name 在这里
   div.game-input-area.game-ui-panel
     div.game-input-compose
       textarea.game-textarea.game-ui-textarea
-      div.game-input-toolbar | div.game-input-actions
-        button.game-input-attach-btn | .game-input-icon-btn   // 图片 / 语音
-        button.game-submit-btn                                 // 发送
+
+      <!-- 桌面端按钮行：图片/语音外包一层真实元素 -->
+      div.game-input-toolbar
+        div.game-input-toolbar-left            ← 真实包装元素
+          button.game-input-attach-btn         （图片）
+          button.game-input-attach-btn         （语音）
+        button.game-submit-btn.game-submit-btn--inline
+
+      <!-- 移动端按钮行：包装无类名且 display: contents，按钮直接参与布局 -->
+      div.game-input-actions
+        div（无类名，display: contents）
+          button.game-input-icon-btn           （图片）
+          button.game-input-icon-btn           （语音）
+        div.game-input-actions-spacer
+        button.game-submit-btn
 ```
+
+> **桌面端不要给 `.game-input-toolbar-left` 设 `width: 100%`。** 它是按钮行内的真实元素，设成
+> 100% 会把这一行撑到两倍宽，发送按钮（`margin-left: auto`）被顶出屏幕右缘、只露一条边。
+> 正确写法是 `flex: 0 0 auto; width: auto`。移动端因为同位置的包装 `display: contents`，
+> 这个选择器不会命中任何元素——这是「手机正常、桌面跑偏」的典型来源。
 
 **`message_list` 消息下操作按钮：**
 
@@ -1485,6 +1502,7 @@ div.game-ui-component[data-component="message_list"]  ← class_name
 | `references assets that are not declared` | world/character 引用了 ZIP 中未声明的资源 | 把真实文件加入 ZIP，并在 `manifest.assets` 中逐项声明 |
 | 导入报 `Unknown platform feature` | `platform_features` 含目录外的 action | 只用 `file.pick` / `file.read` / `file.write` / `file.share` |
 | 输入框比聊天区窄/宽 | 只改了 wrapper 的 `class_name` padding，未清 `game-input-area` / `game-textarea` 默认盒模型 | 见第 11 节「宿主组件 DOM 契约」：内层 `width:100%` + 与消息区同一水平 padding |
+| 桌面端发送按钮被顶出屏幕右缘、只露一条边（手机正常） | 世界 CSS 给 `.game-input-toolbar-left` 设了 `width: 100%`；该包装仅桌面端存在，移动端 `display: contents` 不会命中 | 改为 `flex: 0 0 auto; width: auto`（第 11 节 DOM 契约） |
 | 顶部出现「灰色 + 白色」两大块空白 | 顶栏/页签条又吃了一次 `--world-safe-area-top`，与宿主基线的根节点 padding 叠加 | 顶栏 `padding-top` 用固定内容间距（如 `10px`），不要吃安全区变量（第 11 节） |
 | 底部输入区按钮行被裁掉、只看到文本框 | 布局根写了 `height: var(--game-visual-viewport-height)`，比根内容盒高出一个安全区 | 布局根改 `height: 100%`（第 11 节） |
 | 分支/复制/重发按钮样式不生效 | `theme.css`（含触控 media）特异性更高 | 用 `[data-component="message_list"]` 锚定并 `!important` |

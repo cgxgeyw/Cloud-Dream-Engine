@@ -317,7 +317,6 @@
   background: var(--hl-orange) !important;
 }
 .hl-desktop-composer .game-input-toolbar,
-.hl-desktop-composer .game-input-toolbar-left,
 .hl-desktop-composer .game-input-actions {
   display: flex !important;
   align-items: center !important;
@@ -325,8 +324,15 @@
   width: 100% !important;
   margin-top: 10px !important;
 }
+/* 桌面端 toolbar-left 是包裹图片/语音按钮的真实元素（移动端为 display:contents 无类名），
+   不能吃 width:100%，否则一行 = 左包装 100% + 发送按钮，发送键被顶出屏幕右缘。 */
 .hl-desktop-composer .game-input-toolbar-left {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
   flex: 0 0 auto !important;
+  width: auto !important;
+  margin-top: 0 !important;
 }
 .hl-desktop-composer .game-submit-btn,
 .hl-desktop-composer .game-send-btn {
