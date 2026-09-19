@@ -31,8 +31,6 @@ fn default_seed_world_director_config_json() -> String {
 }
 
 const POETRY_LING_WORD_SCHEMA_ID: &str = "attr-seed-poetry-ling-word";
-const SEED_CHARACTER_TRUST_LABEL: &str = "信任度";
-const SEED_CHARACTER_TRUST_DESCRIPTION: &str = "角色对玩家或当前局势的信任数值。";
 const SCHEDULE_TODO_SCHEMA_ID: &str = "attr-schedule-assistant-todo-items";
 const SCHEDULE_COMPLETED_SCHEMA_ID: &str = "attr-schedule-assistant-completed-items";
 fn sample_world_seeding_enabled() -> bool {
@@ -678,43 +676,12 @@ fn ensure_core_seed_data(conn: &Connection) -> Result<(), rusqlite::Error> {
             ],
         )?;
     }
-    let schema_count: i64 =
-        conn.query_row("SELECT COUNT(*) FROM attribute_schemas", [], |row| {
-            row.get(0)
-        })?;
-    if schema_count == 0 {
-        conn.execute(
-            "
-            INSERT INTO attribute_schemas (
-                id, scope, key, label, value_type, description, default_value_json, enum_options_json,
-                display_policy_json, access_policy_json, mutation_policy_json, influence_policy_json, projection_policy_json
-            ) VALUES (?1, 'character', 'trust_level', ?2, 'number', ?3, '0', '[]', ?4, ?5, ?6, ?7, ?8)
-            ",
-            params![
-                "attr-seed-character-trust",
-                SEED_CHARACTER_TRUST_LABEL,
-                SEED_CHARACTER_TRUST_DESCRIPTION,
-                r#"{"editor_visible":true,"game_visible":true,"debug_visible":true}"#,
-                r#"{"creator_read":true,"player_read":false,"agent_self_read":true,"director_read":true,"plugin_read":true}"#,
-                r#"{"creator_write":true,"rule_write":true,"trigger_write":true,"player_action_write":true,"allowed_ops":["set","increment"]}"#,
-                r#"{"prompt.character_self":{"enabled":true,"mode":"raw"},"speaker_selector":{"enabled":true,"mode":"weighted_factor","weight":0.8}}"#,
-                r#"{"inherit_to_session":true,"session_owner_type":"session_character","mutable_in_session":true}"#,
-            ],
-        )?;
-    }
     Ok(())
 }
 fn ensure_localized_builtin_content(conn: &Connection) -> Result<(), rusqlite::Error> {
     remove_retired_world_tension_seed(conn)?;
+    remove_retired_character_trust_seed(conn)?;
     ensure_poetry_ling_word_attribute_schema(conn)?;
-    conn.execute(
-        "UPDATE attribute_schemas SET label = ?1, description = ?2 WHERE id = ?3",
-        params![
-            SEED_CHARACTER_TRUST_LABEL,
-            SEED_CHARACTER_TRUST_DESCRIPTION,
-            "attr-seed-character-trust"
-        ],
-    )?;
     ensure_schedule_assistant_task_attribute_schemas(conn)?;
     update_seed_world(
         conn,
@@ -889,6 +856,20 @@ fn remove_retired_world_tension_seed(conn: &Connection) -> Result<(), rusqlite::
     conn.execute(
         "DELETE FROM rules WHERE id = ?1",
         params!["rule-seed-lockdown-escalation"],
+    )?;
+    Ok(())
+}
+
+/// 信任度是种子时代的通用示例属性：对诗酒会/日程助手这类世界毫无意义，
+/// 引擎与 UI 也从未按 key 消费它。随种子启动统一退役，老库下次启动自动清理。
+fn remove_retired_character_trust_seed(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "DELETE FROM attribute_values WHERE schema_id = ?1",
+        params!["attr-seed-character-trust"],
+    )?;
+    conn.execute(
+        "DELETE FROM attribute_schemas WHERE id = ?1 OR key = ?2",
+        params!["attr-seed-character-trust", "trust_level"],
     )?;
     Ok(())
 }

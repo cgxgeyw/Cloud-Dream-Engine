@@ -10,14 +10,14 @@ pub(crate) const SEED_WORLD_POETRY_BACKGROUND_PROMPT: &str =
     "这是一个围绕诗词、宴会与临场应答展开的世界。";
 pub(crate) const SEED_WORLD_POETRY_OPENING_SCENE: &str = "临水赏月亭";
 pub(crate) const SEED_WORLD_POETRY_SUMMARY: &str =
-    "玩家以贾府访客视角进入诗会，在往来酬答与礼法张力中推进故事。";
+    "玩家以新到客人身份入席飞花令夜宴，在行令酬答与诗句往来中推进故事。";
 pub(crate) const SEED_WORLD_POETRY_TIME_SYSTEM: &str = "夜宴轮转";
 
 pub(crate) const SEED_CHARACTER_GUEST_ID: &str = "character-seed-poetry-guest";
 pub(crate) const SEED_CHARACTER_GUEST_NAME: &str = "座上客";
 pub(crate) const SEED_CHARACTER_GUEST_ROLE: &str = "新到来客 / 玩家视角 / 发言者";
 pub(crate) const SEED_CHARACTER_GUEST_BACKGROUND: &str =
-    "一个会在诗会上观察局势、试探关系并参与应答的新来客。";
+    "初入席间的新客，一边观察席上氛围，一边接令应答。";
 pub(crate) const SEED_CHARACTER_GUEST_MEMORY: &str = "记住宴会中的人际变化与诗句往来。";
 
 pub(crate) const SEED_CHARACTER_LIBAI_ID: &str = "character-seed-libai";
@@ -30,7 +30,7 @@ pub(crate) const SEED_CHARACTER_DUFU_ID: &str = "character-seed-dufu";
 pub(crate) const SEED_CHARACTER_DUFU_NAME: &str = "杜甫";
 pub(crate) const SEED_CHARACTER_DUFU_ROLE: &str = "沉稳诗人";
 pub(crate) const SEED_CHARACTER_DUFU_BACKGROUND: &str = "关注秩序、现实与长远影响。";
-pub(crate) const SEED_CHARACTER_DUFU_MEMORY: &str = "记住礼法、责任与局势变化。";
+pub(crate) const SEED_CHARACTER_DUFU_MEMORY: &str = "记住诗句往来、席间氛围与现实关切。";
 
 pub(crate) const SEED_CHARACTER_WANGWEI_ID: &str = "character-seed-wangwei";
 pub(crate) const SEED_CHARACTER_WANGWEI_NAME: &str = "王维";
