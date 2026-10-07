@@ -54,6 +54,44 @@ v3 的核心原则是：**世界包拥有游戏页面的结构和视觉设计**�
 
 世界包可以选择提供 `sandbox-js-v1` 逻辑文件。该文件只在独立 Worker 中运行，通过受控 SDK 访问本世界存储和已授权的平台能力，不能访问 DOM、Tauri、任意文件系统和网络。图片选择、麦克风权限、录音、剪贴板、导航和游戏状态写入仍由父页面执行；文件等平台能力经「manifest 声明 + 玩家允许」后由宿主（安卓上经 Kotlin 中间件）执行。
 
+### 框架契约速查（系统栏 / 键盘 / 抽屉 / 交互默认值）
+
+以下是宿主**替世界包兜底**的框架级契约。移动端游戏页里，左列行为全部自动发生，世界包只需按右列书写，**不要自己再做一遍**（细节与历史踩坑见第 11 节、第 8 节）：
+
+| 行为 | 宿主自动完成 | 世界包写法 |
+|---|---|---|
+| 顶部状态栏 / 挖孔 | 根节点 `padding-top` = 原生状态栏精确高度 | 顶栏/页签条 `padding-top` 写固定内容间距（如 `10px`） |
+| 底部导航栏 / 手势条 | 根节点 `padding-bottom` = 原生导航栏高度，**键盘弹出时自动归零** | 输入区不要再加 `env(safe-area-inset-bottom)` |
+| 软键盘让位 | 根节点高度 = 可视视口（原生 IME 高度已扣除），并暴露 `--game-keyboard-height` | 布局根 `height: 100%`；消息列表容器 `min-height: 0` |
+| 高度失控防护 | `.game-ui-layout` 及布局根 `max-height: 100%`，视口全高不再裁掉底部 | 布局根**不要写** `var(--game-visual-viewport-height)` 或 `100dvh` |
+| 点按高亮 | 宿主页面与游戏 iframe 全局 `-webkit-tap-highlight-color: transparent` | 无需处理 |
+| 长按复制 / 全选 | 移动端放行 `contextmenu`，消息正文基线 `user-select: text` | 不要在根节点阻止 contextmenu，不要把消息内容设为 `user-select: none` |
+| 状态抽屉 | 默认停靠右缘、把手可自由拖动换边（位置记忆）、抽屉跟随把手换边 | 只写把手/抽屉的观感（颜色、尺寸、圆角），不要钉停靠边；不需要时隐藏 `.game-status--mobile-drawer` |
+| 页签/纯状态切换 | `set_state` 动作与 `logic.run` 的 `ui.setTab` 快速通道，不创建 Worker | 纯状态写入用这两个；重计算才写 `logic.js` handler |
+
+**禁止出现的写法**（会双份避让或被宿主覆盖）：
+
+- 世界 CSS 里任何 `env(safe-area-inset-*)`——顶部/底部已由根节点预留，再吃一次就是双份留白或垫高；
+- 顶栏/页签条/输入区引用 `--world-safe-area-*`——这些变量仅供把手、浮层等**绝对定位**锚点使用；
+- 布局根写 `height: var(--game-visual-viewport-height, 100dvh)`——视口全高会比根内容盒高出一个安全区，底部被裁；
+- 根节点上写 `padding-top: 0` 或阻止 `contextmenu`——前者抵消宿主顶部预留，后者杀死安卓长按复制。
+
+**正确基线**（直接照抄）：
+
+```css
+/* 布局根（根节点下第一个子元素） */
+.my-shell {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+/* 顶栏、页签条、输入区的间距一律用固定值 */
+.my-topbar { padding: 10px 14px; }
+.my-composer { padding: 10px 12px; }
+```
+
+所有内置种子世界与 `examples/world-packages/` 示例均已按此契约书写，可作为参照。
+
 ## 3. 推荐开发流程
 
 1. 在应用中创建或复制一个世界。
@@ -126,6 +164,8 @@ npm run tauri:dev
   }
 }
 ```
+
+> **键名映射：** 上表是应用数据库 `ui_theme_config` 的存储结构。世界包 `world/world.json` 使用扁平字段名——资源配置写作 `ui_assets_config`（不是 `assets`），能力列表写作 `ui_capabilities`（不是 `capabilities`），运行时版本写作 `ui_runtime_version`（不是 `runtime_version`）。导出/导入时宿主会在这两套名字之间映射。
 
 ### `runtime_version`
 
@@ -304,6 +344,20 @@ manifest 中与 UI 有关的字段：
     "presentation": "meter",
     "max": 100,
     "order": 20
+  },
+  "access_policy": {
+    "agent_self_read": true,
+    "creator_read": true,
+    "director_read": true,
+    "player_read": true,
+    "plugin_read": true
+  },
+  "mutation_policy": {
+    "allowed_ops": ["set"],
+    "creator_write": true,
+    "player_action_write": true,
+    "rule_write": true,
+    "trigger_write": true
   }
 }
 ```
@@ -312,9 +366,13 @@ manifest 中与 UI 有关的字段：
 - `key`：主控写回时使用的稳定 key。数据库当前要求同 scope 全局唯一，包作者必须加世界前缀。
 - `value_type`：`text`、`number`、`boolean`、`list` 或 `json`。
 - `default_value`：新存档初值，类型必须与 `value_type` 一致。
+- `enum_options`：可选，字符串枚举候选（`value_type` 为 `text` 时用）。
 - `display_policy.group`：`side_panel_tabs` 中的标签名；同组属性自动聚合。
 - `display_policy.presentation`：`meter` 显示数值条，`list` 显示条目集合，缺省显示普通值。
 - `display_policy.max` / `order`：数值条上限和组内顺序。
+- `access_policy`：谁可读。世界包运行时属性通常需要 `agent_self_read: true`，角色发言时才能在 `visible_attribute_records` 里看到；按需打开 `creator_read` / `director_read` / `player_read` / `plugin_read`。角色 scope 还可看 `agent_other_read`。
+- `mutation_policy`：谁可写、允许哪些操作。主控写回依赖 `allowed_ops` 含 `"set"`；按需打开 `creator_write` / `player_action_write` / `rule_write` / `trigger_write`。
+- `influence_policy` / `projection_policy`：可选，宿主内部投影用（是否进主控 prompt、如何继承到 session）。世界包一般省略即可；字段会入库，但并非每一项都完整执行，不要当完整策略引擎用。
 
 世界主控请求的 `current_state.runtime_attributes` 会列出当前值和可写 key。行动真实造成消耗、恢复、受伤、身份、装备、功法或进度变化时，主控必须在同一回合返回属性更新，不能只在叙事中声称“体力下降”。地图位置、时间和在场人物分别继续使用 `next_location`、`next_time_label` 与 `scene_visible_characters`；背包使用主控的完整 `inventory_items` 写回。
 
@@ -465,6 +523,43 @@ NPC 发言时，宿主按以下顺序拼接系统提示：
 | `align` / `justify` | 对齐方式 |
 | `style` | React inline style 格式的键值对象 |
 
+上述尺寸字段与 `style` 里的字符串值都支持 `{{ }}` 插值，路径解析规则与 `text` 字段一致
+（`state.` / `attributes.` / `locals.` 等前缀，`for_each` 里用 `locals` 取当前项）。
+整值只有一个模板、且求值结果是数字或布尔时保留原类型，数字交给 React 自动补 `px`；
+模板嵌在更长字符串里时按文本替换。
+
+```jsonc
+{
+  "type": "stack",
+  "class_name": "my-bar",
+  "style": { "height": "{{ bar.ratio }}", "width": "100%" }
+}
+```
+
+典型用途是「按数据定高」的图表柱子、进度条：
+
+```jsonc
+{
+  "type": "for_each",
+  "source": "$state.stats.week_bars",
+  "item_as": "bar",
+  "child": {
+    "type": "stack",
+    "class_name": "my-bar-col",
+    "children": [
+      {
+        "type": "stack",
+        "class_name": "my-bar",
+        "style": { "height": "{{ bar.h_burn }}", "width": "100%" }
+      },
+      { "type": "text", "class_name": "my-bar-label", "text": "{{ bar.label }}" }
+    ]
+  }
+}
+```
+
+配一份世界包 CSS 给 `.my-bar` 上背景色和圆角，柱子就能按数据高度显示。
+
 ### `grid`
 
 ```jsonc
@@ -574,6 +669,27 @@ NPC 发言时，宿主按以下顺序拼接系统提示：
 ```
 
 `disabled_when_empty_state` 可指向 `state` 中的数组字段，数组为空时禁用按钮。
+
+按钮还可以像 `stack` 一样携带 `children`，把整块内容做成可点区域（例如把一整根图表柱子做成按钮）。此时按钮本身不再需要 `label`，可读名称由子内容承担；有子内容时 `label` 仍可写，会渲染在子内容之前。既没有 `label` 又没有 `children` 的按钮会校验失败。
+
+```jsonc
+{
+  "type": "button",
+  "label": "",
+  "class_name": "hl-bar-col-btn",
+  "action": {
+    "id": "logic.run",
+    "args": { "handler": "health.selectDay", "input": { "date": "{{$bar.date}}" } },
+    "result_state": "stats"
+  },
+  "children": [
+    { "type": "when", "expr": "$bar.selected == true", "child": { "type": "badge", "text": "选中", "variant": "success" } },
+    { "type": "when", "expr": "$bar.selected != true", "child": { "type": "text", "text": "{{$bar.value}}" } }
+  ]
+}
+```
+
+注意按钮的 `children` 不会自动获得 `stack` 的纵向排列，柱高、对齐这类布局要写在子节点自己的 `style` 或世界包 CSS 里。
 
 ### `checkbox`
 
@@ -780,7 +896,7 @@ Props：
 
 | Action | 参数 | 用途 |
 |---|---|---|
-| `set_state` | `value?` | 纯前端状态写入：把 `value` 写入 `result_state` 指定的 state 字段；不创建 Worker、不走 IPC，适合本地开关与页签切换 |
+| `set_state` | `key?`、`value?` | 纯前端状态写入：状态键取 `result_state`，缺省时用 `args.key`；值取 `args.value`（无 `value` 键时用整个 `args`）。不创建 Worker、不走 IPC，适合本地开关与页签切换 |
 | `submit_message` | `mode?`、`content?`、`turn_index?` | 发送、编辑或重发输入 |
 | `edit_turn_start` | `content`、`turn_index` | 开始编辑玩家回合 |
 | `edit_turn_cancel` | 无 | 取消编辑 |
@@ -810,7 +926,7 @@ Props：
 | `storage.kv.delete` | `namespace`、`key`、`scope?` | 删除一个 KV 值 |
 | `logic.run` | `handler`、`input` | 在受限 Worker 中执行已注册逻辑 |
 
-`logic.run` 有一条内置快速通道：`handler` 为 `ui.setTab` 时由前端直接完成页签切换（返回 `input.tab`，当前仅接受 `chat` / `growth` / `profile`，其他值回落 `chat`），**不创建 Worker**。Android WebView 的 sandbox iframe 内 Worker 创建偶发失败，世界自建底部页签时建议用 `ui.setTab` 或 `set_state` 承担纯状态切换，把真正的计算留给 `logic.js` 的自定义 handler。需要任意键值的状态写入时用 `set_state`，不受这三个键限制。
+`logic.run` 有一条内置快速通道：`handler` 为 `ui.setTab` 时由前端直接完成页签切换（返回 `input.tab`，接受 `chat` / `records` / `plan` / `profile` / `growth` / `mine`，其他值回落 `chat`），**不创建 Worker**。Android WebView 的 sandbox iframe 内 Worker 创建偶发失败，世界自建底部页签时建议用 `ui.setTab` 或 `set_state` 承担纯状态切换，把真正的计算留给 `logic.js` 的自定义 handler。需要任意键值的状态写入时用 `set_state`，不受上述页签键限制。除 `ui.setTab` 外，业务 handler 一律在世界包 `logic.js` 中实现，宿主不内置专用业务逻辑。
 
 动作参数支持 `$binding` 和 `{{ }}` 模板：
 
@@ -1277,15 +1393,21 @@ div.game-ui-component[data-component="message_list"]  ← class_name
 /* 宿主生成，世界包无需手写 */
 .game-root--mobile-session {
   padding-top: max(var(--world-safe-area-top, 0px), env(safe-area-inset-top, 0px), 0px);
+  padding-bottom: max(var(--world-safe-area-bottom, 0px), env(safe-area-inset-bottom, 0px), 0px);
   box-sizing: border-box;
+}
+/* 防裁剪护栏：布局根误写视口全高时被截到根内容盒高 */
+.game-root--mobile-session .game-ui-layout,
+.game-root--mobile-session .game-ui-layout > .game-ui-node {
+  max-height: 100%;
 }
 ```
 
-安卓上 `--world-safe-area-top` 来自原生 WindowInsets（真实状态栏高度，含挖孔；由宿主注入 JS 后换算成 CSS px），取不到原生值时才回落 88px 估算；iOS 桌面预览则直接用 `env(safe-area-inset-top)`。因此：
+安卓上这些变量来自原生 WindowInsets（由宿主注入 JS 后换算成 CSS px）：顶部是真实状态栏高度（含挖孔），底部是导航栏/手势条高度且**键盘弹出时自动归零**（键盘会覆盖导航栏，不叠加垫高）；取不到原生值时才回落估算（顶部 88px）。iOS 桌面预览则直接用 `env(safe-area-inset-*)`。因此：
 
 - **世界包的顶栏、页签条不要再吃一次 `--world-safe-area-top`**。否则会叠出「根节点灰条 + 顶栏白条」两大块顶部空白（这是真实踩过的坑）。顶栏的 `padding-top` 写固定内容间距（如 `10px`）即可。
 - 移动根节点的 `height` 由宿主按可视视口内联设置。布局根节点（根节点下第一个子元素）请用 `height: 100%` 相对根内容盒排版；**不要写 `var(--game-visual-viewport-height)`**——那是全视口高，会比根内容盒高出一个安全区，底部被 `overflow: hidden` 裁掉（典型症状：输入框下面的按钮行看不见）。
-- 底部手势区由世界包自理：输入区容器加 `padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px))`（安卓上 `env` 通常为 0，写上无害）。
+- 底部手势区同样由宿主基线预留（根节点 `padding-bottom`），输入区不要再加 `env(safe-area-inset-bottom)`——叠加会在有手势条的机型上把输入区抬高两倍。
 
 父页面向移动 iframe 提供的变量（可用于把手、浮层等绝对定位锚点）：
 
@@ -1295,6 +1417,8 @@ div.game-ui-component[data-component="message_list"]  ← class_name
 ```
 
 宿主自身组件（如状态抽屉把手 `top: max(var(--world-safe-area-top, 0px), env(safe-area-inset-top, 0px), 80px)`）用它们做定位；世界包的自有浮层也可以用，但不要用它们给根节点或顶栏再加 padding。
+
+**软键盘避让同样由宿主完成，世界包无需处理。** 宿主通过原生 IME inset 拿到精确键盘高度（安卓上 WebView 的布局视口经常不随键盘收缩，`visualViewport` 在部分 ROM 也不可靠），把移动根节点高度设为「可视视口 = 布局视口 − 键盘高度」，并暴露 `--game-keyboard-height` 变量。世界包只需要保证布局根 `height: 100%`、消息列表 `min-height: 0`，键盘弹出时根节点整体收缩，输入区自然停在键盘上沿；不要自己监听键盘、位移输入区或改写根高度。
 
 此外，宿主已全局设置 `-webkit-tap-highlight-color: transparent`（宿主页面与游戏 iframe 都覆盖），世界包无需自行处理点按高亮；移动端长按复制也已由宿主放行（消息正文基线即 `user-select: text`，contextmenu 不再被全局拦截），世界包不要在根节点上阻止 contextmenu 或把消息内容设为 `user-select: none`。
 
@@ -1441,9 +1565,11 @@ div.game-ui-component[data-component="message_list"]  ← class_name
 
 ## 14. 资源配置
 
+`world/world.json` 里键名是 **`ui_assets_config`**（不是 `assets`；写成 `assets` 会缺字段导入失败）。应用内数据库的 `ui_theme_config.assets` 是同一份数据的存储位置，导出时会映射为 `ui_assets_config`。
+
 ```jsonc
 {
-  "assets": {
+  "ui_assets_config": {
     "background_source_mode": "local-first",
     "portrait_source_mode": "local-first",
     "runtime_image_generation_enabled": false,
