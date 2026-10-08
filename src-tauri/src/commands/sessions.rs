@@ -138,6 +138,9 @@ async fn submit_player_action_inner(
     // 不支持即提交即报错，不写回合数据、不发 HTTP。
     let player_media = request.content.media_parts();
     if !player_media.is_empty() {
+        // 内容校验（体积 + 真实类型）先于模态校验：非法附件无论模型支持什么都不该发出去，
+        // 否则超大请求体会挂死端点，并把 turn_journal 撑爆。
+        crate::models::model_config::ensure_media_payload_valid(&player_media)?;
         let db = state.db.lock().await;
         let mut checked_model_ids = std::collections::HashSet::new();
         let mut check_model = |model: &crate::models::model_config::ModelConfig| -> Result<(), String> {
@@ -317,6 +320,7 @@ async fn submit_player_action_inner(
                 speaker_name: String::new(),
                 narration: None,
                 is_placeholder: false,
+                is_streaming: false,
                 is_error: false,
             },
             turn_index,
@@ -1325,10 +1329,12 @@ fn build_progress_snapshot(
     messages.extend(runtime_preparation.pre_runtime_system_messages.clone());
 
     let mut speaker_messages = progress.messages[split_index..].to_vec();
+    // 占位消息和真流式增量都要打上 streaming：占位时前端显示「思考中」动画，
+    // 逐字阶段前端据此开流动画并藏掉「思考中」，否则会出现两条回复条。
     normalize_progress_messages(
         &mut speaker_messages,
         turn_index,
-        progress.is_placeholder,
+        progress.is_streaming || progress.is_placeholder,
         progress.is_error,
     );
     messages.extend(speaker_messages);
@@ -1433,10 +1439,12 @@ fn build_agent_chat_progress_snapshot(
     let mut messages = progress.messages[..split_index].to_vec();
 
     let mut speaker_messages = progress.messages[split_index..].to_vec();
+    // 占位消息和真流式增量都要打上 streaming：占位时前端显示「思考中」动画，
+    // 逐字阶段前端据此开流动画并藏掉「思考中」，否则会出现两条回复条。
     normalize_progress_messages(
         &mut speaker_messages,
         turn_index,
-        progress.is_placeholder,
+        progress.is_streaming || progress.is_placeholder,
         progress.is_error,
     );
     messages.extend(speaker_messages);

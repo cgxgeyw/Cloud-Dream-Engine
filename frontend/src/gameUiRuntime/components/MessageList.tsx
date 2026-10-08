@@ -586,6 +586,19 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
           return null;
         }
 
+        // 流式占位气泡没有可见正文时，渲染出来只是一条空条；它和底部的
+        // 「思考中」指示条并排出现，就成了用户看到的「两条回复条」。
+        // 注意：show_agent_reasoning=false 时思维链不渲染，不能把 reasoning
+        // 当成「有内容」——否则模型先吐 CoT 会多出一条空回复气泡。
+        const visibleAgentBodyEmpty =
+          getMessageText(message.content).trim().length === 0
+          && String(messageMetadata.narration ?? "").trim().length === 0
+          && (!showAgentReasoning || String(messageMetadata.reasoning ?? "").trim().length === 0)
+          && !(agentToolActivity && (agentToolActivity.tools?.length ?? 0) > 0);
+        if (message.role === "agent" && visibleAgentBodyEmpty) {
+          return null;
+        }
+
         const showTimestamp = shouldShowMessageTimestamp(message.created_at, previousVisibleMessageCreatedAt);
         const timestampLabel = showTimestamp ? formatMessageTimestamp(message.created_at) : null;
         previousVisibleMessageCreatedAt = message.created_at;
@@ -782,9 +795,11 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
         const lastAgent = [...runtime.messages].reverse().find((m) => m.role === "agent");
         const agentText = lastAgent ? getMessageText(lastAgent.content).trim() : "";
         const agentMeta = (lastAgent?.metadata ?? {}) as Record<string, unknown>;
-        const agentHasOutput = agentMeta.streaming === true && agentText.length > 0;
-        // 思考点：尚无流式正文时也显示「思考中」动画（含仅有思维链的阶段）。
-        if (agentHasOutput || hasActiveAgentStream && agentText.length > 0) {
+        const agentHasVisibleText = agentText.length > 0
+          || (showAgentReasoning && String(agentMeta.reasoning ?? "").trim().length > 0)
+          || String(agentMeta.narration ?? "").trim().length > 0;
+        // 已有可见输出（正文 / 会展示的思维链 / 旁白）后关掉「思考中」，避免双气泡。
+        if (agentHasVisibleText) {
           return null;
         }
         const speakerName = lastAgent?.speaker || runtime.session?.player_character_name || "";

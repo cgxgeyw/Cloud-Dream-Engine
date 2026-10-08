@@ -6,8 +6,8 @@
 }
 
 .game-root--mobile-session {
-  height: var(--game-visual-viewport-height, 100dvh);
-  min-height: var(--game-visual-viewport-height, 100dvh);
+  height: 100%;
+  min-height: 100%;
   overflow: hidden;
   color: var(--jiazi-ink);
   background: #d8d1bf;
@@ -15,9 +15,9 @@
 
 .jiazi-mobile {
   box-sizing: border-box;
-  padding-top: max(calc(env(safe-area-inset-top, 0px) + 10px), 20px);
+  padding-top: 20px;
   padding-right: 10px;
-  padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px);
+  padding-bottom: 8px;
   padding-left: 10px;
 }
 

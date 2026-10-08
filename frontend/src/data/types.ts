@@ -516,6 +516,8 @@ export type ModelConfig = {
   is_default: boolean;
   /** 声明支持的输入模态（"image" / "audio"），空 = 仅文本。 */
   input_modalities: string[];
+  /** 关闭 JSON 结构化输出（不发 response_format=json_object）。 */
+  json_mode_disabled?: boolean;
 };
 
 export type ModelConfigResponse = ModelConfig;

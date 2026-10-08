@@ -42,14 +42,14 @@ body,
 
 .accounting-ledger--desktop .ledger-header,
 .accounting-ledger--desktop .ledger-view-tabs {
-  padding-right: max(30px, var(--world-safe-area-right, 0px));
-  padding-left: max(30px, var(--world-safe-area-left, 0px));
+  padding-right: 30px;
+  padding-left: 30px;
 }
 
 .accounting-ledger--desktop .ledger-period-toolbar,
 .accounting-ledger--desktop .ledger-view {
-  padding-right: max(30px, var(--world-safe-area-right, 0px));
-  padding-left: max(30px, var(--world-safe-area-left, 0px));
+  padding-right: 30px;
+  padding-left: 30px;
 }
 
 .accounting-ledger--desktop .ledger-view {

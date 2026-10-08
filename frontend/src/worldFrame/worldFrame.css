@@ -9,6 +9,8 @@ body,
   margin: 0;
   overflow: hidden;
   background: transparent;
+  /* 键盘弹出时避免 WebView 把 iframe 内容顶到看不见的位置 */
+  overflow-anchor: none;
 }
 
 .world-frame-status {

@@ -12,8 +12,8 @@
 
 .game-root--mobile-session {
   width: 100%;
-  height: var(--game-visual-viewport-height, 100dvh);
-  min-height: var(--game-visual-viewport-height, 100dvh);
+  height: 100%;
+  min-height: 100%;
   overflow: hidden;
   color: var(--mortal-mobile-ink);
   background: var(--mortal-mobile-paper);
@@ -22,7 +22,7 @@
 .mortal-mobile-shell {
   position: relative;
   width: 100%;
-  height: var(--game-visual-viewport-height, 100dvh);
+  height: 100%;
   min-height: 0;
   overflow: hidden;
   background: var(--mortal-mobile-paper);
@@ -30,11 +30,11 @@
 
 .mortal-mobile-topbar {
   box-sizing: border-box;
-  flex-basis: max(74px, calc(env(safe-area-inset-top, 0px) + 58px)) !important;
-  min-height: max(74px, calc(env(safe-area-inset-top, 0px) + 58px));
-  padding-top: max(env(safe-area-inset-top, 0px), 10px);
-  padding-left: max(env(safe-area-inset-left, 0px), 10px);
-  padding-right: max(env(safe-area-inset-right, 0px), 8px);
+  flex-basis: max(74px, 58px) !important;
+  min-height: max(74px, 58px);
+  padding-top: 10px;
+  padding-left: 10px;
+  padding-right: 8px;
   border-bottom: 1px solid rgba(230, 236, 226, 0.13);
   background: var(--mortal-mobile-shell);
 }
@@ -253,7 +253,7 @@
 
 .mortal-mobile-command {
   box-sizing: border-box;
-  padding: 8px max(env(safe-area-inset-right, 0px), 9px) max(env(safe-area-inset-bottom, 0px), 9px) max(env(safe-area-inset-left, 0px), 9px);
+  padding: 8px 9px 9px 9px;
   border-top: 1px solid var(--mortal-mobile-line);
   background: var(--mortal-mobile-paper-deep);
 }
@@ -354,8 +354,8 @@
 
 .mortal-mobile-systems .game-status-handle {
   position: absolute;
-  top: max(calc(env(safe-area-inset-top, 0px) + 92px), 108px);
-  right: max(env(safe-area-inset-right, 0px), 0px);
+  top: 108px;
+  right: 0px;
   min-width: 42px;
   min-height: 88px;
   padding: 10px 8px;
@@ -371,9 +371,9 @@
 
 .mortal-mobile-systems .game-status-drawer {
   position: fixed;
-  top: max(calc(env(safe-area-inset-top, 0px) + 58px), 74px);
-  right: max(env(safe-area-inset-right, 0px), 0px);
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 106px);
+  top: 74px;
+  right: 0px;
+  bottom: 106px;
   width: min(80vw, 320px);
   display: flex;
   flex-direction: column;

@@ -6,7 +6,7 @@ use rusqlite::Connection;
 use crate::db::repositories::character_repo::CharacterRepository;
 use crate::db::repositories::attribute_repo::AttributeRepository;
 use crate::db::repositories::world_repo::WorldRepository;
-use crate::models::character::{CharacterCreateRequest, CharacterDefinition};
+use crate::models::character::{CharacterCreateRequest, CharacterDefinition, CharacterUpdateRequest};
 use crate::models::session::{
     AssetSelection, CharacterVisualState, ChatMessage, MessageContent, SceneRuntime,
     SessionSnapshot, SessionState,
@@ -731,46 +731,62 @@ impl WorldService {
                 }
             }
         }
-        let created_world = world_repo.create(&WorldCreateRequest {
-            name: imported_world.name.clone(),
-            genre: imported_world.genre.clone(),
-            background_prompt: imported_world.background_prompt.clone(),
-            opening_scene: imported_world.opening_scene.clone(),
-            summary: imported_world.summary.clone(),
-            time_system: imported_world.time_system.clone(),
-            map_nodes: imported_world.map_nodes.clone(),
-            triggers: imported_world.triggers.clone(),
-            time_config: imported_world.time_config.clone(),
-            director_config: Self::normalize_world_director_config(&imported_world.director_config),
-            ui_theme_config: Self::normalize_world_ui_theme_config(&serde_json::json!({
-                "assets": WorldPackageService::remap_world_ui_theme_assets(
-                    Self::normalize_world_ui_assets_config(&imported_world.ui_assets_config),
-                    &asset_map,
-                ),
-                "desktop_file": desktop_ui_source,
-                "mobile_file": mobile_ui_source,
-                "runtime_version": ui_runtime_version,
-                "capabilities": ui_capabilities,
-                "platform_features": imported_world.platform_features.clone(),
-                "storage": imported_world.ui_storage_config.clone(),
-                "logic": imported_world.ui_logic_config.clone(),
-                "attribute_schemas": imported_world.attribute_schemas.clone(),
-                "initial_inventory_items": imported_world.initial_inventory_items.clone(),
-                "entries": {
-                    "desktop": {
-                        "document": desktop_ui_source,
-                        "stylesheet": desktop_ui_stylesheet,
-                    },
-                    "mobile": {
-                        "document": mobile_ui_source,
-                        "stylesheet": mobile_ui_stylesheet,
-                    },
+        let ui_theme_config = Self::normalize_world_ui_theme_config(&serde_json::json!({
+            "assets": WorldPackageService::remap_world_ui_theme_assets(
+                Self::normalize_world_ui_assets_config(&imported_world.ui_assets_config),
+                &asset_map,
+            ),
+            "desktop_file": desktop_ui_source,
+            "mobile_file": mobile_ui_source,
+            "runtime_version": ui_runtime_version,
+            "capabilities": ui_capabilities,
+            "platform_features": imported_world.platform_features.clone(),
+            "storage": imported_world.ui_storage_config.clone(),
+            "logic": imported_world.ui_logic_config.clone(),
+            "attribute_schemas": imported_world.attribute_schemas.clone(),
+            "initial_inventory_items": imported_world.initial_inventory_items.clone(),
+            "entries": {
+                "desktop": {
+                    "document": desktop_ui_source,
+                    "stylesheet": desktop_ui_stylesheet,
                 },
-            })),
-            opening_messages: imported_world.opening_messages.clone(),
-            opening_character_ids: Vec::new(),
-            player_character_id: None,
-        })?;
+                "mobile": {
+                    "document": mobile_ui_source,
+                    "stylesheet": mobile_ui_stylesheet,
+                },
+            },
+        }));
+
+        // 二次导入同名世界包 = 升级，不是新建：沿用已有世界的 id，会话、存档、消息        // 全都还挂在它上面。否则每修一次包就多出一个同名世界，玩家点进的仍然是那个
+        // 界面坏掉的旧世界——「改了包还是老样子」就是这么来的。
+        let existing_world_id = world_repo
+            .list()?
+            .into_iter()
+            .find(|world| world.name.trim() == imported_world.name.trim())
+            .map(|world| world.id);
+        let world_id = match existing_world_id {
+            Some(id) => id,
+            None => world_repo
+                .create(&WorldCreateRequest {
+                    name: imported_world.name.clone(),
+                    genre: imported_world.genre.clone(),
+                    background_prompt: imported_world.background_prompt.clone(),
+                    opening_scene: imported_world.opening_scene.clone(),
+                    summary: imported_world.summary.clone(),
+                    time_system: imported_world.time_system.clone(),
+                    map_nodes: imported_world.map_nodes.clone(),
+                    triggers: imported_world.triggers.clone(),
+                    time_config: imported_world.time_config.clone(),
+                    director_config: Self::normalize_world_director_config(
+                        &imported_world.director_config,
+                    ),
+                    ui_theme_config: ui_theme_config.clone(),
+                    opening_messages: imported_world.opening_messages.clone(),
+                    opening_character_ids: Vec::new(),
+                    player_character_id: None,
+                })?
+                .id,
+        };
 
         let attribute_repo = AttributeRepository::new(&tx);
         let existing_schemas = attribute_repo.list_schemas(None)?;
@@ -801,6 +817,7 @@ impl WorldService {
 
         let mut id_map = HashMap::new();
         let mut name_map = HashMap::new();
+        let existing_characters = char_repo.list_by_world(&world_id)?;
         for character in imported_characters {
             let source_character_id = if character.source_character_id.trim().is_empty() {
                 character.name.clone()
@@ -817,24 +834,30 @@ impl WorldService {
                 .get(&character.avatar_asset)
                 .cloned()
                 .unwrap_or_else(|| character.avatar_asset.clone());
-            let created_character = char_repo.create(
-                &created_world.id,
-                &CharacterCreateRequest {
-                    name: character.name.clone(),
-                    role: character.role.clone(),
-                    background_prompt: character.background_prompt.clone(),
-                    model: character.model.clone(),
-                    memory_strategy: character.memory_strategy.clone(),
-                    recent_dialogue_rounds: character.recent_dialogue_rounds,
-                    attributes: character.attributes.clone(),
-                    portrait_assets: character.portrait_assets.clone(),
-                    avatar_asset: character.avatar_asset.clone(),
-                    system_prompt_template: character.system_prompt_template.clone(),
-                    response_contract_prompt: character.response_contract_prompt.clone(),
-                    narration_prompt: character.narration_prompt.clone(),
-                    runtime_system_prompt: character.runtime_system_prompt.clone(),
-                },
-            )?;
+            let request = CharacterCreateRequest {
+                name: character.name.clone(),
+                role: character.role.clone(),
+                background_prompt: character.background_prompt.clone(),
+                model: character.model.clone(),
+                memory_strategy: character.memory_strategy.clone(),
+                recent_dialogue_rounds: character.recent_dialogue_rounds,
+                attributes: character.attributes.clone(),
+                portrait_assets: character.portrait_assets.clone(),
+                avatar_asset: character.avatar_asset.clone(),
+                system_prompt_template: character.system_prompt_template.clone(),
+                response_contract_prompt: character.response_contract_prompt.clone(),
+                narration_prompt: character.narration_prompt.clone(),
+                runtime_system_prompt: character.runtime_system_prompt.clone(),
+            };
+            // 同名角色就地更新：消息行的 character_id 指着老角色，换成新 id 就成孤儿了。
+            // 包里少了的角色不删，同样是怕把历史消息的说话人带掉。
+            let created_character = match existing_characters
+                .iter()
+                .find(|existing| existing.name.trim() == character.name.trim())
+            {
+                Some(existing) => char_repo.update(&existing.id, &CharacterUpdateRequest::from(&request))?,
+                None => char_repo.create(&world_id, &request)?,
+            };
             let created_character_id = created_character.id.clone();
             id_map.insert(source_character_id, created_character_id.clone());
             name_map.insert(character.name.clone(), created_character_id);
@@ -869,21 +892,23 @@ impl WorldService {
             Some(&name_map),
         );
 
+        // 包即事实来源：升级已有世界时把界面/文案/地图这些一并刷成包内定义，
+        // 只改 director_config 和角色关联会留下一半新一半旧的世界。
         let updated_world = world_repo.update(
-            &created_world.id,
+            &world_id,
             &WorldUpdateRequest {
-                name: None,
-                genre: None,
-                background_prompt: None,
-                opening_scene: None,
-                summary: None,
-                time_system: None,
-                map_nodes: None,
-                triggers: None,
-                time_config: None,
+                name: Some(imported_world.name.clone()),
+                genre: Some(imported_world.genre.clone()),
+                background_prompt: Some(imported_world.background_prompt.clone()),
+                opening_scene: Some(imported_world.opening_scene.clone()),
+                summary: Some(imported_world.summary.clone()),
+                time_system: Some(imported_world.time_system.clone()),
+                map_nodes: Some(imported_world.map_nodes.clone()),
+                triggers: Some(imported_world.triggers.clone()),
+                time_config: Some(imported_world.time_config.clone()),
                 director_config: Some(Self::normalize_world_director_config(&director_config)),
-                ui_theme_config: None,
-                opening_messages: None,
+                ui_theme_config: Some(ui_theme_config),
+                opening_messages: Some(imported_world.opening_messages.clone()),
                 opening_character_ids: Some(opening_character_ids),
                 player_character_id: Some(player_character_id),
             },
@@ -1367,6 +1392,115 @@ mod tests {
             )
             .expect("imported world count"),
             0
+        );
+    }
+
+    fn healthy_life_package(
+        ui_source: &str,
+        characters: Vec<CharacterPackageData>,
+    ) -> ImportedWorldPackage {
+        ImportedWorldPackage {
+            world: WorldPackageWorldData {
+                name: "健康生活".to_string(),
+                genre: "生活".to_string(),
+                background_prompt: String::new(),
+                opening_scene: "开场场景".to_string(),
+                summary: String::new(),
+                time_system: String::new(),
+                map_nodes: serde_json::json!({ "version": 1, "nodes": [] }),
+                triggers: Vec::new(),
+                time_config: serde_json::json!({}),
+                director_config: serde_json::json!({}),
+                ui_assets_config: serde_json::json!({}),
+                attribute_schemas: Vec::new(),
+                initial_inventory_items: Vec::new(),
+                ui_runtime_version: Some(3),
+                ui_capabilities: Vec::new(),
+                platform_features: Vec::new(),
+                ui_storage_config: serde_json::json!({}),
+                ui_logic_config: serde_json::json!({}),
+                opening_messages: Vec::new(),
+                opening_character_names: Vec::new(),
+                player_character_name: None,
+                opening_character_source_ids: Vec::new(),
+                player_character_source_id: None,
+            },
+            desktop_ui_source: ui_source.to_string(),
+            mobile_ui_source: ui_source.to_string(),
+            desktop_ui_stylesheet: ui_source.to_string(),
+            mobile_ui_stylesheet: ui_source.to_string(),
+            ui_runtime_version: 3,
+            ui_capabilities: Vec::new(),
+            characters,
+            asset_map: HashMap::new(),
+            mcp_tools: Vec::new(),
+        }
+    }
+
+    // 二次导入同一个世界包必须是「就地升级」：世界 id 不变，界面刷成包内最新的那份。
+    // 否则每修一次包就多出一个同名世界，玩家点进的还是界面坏掉的旧世界。
+    #[test]
+    fn reimporting_a_world_package_upgrades_the_existing_world_in_place() {
+        let conn = Connection::open_in_memory().expect("open database");
+        schema::create_tables(&conn).expect("create schema");
+        let service = WorldService::new();
+
+        let first = service
+            .persist_world_package(
+                &conn,
+                healthy_life_package(
+                    "旧版界面",
+                    vec![imported_character("coach", "健康小助手")],
+                ),
+            )
+            .expect("first import");
+        let coach_id_before = conn
+            .query_row(
+                "SELECT id FROM characters WHERE world_id = ?1",
+                [&first.id],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("character id before upgrade");
+
+        let second = service
+            .persist_world_package(
+                &conn,
+                healthy_life_package(
+                    "新版界面",
+                    vec![imported_character("coach", "健康小助手")],
+                ),
+            )
+            .expect("second import");
+
+        assert_eq!(first.id, second.id, "二次导入必须沿用同一个世界 id");
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM worlds WHERE name = '健康生活'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("world count after reimport"),
+            1,
+            "同名世界不该被复制成两行"
+        );
+
+        let desktop_document = second
+            .ui_theme_config
+            .pointer("/entries/desktop/document")
+            .and_then(|value: &serde_json::Value| value.as_str())
+            .unwrap_or_default();
+        assert_eq!(desktop_document, "新版界面", "界面必须换成包内这一版");
+
+        let coach_id_after = conn
+            .query_row(
+                "SELECT id FROM characters WHERE world_id = ?1",
+                [&second.id],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("character id after upgrade");
+        assert_eq!(
+            coach_id_before, coach_id_after,
+            "同名角色必须就地更新，换成新 id 历史消息就成孤儿了"
         );
     }
 }

@@ -27,9 +27,12 @@
 
 .game-root--mobile-session {
   width: 100%;
-  height: var(--game-visual-viewport-height, 100dvh);
-  min-height: var(--game-visual-viewport-height, 100dvh);
-  overflow: hidden;
+  /* 必须吃运行时可见高度变量：键盘弹出后 --game-visual-viewport-height 变小，
+     界面才会跟着上移。不要写死 100vh/100dvh。 */
+  height: 100%;
+  min-height: 0;
+  /* 根节点不要 overflow:hidden——键盘弹出时会把焦点输入框裁在键盘下面 */
+  overflow: visible;
   color: var(--hl-ink);
   background: var(--hl-bg);
   font-family: var(--hl-font);
@@ -39,8 +42,10 @@
   position: relative;
   width: 100%;
   /* 安全区已由宿主基线垫在 .game-root--mobile-session 的 padding-top 上，
-     这里相对 root 内容盒排版即可；写 viewport 高度会在底部裁掉输入区按钮行。 */
-  height: 100%;
+     这里必须是 100%（父内容盒 = 可见高度 − top safe-area）。
+     写成 viewport 高度会裁掉底部输入行；overflow 放在聊天区而不是根上，
+     否则键盘弹出时输入框被裁在下面。 */
+  height: 100% !important;
   min-height: 0;
   overflow: hidden;
   background: var(--hl-bg);
@@ -98,24 +103,35 @@
 }
 
 .hl-pane--chat {
-  min-height: 0;
-  overflow: hidden;
+  display: flex !important;
+  flex-direction: column !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
 }
 
-.hl-mobile-messages,
-.hl-mobile-messages .game-chat-messages-shell,
-.hl-mobile-messages .game-chat-messages {
+/* 对照 stock-analyst：消息区只靠 flex 收缩，不要 height:100%（父高度 auto 时会把输入条顶出屏） */
+.hl-mobile-messages {
+  flex: 1 1 0 !important;
+  min-height: 0 !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
+}
+.hl-mobile-messages .game-chat-messages-shell {
   min-width: 0;
   min-height: 0;
   height: 100%;
+  overflow: hidden;
 }
 
 .hl-mobile-messages .game-chat-messages {
   overflow-y: auto;
+  overflow-x: hidden;
+  height: 100%;
   width: 100% !important;
   box-sizing: border-box !important;
   padding: 14px 12px 10px !important;
   background: transparent;
+  -webkit-overflow-scrolling: touch;
 }
 
 .hl-mobile-messages .game-message-row--agent .game-message,
@@ -150,7 +166,12 @@
   box-sizing: border-box !important;
   background: var(--hl-panel);
   border-top: 1px solid var(--hl-line);
-  padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+  padding: 10px 12px 10px;
+  /* 与 stock-analyst 相同：贴在 flex 列底部，靠消息区收缩让位，不要 sticky */
+  flex: 0 0 auto !important;
+  min-height: 0 !important;
+  position: relative;
+  z-index: 5;
 }
 
 .hl-mobile-composer .game-input-area,
@@ -162,6 +183,14 @@
   background: transparent !important;
   border: 0 !important;
   box-shadow: none !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+}
+/* stock-analyst 同款：单列 grid，textarea 一行、按钮一行 */
+.hl-mobile-composer .game-input-compose {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  gap: 8px !important;
 }
 
 .hl-mobile-composer .game-textarea,
@@ -217,13 +246,52 @@
   background: var(--hl-orange) !important;
 }
 
-.hl-mobile-composer .game-input-actions,
-.hl-mobile-composer .game-input-toolbar,
-.hl-mobile-composer .game-input-toolbar-left {
-  gap: 10px !important;
+/* 移动端按钮行。框架没有给 .game-input-actions 预置任何样式，它默认是 block，
+   于是两个图标按钮、弹性占位块、发送按钮各自占一行：发送按钮被挤到图标行下
+   面，连同 calc(10px + env(safe-area-inset-bottom)) 的底部内边距一起把输入区
+   顶出屏幕——就是「发送按钮超出页面底部」。这里显式改成单行 flex，
+   .game-input-actions-spacer 负责把发送按钮推到右侧。 */
+.hl-mobile-composer .game-input-actions {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
   align-items: center !important;
   width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
   margin-top: 10px !important;
+  gap: 10px !important;
+}
+
+.hl-mobile-composer .game-input-actions-spacer {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.hl-mobile-composer .game-submit-btn {
+  flex: 0 0 auto !important;
+  max-width: 100% !important;
+  white-space: nowrap !important;
+}
+
+/* 桌面 DOM 误入时的兜底：toolbar-left 不能吃 width:100%，否则发送键被顶出右缘 */
+.hl-mobile-composer .game-input-toolbar {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  width: 100% !important;
+  margin-top: 10px !important;
+}
+.hl-mobile-composer .game-input-toolbar-left {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  flex: 0 0 auto !important;
+  width: auto !important;
+  margin-top: 0 !important;
 }
 
 /* Message actions — quiet white chips (no full-sat fills) */
@@ -446,7 +514,7 @@
 .hl-tabbar {
   background: var(--hl-panel);
   border-top: 1px solid var(--hl-line);
-  padding: 6px 12px calc(8px + env(safe-area-inset-bottom, 0px));
+  padding: 6px 12px 8px;
   min-height: 56px;
 }
 
@@ -493,6 +561,8 @@
 }
 
 .hl-tab-btn--active.hl-tab-btn--chat::after { background: var(--hl-green); }
+.hl-tab-btn--active.hl-tab-btn--records::after { background: var(--hl-blue); }
+.hl-tab-btn--active.hl-tab-btn--plan::after { background: var(--hl-orange); }
 .hl-tab-btn--active.hl-tab-btn--growth::after { background: var(--hl-orange); }
 .hl-tab-btn--active.hl-tab-btn--profile::after { background: var(--hl-purple); }
 
@@ -842,10 +912,15 @@
 }
 .hl-mobile-shell {
   isolation: isolate;
+  display: flex !important;
+  flex-direction: column !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
 }
 .hl-mobile-body {
   position: relative;
   z-index: 1;
+  flex: 1 1 0 !important;
   min-height: 0 !important;
   overflow: hidden !important;
 }
@@ -1134,7 +1209,7 @@
   flex: 0 0 auto !important;
   min-height: 48px !important;
   gap: 6px !important;
-  /* 顶部安全区由宿主基线垫在 root 上（安卓为 --world-safe-area-top: 88px），
+  /* 顶部安全区由宿主基线垫在 root 上（安卓为原生精确状态栏高度），
      这里再吃一次会叠出第二块空白；只留内容间距。 */
   padding: 10px 10px 8px !important; /* 顶部安全区已由宿主基线垫在 root 上，tab 条只留内容间距 */
   background: var(--hl-panel) !important;
@@ -1172,6 +1247,8 @@
   box-shadow: var(--hl-shadow-sm) !important;
 }
 .hl-tab-btn--active.hl-tab-btn--chat::after { background: var(--hl-green); }
+.hl-tab-btn--active.hl-tab-btn--records::after { background: var(--hl-blue); }
+.hl-tab-btn--active.hl-tab-btn--plan::after { background: var(--hl-orange); }
 .hl-tab-btn--active.hl-tab-btn--growth::after { background: var(--hl-orange); }
 .hl-tab-btn--active.hl-tab-btn--profile::after { background: var(--hl-purple); }
 .hl-tab-btn--active::after {

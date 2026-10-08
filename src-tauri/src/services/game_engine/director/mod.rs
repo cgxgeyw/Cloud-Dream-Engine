@@ -756,6 +756,7 @@ impl WorldDirectorService {
         model_id: &str,
         generation: &GenerationParams,
         stream_enabled: bool,
+        json_mode_disabled: bool,
     ) -> ChatRequest {
         let mut messages: Vec<crate::services::llm::client::ChatMessage> = prompt_call
             .get("messages")
@@ -829,7 +830,7 @@ impl WorldDirectorService {
             messages,
             generation: generation.clone(),
             stream: Some(stream_enabled),
-            json_mode: Some(true),
+            json_mode: Some(!json_mode_disabled),
             response_schema: Some(self.build_director_response_schema(world)),
             tools,
             tool_choice: native_tools_active.then_some(ChatToolChoice::Auto),

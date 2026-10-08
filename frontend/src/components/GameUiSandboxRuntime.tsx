@@ -498,12 +498,14 @@ function useWorldFrameViewport(platform: GameUiPlatform): WorldFrameViewportSnap
     window.addEventListener("resize", update);
     window.addEventListener("orientationchange", update);
     window.addEventListener("native-safe-area", update);
+    window.addEventListener("native-keyboard", update);
     window.visualViewport?.addEventListener("resize", update);
     window.visualViewport?.addEventListener("scroll", update);
     return () => {
       window.removeEventListener("resize", update);
       window.removeEventListener("orientationchange", update);
       window.removeEventListener("native-safe-area", update);
+      window.removeEventListener("native-keyboard", update);
       window.visualViewport?.removeEventListener("resize", update);
       window.visualViewport?.removeEventListener("scroll", update);
     };
@@ -511,16 +513,46 @@ function useWorldFrameViewport(platform: GameUiPlatform): WorldFrameViewportSnap
   return viewport;
 }
 
+function readNativeKeyboardHeight(): number {
+  const raw = (window as { __nativeKeyboardHeight?: unknown }).__nativeKeyboardHeight;
+  const value = typeof raw === "number" ? raw : Number(raw);
+  return Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
+}
+
+/** 无键盘布局高；模块级记忆，避免 WebView 已缩后再减一次键盘。 */
+let hostMaxLayoutHeight = 0;
+
 function readViewport(platform: GameUiPlatform): WorldFrameViewportSnapshot {
   const visual = window.visualViewport;
   const width = Math.round(visual?.width ?? window.innerWidth);
-  const height = Math.round(visual?.height ?? window.innerHeight);
+  const layout = Math.round(window.innerHeight);
+  if (layout > hostMaxLayoutHeight) {
+    hostMaxLayoutHeight = layout;
+  }
+  const visualHeight = Math.round(visual?.height ?? layout);
   const offsetTop = Math.round(visual?.offsetTop ?? 0);
+  const nativeKeyboard = platform === "mobile" ? readNativeKeyboardHeight() : 0;
+  const visualKeyboard = platform === "mobile"
+    ? Math.max(0, hostMaxLayoutHeight - visualHeight - offsetTop)
+    : 0;
+  const keyboardHeight = Math.max(nativeKeyboard, visualKeyboard);
+  // 只收缩一次：布局/visual 已变矮就直接用；否则才用 maxLayout−keyboard
+  const alreadyShrunk = layout < hostMaxLayoutHeight - 8 || visualHeight < hostMaxLayoutHeight - 8;
+  let height: number;
+  if (platform !== "mobile") {
+    height = visualHeight;
+  } else if (alreadyShrunk) {
+    height = Math.max(1, Math.min(visualHeight > 0 ? visualHeight : layout, layout || hostMaxLayoutHeight));
+  } else if (keyboardHeight > 0) {
+    height = Math.max(1, hostMaxLayoutHeight - keyboardHeight);
+  } else {
+    height = visualHeight;
+  }
   return {
     width,
     height,
     offset_top: offsetTop,
-    keyboard_height: platform === "mobile" ? Math.max(0, Math.round(window.innerHeight - height - offsetTop)) : 0,
+    keyboard_height: keyboardHeight,
     safe_area: measureSafeAreaInsets(platform),
   };
 }
@@ -541,17 +573,24 @@ function measureSafeAreaInsets(platform: GameUiPlatform) {
   if (platform !== "mobile") {
     return result;
   }
-  // 安卓 WebView 里 env(safe-area-inset-top) 恒为 0；MainActivity 会经 evaluateJavascript
-  // 把真实 statusBars/displayCutout inset（CSS px）注入 __nativeSafeAreaInsets，优先采用。
-  const nativeTop = (window as { __nativeSafeAreaInsets?: { top?: unknown } }).__nativeSafeAreaInsets?.top;
-  const parsedNativeTop = typeof nativeTop === "number" ? nativeTop : Number(nativeTop);
-  if (Number.isFinite(parsedNativeTop) && parsedNativeTop > 0) {
-    result.top = Math.round(parsedNativeTop);
-    return result;
-  }
-  // 取不到原生值（如浏览器调试）时退回保守猜测：全面屏状态栏/挖孔仍挡住顶部 UI。
-  if (result.top < 72) {
+  // 安卓 WebView 里 env(safe-area-inset-*) 恒为 0；MainActivity 会经 evaluateJavascript
+  // 把真实 statusBars/displayCutout/navigationBars inset（CSS px）注入 __nativeSafeAreaInsets，
+  // 顶部与底部都优先采用原生值（底部在键盘弹出时由原生侧归零）。
+  const nativeInsets = (window as { __nativeSafeAreaInsets?: { top?: unknown; bottom?: unknown } }).__nativeSafeAreaInsets;
+  const parseNative = (value: unknown): number | null => {
+    const parsed = typeof value === "number" ? value : Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const nativeTop = parseNative(nativeInsets?.top);
+  if (nativeTop != null) {
+    result.top = Math.round(Math.max(0, nativeTop));
+  } else if (result.top < 72) {
+    // 取不到原生值（如浏览器调试）时退回保守猜测：全面屏状态栏/挖孔仍挡住顶部 UI。
     result.top = 88;
+  }
+  const nativeBottom = parseNative(nativeInsets?.bottom);
+  if (nativeBottom != null) {
+    result.bottom = Math.round(Math.max(0, nativeBottom));
   }
   return result;
 }

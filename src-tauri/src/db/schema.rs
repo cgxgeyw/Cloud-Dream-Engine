@@ -227,7 +227,8 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             max_tokens INTEGER NOT NULL DEFAULT 1200,
             streaming_enabled INTEGER NOT NULL DEFAULT 1,
             is_default INTEGER NOT NULL DEFAULT 0,
-            input_modalities TEXT NOT NULL DEFAULT '[]'
+            input_modalities TEXT NOT NULL DEFAULT '[]',
+            json_mode_disabled INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS plugins (

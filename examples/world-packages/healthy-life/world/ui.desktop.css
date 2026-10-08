@@ -13,6 +13,9 @@
   --hl-green: #0e7c57;
   --hl-purple: #6a4bc4;
   --hl-blue: #2b5fe3;
+  /* 图表柱与状态卡共用：浅蓝=摄入，深蓝=消耗 */
+  --hl-bar-in: #a8c0ef;
+  --hl-bar-out: #1a4fb4;
   --hl-shadow:
     3px 4px 12px rgba(100, 116, 139, 0.14);
   --hl-shadow-sm:
@@ -437,8 +440,8 @@
   border-radius: 50%;
   flex: 0 0 auto;
 }
-.hl-stat-card--in .hl-stat-label::before { background: var(--hl-orange); }
-.hl-stat-card--out .hl-stat-label::before { background: var(--hl-green); }
+.hl-stat-card--in .hl-stat-label::before { background: var(--hl-bar-in); }
+.hl-stat-card--out .hl-stat-label::before { background: var(--hl-bar-out); }
 .hl-stat-value {
   margin-top: 4px;
   color: var(--hl-ink) !important;

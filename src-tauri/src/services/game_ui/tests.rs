@@ -269,6 +269,79 @@
     }
 
     #[test]
+    fn button_nodes_may_carry_children_without_a_label() {
+        let service = GameUiService::new();
+        let validate = |source: &str| {
+            service.validate_world_ui_document(WorldUiDocumentRequest {
+                source: source.to_string(),
+                platform: Some("mobile".to_string()),
+            })
+        };
+
+        // 有子内容的按钮（例如整根图表柱子做成可点区域）可以不写 label，
+        // 可读名称由子内容本身承担。
+        let result = validate(
+            r#"{
+          schema_version: 2,
+          layout: {
+            root: {
+              type: "button",
+              label: "",
+              children: [
+                { type: "when", expr: "bar.selected == true", child: { type: "text", text: "选中" } },
+                { type: "when", expr: "bar.selected != true", child: { type: "text", text: "未选中" } }
+              ]
+            }
+          }
+        }"#,
+        );
+        assert!(result.ok, "errors: {:?}", result.errors);
+        assert!(!result
+            .errors
+            .iter()
+            .any(|diagnostic| diagnostic.path.as_deref() == Some("layout.root.label")));
+
+        // 既没 label 又没 children 的按钮既看不见也没有可读名称，仍然要求 label。
+        let result = validate(
+            r#"{
+          schema_version: 2,
+          layout: { root: { type: "button" } }
+        }"#,
+        );
+        assert!(!result.ok);
+        assert!(result
+            .errors
+            .iter()
+            .any(|diagnostic| diagnostic.code == "missing_string"
+                && diagnostic.path.as_deref() == Some("layout.root.label")));
+
+        // children 不是数组、或子节点本身有问题时照常报错。
+        let result = validate(
+            r#"{
+          schema_version: 2,
+          layout: { root: { type: "button", label: "继续", children: { type: "text" } } }
+        }"#,
+        );
+        assert!(!result.ok);
+        assert!(result
+            .errors
+            .iter()
+            .any(|diagnostic| diagnostic.code == "invalid_children"));
+
+        let result = validate(
+            r#"{
+          schema_version: 2,
+          layout: { root: { type: "button", label: "继续", children: [{ type: "text" }] } }
+        }"#,
+        );
+        assert!(!result.ok);
+        assert!(result
+            .errors
+            .iter()
+            .any(|diagnostic| diagnostic.path.as_deref() == Some("layout.root.children[0].text")));
+    }
+
+    #[test]
     fn compatibility_reports_unsupported_components() {
         let service = GameUiService::new();
         let report = service.verify_world_package_ui_compatibility(

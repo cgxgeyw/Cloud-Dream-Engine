@@ -16,6 +16,14 @@ pub struct ModelConfig {
     /// 玩家附件只发给声明了对应模态的模型，否则提交时明确报错（第 10 项）。
     #[serde(default)]
     pub input_modalities: Vec<String>,
+    /// 关闭该模型的 JSON 结构化输出（不发 `response_format=json_object`）。
+    ///
+    /// 部分 OpenAI 兼容模型（实测阶跃星辰 step-5-preview）在 json_object 模式下
+    /// 会把字段名写坏，输出 `{"  \t":"正文…","narration":""}` 这类非法 JSON，
+    /// 导致回合解析失败、界面显示「（本回合没有可显示的台词）」。
+    /// 关掉后模型改走普通文本输出，靠解析器从 ```json 围栏里取结构，反而稳定。
+    #[serde(default)]
+    pub json_mode_disabled: bool,
 }
 
 impl ModelConfig {
@@ -76,6 +84,97 @@ pub fn ensure_media_supported(
     }
 }
 
+/// 单张图片附件的体积上限（解码后的二进制字节）。
+/// 前端压缩后上限 6MB，这里放宽到 8MB 作为兜底：老版本客户端、
+/// 未来的其他入口（插件/MCP）都可能绕过前端校验。
+pub const MAX_IMAGE_PART_BYTES: usize = 8 * 1024 * 1024;
+/// 单条语音附件的体积上限（解码后的二进制字节）。
+pub const MAX_AUDIO_PART_BYTES: usize = 16 * 1024 * 1024;
+
+fn strip_data_url_prefix(value: &str) -> &str {
+    match value.split_once(',') {
+        Some((prefix, rest)) if prefix.starts_with("data:") => rest,
+        _ => value,
+    }
+}
+
+/// 按 base64 长度反推解码后的字节数（含 padding 的粗略估算，够用于上限判断）。
+fn estimated_decoded_bytes(payload: &str) -> usize {
+    let trimmed = payload.trim_end_matches('=');
+    trimmed.len() * 3 / 4
+}
+
+/// 用魔数判断这段解码数据是不是真实图片。
+/// 只要前 12 字节，避免为了校验而解码整个（可能上百 MB 的）附件。
+fn looks_like_image(bytes: &[u8]) -> bool {
+    let starts_with = |magic: &[u8]| bytes.len() >= magic.len() && &bytes[..magic.len()] == magic;
+    starts_with(b"\x89PNG\r\n\x1a\n")
+        || starts_with(&[0xFF, 0xD8, 0xFF])
+        || starts_with(b"GIF87a")
+        || starts_with(b"GIF89a")
+        || starts_with(b"BM")
+        || starts_with(b"RIFF") && bytes.len() >= 12 && &bytes[8..12] == b"WEBP"
+}
+
+/// 附件内容校验：体积上限 + 真实类型。
+///
+/// 动机：文件选择器的 MIME 不可信，曾有一个 94MB 的 APK 被标成 `image/png`
+/// 送进请求，132MB 的请求体让端点迟迟不返回、会话永远停在「回复中」，
+/// 同时把 turn_journal 撑到上百 MB。因此这里在「发 HTTP / 写回合数据」之前
+/// 就把不合法附件挡掉，而不是等到超时。
+pub fn ensure_media_payload_valid(
+    media: &[crate::models::session::ContentPart],
+) -> Result<(), String> {
+    for part in media {
+        match part.part_type.as_str() {
+            "image_url" => {
+                let Some(image) = part.image_url.as_ref() else {
+                    continue;
+                };
+                let payload = strip_data_url_prefix(image.url.trim());
+                let size = estimated_decoded_bytes(payload);
+                if size > MAX_IMAGE_PART_BYTES {
+                    return Err(format!(
+                        "图片附件过大（约 {}MB，上限 {}MB）：请换一张更小的图片后重试。",
+                        size / 1024 / 1024,
+                        MAX_IMAGE_PART_BYTES / 1024 / 1024
+                    ));
+                }
+                // 只解前 16 个 base64 字符（12 字节）看魔数即可。
+                let head_len = (payload.len().min(16) / 4) * 4;
+                let head = &payload[..head_len];
+                let decoded = base64::Engine::decode(
+                    &base64::engine::general_purpose::STANDARD,
+                    head,
+                )
+                .unwrap_or_default();
+                if !looks_like_image(&decoded) {
+                    return Err(
+                        "图片附件不是有效的图片文件（可能误选了压缩包或其他格式），请重新选择后重试。"
+                            .to_string(),
+                    );
+                }
+            }
+            "input_audio" => {
+                let Some(audio) = part.input_audio.as_ref() else {
+                    continue;
+                };
+                let payload = strip_data_url_prefix(audio.data.trim());
+                let size = estimated_decoded_bytes(payload);
+                if size > MAX_AUDIO_PART_BYTES {
+                    return Err(format!(
+                        "语音附件过大（约 {}MB，上限 {}MB）：请录制更短的语音后重试。",
+                        size / 1024 / 1024,
+                        MAX_AUDIO_PART_BYTES / 1024 / 1024
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelConfigCreateRequest {
     pub name: String,
@@ -89,6 +188,8 @@ pub struct ModelConfigCreateRequest {
     pub is_default: bool,
     #[serde(default)]
     pub input_modalities: Vec<String>,
+    #[serde(default)]
+    pub json_mode_disabled: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -103,6 +204,7 @@ pub struct ModelConfigUpdateRequest {
     pub streaming_enabled: Option<bool>,
     pub is_default: Option<bool>,
     pub input_modalities: Option<Vec<String>>,
+    pub json_mode_disabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -179,6 +281,7 @@ mod tests {
             streaming_enabled: true,
             is_default: false,
             input_modalities: modalities.iter().map(|value| value.to_string()).collect(),
+            json_mode_disabled: false,
         }
     }
 

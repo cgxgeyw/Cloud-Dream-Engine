@@ -38,10 +38,10 @@ body,
 }
 
 .accounting-ledger--mobile .ledger-header {
-  padding-top: max(16px, calc(var(--world-safe-area-top, 0px) + 10px));
+  padding-top: 16px;
 }
 
 .accounting-ledger--mobile .ledger-dialog-backdrop {
-  padding-top: max(10px, calc(var(--world-safe-area-top, 0px) + 6px));
-  padding-bottom: max(10px, calc(var(--world-safe-area-bottom, 0px) + 6px));
+  padding-top: 10px;
+  padding-bottom: 10px;
 }

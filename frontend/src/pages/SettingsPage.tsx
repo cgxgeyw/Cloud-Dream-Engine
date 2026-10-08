@@ -26,6 +26,7 @@ import {
 import { GenerationParamsEditor } from "../components/GenerationParamsEditor";
 import { ImageModelTestPanel } from "../components/ImageModelTestPanel";
 import { ConfirmDialog } from "../components/ModalDialog";
+import { HelpTip } from "../components/HelpTip";
 import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
 import { showToast } from "../components/Toast";
 import { useSettings } from "../data/SettingsContext";
@@ -196,6 +197,7 @@ export function SettingsPage() {
       streaming_enabled: model.streaming_enabled,
       supports_image_input: (model.input_modalities ?? []).includes("image"),
       supports_audio_input: (model.input_modalities ?? []).includes("audio"),
+      json_mode_disabled: model.json_mode_disabled ?? false,
     });
     setCustomProviderMode(!providerOptions.some((option) => option.value === model.provider));
     setModelDiscovery(null);
@@ -317,6 +319,7 @@ export function SettingsPage() {
                 ...(modelForm.supports_audio_input ? ["audio"] : []),
               ]
             : [],
+        json_mode_disabled: modelType === "text" ? modelForm.json_mode_disabled : false,
       };
 
       if (isNewModel) {
@@ -572,6 +575,211 @@ export function SettingsPage() {
     );
   }
 
+  /** 桌面端与移动端共用同一套字段结构，只在占位文案 / 密钥输入类型上有差异，保证两边始终对齐。 */
+  function renderModelFields(variant: "desktop" | "mobile") {
+    const isDesktop = variant === "desktop";
+    const providerPlaceholderKey = isDesktop ? "settings.selectPlaceholder" : "settings.selectProvider";
+    const namePlaceholderKey = isDesktop ? "settings.phMainModel" : "settings.phNarrativeName";
+    const modelIdPlaceholderKey = isDesktop ? "settings.phExampleGpt" : "settings.phExampleGptLocal";
+    const customProviderPlaceholderKey = isDesktop ? "settings.phProviderName" : "settings.phCustomProvider";
+
+    return (
+      <>
+        <label className="field-label">
+          <span className="field-label-head">
+            <span className="field-label-text">{t("settings.modelName")}</span>
+            <HelpTip text={t("settings.tip.modelName")} />
+          </span>
+          <input
+            value={modelForm.name}
+            onChange={(event) => patchModelForm({ name: event.target.value })}
+            className="field-input"
+            placeholder={t(namePlaceholderKey)}
+          />
+        </label>
+
+        <label className="field-label">
+          <span className="field-label-head">
+            <span className="field-label-text">{t("settings.provider")}</span>
+            <HelpTip text={t("settings.tip.provider")} />
+          </span>
+          <select
+            value={providerSelectValue}
+            onChange={(event) => {
+              const nextValue = event.target.value;
+              if (nextValue === "custom") {
+                setCustomProviderMode(true);
+                patchModelForm(
+                  {
+                    provider: providerOptions.some((option) => option.value === modelForm.provider)
+                      ? ""
+                      : modelForm.provider,
+                  },
+                  { resetDiscovery: true },
+                );
+                return;
+              }
+              patchProvider(nextValue);
+            }}
+            className="field-input editor-field-select"
+          >
+            <option value="">{t(providerPlaceholderKey)}</option>
+            {providerOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.value === "builtin-local" ? t("settings.builtinLocal") : option.label}
+              </option>
+            ))}
+            <option value="custom">{t("settings.custom")}</option>
+          </select>
+          {showsCustomProviderInput ? (
+            <input
+              value={modelForm.provider}
+              onChange={(event) => {
+                setCustomProviderMode(true);
+                patchModelForm({ provider: event.target.value }, { resetDiscovery: true });
+              }}
+              className="field-input"
+              placeholder={t(customProviderPlaceholderKey)}
+            />
+          ) : null}
+        </label>
+
+        <label className="field-label">
+          <span className="field-label-head">
+            <span className="field-label-text">{t("settings.modelId")}</span>
+            <HelpTip text={t("settings.tip.modelId")} />
+          </span>
+          <input
+            value={modelForm.model_id}
+            onChange={(event) => patchModelForm({ model_id: event.target.value })}
+            className="field-input"
+            placeholder={t(modelIdPlaceholderKey)}
+            readOnly={isBuiltinLocalProvider}
+          />
+        </label>
+
+        <label className="field-label">
+          <span className="field-label-head">
+            <span className="field-label-text">Base URL</span>
+            <HelpTip text={t("settings.tip.baseUrl")} />
+          </span>
+          <input
+            value={modelForm.base_url}
+            onChange={(event) => patchModelForm({ base_url: event.target.value }, { resetDiscovery: true })}
+            className="field-input"
+            placeholder={isBuiltinLocalProvider ? t("settings.builtinNoFill") : t("settings.phBaseUrlExample")}
+            readOnly={isBuiltinLocalProvider}
+          />
+        </label>
+
+        <label className="field-label">
+          <span className="field-label-head">
+            <span className="field-label-text">{isDesktop ? "API Key" : t("settings.apiKeyOptional")}</span>
+            <HelpTip text={t("settings.tip.apiKey")} />
+          </span>
+          <input
+            value={modelForm.api_key}
+            onChange={(event) => patchModelForm({ api_key: event.target.value }, { resetDiscovery: true })}
+            className="field-input"
+            type={isDesktop ? "text" : "password"}
+            inputMode="text"
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            placeholder={isBuiltinLocalProvider ? t("settings.builtinNoFill") : t("settings.leaveEmptyNoSet")}
+            readOnly={isBuiltinLocalProvider}
+          />
+        </label>
+
+        {activeModelTab === "text-model" ? (
+          <label className="field-label">
+            <span className="field-label-head">
+              <span className="field-label-text">{t("settings.maxOutputTokens")}</span>
+              <HelpTip text={t("settings.tip.maxTokens")} />
+            </span>
+            <input
+              value={modelForm.max_tokens}
+              onChange={(event) => patchModelForm({ max_tokens: event.target.value })}
+              className="field-input"
+              inputMode="numeric"
+              placeholder="1200"
+            />
+          </label>
+        ) : null}
+
+        {activeModelTab === "text-model" ? (
+          <div className="settings-field-group">
+            <label className="settings-toggle-row">
+              <span className="settings-toggle-row-copy">
+                {t("settings.streamingOutput")}
+                <HelpTip text={t("settings.tip.streaming")} />
+              </span>
+              <span className="settings-inline-toggle">
+                <input
+                  type="checkbox"
+                  checked={modelForm.streaming_enabled}
+                  onChange={(event) => patchModelForm({ streaming_enabled: event.target.checked })}
+                />
+              </span>
+            </label>
+
+            <label className="settings-toggle-row">
+              <span className="settings-toggle-row-copy">
+                {t("settings.disableJsonMode")}
+                <HelpTip text={t("settings.tip.disableJsonMode")} />
+              </span>
+              <span className="settings-inline-toggle">
+                <input
+                  type="checkbox"
+                  checked={modelForm.json_mode_disabled}
+                  onChange={(event) => patchModelForm({ json_mode_disabled: event.target.checked })}
+                />
+              </span>
+            </label>
+          </div>
+        ) : null}
+
+        {activeModelTab === "text-model" ? (
+          <div className="settings-field-group">
+            <span className="field-label-head">
+              <span className="field-label-text">{t("settings.inputModalities")}</span>
+              <HelpTip text={t("settings.tip.inputModalities")} />
+            </span>
+            <div className="settings-toggle-grid">
+              <label className="settings-toggle-row">
+                <span className="settings-toggle-row-copy">
+                  {t("settings.supportsImageInput")}
+                  <HelpTip text={t("settings.tip.inputModalitiesImage")} />
+                </span>
+                <span className="settings-inline-toggle">
+                  <input
+                    type="checkbox"
+                    checked={modelForm.supports_image_input}
+                    onChange={(event) => patchModelForm({ supports_image_input: event.target.checked })}
+                  />
+                </span>
+              </label>
+
+              <label className="settings-toggle-row">
+                <span className="settings-toggle-row-copy">
+                  {t("settings.supportsAudioInput")}
+                  <HelpTip text={t("settings.tip.inputModalitiesAudio")} />
+                </span>
+                <span className="settings-inline-toggle">
+                  <input
+                    type="checkbox"
+                    checked={modelForm.supports_audio_input}
+                    onChange={(event) => patchModelForm({ supports_audio_input: event.target.checked })}
+                  />
+                </span>
+              </label>
+            </div>
+          </div>
+        ) : null}
+      </>
+    );
+  }
+
   function renderModelEditor() {
     return (
       <SurfacePanel className="surface-panel--pad-lg">
@@ -579,158 +787,17 @@ export function SettingsPage() {
           <h3 className="settings-section-title">{isNewModel ? t("settings.newModel") : t("settings.editModel").replace("{name}", editingModel?.name ?? "")}</h3>
 
           <div className="settings-form-grid settings-form-grid--model-editor">
-            <label className="field-label">
-              <span className="field-label-text">{t("settings.modelName")}</span>
-              <input
-                value={modelForm.name}
-                onChange={(event) => patchModelForm({ name: event.target.value })}
-                className="field-input"
-                placeholder={t("settings.phMainModel")}
-              />
-            </label>
-
-            <label className="field-label">
-              <span className="field-label-text">{t("settings.provider")}</span>
-              <select
-                value={providerSelectValue}
-                onChange={(event) => {
-                  const nextValue = event.target.value;
-                  if (nextValue === "custom") {
-                    setCustomProviderMode(true);
-                    patchModelForm(
-                      {
-                        provider: providerOptions.some((option) => option.value === modelForm.provider)
-                          ? ""
-                          : modelForm.provider,
-                      },
-                      { resetDiscovery: true },
-                    );
-                    return;
-                  }
-                  patchProvider(nextValue);
-                }}
-                className="field-input editor-field-select"
-              >
-                <option value="">{t("settings.selectPlaceholder")}</option>
-                {providerOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.value === "builtin-local" ? t("settings.builtinLocal") : option.label}
-                  </option>
-                ))}
-                <option value="custom">{t("settings.custom")}</option>
-              </select>
-              {showsCustomProviderInput ? (
-                <input
-                  value={modelForm.provider}
-                  onChange={(event) => {
-                    setCustomProviderMode(true);
-                    patchModelForm({ provider: event.target.value }, { resetDiscovery: true });
-                  }}
-                  className="field-input"
-                  style={{ marginTop: 8 }}
-                  placeholder={t("settings.phProviderName")}
-                />
-              ) : null}
-            </label>
-
-            <label className="field-label">
-              <span className="field-label-text">{t("settings.modelId")}</span>
-              <input
-                value={modelForm.model_id}
-                onChange={(event) => patchModelForm({ model_id: event.target.value })}
-                className="field-input"
-                placeholder={t("settings.phExampleGpt")}
-                readOnly={isBuiltinLocalProvider}
-              />
-            </label>
-
-            <label className="field-label">
-              <span className="field-label-text">Base URL</span>
-              <input
-                value={modelForm.base_url}
-                onChange={(event) => patchModelForm({ base_url: event.target.value }, { resetDiscovery: true })}
-                className="field-input"
-                placeholder={isBuiltinLocalProvider ? t("settings.builtinNoFill") : t("settings.phBaseUrlExample")}
-                readOnly={isBuiltinLocalProvider}
-              />
-            </label>
-
-            <label className="field-label">
-              <span className="field-label-text">API Key</span>
-              <input
-                value={modelForm.api_key}
-                onChange={(event) => patchModelForm({ api_key: event.target.value }, { resetDiscovery: true })}
-                className="field-input"
-                type="text"
-                inputMode="text"
-                autoComplete="off"
-                autoCapitalize="none"
-                spellCheck={false}
-                placeholder={isBuiltinLocalProvider ? t("settings.builtinNoFill") : t("settings.leaveEmptyNoSet")}
-                readOnly={isBuiltinLocalProvider}
-              />
-            </label>
-
-            {activeModelTab === "text-model" ? (
-              <label className="field-label field-label--inline">
-                <span className="field-label-text">{t("settings.maxOutputTokens")}</span>
-                <input
-                  value={modelForm.max_tokens}
-                  onChange={(event) => patchModelForm({ max_tokens: event.target.value })}
-                  className="field-input"
-                  inputMode="numeric"
-                  placeholder="1200"
-                />
-              </label>
-            ) : null}
-
-            {activeModelTab === "text-model" ? (
-              <label className="field-label field-label--inline">
-                <span className="field-label-text">{t("settings.streamingOutput")}</span>
-                <div className="settings-inline-toggle">
-                  <input
-                    type="checkbox"
-                    checked={modelForm.streaming_enabled}
-                    onChange={(event) => patchModelForm({ streaming_enabled: event.target.checked })}
-                  />
-                </div>
-              </label>
-            ) : null}
-
-            {activeModelTab === "text-model" ? (
-              <div className="field-label">
-                <span className="field-label-text">{t("settings.inputModalities")}</span>
-                <label className="field-label field-label--inline">
-                  <span className="field-label-text">{t("settings.supportsImageInput")}</span>
-                  <div className="settings-inline-toggle">
-                    <input
-                      type="checkbox"
-                      checked={modelForm.supports_image_input}
-                      onChange={(event) => patchModelForm({ supports_image_input: event.target.checked })}
-                    />
-                  </div>
-                </label>
-                <label className="field-label field-label--inline">
-                  <span className="field-label-text">{t("settings.supportsAudioInput")}</span>
-                  <div className="settings-inline-toggle">
-                    <input
-                      type="checkbox"
-                      checked={modelForm.supports_audio_input}
-                      onChange={(event) => patchModelForm({ supports_audio_input: event.target.checked })}
-                    />
-                  </div>
-                </label>
-                <div className="text-muted">{t("settings.inputModalitiesHint")}</div>
-              </div>
-            ) : null}
+            {renderModelFields("desktop")}
           </div>
 
           {activeModelTab !== "image-model" && !isBuiltinLocalProvider ? (
             <div className="settings-model-discovery">
               <div className="settings-model-discovery-header">
                 <div className="settings-model-discovery-copy">
-                  <div className="field-label-text">{t("settings.modelListLabel")}</div>
-                  <div className="text-muted">{t("settings.modelListHint")}</div>
+                  <div className="field-label-head">
+                    <span className="field-label-text">{t("settings.modelListLabel")}</span>
+                    <HelpTip text={t("settings.tip.modelList")} />
+                  </div>
                 </div>
               </div>
 
@@ -1104,148 +1171,16 @@ export function SettingsPage() {
                   {isNewModel ? t("settings.newModelMobile") : t("settings.editModelShort").replace("{name}", editingModel?.name ?? "")}
                 </h3>
                 <div className="settings-form-grid settings-form-grid--model-editor">
-                  <label className="field-label">
-                    <span className="field-label-text">{t("settings.modelName")}</span>
-                    <input
-                      value={modelForm.name}
-                      onChange={(event) => patchModelForm({ name: event.target.value })}
-                      className="field-input"
-                      placeholder={t("settings.phNarrativeName")}
-                    />
-                  </label>
-                  <label className="field-label">
-                    <span className="field-label-text">{t("settings.provider")}</span>
-                    <select
-                      value={providerSelectValue}
-                      onChange={(event) => {
-                        const nextValue = event.target.value;
-                        if (nextValue === "custom") {
-                          setCustomProviderMode(true);
-                          patchModelForm(
-                            {
-                              provider: providerOptions.some((option) => option.value === modelForm.provider)
-                                ? ""
-                                : modelForm.provider,
-                            },
-                            { resetDiscovery: true },
-                          );
-                          return;
-                        }
-                        patchProvider(nextValue);
-                      }}
-                      className="field-input editor-field-select"
-                    >
-                      <option value="">{t("settings.selectProvider")}</option>
-                      {providerOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.value === "builtin-local" ? t("settings.builtinLocal") : option.label}
-                        </option>
-                      ))}
-                      <option value="custom">{t("settings.custom")}</option>
-                    </select>
-                    {showsCustomProviderInput ? (
-                      <input
-                        value={modelForm.provider}
-                        onChange={(event) => {
-                          setCustomProviderMode(true);
-                          patchModelForm({ provider: event.target.value }, { resetDiscovery: true });
-                        }}
-                        className="field-input"
-                        style={{ marginTop: 8 }}
-                        placeholder={t("settings.phCustomProvider")}
-                      />
-                    ) : null}
-                  </label>
-                  <label className="field-label">
-                    <span className="field-label-text">{t("settings.modelId")}</span>
-                    <input
-                      value={modelForm.model_id}
-                      onChange={(event) => patchModelForm({ model_id: event.target.value })}
-                      className="field-input"
-                      placeholder={t("settings.phExampleGptLocal")}
-                      readOnly={isBuiltinLocalProvider}
-                    />
-                  </label>
-                  <label className="field-label">
-                    <span className="field-label-text">Base URL</span>
-                    <input
-                      value={modelForm.base_url}
-                      onChange={(event) => patchModelForm({ base_url: event.target.value }, { resetDiscovery: true })}
-                      className="field-input"
-                      placeholder={isBuiltinLocalProvider ? t("settings.builtinNoFill") : t("settings.phBaseUrlExample")}
-                      readOnly={isBuiltinLocalProvider}
-                    />
-                  </label>
-                  <label className="field-label">
-                    <span className="field-label-text">{t("settings.apiKeyOptional")}</span>
-                    <input
-                      value={modelForm.api_key}
-                      onChange={(event) => patchModelForm({ api_key: event.target.value }, { resetDiscovery: true })}
-                      className="field-input"
-                      type="password"
-                      placeholder={isBuiltinLocalProvider ? t("settings.builtinNoFill") : t("settings.leaveEmptyNoSet")}
-                      readOnly={isBuiltinLocalProvider}
-                    />
-                  </label>
-                  {activeTab === "text-model" ? (
-                    <label className="field-label">
-                      <span className="field-label-text">{t("settings.maxOutputTokens")}</span>
-                      <input
-                        value={modelForm.max_tokens}
-                        onChange={(event) => patchModelForm({ max_tokens: event.target.value })}
-                        className="field-input"
-                        inputMode="numeric"
-                        placeholder="1200"
-                      />
-                    </label>
-                  ) : null}
-                  {activeTab === "text-model" ? (
-                    <label className="field-label">
-                      <span className="field-label-text">{t("settings.streamingOutput")}</span>
-                      <div className="settings-inline-toggle">
-                        <input
-                          type="checkbox"
-                          checked={modelForm.streaming_enabled}
-                          onChange={(event) => patchModelForm({ streaming_enabled: event.target.checked })}
-                        />
-                      </div>
-                    </label>
-                  ) : null}
-                  {activeTab === "text-model" ? (
-                    <div className="field-label">
-                      <span className="field-label-text">{t("settings.inputModalities")}</span>
-                      <label className="field-label">
-                        <span className="field-label-text">{t("settings.supportsImageInput")}</span>
-                        <div className="settings-inline-toggle">
-                          <input
-                            type="checkbox"
-                            checked={modelForm.supports_image_input}
-                            onChange={(event) => patchModelForm({ supports_image_input: event.target.checked })}
-                          />
-                        </div>
-                      </label>
-                      <label className="field-label">
-                        <span className="field-label-text">{t("settings.supportsAudioInput")}</span>
-                        <div className="settings-inline-toggle">
-                          <input
-                            type="checkbox"
-                            checked={modelForm.supports_audio_input}
-                            onChange={(event) => patchModelForm({ supports_audio_input: event.target.checked })}
-                          />
-                        </div>
-                      </label>
-                      <div className="text-muted">{t("settings.inputModalitiesHint")}</div>
-                    </div>
-                  ) : null}
+                  {renderModelFields("mobile")}
                 </div>
 
                 {activeTab !== "image-model" && !isBuiltinLocalProvider ? (
                   <div className="settings-model-discovery">
                     <div className="settings-model-discovery-header">
                       <div className="settings-model-discovery-copy">
-                        <div className="field-label-text">{t("settings.endpointModelList")}</div>
-                        <div className="text-muted">
-                          {t("settings.endpointHint")}
+                        <div className="field-label-head">
+                          <span className="field-label-text">{t("settings.endpointModelList")}</span>
+                          <HelpTip text={t("settings.tip.endpointList")} />
                         </div>
                       </div>
                       <button

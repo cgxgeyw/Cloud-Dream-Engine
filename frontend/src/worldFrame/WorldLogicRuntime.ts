@@ -34,9 +34,35 @@ export async function invokeWorldLogic(
   }
   assertMessageSize(input, "世界逻辑输入");
 
+  try {
+    return await invokeWorldLogicViaWorker(config, handler, input, sendAction);
+  } catch (errorLike) {
+    const message = errorLike instanceof Error ? errorLike.message : String(errorLike);
+    // 安卓 WebView + sandbox iframe 创建 Worker 失败时，退回宿主同线程执行同一套 SDK。
+    if (/Worker|worker|创建|运行失败/i.test(message)) {
+      return invokeWorldLogicInline(config, handler, input, sendAction);
+    }
+    throw errorLike;
+  }
+}
+
+async function invokeWorldLogicViaWorker(
+  config: WorldLogicConfig,
+  handler: string,
+  input: unknown,
+  sendAction: SendAction,
+): Promise<unknown> {
   const workerSource = createWorkerSource(config.source);
   const objectUrl = URL.createObjectURL(new Blob([workerSource], { type: "text/javascript" }));
-  const worker = new Worker(objectUrl, { name: `world-logic:${handler}` });
+  let worker: Worker;
+  try {
+    worker = new Worker(objectUrl, { name: `world-logic:${handler}` });
+  } catch (errorLike) {
+    URL.revokeObjectURL(objectUrl);
+    throw new Error(
+      `世界逻辑 Worker 运行失败。${errorLike instanceof Error ? errorLike.message : String(errorLike)}`,
+    );
+  }
   URL.revokeObjectURL(objectUrl);
 
   return new Promise<unknown>((resolve, reject) => {
@@ -96,6 +122,123 @@ export async function invokeWorldLogic(
       }
     };
     worker.postMessage({ type: "invoke", handler, input });
+  });
+}
+
+/** Worker 不可用时的宿主同线程实现：同一 register/handler 与 storage SDK 语义。 */
+async function invokeWorldLogicInline(
+  config: WorldLogicConfig,
+  handler: string,
+  input: unknown,
+  sendAction: SendAction,
+): Promise<unknown> {
+  const handlers = new Map<string, (input: unknown, api: unknown) => unknown>();
+  const records = {
+    list: (collection: string) =>
+      handleStorageRequest({ type: "storage-request", requestId: "inline", operation: "records.list", payload: { collection } }, sendAction),
+    create: (collection: string, data: unknown) =>
+      handleStorageRequest({ type: "storage-request", requestId: "inline", operation: "records.create", payload: { collection, data } }, sendAction),
+    update: (collection: string, recordId: string, data: unknown) =>
+      handleStorageRequest({ type: "storage-request", requestId: "inline", operation: "records.update", payload: { collection, recordId, data } }, sendAction),
+    remove: (collection: string, recordId: string) =>
+      handleStorageRequest({ type: "storage-request", requestId: "inline", operation: "records.delete", payload: { collection, recordId } }, sendAction),
+    query: async (collection: string, options: { where?: Record<string, unknown>; orderBy?: [string, string?]; offset?: number; limit?: number } = {}) => {
+      const raw = (await handleStorageRequest(
+        { type: "storage-request", requestId: "inline", operation: "records.list", payload: { collection } },
+        sendAction,
+      )) as unknown[];
+      const list = Array.isArray(raw) ? raw : [];
+      let recordsOut = list.filter((row) => matchesWhereInline(row, options.where));
+      if (Array.isArray(options.orderBy) && options.orderBy.length > 0) {
+        const field = options.orderBy[0];
+        const direction = options.orderBy[1] === "desc" ? -1 : 1;
+        recordsOut = [...recordsOut].sort((left, right) => {
+          const a = left && typeof left === "object" ? (left as { data?: Record<string, unknown> }).data?.[field] : undefined;
+          const b = right && typeof right === "object" ? (right as { data?: Record<string, unknown> }).data?.[field] : undefined;
+          return a === b ? 0 : (a as number | string) > (b as number | string) ? direction : -direction;
+        });
+      }
+      const offset = Math.max(0, Number(options.offset) || 0);
+      const limit = Math.min(1000, Math.max(0, Number(options.limit) || 1000));
+      return recordsOut.slice(offset, offset + limit);
+    },
+  };
+  const kv = {
+    list: (namespace: string, options?: { scope?: string; characterId?: string }) =>
+      handleStorageRequest({ type: "storage-request", requestId: "inline", operation: "kv.list", payload: { namespace, scope: normalizeScope(options) } }, sendAction),
+    get: async (namespace: string, key: string, fallback: unknown = null, options?: { scope?: string; characterId?: string }) => {
+      const entry = (await handleStorageRequest(
+        { type: "storage-request", requestId: "inline", operation: "kv.get", payload: { namespace, key, scope: normalizeScope(options) } },
+        sendAction,
+      )) as { value?: unknown } | null;
+      return entry && typeof entry === "object" && "value" in entry ? entry.value : fallback;
+    },
+    set: (namespace: string, key: string, value: unknown, options?: { scope?: string; characterId?: string }) =>
+      handleStorageRequest({ type: "storage-request", requestId: "inline", operation: "kv.set", payload: { namespace, key, value, scope: normalizeScope(options) } }, sendAction),
+    remove: (namespace: string, key: string, options?: { scope?: string; characterId?: string }) =>
+      handleStorageRequest({ type: "storage-request", requestId: "inline", operation: "kv.delete", payload: { namespace, key, scope: normalizeScope(options) } }, sendAction),
+  };
+  const platform = {
+    invoke: (feature: string, params?: unknown) =>
+      handleStorageRequest({ type: "storage-request", requestId: "inline", operation: "platform.invoke", payload: { feature, params: params ?? {} } }, sendAction),
+  };
+  const worldApi = Object.freeze({ records, kv, platform });
+  const world = Object.freeze({
+    register(name: string, handlerFn: (input: unknown, api: unknown) => unknown) {
+      if (typeof name !== "string" || typeof handlerFn !== "function") {
+        throw new Error("world.register(name, handler) 需要传入函数。");
+      }
+      handlers.set(name, handlerFn);
+    },
+  });
+
+  const runner = new Function(
+    "world",
+    `"use strict";\n${config.source}\nreturn typeof world !== "undefined" ? world : null;`,
+  ) as (world: unknown) => unknown;
+  runner(world);
+
+  const target = handlers.get(handler);
+  if (!target) {
+    throw new Error(`World logic handler not found: ${handler}`);
+  }
+  const result = await Promise.resolve(target(input, worldApi));
+  const encoded = JSON.stringify(result === undefined ? null : result);
+  if (encoded && encoded.length > MAX_LOGIC_MESSAGE_BYTES) {
+    throw new Error(`世界逻辑结果超过 ${MAX_LOGIC_MESSAGE_BYTES} 字节上限。`);
+  }
+  return result;
+}
+
+function normalizeScope(options?: { scope?: string; characterId?: string }): Record<string, unknown> | undefined {
+  if (!options || typeof options.scope !== "string") return undefined;
+  if (options.scope !== "world" && options.scope !== "session" && options.scope !== "character") return undefined;
+  const scope: Record<string, unknown> = { scope: options.scope };
+  if (options.scope === "character" && typeof options.characterId === "string") {
+    scope.character_id = options.characterId;
+  }
+  return scope;
+}
+
+function matchesWhereInline(record: unknown, where: Record<string, unknown> | undefined): boolean {
+  if (!where || typeof where !== "object") return true;
+  const data = record && typeof record === "object" && "data" in record
+    ? (record as { data?: Record<string, unknown> }).data
+    : undefined;
+  return Object.entries(where).every(([field, expected]) => {
+    const actual = data?.[field];
+    if (!expected || typeof expected !== "object" || Array.isArray(expected)) {
+      return actual === expected;
+    }
+    const exp = expected as Record<string, unknown>;
+    if ("eq" in exp && actual !== exp.eq) return false;
+    if ("ne" in exp && actual === exp.ne) return false;
+    if ("gt" in exp && !((actual as number) > (exp.gt as number))) return false;
+    if ("gte" in exp && !((actual as number) >= (exp.gte as number))) return false;
+    if ("lt" in exp && !((actual as number) < (exp.lt as number))) return false;
+    if ("lte" in exp && !((actual as number) <= (exp.lte as number))) return false;
+    if (Array.isArray(exp.in) && !exp.in.includes(actual)) return false;
+    return true;
   });
 }
 

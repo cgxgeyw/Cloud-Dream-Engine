@@ -107,6 +107,9 @@ pub struct SpeakerTurnProgress {
     pub speaker_name: String,
     pub narration: Option<String>,
     pub is_placeholder: bool,
+    /// 真流式增量（模型正在逐字吐字）。占位消息与最终落库消息都为 false。
+    /// 前端靠它开启气泡的逐字动画，并据此隐藏「思考中」指示条。
+    pub is_streaming: bool,
     pub is_error: bool,
 }
 
@@ -343,6 +346,7 @@ impl SessionOrchestrator {
                     &model.model_id,
                     generation,
                     model.streaming_enabled,
+                    model.json_mode_disabled,
                 );
                 let loop_result = if let Some(callback) = progress_callback.as_deref_mut() {
                     world_director
@@ -419,6 +423,7 @@ impl SessionOrchestrator {
                 &model.model_id,
                 generation,
                 model.streaming_enabled,
+                model.json_mode_disabled,
             );
             let loop_result = if let Some(callback) = progress_callback.as_deref_mut() {
                 world_director

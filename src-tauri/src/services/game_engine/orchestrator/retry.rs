@@ -678,6 +678,7 @@ mod tests {
                 streaming_enabled: false,
                 is_default: true,
                 input_modalities: vec![],
+                json_mode_disabled: false,
             })
             .expect("create model");
         let session = sample_session();

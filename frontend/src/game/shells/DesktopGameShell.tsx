@@ -54,6 +54,7 @@ export const DesktopGameShell: React.FC<{
     }),
     [runtime],
   );
+  const worldId = bag.themeWorld?.id || runtime.world?.id || "";
   const handleDslAction = React.useCallback(
     async (action: GameUiActionReference, context: GameUiRenderContext) => {
       const actionId = action.id.replace(/^@/, "");
@@ -66,11 +67,11 @@ export const DesktopGameShell: React.FC<{
         return undefined;
       }
       if (actionId === "logic.run") {
-        return runShellLogicAction(action, bag.worldUiEnvelope.logic);
+        return runShellLogicAction(action, bag.worldUiEnvelope.logic, { worldId });
       }
       return undefined;
     },
-    [actions, bag.worldUiEnvelope],
+    [actions, bag.worldUiEnvelope, worldId],
   );
 
   const headerMount = <SceneHeaderComponent runtime={runtime} actions={actions} />;

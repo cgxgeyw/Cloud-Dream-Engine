@@ -105,6 +105,7 @@ export type ModelFormState = {
   streaming_enabled: boolean;
   supports_image_input: boolean;
   supports_audio_input: boolean;
+  json_mode_disabled: boolean;
 };
 
 export const defaultModelForm: ModelFormState = {
@@ -117,6 +118,7 @@ export const defaultModelForm: ModelFormState = {
   streaming_enabled: true,
   supports_image_input: false,
   supports_audio_input: false,
+  json_mode_disabled: false,
 };
 
 export function isModelTab(tab: TabId): tab is ModelTabId {

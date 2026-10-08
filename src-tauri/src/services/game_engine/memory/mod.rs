@@ -919,6 +919,7 @@ impl MemoryService {
                 streaming_enabled: false,
                 is_default: true,
                 input_modalities: Vec::new(),
+                json_mode_disabled: false,
             }));
         }
 

@@ -75,6 +75,7 @@ use super::*;
             streaming_enabled: true,
             is_default: true,
             input_modalities: Vec::new(),
+            json_mode_disabled: false,
         }
     }
 

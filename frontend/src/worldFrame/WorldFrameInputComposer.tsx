@@ -6,6 +6,7 @@ import type { GameUiRuntimeActions } from "../gameUiRuntime/actions";
 import type { GameUiRuntimeContext } from "../gameUiRuntime/runtimeContext";
 import { InteractionBlock } from "../gameUiRuntime/components/InteractionBlock";
 import type { MessageInteraction } from "../data/types";
+import { notifyKeyboardMaybeOpen } from "./useVisibleViewport";
 
 type Props = {
   runtime: GameUiRuntimeContext;
@@ -130,6 +131,18 @@ export function WorldFrameInputComposer({ runtime, actions, node }: Props) {
         <textarea
           ref={runtime.draft_input.input_ref}
           value={draftValue}
+          onFocus={(event) => {
+            // 键盘弹出后把输入条滚进可见区；并通知视口层重测（部分 WebView 不自动上推）。
+            notifyKeyboardMaybeOpen();
+            window.requestAnimationFrame(() => {
+              event.target.scrollIntoView({ block: "nearest", inline: "nearest" });
+              notifyKeyboardMaybeOpen();
+            });
+            window.setTimeout(() => {
+              event.target.scrollIntoView({ block: "nearest", inline: "nearest" });
+              notifyKeyboardMaybeOpen();
+            }, 280);
+          }}
           onChange={(event) => {
             const value = event.target.value;
             setDraftValue(value);

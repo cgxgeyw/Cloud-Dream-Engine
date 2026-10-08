@@ -13,6 +13,7 @@ import type { WorldFrameAction } from "./protocol";
 import { LedgerBook } from "./LedgerBook";
 import { invokeWorldLogic } from "./WorldLogicRuntime";
 import { WorldFrameInputComposer } from "./WorldFrameInputComposer";
+import { useVisibleViewport } from "./useVisibleViewport";
 
 type Props = {
   payload: WorldFrameRuntimePayload;
@@ -111,15 +112,38 @@ export function WorldFrameRuntimeView({ payload, sendAction }: Props) {
     return dispatchDslAction(action, context, runtime, actions, payload.logic, sendAction);
   };
 
+  // 可见高度只在一处收缩：useVisibleViewport 与宿主 snapshot 取 min，不再减键盘/padding。
+  const visible = useVisibleViewport(payload.platform === "mobile", payload.snapshot.viewport);
+  const viewportHeight = payload.platform === "mobile"
+    ? `${visible.height}px`
+    : `${payload.snapshot.viewport.height}px`;
   const viewportStyle = {
     ...payload.rootStyle,
-    "--game-visual-viewport-height": `${payload.snapshot.viewport.height}px`,
+    "--game-visual-viewport-height": viewportHeight,
+    "--game-keyboard-height": `${payload.platform === "mobile" ? visible.keyboardHeight : 0}px`,
     "--world-safe-area-top": `${payload.snapshot.viewport.safe_area.top}px`,
     "--world-safe-area-right": `${payload.snapshot.viewport.safe_area.right}px`,
     "--world-safe-area-bottom": `${payload.snapshot.viewport.safe_area.bottom}px`,
     "--world-safe-area-left": `${payload.snapshot.viewport.safe_area.left}px`,
-    height: payload.platform === "mobile" ? `${payload.snapshot.viewport.height}px` : "100%",
-  } as React.CSSProperties;
+    ...(payload.platform === "mobile"
+      ? {
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
+        height: viewportHeight,
+        maxHeight: viewportHeight,
+        minHeight: 0,
+        overflow: "hidden",
+        zIndex: 1,
+        boxSizing: "border-box",
+      }
+      : {
+        position: "relative",
+        height: "100%",
+        minHeight: 0,
+      }),
+  } as React.CSSProperties & Record<string, string | number>;
 
   return (
     <div
@@ -264,20 +288,21 @@ async function dispatchDslAction(
         scope: readKvScopeArg(args),
       });
     case "logic.run": {
-      // Pure compute handlers must not spawn a Worker: Android WebView + sandboxed
-      // iframe often fails Worker creation, which breaks world-owned tab bars.
+      // Pure tab switch stays in-host: Android WebView + sandboxed iframe often
+      // fails Worker creation, which breaks world-owned tab bars.
       const handler = readStringArg(args, "handler");
+      const logicInput = args.input ?? args;
       if (handler === "ui.setTab") {
-        const rawInput = (args.input ?? args) as { tab?: unknown };
+        const rawInput = logicInput as { tab?: unknown };
         const raw = rawInput && typeof rawInput === "object" && rawInput.tab != null
           ? String(rawInput.tab)
           : "chat";
-        return ["chat", "growth", "profile"].includes(raw) ? raw : "chat";
+        return ["chat", "records", "plan", "profile", "growth", "mine"].includes(raw) ? raw : "chat";
       }
       return invokeWorldLogic(
         logic,
         handler,
-        args.input ?? args,
+        logicInput,
         sendAction,
       );
     }

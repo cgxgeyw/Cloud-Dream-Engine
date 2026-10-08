@@ -80,6 +80,27 @@ pub struct CharacterUpdateRequest {
     pub runtime_system_prompt: Option<String>,
 }
 
+/// 整包覆盖式更新：世界包导入走「同名角色就地 update」，字段一个不落全带上。
+impl From<&CharacterCreateRequest> for CharacterUpdateRequest {
+    fn from(request: &CharacterCreateRequest) -> Self {
+        Self {
+            name: Some(request.name.clone()),
+            role: Some(request.role.clone()),
+            background_prompt: Some(request.background_prompt.clone()),
+            model: Some(request.model.clone()),
+            memory_strategy: Some(request.memory_strategy.clone()),
+            recent_dialogue_rounds: Some(request.recent_dialogue_rounds),
+            attributes: Some(request.attributes.clone()),
+            portrait_assets: Some(request.portrait_assets.clone()),
+            avatar_asset: Some(request.avatar_asset.clone()),
+            system_prompt_template: Some(request.system_prompt_template.clone()),
+            response_contract_prompt: Some(request.response_contract_prompt.clone()),
+            narration_prompt: Some(request.narration_prompt.clone()),
+            runtime_system_prompt: Some(request.runtime_system_prompt.clone()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CharacterTemplateExport {
     pub name: String,

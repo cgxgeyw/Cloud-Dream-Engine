@@ -153,7 +153,9 @@ pub(crate) fn build_character_chat_request(
         messages: artifacts.messages,
         generation: generation.clone(),
         stream: Some(model.streaming_enabled && !native_tool_calling),
-        json_mode: Some(true),
+        // 模型级开关：某些 OpenAI 兼容端点的 json_object 模式会写坏字段名，
+        // 关掉后改走普通文本输出，由解析器从 ```json 围栏里取结构。
+        json_mode: Some(!model.json_mode_disabled),
         response_schema: Some(build_character_response_schema()),
         tools,
         tool_choice: native_tool_calling
@@ -509,6 +511,66 @@ mod tests {
         assert_eq!(names, vec!["stock_quote".to_string()]);
     }
 
+    /// 模型关闭 JSON 模式后，角色请求不再带 json_mode=true。
+    /// 某些端点（实测 step-5-preview）在 json_object 下会写坏字段名。
+    #[test]
+    fn character_request_honours_json_mode_switch() {
+        let world = params_test_world(serde_json::json!({}));
+        let session = params_test_session("session-json-mode", "参数世界");
+        let pipeline = DialoguePipeline::new();
+
+        let enabled = build_character_chat_request(
+            &pipeline,
+            &world,
+            &params_test_model(),
+            "Alice",
+            None,
+            &session,
+            "玩家",
+            "开场",
+            "开场",
+            "你好",
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &std::collections::HashMap::new(),
+            &GenerationParams::default(),
+            &[],
+            &[],
+        );
+        assert_eq!(enabled.json_mode, Some(true));
+
+        let mut disabled_model = params_test_model();
+        disabled_model.json_mode_disabled = true;
+        let disabled = build_character_chat_request(
+            &pipeline,
+            &world,
+            &disabled_model,
+            "Alice",
+            None,
+            &session,
+            "玩家",
+            "开场",
+            "开场",
+            "你好",
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &std::collections::HashMap::new(),
+            &GenerationParams::default(),
+            &[],
+            &[],
+        );
+        assert_eq!(disabled.json_mode, Some(false), "关闭后不该再要 json_object");
+        assert_eq!(enabled.response_schema, disabled.response_schema);
+    }
+
     /// 停用的工具不下发，即使世界授权了它。
     #[test]
     fn character_request_omits_disabled_tools() {
@@ -533,6 +595,7 @@ mod tests {
             streaming_enabled: false,
             is_default: true,
             input_modalities: Vec::new(),
+            json_mode_disabled: false,
         }
     }
 

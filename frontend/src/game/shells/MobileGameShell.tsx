@@ -22,12 +22,30 @@ import { runShellLogicAction } from "./shellLogicAction";
 
 type MobileViewportState = {
   height: number;
+  offsetTop: number;
+  keyboardHeight: number;
 };
 
+let mobileMaxLayoutHeight = 0;
+
 function useMobileVisualViewport(): MobileViewportState {
-  const [viewport, setViewport] = React.useState<MobileViewportState>(() => ({
-    height: typeof window === "undefined" ? 0 : Math.round(window.visualViewport?.height ?? window.innerHeight),
-  }));
+  const [viewport, setViewport] = React.useState<MobileViewportState>(() => {
+    if (typeof window === "undefined") {
+      return { height: 0, offsetTop: 0, keyboardHeight: 0 };
+    }
+    const layout = Math.round(window.innerHeight);
+    mobileMaxLayoutHeight = Math.max(mobileMaxLayoutHeight, layout);
+    const visual = window.visualViewport;
+    const visualHeight = Math.round(visual?.height ?? layout);
+    const offsetTop = Math.round(visual?.offsetTop ?? 0);
+    const nativeRaw = (window as { __nativeKeyboardHeight?: unknown }).__nativeKeyboardHeight;
+    const nativeKeyboard = Math.max(0, Math.round(Number(nativeRaw) || 0));
+    const keyboardHeight = Math.max(nativeKeyboard, Math.max(0, mobileMaxLayoutHeight - visualHeight - offsetTop));
+    const height = keyboardHeight > 0
+      ? Math.max(1, Math.min(visualHeight, mobileMaxLayoutHeight - keyboardHeight))
+      : visualHeight;
+    return { height, offsetTop, keyboardHeight };
+  });
 
   React.useEffect(() => {
     if (typeof window === "undefined") {
@@ -38,8 +56,30 @@ function useMobileVisualViewport(): MobileViewportState {
     const updateViewport = () => {
       window.cancelAnimationFrame(frameId);
       frameId = window.requestAnimationFrame(() => {
-        const nextHeight = Math.round(window.visualViewport?.height ?? window.innerHeight);
-        setViewport((current) => (current.height === nextHeight ? current : { height: nextHeight }));
+        const visual = window.visualViewport;
+        const layout = Math.round(window.innerHeight);
+        if (layout > mobileMaxLayoutHeight) {
+          mobileMaxLayoutHeight = layout;
+        }
+        const visualHeight = Math.round(visual?.height ?? layout);
+        const nextOffsetTop = Math.round(visual?.offsetTop ?? 0);
+        const nativeRaw = (window as { __nativeKeyboardHeight?: unknown }).__nativeKeyboardHeight;
+        const nativeKeyboard = Math.max(0, Math.round(Number(nativeRaw) || 0));
+        const visualKeyboard = Math.max(0, mobileMaxLayoutHeight - visualHeight - nextOffsetTop);
+        const nextKeyboardHeight = Math.max(nativeKeyboard, visualKeyboard);
+        const alreadyShrunk = layout < mobileMaxLayoutHeight - 8 || visualHeight < mobileMaxLayoutHeight - 8;
+        const nextHeight = alreadyShrunk
+          ? Math.max(1, Math.min(visualHeight, layout || mobileMaxLayoutHeight))
+          : nextKeyboardHeight > 0
+            ? Math.max(1, mobileMaxLayoutHeight - nextKeyboardHeight)
+            : visualHeight;
+        setViewport((current) => (
+          current.height === nextHeight
+          && current.offsetTop === nextOffsetTop
+          && current.keyboardHeight === nextKeyboardHeight
+            ? current
+            : { height: nextHeight, offsetTop: nextOffsetTop, keyboardHeight: nextKeyboardHeight }
+        ));
       });
     };
 
@@ -48,6 +88,10 @@ function useMobileVisualViewport(): MobileViewportState {
     window.visualViewport?.addEventListener("scroll", updateViewport);
     window.addEventListener("resize", updateViewport);
     window.addEventListener("orientationchange", updateViewport);
+    window.addEventListener("focusin", updateViewport);
+    window.addEventListener("focusout", updateViewport);
+    window.addEventListener("game-keyboard-maybe", updateViewport);
+    window.addEventListener("native-keyboard", updateViewport);
 
     return () => {
       window.cancelAnimationFrame(frameId);
@@ -55,6 +99,10 @@ function useMobileVisualViewport(): MobileViewportState {
       window.visualViewport?.removeEventListener("scroll", updateViewport);
       window.removeEventListener("resize", updateViewport);
       window.removeEventListener("orientationchange", updateViewport);
+      window.removeEventListener("focusin", updateViewport);
+      window.removeEventListener("focusout", updateViewport);
+      window.removeEventListener("game-keyboard-maybe", updateViewport);
+      window.removeEventListener("native-keyboard", updateViewport);
     };
   }, []);
 
@@ -96,6 +144,7 @@ export const MobileGameShell: React.FC<{
     }),
     [runtime],
   );
+  const worldId = bag.themeWorld?.id || runtime.world?.id || "";
   const handleDslAction = React.useCallback(
     async (action: GameUiActionReference, context: GameUiRenderContext) => {
       const actionId = action.id.replace(/^@/, "");
@@ -108,23 +157,29 @@ export const MobileGameShell: React.FC<{
         return undefined;
       }
       if (actionId === "logic.run") {
-        return runShellLogicAction(action, bag.worldUiEnvelope.logic);
+        return runShellLogicAction(action, bag.worldUiEnvelope.logic, { worldId });
       }
       return undefined;
     },
-    [actions, bag.worldUiEnvelope],
+    [actions, bag.worldUiEnvelope, worldId],
   );
   const viewportHeight = mobileViewport.height > 0 ? `${mobileViewport.height}px` : "100dvh";
   const mobileViewportStyle = React.useMemo(
     () => ({
       ...runtimeBackgroundStyle,
       "--game-visual-viewport-height": viewportHeight,
+      "--game-keyboard-height": `${Math.max(0, mobileViewport.keyboardHeight)}px`,
+      // 高度已扣过键盘，top 固定 0；不要再用 offsetTop 上移，否则会叠成两倍
+      position: "fixed",
+      top: 0,
+      left: 0,
+      right: 0,
       height: viewportHeight,
-      minHeight: viewportHeight,
+      minHeight: 0,
       maxHeight: viewportHeight,
       overflow: "hidden",
     }) as React.CSSProperties,
-    [runtimeBackgroundStyle, viewportHeight],
+    [runtimeBackgroundStyle, viewportHeight, mobileViewport.keyboardHeight],
   );
   const mobileKeyboardCss = React.useMemo(
     () => `

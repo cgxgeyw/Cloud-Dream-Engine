@@ -527,6 +527,123 @@ select:focus,
   color: var(--color-charcoal);
 }
 
+/* ─── 标题行：文字 + 小问号 ─── */
+.field-label-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  min-width: 0;
+}
+
+/* ─── HelpTip：小问号 + 说明气泡 ─── */
+.help-tip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+
+.help-tip__btn {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+  color: var(--color-muted);
+  font-family: var(--font-body);
+  font-size: 11px;
+  line-height: 1;
+  cursor: help;
+  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+}
+
+.help-tip__btn:hover,
+.help-tip__btn[aria-expanded="true"] {
+  border-color: var(--color-charcoal);
+  background: var(--color-hover-bg);
+  color: var(--color-charcoal);
+}
+
+.help-tip__bubble {
+  position: absolute;
+  z-index: 80;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: min(260px, calc(100vw - 32px));
+  padding: var(--sp-sm) 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-md);
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.6;
+  text-align: left;
+}
+
+/* ─── 开关：统一成 switch，替代尺寸不一的原生 checkbox ─── */
+.field-label--inline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-sm);
+}
+
+.settings-inline-toggle {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+
+.settings-inline-toggle > input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  flex: none;
+  width: 36px;
+  height: 20px;
+  margin: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-hover-bg);
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.settings-inline-toggle > input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+  transition: transform 140ms ease;
+}
+
+.settings-inline-toggle > input[type="checkbox"]:checked {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.settings-inline-toggle > input[type="checkbox"]:checked::after {
+  transform: translateX(16px);
+}
+
+.settings-inline-toggle > input[type="checkbox"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* ═══════════════════════════════════════════════════════════════
    Settings Page
    ═══════════════════════════════════════════════════════════════ */
@@ -610,6 +727,55 @@ select:focus,
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--sp-md);
+}
+
+/* 模型编辑表单：两列等宽，开关区跨满整行，保证输入框 / 下拉框 / 开关左右边缘对齐。 */
+.settings-form-grid--model-editor {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px var(--sp-md);
+  align-items: start;
+}
+
+.settings-field-group {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: var(--sp-sm);
+  padding-top: var(--sp-xs);
+}
+
+.settings-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-sm);
+}
+
+/* 开关行：与输入框同高（40px）、同圆角、同边框，视觉上横向对齐。 */
+.settings-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-sm);
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-default);
+  background: var(--color-subtle-bg);
+  cursor: pointer;
+  transition: border-color 120ms ease;
+}
+
+.settings-toggle-row:hover {
+  border-color: var(--color-border-hover);
+}
+
+.settings-toggle-row-copy {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-charcoal);
 }
 
 .settings-form-actions {
@@ -2114,9 +2280,12 @@ select:focus,
 .world-ui-runtime-host,
 .world-ui-sandbox-runtime {
   width: 100%;
-  height: 100dvh;
+  /* 跟宿主可见高度走：键盘弹出后 --app-visual-viewport-height 变小，iframe 才会跟着收缩。
+     写死 100dvh 在部分 WebView 上键盘弹出后不缩，界面看起来“不上移”。 */
+  height: var(--app-visual-viewport-height, 100dvh);
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
 }
 
 .world-ui-runtime-host {
@@ -2802,6 +2971,17 @@ select:focus,
 
 .opening-preview-content--default {
   color: var(--color-charcoal);
+}
+
+.opening-preview-message--editing {
+  border-color: var(--color-accent);
+  border-style: solid;
+  background: var(--color-surface);
+}
+
+.opening-preview-edit {
+  display: grid;
+  gap: var(--sp-sm);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -3503,12 +3683,12 @@ select:focus,
   overflow: hidden;
 }
 
-/* 框架导航把手：贴左缘；避开安卓状态栏/挖孔 */
+/* 框架导航把手：贴左缘；避开安卓状态栏/挖孔；左右可拖 */
 .mobile-fab {
   position: fixed;
   top: max(var(--world-safe-area-top, 0px), env(safe-area-inset-top, 0px), 80px);
   left: 0;
-  z-index: 150;
+  z-index: 160;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3524,8 +3704,39 @@ select:focus,
   cursor: pointer;
   font-size: 16px;
   color: var(--color-charcoal);
-  transition: background 150ms, box-shadow 150ms, width 150ms;
-  touch-action: manipulation;
+  transition: background 150ms, box-shadow 150ms, width 150ms, transform 160ms ease;
+  /* 必须 none：manipulation 仍允许浏览器横滑抢走手势 */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 扩大把手热区：视觉仍 22px，触摸约 40px 宽 */
+.mobile-fab::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: -10px;
+  bottom: -10px;
+  width: 40px;
+}
+
+.mobile-fab--dragging {
+  transition: none !important;
+  box-shadow: 3px 3px 12px rgba(0, 0, 0, 0.18);
+}
+
+/* 左缘滑动热区：盖住游戏 iframe，父文档才能收到横向手势 */
+.mobile-edge-swipe-zone {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 22px;
+  z-index: 155;
+  background: transparent;
+  /* 纵向仍可滚页，横向交给把手拖动逻辑 */
+  touch-action: pan-y;
 }
 
 .mobile-fab:active {
@@ -3547,7 +3758,7 @@ select:focus,
 
 .mobile-back-btn {
   position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + 12px);
+  top: calc(max(var(--app-safe-area-top, 0px), env(safe-area-inset-top, 0px)) + 12px);
   right: 16px;
   z-index: 150;
   display: inline-flex;
@@ -3830,17 +4041,21 @@ select:focus,
   }
 
   .layout-root {
-    min-height: var(--app-visual-viewport-height, 100dvh);
-    padding-top: env(safe-area-inset-top, 0px);
-    padding-bottom: env(safe-area-inset-bottom, 0px);
-    padding-left: env(safe-area-inset-left, 0px);
-    padding-right: env(safe-area-inset-right, 0px);
+    height: var(--app-visual-viewport-height, 100dvh);
+    overflow: hidden;
+    box-sizing: border-box;
+    padding-top: max(var(--app-safe-area-top, 0px), env(safe-area-inset-top, 0px));
+    padding-bottom: max(var(--app-safe-area-bottom, 0px), env(safe-area-inset-bottom, 0px));
+    padding-left: max(var(--app-safe-area-left, 0px), env(safe-area-inset-left, 0px));
+    padding-right: max(var(--app-safe-area-right, 0px), env(safe-area-inset-right, 0px));
   }
 
   .layout-inner {
-    min-height: calc(var(--app-visual-viewport-height, 100dvh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
     padding-top: 8px;
-    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(12px + max(var(--app-safe-area-bottom, 0px), env(safe-area-inset-bottom, 0px)));
   }
 
   .layout-inner:has(.newgame-setup-screen) .newgame-preview-hero {
@@ -4064,7 +4279,7 @@ select:focus,
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
     align-items: center;
     gap: 10px;
-    margin-top: calc(env(safe-area-inset-top, 0px) + 68px);
+    margin-top: calc(max(var(--app-safe-area-top, 0px), env(safe-area-inset-top, 0px)) + 68px);
     margin-bottom: 14px;
     min-height: 42px;
   }
@@ -4356,11 +4571,13 @@ select:focus,
 
   /* 世界入口页：菜单把手已在左缘，不必再预留 72px 大空白 */
   .layout-inner:has(.newgame-setup-screen) {
-    min-height: calc(var(--app-visual-viewport-height, 100dvh) - env(safe-area-inset-top, 0px));
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
     padding:
-      max(calc(env(safe-area-inset-top, 0px) + 8px), 12px)
+      max(calc(max(var(--app-safe-area-top, 0px), env(safe-area-inset-top, 0px)) + 8px), 12px)
       12px
-      calc(env(safe-area-inset-bottom, 0px) + 12px);
+      calc(max(var(--app-safe-area-bottom, 0px), env(safe-area-inset-bottom, 0px)) + 12px);
     overflow: visible;
   }
 
@@ -4780,6 +4997,10 @@ select:focus,
   .settings-form-grid--model-editor {
     grid-template-columns: 1fr;
     gap: 12px;
+  }
+
+  .settings-toggle-grid {
+    grid-template-columns: 1fr;
   }
 
   .settings-form-actions,

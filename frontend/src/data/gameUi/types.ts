@@ -236,7 +236,10 @@ export type GameUiBadgeNode = GameUiNodeBase & {
 
 export type GameUiButtonNode = GameUiNodeBase & {
   type: "button";
-  label: string;
+  // 有 children 的按钮（例如把整根图表柱子做成可点区域）可以不写 label，
+  // 可读名称由子内容本身承担。
+  label?: string;
+  children?: GameUiLayoutNodeV2[];
   variant?: string;
   disabled_when_empty_state?: string;
   action?: GameUiActionReference;

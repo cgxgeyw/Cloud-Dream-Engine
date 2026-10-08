@@ -529,13 +529,40 @@ export function isMessageReasoningExpanded(message: ChatMessageResponse): boolea
   return Boolean((message.metadata ?? {}).reasoning_expanded);
 }
 
+/// 判断一段文本是否是结构化载荷（模型把 JSON 当成自然语言吐出来的情况）。
+/// 与 Rust 侧 `looks_like_structured_payload` 保持同一套判据：首尾成对的花
+/// 括号/方括号，或者带 JSON 字段引导且含括号。命中就说明这是结构外泄。
+function looksLikeStructuredPayload(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length < 2) {
+    return false;
+  }
+  const startsStructured = trimmed.startsWith("{") || trimmed.startsWith("[");
+  const endsStructured = trimmed.endsWith("}") || trimmed.endsWith("]");
+  if (startsStructured && endsStructured) {
+    return true;
+  }
+  return (
+    (trimmed.includes('":') || trimmed.includes('" :'))
+    && (trimmed.includes("{") || trimmed.includes("["))
+  );
+}
+
 export function parseAgentNarration(message: ChatMessageResponse): string | null {
   if (message.role !== "agent") {
     return null;
   }
   const metadata = (message.metadata ?? {}) as Record<string, unknown>;
   const narration = String(metadata.narration ?? "").trim();
-  return narration ? narration : null;
+  if (!narration) {
+    return null;
+  }
+  // 兜底：旁白字段万一被原始 JSON 污染（Rust 侧已按 JSON 字符串语义截断并过滤），
+  // 这里也绝不让它以小字旁白的形式渲染出来。
+  if (looksLikeStructuredPayload(narration)) {
+    return null;
+  }
+  return narration;
 }
 
 export async function copyTextToClipboard(text: string): Promise<void> {

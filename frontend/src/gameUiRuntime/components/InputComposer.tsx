@@ -227,6 +227,17 @@ export function InputComposerComponent({ runtime, actions, node }: InputComposer
               actions.clearActionError();
             }
           }}
+          onFocus={(event) => {
+            // 键盘弹出后通知视口层重测，并把输入条滚进可见区
+            window.dispatchEvent(new Event("game-keyboard-maybe"));
+            window.requestAnimationFrame(() => {
+              event.target.scrollIntoView({ block: "nearest", inline: "nearest" });
+            });
+            window.setTimeout(() => {
+              event.target.scrollIntoView({ block: "nearest", inline: "nearest" });
+              window.dispatchEvent(new Event("game-keyboard-maybe"));
+            }, 280);
+          }}
           onKeyDown={(event) => {
             if (enterToSubmit && event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();

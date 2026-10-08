@@ -9,7 +9,12 @@ import {
 } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { showToast } from "../components/Toast";
-import { compressImageForChat, fileToDataUrl } from "./imageCompress";
+import {
+  compressImageForChat,
+  fileToDataUrl,
+  inspectImageFile,
+  MAX_CHAT_IMAGE_BYTES,
+} from "./imageCompress";
 import {
   assetUrl,
   branchSave,
@@ -1030,8 +1035,23 @@ export function useGameSession(
         if (images.length > 0 || audios.length > 0) {
           const parts: ContentPart[] = [];
           // 添加图片部分
+          // 先按魔数校验真实类型再压缩：accept/File.type 不可信，误选的压缩包
+          // 会被原样 base64 塞进请求体（132MB 的 APK 曾让会话永久停在「回复中」）。
           for (const file of images) {
+            const inspection = await inspectImageFile(file);
+            if (!inspection.ok) {
+              setActionError(`无法发送「${file.name}」：${inspection.reason}`);
+              return;
+            }
             const packed = await compressImageForChat(file);
+            if (packed.size > MAX_CHAT_IMAGE_BYTES) {
+              setActionError(
+                `「${file.name}」压缩后仍有 ${(packed.size / 1024 / 1024).toFixed(1)}MB，超过 ${
+                  MAX_CHAT_IMAGE_BYTES / 1024 / 1024
+                }MB 上限，请换一张更小的图片。`,
+              );
+              return;
+            }
             const base64 = await fileToDataUrl(packed);
             parts.push({
               type: "image_url",

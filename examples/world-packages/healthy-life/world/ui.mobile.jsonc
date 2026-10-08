@@ -3,7 +3,7 @@
   "meta": {
     "name": "健康生活移动界面",
     "author": "Cloud Dream Engine",
-    "description": "冷灰纸面轻拟物：白面板浮起，橙/绿/紫仅作数据点缀，发送键蓝色"
+    "description": "四页签：对话/记录/计划/我的。记录页含能量环与日周月柱状图"
   },
   "tokens": {
     "color-bg": "#E9EDF3",
@@ -22,7 +22,11 @@
   "components": {},
   "state": {
     "active_tab": "chat",
-    "checked_health_items": []
+    "chart_mode": "week",
+    "checked_health_items": [],
+    "stats": null,
+    "stats_error": "",
+    "stats_loading": false
   },
   "layout": {
     "root": {
@@ -33,8 +37,7 @@
       "padding": "0",
       "style": {
         "height": "100%",
-        "min_height": "0",
-        "overflow": "hidden"
+        "min_height": "0"
       },
       "children": [
         {
@@ -42,59 +45,40 @@
           "class_name": "hl-tabbar hl-tabbar--mobile-top",
           "direction": "horizontal",
           "gap": "0",
-          "style": {
-            "flex": "0 0 auto",
-            "min_height": "0"
-          },
+          "style": { "flex": "0 0 auto", "min_height": "0" },
           "children": [
             {
               "type": "stack",
               "class_name": "hl-tab-item-wrap",
-              "style": {
-                "flex": "1 1 0"
-              },
+              "style": { "flex": "1 1 0" },
               "children": [
                 {
                   "type": "when",
-                  "expr": "state.active_tab == 'chat' || state.active_tab == null",
+                  "expr": "state.active_tab == 'chat' || state.active_tab == null || state.active_tab == 'growth'",
                   "child": {
                     "type": "button",
                     "class_name": "hl-tab-btn hl-tab-btn--active hl-tab-btn--chat",
                     "label": "对话",
                     "variant": "ghost",
                     "action": {
-                      "id": "logic.run",
-                      "args": {
-                        "handler": "ui.setTab",
-                        "input": {
-                          "tab": "chat"
-                        }
-                      },
-                      "result_state": "active_tab",
-                      "error_state": "tab_error",
-                      "pending_state": "tab_pending"
+                      "id": "set_state",
+                      "args": { "key": "active_tab", "value": "chat" },
+                      "result_state": "active_tab"
                     }
                   }
                 },
                 {
                   "type": "when",
-                  "expr": "state.active_tab != 'chat' && state.active_tab != null",
+                  "expr": "state.active_tab != 'chat' && state.active_tab != null && state.active_tab != 'growth'",
                   "child": {
                     "type": "button",
                     "class_name": "hl-tab-btn hl-tab-btn--chat",
                     "label": "对话",
                     "variant": "ghost",
                     "action": {
-                      "id": "logic.run",
-                      "args": {
-                        "handler": "ui.setTab",
-                        "input": {
-                          "tab": "chat"
-                        }
-                      },
-                      "result_state": "active_tab",
-                      "error_state": "tab_error",
-                      "pending_state": "tab_pending"
+                      "id": "set_state",
+                      "args": { "key": "active_tab", "value": "chat" },
+                      "result_state": "active_tab"
                     }
                   }
                 }
@@ -103,51 +87,35 @@
             {
               "type": "stack",
               "class_name": "hl-tab-item-wrap",
-              "style": {
-                "flex": "1 1 0"
-              },
+              "style": { "flex": "1 1 0" },
               "children": [
                 {
                   "type": "when",
-                  "expr": "state.active_tab == 'growth'",
+                  "expr": "state.active_tab == 'records'",
                   "child": {
                     "type": "button",
-                    "class_name": "hl-tab-btn hl-tab-btn--active hl-tab-btn--growth",
-                    "label": "成长",
+                    "class_name": "hl-tab-btn hl-tab-btn--active hl-tab-btn--records",
+                    "label": "记录",
                     "variant": "ghost",
                     "action": {
-                      "id": "logic.run",
-                      "args": {
-                        "handler": "ui.setTab",
-                        "input": {
-                          "tab": "growth"
-                        }
-                      },
-                      "result_state": "active_tab",
-                      "error_state": "tab_error",
-                      "pending_state": "tab_pending"
+                      "id": "set_state",
+                      "args": { "key": "active_tab", "value": "records" },
+                      "result_state": "active_tab"
                     }
                   }
                 },
                 {
                   "type": "when",
-                  "expr": "state.active_tab != 'growth'",
+                  "expr": "state.active_tab != 'records'",
                   "child": {
                     "type": "button",
-                    "class_name": "hl-tab-btn hl-tab-btn--growth",
-                    "label": "成长",
+                    "class_name": "hl-tab-btn hl-tab-btn--records",
+                    "label": "记录",
                     "variant": "ghost",
                     "action": {
-                      "id": "logic.run",
-                      "args": {
-                        "handler": "ui.setTab",
-                        "input": {
-                          "tab": "growth"
-                        }
-                      },
-                      "result_state": "active_tab",
-                      "error_state": "tab_error",
-                      "pending_state": "tab_pending"
+                      "id": "set_state",
+                      "args": { "key": "active_tab", "value": "records" },
+                      "result_state": "active_tab"
                     }
                   }
                 }
@@ -156,9 +124,44 @@
             {
               "type": "stack",
               "class_name": "hl-tab-item-wrap",
-              "style": {
-                "flex": "1 1 0"
-              },
+              "style": { "flex": "1 1 0" },
+              "children": [
+                {
+                  "type": "when",
+                  "expr": "state.active_tab == 'plan'",
+                  "child": {
+                    "type": "button",
+                    "class_name": "hl-tab-btn hl-tab-btn--active hl-tab-btn--plan",
+                    "label": "计划",
+                    "variant": "ghost",
+                    "action": {
+                      "id": "set_state",
+                      "args": { "key": "active_tab", "value": "plan" },
+                      "result_state": "active_tab"
+                    }
+                  }
+                },
+                {
+                  "type": "when",
+                  "expr": "state.active_tab != 'plan'",
+                  "child": {
+                    "type": "button",
+                    "class_name": "hl-tab-btn hl-tab-btn--plan",
+                    "label": "计划",
+                    "variant": "ghost",
+                    "action": {
+                      "id": "set_state",
+                      "args": { "key": "active_tab", "value": "plan" },
+                      "result_state": "active_tab"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "stack",
+              "class_name": "hl-tab-item-wrap",
+              "style": { "flex": "1 1 0" },
               "children": [
                 {
                   "type": "when",
@@ -169,16 +172,9 @@
                     "label": "我的",
                     "variant": "ghost",
                     "action": {
-                      "id": "logic.run",
-                      "args": {
-                        "handler": "ui.setTab",
-                        "input": {
-                          "tab": "profile"
-                        }
-                      },
-                      "result_state": "active_tab",
-                      "error_state": "tab_error",
-                      "pending_state": "tab_pending"
+                      "id": "set_state",
+                      "args": { "key": "active_tab", "value": "profile" },
+                      "result_state": "active_tab"
                     }
                   }
                 },
@@ -191,16 +187,9 @@
                     "label": "我的",
                     "variant": "ghost",
                     "action": {
-                      "id": "logic.run",
-                      "args": {
-                        "handler": "ui.setTab",
-                        "input": {
-                          "tab": "profile"
-                        }
-                      },
-                      "result_state": "active_tab",
-                      "error_state": "tab_error",
-                      "pending_state": "tab_pending"
+                      "id": "set_state",
+                      "args": { "key": "active_tab", "value": "profile" },
+                      "result_state": "active_tab"
                     }
                   }
                 }
@@ -213,14 +202,11 @@
           "class_name": "hl-mobile-body",
           "direction": "vertical",
           "gap": "0",
-          "style": {
-            "flex": "1 1 0",
-            "min_height": "0"
-          },
+          "style": { "flex": "1 1 0", "min_height": "0" },
           "children": [
             {
               "type": "when",
-              "expr": "state.active_tab == 'chat' || state.active_tab == null",
+              "expr": "state.active_tab == 'chat' || state.active_tab == null || state.active_tab == 'growth'",
               "child": {
                 "type": "stack",
                 "class_name": "hl-pane hl-pane--chat",
@@ -229,17 +215,14 @@
                 "style": {
                   "flex": "1 1 0",
                   "min_height": "0",
-                  "height": "100%"
+                  "overflow": "hidden"
                 },
                 "children": [
                   {
                     "type": "component",
                     "component": "message_list",
                     "class_name": "hl-mobile-messages",
-                    "style": {
-                      "flex": "1 1 0",
-                      "min_height": "0"
-                    },
+                    "style": { "flex": "1 1 0", "min_height": "0", "overflow": "hidden" },
                     "props": {
                       "auto_scroll": true,
                       "show_pending_state": true,
@@ -253,10 +236,7 @@
                     "type": "component",
                     "component": "input_composer",
                     "class_name": "hl-mobile-composer",
-                    "style": {
-                      "flex": "0 0 auto",
-                      "min_height": "0"
-                    },
+                    "style": { "flex": "0 0 auto", "min_height": "0" },
                     "props": {
                       "placeholder": "说说今天的饮食、训练或目标…",
                       "submit_label": "发送",
@@ -272,7 +252,502 @@
             },
             {
               "type": "when",
-              "expr": "state.active_tab == 'growth'",
+              "expr": "state.active_tab == 'records'",
+              "child": {
+                "type": "stack",
+                "class_name": "hl-pane hl-pane--records",
+                "direction": "vertical",
+                "gap": "12px",
+                "style": {
+                  "flex": "1 1 0",
+                  "min_height": "0",
+                  "overflow_y": "auto",
+                  "padding": "12px 14px 16px"
+                },
+                "children": [
+                  {
+                    "type": "stack",
+                    "class_name": "hl-energy-card",
+                    "direction": "vertical",
+                    "gap": "12px",
+                    "children": [
+                      {
+                        "type": "stack",
+                        "class_name": "hl-ring-core",
+                        "direction": "vertical",
+                        "gap": "4px",
+                        "style": { "align_self": "center" },
+                        "children": [
+                          { "type": "text", "class_name": "hl-ring-label", "text": "今日净能量" },
+                          { "type": "text", "class_name": "hl-ring-value", "text": "{{ attributes.health_energy_net }}" },
+                          { "type": "text", "class_name": "hl-ring-unit", "text": "kcal" }
+                        ]
+                      },
+                      {
+                        "type": "stack",
+                        "class_name": "hl-stat-grid",
+                        "direction": "horizontal",
+                        "gap": "10px",
+                        "wrap": true,
+                        "children": [
+                          {
+                            "type": "stack",
+                            "class_name": "hl-stat-card hl-stat-card--in",
+                            "direction": "vertical",
+                            "gap": "6px",
+                            "style": { "flex": "1 1 140px", "min_width": "140px" },
+                            "children": [
+                              { "type": "text", "class_name": "hl-stat-label", "text": "今日摄入" },
+                              { "type": "text", "class_name": "hl-stat-value", "text": "{{ attributes.health_intake_kcal }} kcal" }
+                            ]
+                          },
+                          {
+                            "type": "stack",
+                            "class_name": "hl-stat-card hl-stat-card--out",
+                            "direction": "vertical",
+                            "gap": "6px",
+                            "style": { "flex": "1 1 140px", "min_width": "140px" },
+                            "children": [
+                              { "type": "text", "class_name": "hl-stat-label", "text": "今日消耗" },
+                              { "type": "text", "class_name": "hl-stat-value", "text": "{{ attributes.health_burn_kcal }} kcal" }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "type": "text",
+                        "class_name": "hl-ring-legend",
+                        "text": "消耗 = 基础代谢 BMR + 运动。点下方「同步统计」把今日写入历史。"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "button",
+                    "class_name": "hl-check-confirm",
+                    "label": "同步统计（写入今日并刷新）",
+                    "variant": "ghost",
+                    "action": {
+                      "id": "logic.run",
+                      "args": {
+                        "handler": "health.syncStats",
+                        "input": {
+                          "intake": "$attributes.health_intake_kcal",
+                          "burn": "$attributes.health_burn_kcal",
+                          "net": "$attributes.health_energy_net",
+                          "bmr": "$attributes.health_bmr",
+                          "steps": 0
+                        }
+                      },
+                      "result_state": "stats",
+                      "error_state": "stats_error",
+                      "pending_state": "stats_loading"
+                    }
+                  },
+                  {
+                    "type": "when",
+                    "expr": "state.stats_error != null && state.stats_error != ''",
+                    "child": {
+                      "type": "text",
+                      "class_name": "hl-caption hl-caption--error",
+                      "text": "统计失败：{{ state.stats_error }}"
+                    }
+                  },
+                  {
+                    "type": "stack",
+                    "class_name": "hl-card hl-chart-card",
+                    "direction": "vertical",
+                    "gap": "10px",
+                    "children": [
+                      { "type": "text", "class_name": "hl-section-label", "text": "消耗统计" },
+                      {
+                        "type": "stack",
+                        "class_name": "hl-chart-modes",
+                        "direction": "horizontal",
+                        "gap": "8px",
+                        "children": [
+                          {
+                            "type": "when",
+                            "expr": "state.chart_mode == 'day' || state.chart_mode == null",
+                            "child": {
+                              "type": "button",
+                              "class_name": "hl-mode-btn hl-mode-btn--active",
+                              "label": "日",
+                              "action": {
+                                "id": "set_state",
+                                "args": { "key": "chart_mode", "value": "day" },
+                                "result_state": "chart_mode"
+                              }
+                            }
+                          },
+                          {
+                            "type": "when",
+                            "expr": "state.chart_mode != 'day' && state.chart_mode != null",
+                            "child": {
+                              "type": "button",
+                              "class_name": "hl-mode-btn",
+                              "label": "日",
+                              "action": {
+                                "id": "set_state",
+                                "args": { "key": "chart_mode", "value": "day" },
+                                "result_state": "chart_mode"
+                              }
+                            }
+                          },
+                          {
+                            "type": "when",
+                            "expr": "state.chart_mode == 'week'",
+                            "child": {
+                              "type": "button",
+                              "class_name": "hl-mode-btn hl-mode-btn--active",
+                              "label": "周",
+                              "action": {
+                                "id": "set_state",
+                                "args": { "key": "chart_mode", "value": "week" },
+                                "result_state": "chart_mode"
+                              }
+                            }
+                          },
+                          {
+                            "type": "when",
+                            "expr": "state.chart_mode != 'week'",
+                            "child": {
+                              "type": "button",
+                              "class_name": "hl-mode-btn",
+                              "label": "周",
+                              "action": {
+                                "id": "set_state",
+                                "args": { "key": "chart_mode", "value": "week" },
+                                "result_state": "chart_mode"
+                              }
+                            }
+                          },
+                          {
+                            "type": "when",
+                            "expr": "state.chart_mode == 'month'",
+                            "child": {
+                              "type": "button",
+                              "class_name": "hl-mode-btn hl-mode-btn--active",
+                              "label": "月",
+                              "action": {
+                                "id": "set_state",
+                                "args": { "key": "chart_mode", "value": "month" },
+                                "result_state": "chart_mode"
+                              }
+                            }
+                          },
+                          {
+                            "type": "when",
+                            "expr": "state.chart_mode != 'month'",
+                            "child": {
+                              "type": "button",
+                              "class_name": "hl-mode-btn",
+                              "label": "月",
+                              "action": {
+                                "id": "set_state",
+                                "args": { "key": "chart_mode", "value": "month" },
+                                "result_state": "chart_mode"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "type": "when",
+                        "expr": "state.stats == null",
+                        "child": {
+                          "type": "text",
+                          "class_name": "hl-check-empty",
+                          "text": "还没有历史数据。在对话里更新今日摄入/消耗后，点「同步统计」即可生成柱状图。"
+                        }
+                      },
+                      {
+                        "type": "when",
+                        "expr": "state.chart_mode == 'week' && state.stats != null",
+                        "child": {
+                          "type": "stack",
+                          "class_name": "hl-chart",
+                          "direction": "vertical",
+                          "gap": "8px",
+                          "children": [
+                            {
+                              "type": "text",
+                              "class_name": "hl-caption",
+                              "text": "近 7 日 · 均消耗 {{ state.stats.week_avg.burn }} kcal · 点柱查看当日数据"
+                            },
+                            {
+                              "type": "stack",
+                              "class_name": "hl-bars",
+                              "direction": "horizontal",
+                              "gap": "6px",
+                              "children": [
+                                {
+                                  "type": "for_each",
+                                  "source": "$state.stats.week_bars",
+                                  "item_as": "bar",
+                                  "empty": {
+                                    "type": "text",
+                                    "class_name": "hl-check-empty",
+                                    "text": "本周暂无数据"
+                                  },
+                                  "child": {
+                                    "type": "button",
+                                    "class_name": "hl-bar-col-btn",
+                                    "label": "",
+                                    "action": {
+                                      "id": "logic.run",
+                                      "args": {
+                                        "handler": "health.selectDay",
+                                        "input": { "date": "$bar.date" }
+                                      },
+                                      "result_state": "stats",
+                                      "error_state": "stats_error",
+                                      "pending_state": "stats_loading"
+                                    },
+                                    "children": [
+                                      {
+                                        "type": "when",
+                                        "expr": "bar.selected == true",
+                                        "child": {
+                                          "type": "stack",
+                                          "class_name": "hl-bar-col hl-bar-col--selected",
+                                          "direction": "vertical",
+                                          "gap": "4px",
+                                          "style": { "flex": "1 1 0", "min_width": "0", "width": "100%" },
+                                          "children": [
+                                            {
+                                              "type": "text",
+                                              "class_name": "hl-bar-value",
+                                              "text": "{{ bar.burn_text }}"
+                                            },
+                                            {
+                                              "type": "stack",
+                                              "class_name": "hl-bar-pair",
+                                              "direction": "horizontal",
+                                              "style": { "align_items": "flex-end", "height": "96px", "width": "100%" },
+                                              "children": [
+                                                {
+                                                  "type": "stack",
+                                                  "class_name": "hl-bar hl-bar--selected",
+                                                  "style": { "height": "{{ bar.h_burn }}", "width": "100%" }
+                                                }
+                                              ]
+                                            },
+                                            { "type": "text", "class_name": "hl-bar-label hl-bar-label--selected", "text": "{{ bar.label }}" }
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "type": "when",
+                                        "expr": "bar.selected != true",
+                                        "child": {
+                                          "type": "stack",
+                                          "class_name": "hl-bar-col",
+                                          "direction": "vertical",
+                                          "gap": "4px",
+                                          "style": { "flex": "1 1 0", "min_width": "0", "width": "100%" },
+                                          "children": [
+                                            {
+                                              "type": "stack",
+                                              "class_name": "hl-bar-value hl-bar-value--dim",
+                                              "style": { "min_height": "12px" }
+                                            },
+                                            {
+                                              "type": "stack",
+                                              "class_name": "hl-bar-pair",
+                                              "direction": "horizontal",
+                                              "style": { "align_items": "flex-end", "height": "96px", "width": "100%" },
+                                              "children": [
+                                                {
+                                                  "type": "stack",
+                                                  "class_name": "hl-bar hl-bar--idle",
+                                                  "style": { "height": "{{ bar.h_burn }}", "width": "100%" }
+                                                }
+                                              ]
+                                            },
+                                            { "type": "text", "class_name": "hl-bar-label", "text": "{{ bar.label }}" }
+                                          ]
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "class_name": "hl-caption",
+                              "text": "深蓝=选中日 · 浅蓝=其他日。柱高表示能量消耗。"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "type": "when",
+                        "expr": "state.chart_mode == 'month' && state.stats != null",
+                        "child": {
+                          "type": "stack",
+                          "class_name": "hl-chart",
+                          "direction": "vertical",
+                          "gap": "8px",
+                          "children": [
+                            {
+                              "type": "text",
+                              "class_name": "hl-caption",
+                              "text": "本月每日消耗 · 点选查看数据"
+                            },
+                            {
+                              "type": "stack",
+                              "class_name": "hl-bars hl-bars--month",
+                              "direction": "horizontal",
+                              "gap": "2px",
+                              "style": { "overflow_x": "auto" },
+                              "children": [
+                                {
+                                  "type": "for_each",
+                                  "source": "$state.stats.month_bars",
+                                  "item_as": "bar",
+                                  "empty": {
+                                    "type": "text",
+                                    "class_name": "hl-check-empty",
+                                    "text": "本月暂无数据"
+                                  },
+                                  "child": {
+                                    "type": "button",
+                                    "class_name": "hl-bar-col-btn hl-bar-col-btn--month",
+                                    "label": "",
+                                    "action": {
+                                      "id": "logic.run",
+                                      "args": {
+                                        "handler": "health.selectDay",
+                                        "input": { "date": "$bar.date" }
+                                      },
+                                      "result_state": "stats",
+                                      "error_state": "stats_error",
+                                      "pending_state": "stats_loading"
+                                    },
+                                    "children": [
+                                      {
+                                        "type": "when",
+                                        "expr": "bar.selected == true",
+                                        "child": {
+                                          "type": "stack",
+                                          "class_name": "hl-bar-col hl-bar-col--selected",
+                                          "direction": "vertical",
+                                          "gap": "2px",
+                                          "style": { "flex": "0 0 16px", "min_width": "16px", "width": "100%" },
+                                          "children": [
+                                            {
+                                              "type": "text",
+                                              "class_name": "hl-bar-value hl-bar-value--tiny",
+                                              "text": "{{ bar.burn }}"
+                                            },
+                                            {
+                                              "type": "stack",
+                                              "class_name": "hl-bar-pair",
+                                              "direction": "horizontal",
+                                              "style": { "align_items": "flex-end", "height": "88px", "width": "100%" },
+                                              "children": [
+                                                {
+                                                  "type": "stack",
+                                                  "class_name": "hl-bar hl-bar--selected",
+                                                  "style": { "height": "{{ bar.h_burn }}", "width": "100%" }
+                                                }
+                                              ]
+                                            },
+                                            { "type": "text", "class_name": "hl-bar-label hl-bar-label--selected hl-bar-label--tiny", "text": "{{ bar.label }}" }
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "type": "when",
+                                        "expr": "bar.selected != true",
+                                        "child": {
+                                          "type": "stack",
+                                          "class_name": "hl-bar-col",
+                                          "direction": "vertical",
+                                          "gap": "2px",
+                                          "style": { "flex": "0 0 16px", "min_width": "16px", "width": "100%" },
+                                          "children": [
+                                            {
+                                              "type": "stack",
+                                              "class_name": "hl-bar-pair",
+                                              "direction": "horizontal",
+                                              "style": { "align_items": "flex-end", "height": "88px", "width": "100%" },
+                                              "children": [
+                                                {
+                                                  "type": "stack",
+                                                  "class_name": "hl-bar hl-bar--idle",
+                                                  "style": { "height": "{{ bar.h_burn }}", "width": "100%" }
+                                                }
+                                              ]
+                                            },
+                                            { "type": "text", "class_name": "hl-bar-label hl-bar-label--tiny", "text": "{{ bar.label }}" }
+                                          ]
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "type": "when",
+                        "expr": "state.chart_mode == 'day' && state.stats != null",
+                        "child": {
+                          "type": "stack",
+                          "class_name": "hl-day-list",
+                          "direction": "vertical",
+                          "gap": "8px",
+                          "children": [
+                            {
+                              "type": "text",
+                              "class_name": "hl-caption",
+                              "text": "每日明细（最近 {{ state.stats.recorded_days }} 天有记录）"
+                            },
+                            {
+                              "type": "for_each",
+                              "source": "$state.stats.day_list",
+                              "item_as": "day",
+                              "empty": {
+                                "type": "text",
+                                "class_name": "hl-check-empty",
+                                "text": "暂无每日记录，请先同步统计。"
+                              },
+                              "child": {
+                                "type": "button",
+                                "class_name": "hl-day-row hl-day-row--btn",
+                                "label": "{{ day.date }}  摄 {{ day.intake }} · 耗 {{ day.burn }} · 净 {{ day.net }}",
+                                "action": {
+                                  "id": "logic.run",
+                                  "args": {
+                                    "handler": "health.selectDay",
+                                    "input": { "date": "$day.date" }
+                                  },
+                                  "result_state": "stats",
+                                  "error_state": "stats_error",
+                                  "pending_state": "stats_loading"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "type": "text",
+                    "class_name": "hl-caption",
+                    "text": "柱状图与明细来自世界存储 health.energy_days；属性里的今日数字由对话维护，同步时写入历史。"
+                  }
+                ]
+              }
+            },
+            {
+              "type": "when",
+              "expr": "state.active_tab == 'plan'",
               "child": {
                 "type": "stack",
                 "class_name": "hl-pane hl-pane--growth",
@@ -291,113 +766,19 @@
                     "direction": "vertical",
                     "gap": "6px",
                     "children": [
-                      {
-                        "type": "text",
-                        "class_name": "hl-growth-kicker",
-                        "text": "当前目标"
-                      },
-                      {
-                        "type": "text",
-                        "class_name": "hl-growth-title",
-                        "text": "{{ attributes.health_goal_type }}"
-                      },
-                      {
-                        "type": "text",
-                        "class_name": "hl-growth-sub",
-                        "text": "{{ attributes.health_goal_detail }}"
-                      }
+                      { "type": "text", "class_name": "hl-growth-kicker", "text": "当前目标" },
+                      { "type": "text", "class_name": "hl-growth-title", "text": "{{ attributes.health_goal_type }}" },
+                      { "type": "text", "class_name": "hl-growth-sub", "text": "{{ attributes.health_goal_detail }}" }
                     ]
                   },
                   {
                     "type": "stack",
-                    "class_name": "hl-energy-card",
+                    "class_name": "hl-card",
                     "direction": "vertical",
-                    "gap": "12px",
+                    "gap": "8px",
                     "children": [
-                      {
-                        "type": "stack",
-                        "class_name": "hl-ring-core",
-                        "direction": "vertical",
-                        "gap": "4px",
-                        "style": {
-                          "align_self": "center"
-                        },
-                        "children": [
-                          {
-                            "type": "text",
-                            "class_name": "hl-ring-label",
-                            "text": "净能量平衡"
-                          },
-                          {
-                            "type": "text",
-                            "class_name": "hl-ring-value",
-                            "text": "{{ attributes.health_energy_net }}"
-                          },
-                          {
-                            "type": "text",
-                            "class_name": "hl-ring-unit",
-                            "text": "kcal"
-                          }
-                        ]
-                      },
-                      {
-                        "type": "text",
-                        "class_name": "hl-ring-legend",
-                        "text": "摄入 − 消耗。负值表示今日有热量缺口。"
-                      }
-                    ]
-                  },
-                  {
-                    "type": "stack",
-                    "class_name": "hl-stat-grid",
-                    "direction": "horizontal",
-                    "gap": "10px",
-                    "wrap": true,
-                    "children": [
-                      {
-                        "type": "stack",
-                        "class_name": "hl-stat-card hl-stat-card--in",
-                        "direction": "vertical",
-                        "gap": "6px",
-                        "style": {
-                          "flex": "1 1 140px",
-                          "min_width": "140px"
-                        },
-                        "children": [
-                          {
-                            "type": "text",
-                            "class_name": "hl-stat-label",
-                            "text": "今日摄入"
-                          },
-                          {
-                            "type": "text",
-                            "class_name": "hl-stat-value",
-                            "text": "{{ attributes.health_intake_kcal }} kcal"
-                          }
-                        ]
-                      },
-                      {
-                        "type": "stack",
-                        "class_name": "hl-stat-card hl-stat-card--out",
-                        "direction": "vertical",
-                        "gap": "6px",
-                        "style": {
-                          "flex": "1 1 140px",
-                          "min_width": "140px"
-                        },
-                        "children": [
-                          {
-                            "type": "text",
-                            "class_name": "hl-stat-label",
-                            "text": "今日消耗"
-                          },
-                          {
-                            "type": "text",
-                            "class_name": "hl-stat-value",
-                            "text": "{{ attributes.health_burn_kcal }} kcal"
-                          }
-                        ]
-                      }
+                      { "type": "text", "class_name": "hl-section-label", "text": "今日重点" },
+                      { "type": "text", "class_name": "hl-card-body", "text": "{{ attributes.health_weekly_focus }}" }
                     ]
                   },
                   {
@@ -406,11 +787,7 @@
                     "direction": "vertical",
                     "gap": "10px",
                     "children": [
-                      {
-                        "type": "text",
-                        "class_name": "hl-section-label",
-                        "text": "今日行动清单"
-                      },
+                      { "type": "text", "class_name": "hl-section-label", "text": "今日行动清单" },
                       {
                         "type": "for_each",
                         "source": "$attributes.health_checklist",
@@ -443,14 +820,9 @@
                       {
                         "type": "text",
                         "class_name": "hl-caption",
-                        "text": "勾选后点「确认完成」，会发给小助手更新清单。"
+                        "text": "计划页不直接改模型数据；更新请在「对话」完成。清单确认会发给小助手。"
                       }
                     ]
-                  },
-                  {
-                    "type": "text",
-                    "class_name": "hl-caption",
-                    "text": "在「对话」里告知小助手今日饮食或运动，这里的数据会同步更新。"
                   }
                 ]
               }
@@ -479,56 +851,26 @@
                     "children": [
                       {
                         "type": "stack",
-                        "class_name": "hl-metric-hero hl-metric-hero--bmi",
+                        "class_name": "hl-metric-hero",
                         "direction": "vertical",
                         "gap": "6px",
-                        "style": {
-                          "flex": "1 1 140px",
-                          "min_width": "140px"
-                        },
+                        "style": { "flex": "1 1 140px", "min_width": "140px" },
                         "children": [
-                          {
-                            "type": "text",
-                            "class_name": "hl-metric-hero-label",
-                            "text": "BMI"
-                          },
-                          {
-                            "type": "text",
-                            "class_name": "hl-metric-hero-num",
-                            "text": "{{ attributes.health_bmi }}"
-                          },
-                          {
-                            "type": "text",
-                            "class_name": "hl-metric-hero-tag",
-                            "text": "{{ attributes.health_bmi_label }}"
-                          }
+                          { "type": "text", "class_name": "hl-metric-hero-label", "text": "BMI" },
+                          { "type": "text", "class_name": "hl-metric-hero-num", "text": "{{ attributes.health_bmi }}" },
+                          { "type": "text", "class_name": "hl-metric-hero-tag", "text": "{{ attributes.health_bmi_label }}" }
                         ]
                       },
                       {
                         "type": "stack",
-                        "class_name": "hl-metric-hero hl-metric-hero--bmr",
+                        "class_name": "hl-metric-hero",
                         "direction": "vertical",
                         "gap": "6px",
-                        "style": {
-                          "flex": "1 1 140px",
-                          "min_width": "140px"
-                        },
+                        "style": { "flex": "1 1 140px", "min_width": "140px" },
                         "children": [
-                          {
-                            "type": "text",
-                            "class_name": "hl-metric-hero-label",
-                            "text": "基础代谢 BMR"
-                          },
-                          {
-                            "type": "text",
-                            "class_name": "hl-metric-hero-num",
-                            "text": "{{ attributes.health_bmr }}"
-                          },
-                          {
-                            "type": "text",
-                            "class_name": "hl-metric-hero-tag",
-                            "text": "kcal / 天"
-                          }
+                          { "type": "text", "class_name": "hl-metric-hero-label", "text": "基础代谢 BMR" },
+                          { "type": "text", "class_name": "hl-metric-hero-num", "text": "{{ attributes.health_bmr }}" },
+                          { "type": "text", "class_name": "hl-metric-hero-tag", "text": "kcal / 天" }
                         ]
                       }
                     ]
@@ -545,16 +887,8 @@
                         "direction": "horizontal",
                         "gap": "8px",
                         "children": [
-                          {
-                            "type": "text",
-                            "class_name": "hl-metric-label",
-                            "text": "身高"
-                          },
-                          {
-                            "type": "text",
-                            "class_name": "hl-metric-value",
-                            "text": "{{ attributes.health_height_cm }} cm"
-                          }
+                          { "type": "text", "class_name": "hl-metric-label", "text": "身高" },
+                          { "type": "text", "class_name": "hl-metric-value", "text": "{{ attributes.health_height_cm }} cm" }
                         ]
                       },
                       {
@@ -563,16 +897,8 @@
                         "direction": "horizontal",
                         "gap": "8px",
                         "children": [
-                          {
-                            "type": "text",
-                            "class_name": "hl-metric-label",
-                            "text": "体重"
-                          },
-                          {
-                            "type": "text",
-                            "class_name": "hl-metric-value",
-                            "text": "{{ attributes.health_weight_kg }} kg"
-                          }
+                          { "type": "text", "class_name": "hl-metric-label", "text": "体重" },
+                          { "type": "text", "class_name": "hl-metric-value", "text": "{{ attributes.health_weight_kg }} kg" }
                         ]
                       },
                       {
@@ -581,16 +907,8 @@
                         "direction": "horizontal",
                         "gap": "8px",
                         "children": [
-                          {
-                            "type": "text",
-                            "class_name": "hl-metric-label",
-                            "text": "年龄"
-                          },
-                          {
-                            "type": "text",
-                            "class_name": "hl-metric-value",
-                            "text": "{{ attributes.health_age }} 岁"
-                          }
+                          { "type": "text", "class_name": "hl-metric-label", "text": "年龄" },
+                          { "type": "text", "class_name": "hl-metric-value", "text": "{{ attributes.health_age }} 岁" }
                         ]
                       },
                       {
@@ -599,16 +917,8 @@
                         "direction": "horizontal",
                         "gap": "8px",
                         "children": [
-                          {
-                            "type": "text",
-                            "class_name": "hl-metric-label",
-                            "text": "性别"
-                          },
-                          {
-                            "type": "text",
-                            "class_name": "hl-metric-value",
-                            "text": "{{ attributes.health_gender }}"
-                          }
+                          { "type": "text", "class_name": "hl-metric-label", "text": "性别" },
+                          { "type": "text", "class_name": "hl-metric-value", "text": "{{ attributes.health_gender }}" }
                         ]
                       },
                       {
@@ -617,35 +927,9 @@
                         "direction": "horizontal",
                         "gap": "8px",
                         "children": [
-                          {
-                            "type": "text",
-                            "class_name": "hl-metric-label",
-                            "text": "目标体重"
-                          },
-                          {
-                            "type": "text",
-                            "class_name": "hl-metric-value",
-                            "text": "{{ attributes.health_target_weight }} kg"
-                          }
+                          { "type": "text", "class_name": "hl-metric-label", "text": "目标体重" },
+                          { "type": "text", "class_name": "hl-metric-value", "text": "{{ attributes.health_target_weight }} kg" }
                         ]
-                      }
-                    ]
-                  },
-                  {
-                    "type": "stack",
-                    "class_name": "hl-card",
-                    "direction": "vertical",
-                    "gap": "8px",
-                    "children": [
-                      {
-                        "type": "text",
-                        "class_name": "hl-card-title",
-                        "text": "BMR 怎么算"
-                      },
-                      {
-                        "type": "text",
-                        "class_name": "hl-card-body",
-                        "text": "Mifflin-St Jeor：男 10×体重 + 6.25×身高 − 5×年龄 + 5；女 − 161。"
                       }
                     ]
                   },
@@ -662,5 +946,5 @@
       ]
     }
   },
-  "custom_css": "&.game-root,\n&.game-root--mobile-session {\n  color: #1b2233;\n  background: #e9edf3;\n  font-family: \"PingFang SC\", \"Microsoft YaHei\", system-ui, sans-serif;\n}\n& .hl-mobile-topbar { background: #fff; border-bottom: 1px solid rgba(27,34,51,.08); }\n& .hl-mobile-header .game-simple-top {\n  color: #1b2233;\n  background: transparent;\n  border: 0;\n  box-shadow: none;\n}\n& .hl-mobile-header .game-simple-world { color: #5a657a; }\n& .hl-mobile-header .game-simple-place { color: #1b2233; font-weight: 700; }\n& .hl-mobile-actions .game-back-btn,\n& .hl-mobile-actions button {\n  color: #1b2233;\n  background: #fff;\n  border: 0;\n  border-radius: 12px;\n}\n& .hl-mobile-messages .game-chat-messages { background: transparent; }\n& .hl-mobile-messages .game-message-row--agent .game-message,\n& .hl-mobile-messages .game-message--agent {\n  color: #1b2233;\n  background: #fff;\n  border: 0;\n  border-radius: 16px;\n}\n& .hl-mobile-messages .game-message-row--player .game-message,\n& .hl-mobile-messages .game-message--player {\n  color: #1b2233;\n  background: #e2e7ef;\n  border: 0;\n  border-radius: 16px;\n}\n& .hl-mobile-messages .game-message-speaker { color: #6a4bc4; }\n& .hl-mobile-composer { background: #fff; border-top: 1px solid rgba(27,34,51,.08); }\n& .hl-mobile-composer textarea,\n& .hl-mobile-composer .game-textarea {\n  color: #1b2233;\n  background: #e2e7ef;\n  border: 0;\n  border-radius: 14px;\n}\n& .hl-mobile-composer .game-send-btn,\n& .hl-mobile-composer .game-submit-btn,\n& .hl-mobile-composer .game-ui-button[data-variant=\"primary\"] {\n  color: #fff !important;\n  background: #2b5fe3 !important;\n  border: 0;\n  border-radius: 12px;\n}\n& .hl-card { background: #fff; border-radius: 16px; }\n& .hl-card-title { color: #1b2233; font-weight: 700; }\n& .hl-card-body { color: #5a657a; }\n& .hl-caption, & .hl-section-label, & .hl-metric-label { color: #5a657a; }\n& .hl-goal-btn--orange::before { background: #c4682a; }\n& .hl-goal-btn--green::before { background: #0e7c57; }\n& .hl-goal-btn--purple::before { background: #6a4bc4; }\n& .hl-tab-btn--active.hl-tab-btn--chat::after { background: #0e7c57; }\n& .hl-tab-btn--active.hl-tab-btn--growth::after { background: #c4682a; }\n& .hl-tab-btn--active.hl-tab-btn--profile::after { background: #6a4bc4; }\n&.game-root--mobile-session {\n  --game-ui-composer-max-width: 100%;\n  --game-ui-composer-margin-inline: 0;\n  --game-ui-input-max-width: none;\n  --game-ui-message-max-width: min(100%, 640px);\n  --game-ui-chat-gutter-x: 12px;\n  --game-ui-chat-gutter-y: 14px;\n  --game-ui-textarea-min-height: 44px;\n  --game-ui-action-btn-min-h: 32px;\n  --game-ui-action-btn-min-w: 34px;\n  --game-ui-scroll-btn-size: 32px;\n}"
+  "custom_css": "&.game-root,&.game-root--mobile-session{color:#1b2233;background:#e9edf3;font-family:\"PingFang SC\",\"Microsoft YaHei\",system-ui,sans-serif;}\n& .hl-tab-btn--active.hl-tab-btn--records::after{background:#2b5fe3;}\n& .hl-tab-btn--active.hl-tab-btn--plan::after{background:#c4682a;}\n& .hl-caption--error{color:#c4682a;}\n& .hl-chart-card{background:#fff;border-radius:16px;padding:14px;}\n& .hl-chart-modes{width:100%;}\n& .hl-mode-btn{min-height:36px;padding:0 16px;border:0;border-radius:10px;background:#e2e7ef;color:#5a657a;font-weight:600;font-size:13px;}\n& .hl-mode-btn--active{background:#fff;color:#1b2233;box-shadow:-2px -2px 5px rgba(255,255,255,.95),3px 3px 8px rgba(100,116,139,.12);}\n& .hl-bars{width:100%;align-items:flex-end;}\n& .hl-bar-col-btn{border:0;background:transparent;padding:0;min-width:0;flex:1 1 0;}\n& .hl-bar-col-btn--month{flex:0 0 16px;min-width:16px;}\n& .hl-bar{min-height:2px;border-radius:6px 6px 2px 2px;}\n& .hl-bar--selected,&.hl-bar--on{background:#1a4fb4 !important;box-shadow:0 2px 8px rgba(26,79,180,.28);}\n& .hl-bar--idle,&.hl-bar--off{background:#a8c0ef !important;}\n& .hl-bar-value{font-size:10px;font-weight:700;color:#1a4fb4;text-align:center;white-space:nowrap;min-height:12px;}\n& .hl-bar-value--dim{color:transparent;}\n& .hl-bar-value--tiny{font-size:9px;}\n& .hl-bar-label{font-size:10px;color:#8b95a8;text-align:center;}\n& .hl-bar-label--selected{color:#1a4fb4;font-weight:700;}\n& .hl-bar-label--tiny{font-size:9px;}\n& .hl-day-list{width:100%;}\n& .hl-day-row{width:100%;align-items:center;justify-content:space-between;padding:8px 10px;border-radius:12px;background:#f3f5f9;}\n& .hl-day-row--btn{border:0;width:100%;text-align:left;font-size:12px;color:#1b2233;background:#f3f5f9;padding:10px 12px;min-height:40px;}\n& .hl-selected-card{background:#fff;border-radius:14px;padding:12px 14px;}"
 }

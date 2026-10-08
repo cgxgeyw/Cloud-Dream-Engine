@@ -21,7 +21,8 @@ pub const BUILTIN_RESPONSE_CONTRACT: &str = "【回复格式】你的回复必�
 写 JSON 的规则:\n\
 - 字符串值里的换行必须写成 \\n 两个字符,值内部的英文双引号必须写成 \\\",不要直接换行或直接写引号\n\
 - 不要在 JSON 之外写任何解释或开场白,不要用 Markdown 代码围栏(```)包裹 JSON\n\
-- 除了必填字段和下方说明的可选字段外,不要输出任何其它内容。";
+- 除了必填字段和下方说明的可选字段外,不要输出任何其它内容。\n\
+- 只要本回合写了 session_attribute_updates / character_attribute_updates,就必须给出非空 \"content\" 向玩家确认并补充建议,禁止 pass、禁止空字符串。";
 
 pub const BUILTIN_MEMORY_CONTRACT: &str = "【记忆提取】如果你的回复中出现对剧情有长期价值的事实(物品位置、人物关系、秘密、约定、状态变化等),在 JSON 里额外输出两个可选字段:\n\
 \"memory_entries\": [{\"content\": \"值得记住的事\", \"character_names\": [\"知道这件事的角色名\"]}],\n\
@@ -114,7 +115,13 @@ impl DialoguePipeline {
                 .map(clean_dialogue_text_value)
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or_else(|| default_speaker.to_string());
-            let pass = payload_requests_pass(&payload);
+            // 有 session_attribute_updates 时禁止 pass/空正文：写回数据必须给玩家可见反馈。
+            let has_attribute_updates = payload
+                .get("session_attribute_updates")
+                .and_then(|value| value.as_array())
+                .map(|items| !items.is_empty())
+                .unwrap_or(false);
+            let pass = payload_requests_pass(&payload) && !has_attribute_updates;
             // pass 时正文必须为空：不要落到「没有可显示的台词」占位，否则会伪装成台词。
             let content = if pass {
                 String::new()
@@ -338,12 +345,74 @@ fn salvage_dialogue_content(raw: &str) -> Option<String> {
             }
         }
     }
-    None
+    // 字段名整体被写坏（键名变成空白/乱码）时按形态兜底：取对象里最长的字符串值。
+    salvage_longest_string_value(raw)
+}
+
+/// 兜底：JSON 结构本身合法，但字段名被模型写坏时的正文打捞。
+///
+/// 实景：阶跃星辰 step-5-preview 在 `response_format=json_object` 下会把
+/// `{"speaker":"…","content":"…"}` 的字段名吞掉，输出成
+/// `{"  \t":"正文…","narration":""}`——正文还在，只是键名没了。
+/// 此时按字段名打捞必然落空，只能退而取「对象里最长的字符串值」。
+/// 排除 narration/speaker 等已知非正文键，并要求结果不像结构化负载。
+fn salvage_longest_string_value(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    // 模型吐出的键名里可能带裸控制字符（实测 step-5-preview 输出过 `"  <TAB>"`），
+    // serde_json 严格解析会直接失败；先按原样解析，失败再转义控制字符重试。
+    let value = serde_json::from_str::<serde_json::Value>(trimmed)
+        .ok()
+        .or_else(|| {
+            let escaped = trimmed.replace('\t', "\\t").replace('\r', "\\r");
+            serde_json::from_str::<serde_json::Value>(&escaped).ok()
+        })?;
+    let object = value.as_object()?;
+
+    // 只认「键名被写坏」的条目：键名 trim 后为空，或不含任何 ASCII 字母/数字。
+    // 正常键名（如 advance_objective）一律不碰，否则会把结构化指令当台词外泄。
+    let mut best: Option<&str> = None;
+    for (key, item) in object {
+        let mangled = key.trim().is_empty()
+            || !key.chars().any(|character| character.is_ascii_alphanumeric());
+        if !mangled {
+            continue;
+        }
+        let Some(text) = item.as_str() else {
+            continue;
+        };
+        if best.map_or(true, |current| text.chars().count() > current.chars().count()) {
+            best = Some(text);
+        }
+    }
+
+    let cleaned = strip_dialogue_field_artifacts(best?);
+    if cleaned.trim().is_empty() || looks_like_structured_payload(&cleaned) {
+        return None;
+    }
+    Some(cleaned)
 }
 
 /// 按 JSON 字符串语义提取 `"field": "..."` 的值：定位字段名后的冒号、
 /// 开引号，读到下一个**未转义**的引号为止。结构正常时最精确，能正确
 /// 处理后面跟着未知字段名的情况。引号缺失/未闭合时返回 None。
+/// 从损坏 JSON 里按 JSON 字符串语义读旁白：定位 `"narration"`（或
+/// `"scene_narration"`）后的第一个引号，读到下一个未转义引号为止。
+/// 读到的内容若仍像结构化载荷（含 `"key":` 且带花括号/方括号）一律丢弃，
+/// 绝不让原始 JSON 以小字旁白的形式外泄。
+fn extract_dialogue_narration(raw: &str) -> String {
+    for field in ["narration", "scene_narration"] {
+        let Some(value) = extract_quoted_string_value(raw, field) else {
+            continue;
+        };
+        let cleaned = strip_dialogue_field_artifacts(&value);
+        if cleaned.trim().is_empty() || looks_like_structured_payload(&cleaned) {
+            continue;
+        }
+        return cleaned;
+    }
+    String::new()
+}
+
 fn extract_quoted_string_value(raw: &str, field: &str) -> Option<String> {
     let key = format!("\"{field}\"");
     let key_index = raw.find(&key)?;
@@ -416,7 +485,7 @@ fn structured_payload_content_fallback(payload: &serde_json::Value) -> Option<St
     } else if has_completed_update {
         Some("好的，已更新已完成事项。".to_string())
     } else {
-        Some("好的，状态已更新。".to_string())
+        Some("好的，已记下相关数据。".to_string())
     }
 }
 
@@ -481,6 +550,25 @@ fn extract_partial_json_string_field(raw: &str, field: &str) -> Option<String> {
     Some(output)
 }
 
+/// 损坏 JSON 里正文字段后面可能出现的所有结构字段。边界扫描必须把它们全部
+/// 列为边界，否则会把后面的对象/数组一起读进正文。
+const DIALOGUE_BOUNDARY_FIELDS: &[&str] = &[
+    "content",
+    "message",
+    "text",
+    "speaker",
+    "intent",
+    "emotion",
+    "narration",
+    "scene_narration",
+    "pass",
+    "session_attribute_updates",
+    "sessionAttributes",
+    "character_attribute_updates",
+    "memory_write",
+    "memory_summary",
+];
+
 fn extract_recoverable_character_response(
     raw: &str,
     default_speaker: &str,
@@ -500,30 +588,26 @@ fn extract_recoverable_character_response(
     )
     .filter(|value| !value.trim().is_empty())
     .unwrap_or_else(|| default_speaker.to_string());
-    let content = extract_json_string_field_with_boundaries(
-        raw,
-        "content",
-        &["intent", "emotion", "narration", "scene_narration"],
-    )
-    .or_else(|| {
-        extract_json_string_field_with_boundaries(
-            raw,
-            "message",
-            &["intent", "emotion", "narration", "scene_narration"],
-        )
-    })
-    .or_else(|| {
-        extract_json_string_field_with_boundaries(
-            raw,
-            "text",
-            &["intent", "emotion", "narration", "scene_narration"],
-        )
-    })
-    .map(|value| strip_dialogue_field_artifacts(&value))
-    .filter(|value| !value.trim().is_empty())?;
-    let narration = extract_json_string_field_with_boundaries(raw, "narration", &[])
-        .or_else(|| extract_json_string_field_with_boundaries(raw, "scene_narration", &[]))
-        .unwrap_or_default();
+    // content 同样优先按 JSON 字符串语义读取。边界字段法在负载损坏时会把
+    // session_attribute_updates 之类的后续对象一起吞进正文（同样的结构外泄），
+    // 所以先用精确读法，失败再退回边界扫描，并过滤掉像结构化载荷的值。
+    let content = ["content", "message", "text"]
+        .iter()
+        .find_map(|field| extract_quoted_string_value(raw, field))
+        .or_else(|| {
+            ["content", "message", "text"].iter().find_map(|field| {
+                extract_json_string_field_with_boundaries(raw, field, &DIALOGUE_BOUNDARY_FIELDS)
+            })
+        })
+        .map(|value| strip_dialogue_field_artifacts(&value))
+        .filter(|value| !value.trim().is_empty())
+        .filter(|value| !looks_like_structured_payload(value))?;
+    // 旁白必须按 JSON 字符串语义读到「第一个未转义引号」为止。早期用
+    // extract_json_string_field_with_boundaries(..., &[]) 且不传边界字段，
+    // 收尾引号会退化成「最后一个 } 前的引号」——只要 narration 后面还跟着
+    // session_attribute_updates 之类的对象字段，就会把一大段原始 JSON 当旁白
+    // 返回，前端再拿灰色小字渲染出来（结构外泄）。
+    let narration = extract_dialogue_narration(raw);
     Some(ParsedCharacterResponse {
         speaker,
         content,
@@ -577,7 +661,34 @@ fn extract_json_string_field_with_boundaries(
 
 #[cfg(test)]
 mod tests {
-    use super::DialoguePipeline;
+    use super::{salvage_dialogue_content, DialoguePipeline};
+
+    /// step-5-preview 在 json_object 模式下吞掉字段名，正文被塞进空白键里。
+    #[test]
+    fn salvages_content_when_json_keys_are_mangled() {
+        let salvaged = salvage_dialogue_content(
+            "{\"  \t\":\"这是一张名为「云朵梦境」的首页截图，页面里有开始冒险等入口。\",\"narration\":\"\"}",
+        )
+        .expect("salvaged content");
+        assert!(salvaged.starts_with("这是一张名为"), "实际: {salvaged}");
+        assert!(!salvaged.contains("narration"));
+    }
+
+    /// 字段名被写坏但 content 键还在时，仍然优先按字段名取，而不是取最长的字符串。
+    #[test]
+    fn prefers_named_content_field_over_longest_value() {
+        let salvaged = salvage_dialogue_content(
+            "{\": \"  \t: null,\n  \"speaker\": \"健康小助手\",\n  \"content\": \"你好呀！\",\n  \"narration\": \"\"\n}",
+        )
+        .expect("salvaged content");
+        assert_eq!(salvaged, "你好呀！");
+    }
+
+    /// 只有 narration 这类非正文字段时不能拿它当台词。
+    #[test]
+    fn does_not_salvage_narration_only_payload() {
+        assert!(salvage_dialogue_content("{\"narration\":\"窗外下起了雨。\"}").is_none());
+    }
 
     #[test]
     fn extracts_partial_character_content_from_streamed_json() {

@@ -3,7 +3,7 @@
   "genre": "单智能体 / 健康管理 / 目标追踪",
   "background_prompt": "这是一个以活力轻拟物界面呈现的个人健康生活工作台。用户与一位健康小助手对话，维护身高体重等身体数据，设定减重、健身、长高等目标，并根据数据变化获得可执行建议。所有结论基于用户自己填写或口述的数据，不提供医疗诊断。",
   "opening_scene": "健康生活",
-  "summary": "对话页与健康小助手交流；成长页展示今日能量与今日行动清单；我的页展示身高体重与 BMI/BMR。助手按「今日」维护清单与重点；今日消耗 = 基础代谢 BMR + 运动消耗。",
+  "summary": "对话页与健康小助手交流；记录页展示今日能量环与日/周/月消耗统计；计划页展示今日重点与行动清单；我的页展示身高体重与 BMI/BMR。助手按「今日」维护清单；今日消耗 = BMR + 运动；历史能量写入 health.energy_days 世界存储。",
   "time_system": "真实日期",
   "map_nodes": {
     "version": 1,
@@ -16,8 +16,12 @@
           "label": "对话角"
         },
         {
-          "id": "growth-garden",
-          "label": "成长花园"
+          "id": "records-bay",
+          "label": "能量记录"
+        },
+        {
+          "id": "plan-bay",
+          "label": "今日计划"
         },
         {
           "id": "profile-desk",
@@ -25,16 +29,7 @@
         }
       ]
     },
-    "edges": [
-      {
-        "source": "对话角",
-        "target": "成长花园"
-      },
-      {
-        "source": "成长花园",
-        "target": "我的档案"
-      }
-    ]
+    "edges": []
   },
   "triggers": [],
   "time_config": {
@@ -53,7 +48,7 @@
       "form",
       "choice"
     ],
-    "runtime_context_prompt": "当前用户身体与目标数据（来自 runtime_attributes，以数据库为准）：身高 {{attributes.health_height_cm}} cm，体重 {{attributes.health_weight_kg}} kg，年龄 {{attributes.health_age}}，性别 {{attributes.health_gender}}，BMI {{attributes.health_bmi}}（{{attributes.health_bmi_label}}），BMR {{attributes.health_bmr}}，今日摄入 {{attributes.health_intake_kcal}}，今日消耗 {{attributes.health_burn_kcal}}，净能量 {{attributes.health_energy_net}}，今日重点 {{attributes.health_weekly_focus}}，今日清单 {{attributes.health_checklist}}，目标类型 {{attributes.health_goal_type}}，进度 {{attributes.health_progress_pct}}%。\n\n数据维护规则（必须遵守）：\n(1) 用户提供身高、体重、年龄、性别时，用 session_attribute_updates 写回对应 health_* 键。\n(2) 身高体重均 >0 时计算 BMI 与 health_bmi_label。\n(3) 设定减重/健身/长高/维持目标时更新 goal 相关字段。\n(4) 成长页/我的页只展示属性；所有更新发生在对话。\n(5) 更新属性时角色 JSON 必须含 content 与 session_attribute_updates。\n(6) 不提供医疗诊断；伤病建议就医。\n(7) 【今日摄入】health_intake_kcal；【今日消耗】health_burn_kcal = health_bmr + 运动消耗。\n(8) health_energy_net = intake − burn。\n(9) 性别已知时写 health_bmr（Mifflin-St Jeor）。\n(10) 【计划口径】界面为每日：health_checklist 是**今日** 1-3 条动作；health_weekly_focus 字段名虽带 weekly，在本世界中表示**今日重点**（一天 1 条）。助手 content 默认说「今天」，不要默认输出每周计划。\n(11) 「【清单确认】我已完成以下行动清单事项：」时，从 health_checklist 移除对应条目并写回完整数组。\n(12) 属性为空时在对话里引导口述，不要指向成长/我的页按钮。\n",
+    "runtime_context_prompt": "当前用户身体与目标数据（来自 runtime_attributes，以数据库为准）：身高 {{attributes.health_height_cm}} cm，体重 {{attributes.health_weight_kg}} kg，年龄 {{attributes.health_age}}，性别 {{attributes.health_gender}}，BMI {{attributes.health_bmi}}（{{attributes.health_bmi_label}}），BMR {{attributes.health_bmr}}，今日摄入 {{attributes.health_intake_kcal}}，今日消耗 {{attributes.health_burn_kcal}}，净能量 {{attributes.health_energy_net}}，今日重点 {{attributes.health_weekly_focus}}，今日清单 {{attributes.health_checklist}}，目标类型 {{attributes.health_goal_type}}，进度 {{attributes.health_progress_pct}}%。\n\n数据维护规则（必须遵守）：\n(1) 用户提供身高、体重、年龄、性别时，用 session_attribute_updates 写回对应 health_* 键。\n(2) 身高体重均 >0 时计算 BMI 与 health_bmi_label。\n(3) 设定减重/健身/长高/维持目标时更新 goal 相关字段。\n(4) 计划页/我的页只展示属性；所有更新发生在对话。\n(5) 更新属性时角色 JSON 必须含 content 与 session_attribute_updates。\n(6) 不提供医疗诊断；伤病建议就医。\n(7) 【今日摄入】health_intake_kcal；【今日消耗】health_burn_kcal = health_bmr + 运动消耗（例：BMR 1700 + 走路 200 → 写 1900，不是 200；无运动至少写 BMR）。\n(8) health_energy_net = intake − burn。\n(9) 性别已知时写 health_bmr（Mifflin-St Jeor）。\n(10) 【计划口径】界面为每日：health_checklist 是**今日** 1-3 条动作；health_weekly_focus 字段名虽带 weekly，在本世界中表示**今日重点**（一天 1 条）。助手 content 默认说「今天」，不要默认输出每周计划。\n(11) 「【清单确认】我已完成以下行动清单事项：」时，从 health_checklist 移除对应条目并写回完整数组。\n(12) 属性为空时在对话里引导口述，不要指向计划/我的页按钮。\n(13) 记录页的柱状图来自世界存储 health.energy_days；玩家打开记录页点「同步统计」时会把今日属性快照写入。对话里只需正确维护今日摄入/消耗属性。\n",
     "world_director_prompt": "",
     "prompt_presets": [
       {
@@ -294,7 +289,7 @@
       "label": "目标说明",
       "value_type": "text",
       "description": "用户目标的具体描述。",
-      "default_value": "还没有设定目标，去成长页或对话里告诉教练吧。",
+      "default_value": "还没有设定目标，在对话里告诉小助手吧。",
       "display_policy": {
         "group": "成长目标",
         "order": 20
@@ -408,7 +403,7 @@
       "label": "今日重点",
       "value_type": "text",
       "description": "今天最重要的一条重点（字段名历史原因含 weekly，本世界按今日用）。",
-      "default_value": "先填写身高体重，再选一个目标",
+      "default_value": "在对话里告诉小助手身高体重，再选一个目标",
       "display_policy": {
         "group": "成长目标",
         "order": 60
@@ -602,6 +597,7 @@
   "initial_inventory_items": [],
   "ui_runtime_version": 3,
   "ui_capabilities": [
+    "supports_world_records",
     "supports_world_storage"
   ],
   "platform_features": [],
@@ -609,17 +605,35 @@
     "kv_namespaces": [
       "health.ui"
     ],
-    "collections": {}
+    "collections": {
+      "health.energy_days": {
+        "schema": {
+          "type": "object",
+          "required": ["date", "intake", "burn"],
+          "properties": {
+            "date": { "type": "string", "minLength": 10, "maxLength": 10 },
+            "intake": { "type": "number", "minimum": 0 },
+            "burn": { "type": "number", "minimum": 0 },
+            "net": { "type": "number" },
+            "bmr": { "type": "number", "minimum": 0 },
+            "steps": { "type": "number", "minimum": 0 },
+            "note": { "type": "string", "maxLength": 200 }
+          },
+          "additionalProperties": false
+        },
+        "indexes": ["date"]
+      }
+    }
   },
   "logic": {
     "runtime": "sandbox-js-v1",
-    "timeout_ms": 1000
+    "timeout_ms": 2000
   },
   "opening_messages": [
     {
       "role": "assistant",
       "speaker": "健康小助手",
-      "content": "嗨，我是你的健康小助手！这里可以聊饮食、训练、睡眠，也可以设定减重、健身或长高目标。\n\n先做两件事会更顺：\n1. 打开底部「我的」，告诉我身高体重，我帮你算 BMI；\n2. 打开「成长」，选一个目标，我给你拆成今天就能做的 1-3 件小事。\n\n今天想先从哪块开始？"
+      "content": "嗨，我是你的健康小助手！四个页签：\n1. 对话——聊饮食、训练，更新数据\n2. 记录——今日能量环 + 日/周/月消耗柱状图\n3. 计划——今日重点与行动清单\n4. 我的——身高体重与 BMI/BMR\n\n直接在「对话」里告诉我身高、体重、年龄、性别，档案和 BMI/BMR 会自动更新；今天吃了什么、练了什么也直接说就行。"
     }
   ],
   "opening_character_names": [

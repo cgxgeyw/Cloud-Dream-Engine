@@ -16,7 +16,8 @@ const MIGRATION_GENERATION_PARAMS: i64 = 9;
 const MIGRATION_MODEL_INPUT_MODALITIES: i64 = 10;
 const MIGRATION_WORLD_FEATURE_GRANTS: i64 = 11;
 const MIGRATION_MCP_TOOL_IMPL: i64 = 12;
-const CURRENT_SCHEMA_VERSION: i64 = MIGRATION_MCP_TOOL_IMPL;
+const MIGRATION_MODEL_JSON_MODE: i64 = 13;
+const CURRENT_SCHEMA_VERSION: i64 = MIGRATION_MODEL_JSON_MODE;
 
 fn ensure_column(
     conn: &Connection,
@@ -463,6 +464,18 @@ pub(crate) fn run(conn: &Connection) -> Result<(), rusqlite::Error> {
         // 本地工具框架：impl_kind=mcp（默认，外部 server）或 builtin_http（核心直接执行）。
         migrate_mcp_tool_impl(&tx)?;
         set_schema_version(&tx, MIGRATION_MCP_TOOL_IMPL)?;
+    }
+    if version < MIGRATION_MODEL_JSON_MODE {
+        // 模型级「关闭 JSON 结构化输出」开关。
+        // 部分 OpenAI 兼容模型在 response_format=json_object 下会把字段名写坏
+        // （实测输出 `{"  \t":"正文…","narration":""}`），关掉后改走文本输出更稳。
+        ensure_column(
+            &tx,
+            "model_configs",
+            "json_mode_disabled",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        set_schema_version(&tx, MIGRATION_MODEL_JSON_MODE)?;
     }
 
     tx.commit()

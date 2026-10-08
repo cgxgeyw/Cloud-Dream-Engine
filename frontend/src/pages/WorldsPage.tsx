@@ -103,6 +103,14 @@ export function WorldsPage() {
   const [pendingDelete, setPendingDelete] = useState<WorldResponse | null>(null);
   const [showDeleteAllDialog, setShowDeleteAllDialog] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  // 导入是「同名世界就地升级」，返回的还是那个世界的 id。这里要能判断「是新建
+  // 还是升级了已有的」好给不同的提示，而 setWorlds 的 updater 不会被同步调用，
+  // 所以留一份同步镜像。
+  const worldsRef = useRef<WorldResponse[]>([]);
+
+  useEffect(() => {
+    worldsRef.current = worlds;
+  }, [worlds]);
 
   useEffect(() => {
     let cancelled = false;
@@ -229,13 +237,19 @@ export function WorldsPage() {
       setImporting(true);
       setError(null);
       const importedWorld = await importWorldPackage(file);
+      const isUpgrade = worldsRef.current.some((world) => world.id === importedWorld.id);
       const importedCharacters = await fetchWorldCharacters(importedWorld.id);
-      setWorlds((prev) => [importedWorld, ...prev]);
+      // 同名世界包导入后端会复用原世界的 id，这里也要按 id 替换而不是往后加，
+      // 否则列表里出现两行同名世界，玩家分不清自己进的是哪一个。
+      setWorlds((prev) => [
+        importedWorld,
+        ...prev.filter((world) => world.id !== importedWorld.id),
+      ]);
       setWorldCharacters((prev) => ({
         ...prev,
         [importedWorld.id]: importedCharacters,
       }));
-      showToast(t("worlds.imported"));
+      showToast(t(isUpgrade ? "worlds.updated" : "worlds.imported"));
     } catch (importError) {
       setError(importError instanceof Error ? importError.message : t("worlds.importFailed"));
     } finally {

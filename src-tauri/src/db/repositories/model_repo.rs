@@ -11,7 +11,7 @@ impl<'a> ModelRepository<'a> {
     }
 
     pub fn list(&self, model_type: Option<&str>) -> Result<Vec<ModelConfig>, String> {
-        let mut sql = "SELECT id, name, model_type, provider, model_id, base_url, api_key, max_tokens, streaming_enabled, is_default, input_modalities FROM model_configs".to_string();
+        let mut sql = "SELECT id, name, model_type, provider, model_id, base_url, api_key, max_tokens, streaming_enabled, is_default, input_modalities, json_mode_disabled FROM model_configs".to_string();
         if model_type.is_some() {
             sql.push_str(" WHERE model_type = ?1");
         }
@@ -32,6 +32,7 @@ impl<'a> ModelRepository<'a> {
                 streaming_enabled: row.get::<_, i32>(8)? != 0,
                 is_default: row.get::<_, i32>(9)? != 0,
                 input_modalities: parse_input_modalities(&row.get::<_, String>(10)?),
+                json_mode_disabled: row.get::<_, i32>(11)? != 0,
             })
         };
 
@@ -61,7 +62,7 @@ impl<'a> ModelRepository<'a> {
     pub fn get(&self, id: &str) -> Result<Option<ModelConfig>, String> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, name, model_type, provider, model_id, base_url, api_key, max_tokens, streaming_enabled, is_default, input_modalities FROM model_configs WHERE id = ?1")
+            .prepare("SELECT id, name, model_type, provider, model_id, base_url, api_key, max_tokens, streaming_enabled, is_default, input_modalities, json_mode_disabled FROM model_configs WHERE id = ?1")
             .map_err(|e| e.to_string())?;
 
         let mut rows = stmt
@@ -78,6 +79,7 @@ impl<'a> ModelRepository<'a> {
                     streaming_enabled: row.get::<_, i32>(8)? != 0,
                     is_default: row.get::<_, i32>(9)? != 0,
                     input_modalities: parse_input_modalities(&row.get::<_, String>(10)?),
+                    json_mode_disabled: row.get::<_, i32>(11)? != 0,
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -116,7 +118,7 @@ impl<'a> ModelRepository<'a> {
                 .map_err(|e| e.to_string())?;
         }
         self.conn.execute(
-            "INSERT INTO model_configs (id, name, model_type, provider, model_id, base_url, api_key, max_tokens, streaming_enabled, is_default, input_modalities) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO model_configs (id, name, model_type, provider, model_id, base_url, api_key, max_tokens, streaming_enabled, is_default, input_modalities, json_mode_disabled) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 id,
                 name,
@@ -129,6 +131,7 @@ impl<'a> ModelRepository<'a> {
                 if streaming_enabled { 1 } else { 0 },
                 if is_default { 1 } else { 0 },
                 format_input_modalities(&req.input_modalities),
+                if req.json_mode_disabled { 1 } else { 0 },
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -188,12 +191,15 @@ impl<'a> ModelRepository<'a> {
             streaming_enabled,
             is_default: req.is_default.unwrap_or(existing.is_default),
             input_modalities,
+            json_mode_disabled: req
+                .json_mode_disabled
+                .unwrap_or(existing.json_mode_disabled),
         };
 
         // L6: 主 UPDATE 不直接写 is_default=1,否则在 set_default 清理同类默认之前
         // 会出现"多个默认"的中间态。这里先写 0,默认标志统一交给 set_default 落定。
         self.conn.execute(
-            "UPDATE model_configs SET name = ?1, model_type = ?2, provider = ?3, model_id = ?4, base_url = ?5, api_key = ?6, max_tokens = ?7, streaming_enabled = ?8, is_default = ?9, input_modalities = ?10 WHERE id = ?11",
+            "UPDATE model_configs SET name = ?1, model_type = ?2, provider = ?3, model_id = ?4, base_url = ?5, api_key = ?6, max_tokens = ?7, streaming_enabled = ?8, is_default = ?9, input_modalities = ?10, json_mode_disabled = ?11 WHERE id = ?12",
             params![
                 updated.name,
                 updated.model_type,
@@ -205,6 +211,7 @@ impl<'a> ModelRepository<'a> {
                 if updated.streaming_enabled { 1 } else { 0 },
                 0,
                 format_input_modalities(&updated.input_modalities),
+                if updated.json_mode_disabled { 1 } else { 0 },
                 id,
             ],
         )
@@ -346,6 +353,7 @@ mod tests {
             streaming_enabled: true,
             is_default: false,
             input_modalities: modalities.iter().map(|value| value.to_string()).collect(),
+            json_mode_disabled: false,
         }
     }
 
@@ -379,5 +387,43 @@ mod tests {
             .expect("update");
         assert_eq!(updated.input_modalities, vec!["image"]);
         assert_eq!(updated.model_id, "gpt-test");
+    }
+
+    /// 关闭 JSON 模式是模型级开关，必须在库里存得下、读得回，且不被其它字段更新冲掉。
+    #[test]
+    fn json_mode_disabled_survives_a_db_round_trip() {
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        crate::db::schema::create_tables(&conn).expect("create schema");
+        let repo = ModelRepository::new(&conn);
+
+        let created = repo.create(&create_request(&["image"])).expect("create model");
+        assert!(!created.json_mode_disabled, "默认应开启 JSON 模式");
+
+        let disabled = repo
+            .update(
+                &created.id,
+                &ModelConfigUpdateRequest {
+                    json_mode_disabled: Some(true),
+                    ..Default::default()
+                },
+            )
+            .expect("disable json mode");
+        assert!(disabled.json_mode_disabled);
+
+        let fetched = repo.get(&created.id).expect("get").expect("exists");
+        assert!(fetched.json_mode_disabled, "重开应用后开关应保留");
+        assert_eq!(fetched.input_modalities, vec!["image"], "不应影响其它字段");
+
+        // 只改别的字段时开关不能被重置
+        let renamed = repo
+            .update(
+                &created.id,
+                &ModelConfigUpdateRequest {
+                    name: Some("改个名".to_string()),
+                    ..Default::default()
+                },
+            )
+            .expect("rename");
+        assert!(renamed.json_mode_disabled, "改其它字段不应重置该开关");
     }
 }

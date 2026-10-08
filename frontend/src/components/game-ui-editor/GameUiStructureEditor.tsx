@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import type {
   GameUiAbsoluteNodeV2,
+  GameUiButtonNode,
   GameUiComponentNode,
   GameUiDocumentV2,
   GameUiForEachNode,
@@ -101,7 +102,7 @@ type JsonEditorFieldProps = {
 };
 
 type ParentReference =
-  | { kind: "children"; parent: GameUiGridNodeV2 | GameUiStackNodeV2 | GameUiAbsoluteNodeV2; index: number }
+  | { kind: "children"; parent: GameUiGridNodeV2 | GameUiStackNodeV2 | GameUiAbsoluteNodeV2 | GameUiButtonNode; index: number }
   | { kind: "child"; parent: GameUiWhenNode | GameUiForEachNode }
   | { kind: "empty"; parent: GameUiForEachNode }
   | { kind: "slot-single"; parent: GameUiComponentNode; slotName: string }
@@ -1148,8 +1149,8 @@ function getParentReference(root: GameUiLayoutNodeV2, path: GameUiEditorPath): P
 
 function nodeSupportsChildren(
   node: GameUiLayoutNodeV2,
-): node is GameUiGridNodeV2 | GameUiStackNodeV2 | GameUiAbsoluteNodeV2 {
-  return node.type === "grid" || node.type === "stack" || node.type === "absolute";
+): node is GameUiGridNodeV2 | GameUiStackNodeV2 | GameUiAbsoluteNodeV2 | GameUiButtonNode {
+  return node.type === "grid" || node.type === "stack" || node.type === "absolute" || node.type === "button";
 }
 
 // 组件的中文名（取自 COMPONENT_LIBRARY 的 label），未知组件回退到原 id。
@@ -1201,7 +1202,7 @@ function nodeDetailText(node: GameUiLayoutNodeV2): string {
     case "text":
       return node.text || "";
     case "button":
-      return node.label || "";
+      return node.label || (node.children?.length ? `${node.children.length} 个子节点` : "");
     case "badge":
       return node.text || "";
     case "checkbox":

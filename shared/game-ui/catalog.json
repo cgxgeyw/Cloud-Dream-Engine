@@ -33,7 +33,7 @@
   "actions": [
     {
       "id": "set_state",
-      "description": "写入世界 UI 本地 state（不经过 Worker / 模型）。用 result_state 或 args.key 作为状态键，args.value 为值。",
+      "description": "写入世界 UI 本地 state（不经过 Worker / 模型）。状态键取 result_state，缺省时用 args.key；值取 args.value（无 value 键时用整个 args）。",
       "input": { "key": "string?", "value": "any?" }
     },
     { "id": "submit_message", "description": "提交当前输入草稿", "input": { "mode": "submit|edit|resend", "content": "string?", "turn_index": "number?" } },

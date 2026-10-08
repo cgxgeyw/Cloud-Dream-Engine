@@ -14,6 +14,7 @@ import {
   type GameUiLayoutNodeV2,
   type GameUiMountId,
   type GameUiPropValue,
+  type GameUiStyleRecord,
   type GameUiTextNode,
   styleRecordToInlineStyle,
 } from "../data/gameUi";
@@ -142,7 +143,16 @@ function renderV2Node(
   }
 
   if (node.type === "button") {
-    return renderButtonNode(node, context, actions, key);
+    return renderButtonNode(
+      node,
+      document,
+      componentRenderers,
+      evaluateCondition,
+      resolveLoopSource,
+      context,
+      actions,
+      key,
+    );
   }
 
   if (node.type === "checkbox") {
@@ -155,7 +165,7 @@ function renderV2Node(
         key={key}
         className={["game-ui-slot", node.class_name].filter(Boolean).join(" ")}
         data-slot={node.name}
-        style={buildNodeStyle(node)}
+        style={buildNodeStyle(node, context)}
       />
     );
   }
@@ -211,7 +221,7 @@ function renderV2Node(
       <div
         key={key}
         className={["game-ui-node", "game-ui-node--absolute", node.class_name].filter(Boolean).join(" ")}
-        style={buildNodeStyle(node)}
+        style={buildNodeStyle(node, context)}
       >
         {children}
       </div>
@@ -223,7 +233,7 @@ function renderV2Node(
       <div
         key={key}
         className={["game-ui-node", "game-ui-node--stack", node.class_name].filter(Boolean).join(" ")}
-        style={buildNodeStyle(node)}
+        style={buildNodeStyle(node, context)}
       >
         {(node.children ?? []).map((child, index) =>
           renderV2Node(
@@ -245,7 +255,7 @@ function renderV2Node(
     <div
       key={key}
       className={["game-ui-node", "game-ui-node--grid", node.class_name].filter(Boolean).join(" ")}
-      style={buildNodeStyle(node)}
+      style={buildNodeStyle(node, context)}
     >
       {(node.children ?? []).map((child, index) =>
         renderV2Node(
@@ -329,7 +339,7 @@ function renderComponentNode(
       ].filter(Boolean).join(" ")}
       data-component={node.component}
       data-variant={node.variant}
-      style={buildNodeStyle(node)}
+      style={buildNodeStyle(node, context)}
     >
       {content}
     </div>
@@ -442,7 +452,7 @@ function renderTextNode(
       key={key}
       className={["game-ui-node", "game-ui-text", node.class_name].filter(Boolean).join(" ")}
       data-variant={node.variant}
-      style={buildNodeStyle(node)}
+      style={buildNodeStyle(node, context)}
     >
       {resolveText(node.text, context)}
     </span>
@@ -466,7 +476,7 @@ function renderImageNode(
       src={src}
       alt={resolveText(node.alt ?? "", context)}
       style={{
-        ...buildNodeStyle(node),
+        ...buildNodeStyle(node, context),
         objectFit: node.fit,
       }}
     />
@@ -483,7 +493,7 @@ function renderBadgeNode(
       key={key}
       className={["game-ui-node", "game-ui-badge", node.class_name].filter(Boolean).join(" ")}
       data-variant={node.variant}
-      style={buildNodeStyle(node)}
+      style={buildNodeStyle(node, context)}
     >
       {resolveText(node.text, context)}
     </span>
@@ -492,6 +502,10 @@ function renderBadgeNode(
 
 function renderButtonNode(
   node: GameUiButtonNode,
+  document: GameUiDocumentV2,
+  componentRenderers: Partial<Record<string, GameUiComponentRenderer>> | undefined,
+  evaluateCondition: ((expr: string, context: GameUiRenderContext) => boolean) | undefined,
+  resolveLoopSource: ((source: string) => unknown[]) | undefined,
   context: GameUiRenderContext,
   actions: GameUiElementActions,
   key: string,
@@ -505,7 +519,7 @@ function renderButtonNode(
       type="button"
       className={["game-ui-node", "game-ui-button", "game-ui-dsl-button", node.class_name].filter(Boolean).join(" ")}
       data-variant={node.variant ?? "primary"}
-      style={buildNodeStyle(node)}
+      style={buildNodeStyle(node, context)}
       disabled={disabled}
       onClick={() => {
         if (disabled) {
@@ -516,7 +530,19 @@ function renderButtonNode(
         }
       }}
     >
-      {resolveText(node.label, context)}
+      {node.label ? resolveText(node.label, context) : null}
+      {(node.children ?? []).map((child, index) =>
+        renderV2Node(
+          child,
+          document,
+          componentRenderers,
+          evaluateCondition,
+          resolveLoopSource,
+          context,
+          actions,
+          `${key}-${index}`,
+        ),
+      )}
     </button>
   );
 }
@@ -630,7 +656,7 @@ function renderCheckboxNode(
       className={["game-ui-node", "game-ui-checkbox", node.class_name].filter(Boolean).join(" ")}
       data-variant={node.variant}
       data-checked={checked ? "true" : "false"}
-      style={buildNodeStyle(node)}
+      style={buildNodeStyle(node, context)}
     >
       <input
         type="checkbox"
@@ -775,21 +801,22 @@ function stringifyTemplateValue(value: unknown): string {
   }
 }
 
-function buildNodeStyle(
+export function buildNodeStyle(
   node: GameUiLayoutNode,
+  context: GameUiRenderContext,
 ): CSSProperties {
   const style: CSSProperties = {
-    width: node.width,
-    height: node.height,
-    minWidth: node.min_width,
-    minHeight: node.min_height,
-    maxWidth: node.max_width,
-    maxHeight: node.max_height,
-    padding: node.padding,
-    margin: node.margin,
+    width: resolveSizeValue(node.width, context),
+    height: resolveSizeValue(node.height, context),
+    minWidth: resolveSizeValue(node.min_width, context),
+    minHeight: resolveSizeValue(node.min_height, context),
+    maxWidth: resolveSizeValue(node.max_width, context),
+    maxHeight: resolveSizeValue(node.max_height, context),
+    padding: resolveSizeValue(node.padding, context),
+    margin: resolveSizeValue(node.margin, context),
     alignItems: node.align,
     justifyContent: node.justify,
-    ...styleRecordToInlineStyle(node.style),
+    ...styleRecordToInlineStyle(resolveStyleRecord(node.style, context)),
   };
 
   if (node.type === "grid") {
@@ -841,4 +868,57 @@ function applyAnchorStyle(style: CSSProperties, anchor: GameUiAnchor | undefined
   style.left = anchor.left;
   style.zIndex = 20;
   style.pointerEvents = "auto";
+}
+
+type GameUiStyleValue = string | number | boolean | null | undefined;
+
+/**
+ * 尺寸字段（width / height / min_height / max_height / padding / margin）与 style 记录里的字符串值
+ * 都支持 `{{ }}` 插值，这样「按数据定高/定宽」的布局（图表柱子、进度条）才能写出来。
+ * 整值只有一个模板且求值结果是数字/布尔时保留原类型——数字交给 React 自动补 px。
+ */
+function resolveStyleValue(value: GameUiStyleValue, context: GameUiRenderContext): GameUiStyleValue {
+  if (typeof value !== "string" || !value.includes("{{")) {
+    return value;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.startsWith("{{") && trimmed.endsWith("}}")) {
+    const expression = trimmed.slice(2, -2).trim();
+    if (expression && !expression.includes("{")) {
+      const resolved = resolvePath(context, expression);
+      if (typeof resolved === "number" || typeof resolved === "boolean") {
+        return resolved;
+      }
+      return stringifyTemplateValue(resolved);
+    }
+  }
+
+  return value.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, expression: string) =>
+    stringifyTemplateValue(resolvePath(context, expression.trim())),
+  );
+}
+
+export function resolveStyleRecord(
+  style: GameUiStyleRecord | undefined,
+  context: GameUiRenderContext,
+): GameUiStyleRecord | undefined {
+  if (!style) {
+    return style;
+  }
+
+  const resolved: GameUiStyleRecord = {};
+  for (const [key, value] of Object.entries(style)) {
+    resolved[key] = resolveStyleValue(value, context);
+  }
+  return resolved;
+}
+
+/** 通用尺寸字段本身只能是字符串，解析结果交给 React（数字会自动补 px）。 */
+function resolveSizeValue(
+  value: string | undefined,
+  context: GameUiRenderContext,
+): string | number | undefined {
+  const resolved = resolveStyleValue(value, context);
+  return typeof resolved === "string" || typeof resolved === "number" ? resolved : undefined;
 }

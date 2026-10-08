@@ -25,7 +25,7 @@
       "gap": "0",
       "padding": "0",
       "style": {
-        "height": "var(--game-visual-viewport-height, 100dvh)",
+        "height": "100%",
         "min_height": "0",
         "overflow": "hidden"
       },

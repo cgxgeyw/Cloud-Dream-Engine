@@ -257,6 +257,7 @@ impl SessionOrchestrator {
                     speaker_name: speaker_name.clone(),
                     narration: None,
                     is_placeholder: true,
+                    is_streaming: false,
                     is_error: false,
                 });
             }
@@ -355,6 +356,7 @@ impl SessionOrchestrator {
                                     speaker_name: speaker_name.clone(),
                                     narration: None,
                                     is_placeholder: true,
+                                    is_streaming: false,
                                     is_error: false,
                                 });
                             }
@@ -597,6 +599,7 @@ impl SessionOrchestrator {
                                 speaker_name: speaker_name.clone(),
                                 narration: None,
                                 is_placeholder: false,
+                                is_streaming: false,
                                 is_error: true,
                             });
                         }
@@ -665,6 +668,7 @@ impl SessionOrchestrator {
                                 narration: Some(parsed_response.narration.clone())
                                     .filter(|value| !value.trim().is_empty()),
                                 is_placeholder: false,
+                                is_streaming: false,
                                 is_error: false,
                             });
                         }
@@ -675,6 +679,7 @@ impl SessionOrchestrator {
                             speaker_name: parsed_response.speaker.clone(),
                             narration: None,
                             is_placeholder: false,
+                            is_streaming: false,
                             is_error: false,
                         });
                     }
@@ -818,6 +823,7 @@ impl SessionOrchestrator {
                             speaker_name: speaker_name.clone(),
                             narration: None,
                             is_placeholder: false,
+                            is_streaming: false,
                             is_error: true,
                         });
                     }
@@ -1056,6 +1062,7 @@ fn handle_speaker_stream_chunk(
                     .map(|value| value.narration.clone())
                     .filter(|value| !value.trim().is_empty()),
                 is_placeholder: false,
+                is_streaming: true,
                 is_error: false,
             });
         }

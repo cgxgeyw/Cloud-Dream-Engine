@@ -457,6 +457,7 @@ function normalizeLayoutNodeV2(raw: unknown, fallback: GameUiLayoutNodeV2): Game
       variant: readOptionalString(value.variant),
       disabled_when_empty_state: readOptionalString(value.disabled_when_empty_state),
       action: normalizeActionReference(value.action),
+      children: normalizeChildrenV2(value.children),
     };
   }
 
@@ -1004,8 +1005,21 @@ function validateLayoutNodeV2(raw: unknown, path: string): string | null {
   }
 
   if (type === "button") {
-    if (typeof raw.label !== "string") {
+    // 有子内容的按钮可以不写 label；既没 label 又没 children 的按钮既看不见
+    // 也没有可读名称，仍然要求 label。
+    const hasChildren = Array.isArray(raw.children) && raw.children.length > 0;
+    if (!hasChildren && typeof raw.label !== "string") {
       return `${path}.label must be a string.`;
+    }
+    if (raw.children !== undefined && !Array.isArray(raw.children)) {
+      return `${path}.children must be an array.`;
+    }
+    const children = raw.children ?? [];
+    for (let index = 0; index < children.length; index += 1) {
+      const childError = validateLayoutNodeV2(children[index], `${path}.children[${index}]`);
+      if (childError) {
+        return childError;
+      }
     }
     if (raw.variant !== undefined && typeof raw.variant !== "string") {
       return `${path}.variant must be a string.`;
@@ -1360,10 +1374,12 @@ export function buildGameUiStylesheet(
     // 同时去掉点按后的系统焦点蓝框，否则按钮/卡片仍会闪一层蓝。
     `${scopeSelector},\n${scopeSelector} *,\n${scopeSelector} *::before,\n${scopeSelector} *::after {\n-webkit-tap-highlight-color: transparent !important;\n}\n${scopeSelector} button:focus,\n${scopeSelector} button:focus-visible,\n${scopeSelector} a:focus,\n${scopeSelector} a:focus-visible,\n${scopeSelector} [role="button"]:focus,\n${scopeSelector} [role="button"]:focus-visible,\n${scopeSelector} .game-ui-button:focus,\n${scopeSelector} .game-ui-button:focus-visible,\n${scopeSelector} .game-message-action-btn:focus,\n${scopeSelector} .game-message-action-btn:focus-visible {\noutline: none !important;\n}`,
     // Mobile status drawer: edge-docked handle + off-canvas panel (world CSS can restyle).
-    // 安卓 WebView 里 env(safe-area-inset-top) 常为 0，顶部 UI 必须吃 --world-safe-area-top。
+    // 安卓 WebView 里 env(safe-area-inset-*) 常为 0，顶部/底部系统栏避让由宿主基线统一完成，
+    // 世界包不要再吃一遍这些变量。底部原生值在键盘弹出时由原生侧归零，不与键盘避让叠加。
+    // max-height 护栏：世界布局根若误写视口全高，会被截到根内容盒高，底部不再被裁。
     // 抽屉/把手默认停靠右缘；用户拖到左缘时运行时给容器加 --left 变体，
     // 变体里的方向属性带 !important（用户意图优先于世界包样式）。
-    `${scopeSelector}.game-root--mobile-session {\npadding-top: max(var(--world-safe-area-top, 0px), env(safe-area-inset-top, 0px), 0px);\nbox-sizing: border-box;\n}\n${scopeSelector}.game-root--mobile-session .game-status--mobile-drawer,\n${scopeSelector} .game-status--mobile-drawer {\nposition: fixed;\ninset: 0;\nz-index: 80;\npointer-events: none;\nheight: auto !important;\nmin-height: 0 !important;\nbackground: transparent !important;\n}\n${scopeSelector} .game-status-handle {\nposition: absolute;\ntop: max(var(--world-safe-area-top, 0px), env(safe-area-inset-top, 0px), 80px);\nright: max(env(safe-area-inset-right, 0px), 0px);\nleft: auto;\nwidth: var(--game-ui-status-handle-w, 22px);\nmin-width: 22px;\nmax-width: 22px;\nmin-height: var(--game-ui-status-handle-h, 72px);\nheight: auto;\npadding: 12px 4px;\nborder: 0;\nborder-radius: 8px 0 0 8px;\nwriting-mode: vertical-rl;\nletter-spacing: 0.08em;\nfont-size: 11px;\nline-height: 1;\npointer-events: auto;\ntouch-action: none;\nbox-shadow: -2px 2px 8px rgba(15, 23, 42, 0.12);\n}\n${scopeSelector} .game-status-handle--dragging {\nopacity: 0.92;\n}\n${scopeSelector} .game-status--mobile-drawer--left .game-status-handle {\nright: auto !important;\nleft: max(env(safe-area-inset-left, 0px), 0px) !important;\nborder-radius: 0 8px 8px 0 !important;\nbox-shadow: 2px 2px 8px rgba(15, 23, 42, 0.12);\n}\n${scopeSelector} .game-status-drawer {\nposition: fixed;\ntop: max(var(--world-safe-area-top, 0px), env(safe-area-inset-top, 0px), 80px);\nright: max(env(safe-area-inset-right, 0px), 0px);\nleft: auto;\nbottom: calc(env(safe-area-inset-bottom, 0px) + 96px);\nwidth: min(82vw, 300px);\nmax-height: none;\ndisplay: flex;\nflex-direction: column;\ngap: 8px;\npadding: 12px;\noverflow: hidden;\npointer-events: auto;\ntransform: translateX(calc(100% + 8px));\ntransition: transform 180ms ease-out;\nborder-radius: 12px 0 0 12px;\nbox-shadow: -8px 12px 28px rgba(15, 23, 42, 0.18);\n}\n${scopeSelector} .game-status--mobile-drawer-open .game-status-drawer {\ntransform: translateX(0);\n}\n${scopeSelector} .game-status--mobile-drawer--left .game-status-drawer {\nright: auto !important;\nleft: max(env(safe-area-inset-left, 0px), 0px) !important;\ntransform: translateX(calc(-100% - 8px)) !important;\nborder-radius: 0 12px 12px 0 !important;\nbox-shadow: 8px 12px 28px rgba(15, 23, 42, 0.18);\n}\n${scopeSelector} .game-status--mobile-drawer--left.game-status--mobile-drawer-open .game-status-drawer {\ntransform: translateX(0) !important;\n}\n${scopeSelector} .game-status-drawer-close {\nflex: 0 0 auto;\nalign-self: flex-end;\nmin-height: 28px;\npadding: 0 10px;\nborder: 0;\nborder-radius: 8px;\nfont-size: 12px;\n}\n${scopeSelector} .game-status-drawer .game-tabs,\n${scopeSelector} .game-status-drawer .game-side-content {\npointer-events: auto;\n}\n@media (prefers-reduced-motion: reduce) {\n${scopeSelector} .game-status-drawer { transition: none; }\n}`,
+    `${scopeSelector}.game-root--mobile-session {\npadding-top: max(var(--world-safe-area-top, 0px), env(safe-area-inset-top, 0px), 0px);\npadding-bottom: max(var(--world-safe-area-bottom, 0px), env(safe-area-inset-bottom, 0px), 0px);\nbox-sizing: border-box;\n}\n${scopeSelector}.game-root--mobile-session .game-ui-layout,\n${scopeSelector}.game-root--mobile-session .game-ui-layout > .game-ui-node {\nmax-height: 100%;\n}\n${scopeSelector}.game-root--mobile-session .game-status--mobile-drawer,\n${scopeSelector} .game-status--mobile-drawer {\nposition: fixed;\ninset: 0;\nz-index: 80;\npointer-events: none;\nheight: auto !important;\nmin-height: 0 !important;\nbackground: transparent !important;\n}\n${scopeSelector} .game-status-handle {\nposition: absolute;\ntop: max(var(--world-safe-area-top, 0px), env(safe-area-inset-top, 0px), 80px);\nright: max(env(safe-area-inset-right, 0px), 0px);\nleft: auto;\nwidth: var(--game-ui-status-handle-w, 22px);\nmin-width: 22px;\nmax-width: 22px;\nmin-height: var(--game-ui-status-handle-h, 72px);\nheight: auto;\npadding: 12px 4px;\nborder: 0;\nborder-radius: 8px 0 0 8px;\nwriting-mode: vertical-rl;\nletter-spacing: 0.08em;\nfont-size: 11px;\nline-height: 1;\npointer-events: auto;\ntouch-action: none;\nbox-shadow: -2px 2px 8px rgba(15, 23, 42, 0.12);\n}\n${scopeSelector} .game-status-handle--dragging {\nopacity: 0.92;\n}\n${scopeSelector} .game-status--mobile-drawer--left .game-status-handle {\nright: auto !important;\nleft: max(env(safe-area-inset-left, 0px), 0px) !important;\nborder-radius: 0 8px 8px 0 !important;\nbox-shadow: 2px 2px 8px rgba(15, 23, 42, 0.12);\n}\n${scopeSelector} .game-status-drawer {\nposition: fixed;\ntop: max(var(--world-safe-area-top, 0px), env(safe-area-inset-top, 0px), 80px);\nright: max(env(safe-area-inset-right, 0px), 0px);\nleft: auto;\nbottom: calc(env(safe-area-inset-bottom, 0px) + 96px);\nwidth: min(82vw, 300px);\nmax-height: none;\ndisplay: flex;\nflex-direction: column;\ngap: 8px;\npadding: 12px;\noverflow: hidden;\npointer-events: auto;\ntransform: translateX(calc(100% + 8px));\ntransition: transform 180ms ease-out;\nborder-radius: 12px 0 0 12px;\nbox-shadow: -8px 12px 28px rgba(15, 23, 42, 0.18);\n}\n${scopeSelector} .game-status--mobile-drawer-open .game-status-drawer {\ntransform: translateX(0);\n}\n${scopeSelector} .game-status--mobile-drawer--left .game-status-drawer {\nright: auto !important;\nleft: max(env(safe-area-inset-left, 0px), 0px) !important;\ntransform: translateX(calc(-100% - 8px)) !important;\nborder-radius: 0 12px 12px 0 !important;\nbox-shadow: 8px 12px 28px rgba(15, 23, 42, 0.18);\n}\n${scopeSelector} .game-status--mobile-drawer--left.game-status--mobile-drawer-open .game-status-drawer {\ntransform: translateX(0) !important;\n}\n${scopeSelector} .game-status-drawer-close {\nflex: 0 0 auto;\nalign-self: flex-end;\nmin-height: 28px;\npadding: 0 10px;\nborder: 0;\nborder-radius: 8px;\nfont-size: 12px;\n}\n${scopeSelector} .game-status-drawer .game-tabs,\n${scopeSelector} .game-status-drawer .game-side-content {\npointer-events: auto;\n}\n@media (prefers-reduced-motion: reduce) {\n${scopeSelector} .game-status-drawer { transition: none; }\n}`,
     // Base sizing for scene-focus character portraits. Theme custom_css can
     // override these via more specific selectors; without this baseline a theme
     // that only restyles (e.g. sets a filter on) .game-avatar-image leaves the

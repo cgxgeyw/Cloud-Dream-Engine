@@ -131,6 +131,10 @@ export function WorldEditorPage() {
   const [openingComposerRole, setOpeningComposerRole] = useState<OpeningComposerRole>("system");
   const [openingComposerSpeaker, setOpeningComposerSpeaker] = useState("");
   const [openingComposerContent, setOpeningComposerContent] = useState("");
+  const [editingOpeningIndex, setEditingOpeningIndex] = useState<number | null>(null);
+  const [openingEditRole, setOpeningEditRole] = useState<OpeningComposerRole>("system");
+  const [openingEditSpeaker, setOpeningEditSpeaker] = useState("");
+  const [openingEditContent, setOpeningEditContent] = useState("");
   const [mcpToolSearch, setMcpToolSearch] = useState("");
   const {
     preview: promptPreview,
@@ -536,6 +540,11 @@ export function WorldEditorPage() {
   }
 
   function removeOpeningMessage(index: number) {
+    if (editingOpeningIndex === index) {
+      cancelEditOpeningMessage();
+    } else if (editingOpeningIndex !== null && editingOpeningIndex > index) {
+      setEditingOpeningIndex(editingOpeningIndex - 1);
+    }
     updateOpeningMessages(openingMessages.filter((_, itemIndex) => itemIndex !== index));
   }
 
@@ -547,7 +556,53 @@ export function WorldEditorPage() {
     const nextMessages = [...openingMessages];
     const [target] = nextMessages.splice(index, 1);
     nextMessages.splice(nextIndex, 0, target);
+    if (editingOpeningIndex === index) {
+      setEditingOpeningIndex(nextIndex);
+    } else if (editingOpeningIndex === nextIndex) {
+      setEditingOpeningIndex(index);
+    }
     updateOpeningMessages(nextMessages);
+  }
+
+  function startEditOpeningMessage(index: number) {
+    const message = openingMessages[index];
+    if (!message) {
+      return;
+    }
+    setEditingOpeningIndex(index);
+    setOpeningEditRole(message.role === "agent" ? "agent" : "system");
+    setOpeningEditSpeaker(message.speaker?.trim() || "");
+    setOpeningEditContent(message.content);
+    setError(null);
+  }
+
+  function cancelEditOpeningMessage() {
+    setEditingOpeningIndex(null);
+    setOpeningEditRole("system");
+    setOpeningEditSpeaker("");
+    setOpeningEditContent("");
+    setError(null);
+  }
+
+  function saveOpeningMessage() {
+    if (editingOpeningIndex === null) {
+      return;
+    }
+    const content = openingEditContent.trim();
+    if (!content) {
+      setError("开场内容不能为空");
+      return;
+    }
+    const speaker = openingEditRole === "agent"
+      ? (openingEditSpeaker.trim() || characters[0]?.name || null)
+      : null;
+    const nextMessages = openingMessages.map((message, itemIndex) => (
+      itemIndex === editingOpeningIndex
+        ? { role: openingEditRole, speaker, content }
+        : message
+    ));
+    updateOpeningMessages(nextMessages);
+    cancelEditOpeningMessage();
   }
 
   function updateGameUiFile(platform: GameUiPlatform, source: string) {
@@ -1303,17 +1358,76 @@ export function WorldEditorPage() {
                 </div>
                 <div className="opening-preview-messages">
                   {openingMessages.length === 0 ? <div className="text-muted">当前还没有开场消息。</div> : null}
-                  {openingMessages.map((message, index) => (
-                    <div key={`${message.role}-${index}-${message.content}`} className={`opening-preview-message opening-preview-message--${message.role}`}>
-                      {message.role === "agent" ? <div className="opening-preview-speaker">{resolveOpeningSpeakerLabel(message)}</div> : null}
-                      <div className={`opening-preview-content ${message.role === "system" ? "opening-preview-content--system" : "opening-preview-content--default"}`}>{message.content}</div>
-                      <div className="flex flex--gap-sm" style={{ marginTop: 8 }}>
-                        <button type="button" className="action-btn" onClick={() => moveOpeningMessage(index, -1)} disabled={index === 0}>上移</button>
-                        <button type="button" className="action-btn" onClick={() => moveOpeningMessage(index, 1)} disabled={index === openingMessages.length - 1}>下移</button>
-                        <button type="button" className="action-btn" onClick={() => removeOpeningMessage(index)}>删除</button>
+                  {openingMessages.map((message, index) => {
+                    const isEditing = editingOpeningIndex === index;
+                    return (
+                      <div key={`opening-msg-${index}`} className={`opening-preview-message opening-preview-message--${isEditing ? openingEditRole : message.role}${isEditing ? " opening-preview-message--editing" : ""}`}>
+                        {isEditing ? (
+                          <div className="opening-preview-edit">
+                            <div className="settings-form-grid">
+                              <label className="editor-field">
+                                <span className="editor-field-label">发言身份</span>
+                                <select
+                                  value={openingEditRole}
+                                  onChange={(e) => {
+                                    const nextRole = e.target.value as OpeningComposerRole;
+                                    setOpeningEditRole(nextRole);
+                                    if (nextRole !== "agent") {
+                                      setOpeningEditSpeaker("");
+                                    }
+                                  }}
+                                  className="editor-field-input editor-field-select"
+                                >
+                                  <option value="system">系统旁白</option>
+                                  <option value="agent">角色</option>
+                                </select>
+                              </label>
+                              {openingEditRole === "agent" ? (
+                                <label className="editor-field">
+                                  <span className="editor-field-label">角色</span>
+                                  <select
+                                    value={openingEditSpeaker}
+                                    onChange={(e) => setOpeningEditSpeaker(e.target.value)}
+                                    className="editor-field-input editor-field-select"
+                                  >
+                                    <option value="">{openingSpeakerOptions[0]?.label ?? "选择角色"}</option>
+                                    {openingSpeakerOptions.map((option) => (
+                                      <option key={option.value} value={option.value}>{option.label}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                              ) : null}
+                            </div>
+                            <label className="editor-field">
+                              <span className="editor-field-label">开场内容</span>
+                              <textarea
+                                value={openingEditContent}
+                                onChange={(e) => setOpeningEditContent(e.target.value)}
+                                className="editor-field-input editor-field-textarea"
+                                style={{ minHeight: 120 }}
+                                placeholder="修改这条开场消息的内容。"
+                              />
+                            </label>
+                            <div className="flex flex--gap-sm" style={{ marginTop: 8, flexWrap: "wrap" }}>
+                              <button type="button" className="action-btn action-btn--accent" onClick={saveOpeningMessage}>保存</button>
+                              <button type="button" className="action-btn" onClick={cancelEditOpeningMessage}>取消</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            {message.role === "agent" ? <div className="opening-preview-speaker">{resolveOpeningSpeakerLabel(message)}</div> : null}
+                            <div className={`opening-preview-content ${message.role === "system" ? "opening-preview-content--system" : "opening-preview-content--default"}`}>{message.content}</div>
+                            <div className="flex flex--gap-sm" style={{ marginTop: 8, flexWrap: "wrap" }}>
+                              <button type="button" className="action-btn" onClick={() => startEditOpeningMessage(index)}>编辑</button>
+                              <button type="button" className="action-btn" onClick={() => moveOpeningMessage(index, -1)} disabled={index === 0}>上移</button>
+                              <button type="button" className="action-btn" onClick={() => moveOpeningMessage(index, 1)} disabled={index === openingMessages.length - 1}>下移</button>
+                              <button type="button" className="action-btn" onClick={() => removeOpeningMessage(index)}>删除</button>
+                            </div>
+                          </>
+                        )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </div>

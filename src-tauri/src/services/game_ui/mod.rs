@@ -660,7 +660,26 @@ impl GameUiService {
                 }
             }
             Some("button") => {
-                read_required_string(object, "label", path, state);
+                // 有子内容的按钮（例如整根图表柱子做成可点区域）可以没有 label，
+                // 可读名称由子内容本身承担；既没 label 又没 children 的按钮既看不见
+                // 也没有可读名称，仍然要求 label。
+                let has_children = object
+                    .get("children")
+                    .and_then(Value::as_array)
+                    .is_some_and(|children| !children.is_empty());
+                if has_children {
+                    if let Some(label) = object.get("label") {
+                        if !label.is_string() {
+                            state.error(
+                                "invalid_label",
+                                "label must be a string.",
+                                format!("{path}.label"),
+                            );
+                        }
+                    }
+                } else {
+                    read_required_string(object, "label", path, state);
+                }
                 if let Some(variant) = object.get("variant") {
                     if !variant.is_string() {
                         state.error(
@@ -683,6 +702,7 @@ impl GameUiService {
                     validate_action_reference(action, &format!("{path}.action"), state);
                     infer_dependencies_from_value(action, &format!("{path}.action"), state);
                 }
+                validate_children_v2(self, object, path, state);
             }
             Some("checkbox") => {
                 read_required_string(object, "label", path, state);
