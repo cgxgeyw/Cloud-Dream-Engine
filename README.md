@@ -2,7 +2,7 @@
 
 > An offline-first desktop & mobile engine for building LLM-driven narrative games and "world packs" — author worlds, characters, custom in-game UIs, and an AI director, then play them locally.
 
-> [World package developer guide (runtime v3 / package format v7, Chinese)](docs/world-package-guide-v3.md)
+> [World package developer guide (runtime v3 / package format v8, Chinese)](docs/world-package-guide-v3.md)
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/25ae1d57-5e2b-478c-902b-628dad463876" alt="Cloud Dream Engine — world editor and runtime" width="820">
@@ -18,7 +18,7 @@
 
 Cloud Dream Engine is a [Tauri](https://tauri.app/) + React + Rust/SQLite application for creating and playing **AI narrative games**. You design a *world* (setting, characters, rules, memory, attributes) and a *custom game UI*, and an LLM-powered **director** runs the game loop: it reads player input, updates scene/state/attributes/inventory/memory, and decides who speaks next.
 
-World packs are portable, declarative content bundles rather than native plugins. Format version 7 can declare world-scoped `records` / `kv` storage and may include optional `sandbox-js-v1` logic that runs in an isolated Worker through a small, validated SDK.
+World packs are portable, declarative content bundles rather than native plugins. Format version 8 can declare world-scoped `records` / `kv` storage, embed MCP tool definitions, request platform file capabilities, and may include optional `sandbox-js-v1` logic that runs in an isolated Worker through a small, validated SDK.
 
 > **Privacy & offline-first:** the app and all your worlds run locally. You bring your own LLM endpoint (any OpenAI-compatible API), so your data and keys stay on your machine.
 
@@ -39,9 +39,12 @@ World packs are portable, declarative content bundles rather than native plugins
 - Per-platform raw CSS inside an isolated world iframe, with scoped v2 CSS compatibility
 - Memory, attributes, inventory, rules, scene/state writeback
 - Prompt trace viewer — inspect exactly what was sent to the model and how the response was processed
+- MCP tool integration — call external MCP servers from a world, with per-world tool whitelists
+- Platform file capabilities (`file.pick` / `file.read` / `file.write` / `file.share`) granted per world from **Settings → World permissions**
 - World pack import/export
-- World package version 7 with declared `records` / `kv` storage and optional `sandbox-js-v1` logic
-- A ready-to-import, no-model [accounting assistant package](output/accounting-assistant-world.zip) with [editable source](examples/world-packages/accounting-assistant/)
+- World package version 8: declared `records` / `kv` storage, embedded MCP tool definitions, optional `sandbox-js-v1` logic with event handlers (`logic.events`)
+- Registered world UI components including `ledger_book` (a model-free ledger with entry editing and day/month/year reports)
+- Six ready-to-import example packages: [accounting assistant](output/accounting-assistant-world.zip) ([source](examples/world-packages/accounting-assistant/)), [healthy life](output/healthy-life-world.zip) ([source](examples/world-packages/healthy-life/)), [stock analyst](output/stock-analyst-world.zip) ([source](examples/world-packages/stock-analyst/)), [stock council](output/stock-council-world.zip) ([source](examples/world-packages/stock-council/)), [mortal cultivation journey](output/mortal-cultivation-journey-world.zip) ([source](examples/world-packages/mortal-cultivation-journey/))
 - A task-oriented [narrative RPG authoring cookbook](docs/world-package-rpg-cookbook.md) and [copyable starter package](examples/world-packages/narrative-rpg-starter/)
 - Light/dark mode, multiple visual styles, and a platform language toggle (中文 / English)
 
@@ -73,14 +76,17 @@ Key directories:
 - `frontend/src/pages/` — editor, settings, game pages
 - `frontend/src/gameUiRuntime/` — registered components, actions, capabilities for world UIs
 - `frontend/src/components/GameUiRenderer.tsx` — world UI document renderer
+- `frontend/src/worldFrame/` — sandboxed iframe bundle, logic Worker runtime, ledger UI
 - `src-tauri/src/services/game_engine/` — engine, director, memory, orchestrator
-- `src-tauri/src/services/game_ui.rs` — world UI validation/compilation
+- `src-tauri/src/services/game_ui/mod.rs` — world UI validation/compilation
 - `src-tauri/src/services/world_package.rs` — world pack import/export
+- `src-tauri/src/services/mcp/` — MCP client and tool execution
+- `src-tauri/src/services/platform_features.rs` — platform capability declarations and grants
 - `src-tauri/src/db/` — SQLite schema, migrations, repositories, seeds
 
 ## Quick start
 
-**Prerequisites:** [Rust](https://www.rust-lang.org/tools/install) (stable), [Node.js](https://nodejs.org/) 18+, and the [Tauri 2 prerequisites](https://tauri.app/start/prerequisites/) for your OS.
+**Prerequisites:** [Rust](https://www.rust-lang.org/tools/install) (stable), [Node.js](https://nodejs.org/) 20.19+ or 22.12+ (Vite 8 requires `^20.19.0 || >=22.12.0`), and the [Tauri 2 prerequisites](https://tauri.app/start/prerequisites/) for your OS.
 
 ```bash
 # 1. Install frontend dependencies
@@ -108,11 +114,11 @@ Early and actively developed. Expect rapid changes. Issues and feedback are welc
 
 **云朵梦境（Cloud Dream Engine）** 是一个基于 Tauri + React + Rust/SQLite 的离线优先桌面/移动端引擎，用来创作和游玩**由大模型驱动的叙事游戏**。你设计一个*世界*（设定、角色、规则、记忆、属性）和一套*自定义游戏 UI*，由 LLM 驱动的**导演**运行游戏循环：解析玩家输入，写回场景/状态/属性/道具/记忆，并决定下一个发言者。
 
-世界包是可分享的声明式内容包，而不是原生插件。version 7 支持声明按世界隔离的 `records` / `kv` 存储，也可以携带可选的 `sandbox-js-v1` 逻辑；逻辑仅通过受控 SDK 在独立 Worker 中运行。
+世界包是可分享的声明式内容包，而不是原生插件。version 8 支持声明按世界隔离的 `records` / `kv` 存储、内嵌 MCP 工具定义、申请平台文件能力，也可以携带可选的 `sandbox-js-v1` 逻辑；逻辑仅通过受控 SDK 在独立 Worker 中运行。
 
 > **隐私与离线优先：** 应用和你的所有世界都在本地运行。你接入自己的 LLM 端点（任意 OpenAI 兼容 API），数据与密钥不出本机。
 
-> [世界包开发指南（runtime v3 / 世界包格式 v7）](docs/world-package-guide-v3.md)
+> [世界包开发指南（runtime v3 / 世界包格式 v8）](docs/world-package-guide-v3.md)
 
 ### 特点
 
@@ -131,15 +137,18 @@ Early and actively developed. Expect rapid changes. Issues and feedback are welc
 - 桌面/移动分别使用 iframe 内原始 CSS，并兼容 v2 作用域化 CSS
 - 记忆、属性、道具、规则、场景/状态写回
 - 提示词追踪：查看实际发给模型的内容及返回处理过程
+- MCP 工具集成：世界可调用外部 MCP 服务，按世界配置工具白名单
+- 平台文件能力（`file.pick` / `file.read` / `file.write` / `file.share`），按世界在**设置 → 世界权限**中授权
 - 世界包导入/导出
-- 世界包 version 7：声明式 `records` / `kv` 存储与可选 `sandbox-js-v1` 逻辑
-- 可直接导入、无需模型的[记账助手世界包](output/accounting-assistant-world.zip)及其[可编辑源码](examples/world-packages/accounting-assistant/)
+- 世界包 version 8：声明式 `records` / `kv` 存储、内嵌 MCP 工具定义、可选 `sandbox-js-v1` 逻辑及事件处理（`logic.events`）
+- 注册世界 UI 组件，含 `ledger_book`（无模型记账账本，支持录入编辑与日/月/年统计）
+- 六个可直接导入的示例包：[记账助手](output/accounting-assistant-world.zip)（[源码](examples/world-packages/accounting-assistant/)）、[健康生活](output/healthy-life-world.zip)（[源码](examples/world-packages/healthy-life/)）、[A股投研助手](output/stock-analyst-world.zip)（[源码](examples/world-packages/stock-analyst/)）、[股票智囊团](output/stock-council-world.zip)（[源码](examples/world-packages/stock-council/)）、[凡人修仙：小石村问道](output/mortal-cultivation-journey-world.zip)（[源码](examples/world-packages/mortal-cultivation-journey/)）
 - 面向剧情世界的[叙事 RPG 制作手册](docs/world-package-rpg-cookbook.md)与[可复制起步包](examples/world-packages/narrative-rpg-starter/)
 - 明暗模式、多种视觉风格、平台语言切换（中文 / English）
 
 ### 快速开始
 
-**前置：** [Rust](https://www.rust-lang.org/tools/install)（stable）、[Node.js](https://nodejs.org/) 18+、以及对应系统的 [Tauri 2 环境](https://tauri.app/start/prerequisites/)。
+**前置：** [Rust](https://www.rust-lang.org/tools/install)（stable）、[Node.js](https://nodejs.org/) 20.19+ 或 22.12+（Vite 8 要求 `^20.19.0 || >=22.12.0`）、以及对应系统的 [Tauri 2 环境](https://tauri.app/start/prerequisites/)。
 
 ```bash
 npm run frontend:install   # 安装前端依赖

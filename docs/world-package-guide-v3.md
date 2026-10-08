@@ -504,6 +504,7 @@ NPC 发言时，宿主按以下顺序拼接系统提示：
 | `components` | 否 | 注册组件的 base / variant 样式定义 |
 | `meta` | 否 | 作者、名称、说明等元数据 |
 | `custom_css` | 否 | v2 兼容 CSS；新 v3 世界优先使用入口 stylesheet |
+| `effects` | 否 | 预留的视觉效果配置字段。当前 runtime 只接受并透传它，**尚无宿主逻辑消费**，不要依赖它实现表现 |
 | `mounts` | 否 | 旧 mount 兼容字段，新文档不应依赖它扩展功能 |
 
 ## 7. 布局节点
@@ -620,6 +621,40 @@ NPC 发言时，宿主按以下顺序拼接系统提示：
 
 用途：调用引擎注册组件。不能填写任意 React 组件名。
 
+除 `props` 外还支持：
+
+| 字段 | 用途 |
+|---|---|
+| `variant` | 字符串，渲染成组件外壳的 `data-variant` 属性，供世界 CSS 用 `[data-component="…"][data-variant="…"]` 选择。`text` / `image` / `badge` / `button` / `checkbox` 节点同样支持 |
+| `slots` | 具名子区域，值为节点或节点数组，由组件通过 `renderSlot(name)` 决定插到哪里。哪些槽位可用由 catalog 的 `allowed_slots` 声明，当前只有 `side_panel_tabs` 提供 `content`；其他组件写了不报错但不会渲染 |
+| `anchor` | 绝对定位偏移，形如 `{ "top": "12px", "right": "12px" }`，四个方向可选，直接落成外壳元素的内联样式 |
+
+```jsonc
+{
+  "type": "component",
+  "component": "side_panel_tabs",
+  "class_name": "world-sidebar",
+  "variant": "compact",
+  "props": { "show_map_tab": true },
+  "slots": {
+    "content": { "type": "text", "text": "面板内容" }
+  }
+}
+```
+
+### `slot`
+
+```jsonc
+{
+  "type": "slot",
+  "name": "footer"
+}
+```
+
+用途：声明一个具名插槽。在普通布局里它会渲染成一个空占位 `<div class="game-ui-slot" data-slot="name">`，没有任何内容；只有宿主 / 父级组件通过 `component.slots` 接管同名槽位时，才会由组件把内容渲染到指定位置。
+
+哪些组件有哪些槽位由 catalog 的 `allowed_slots` 声明，当前只有 `side_panel_tabs` 提供 `content`。自由布局中一般不需要手写 `slot`。
+
 ### `text`
 
 ```jsonc
@@ -683,8 +718,8 @@ NPC 发言时，宿主按以下顺序拼接系统提示：
     "result_state": "stats"
   },
   "children": [
-    { "type": "when", "expr": "$bar.selected == true", "child": { "type": "badge", "text": "选中", "variant": "success" } },
-    { "type": "when", "expr": "$bar.selected != true", "child": { "type": "text", "text": "{{$bar.value}}" } }
+    { "type": "when", "expr": "bar.selected == true", "child": { "type": "badge", "text": "选中", "variant": "success" } },
+    { "type": "when", "expr": "bar.selected != true", "child": { "type": "text", "text": "{{$bar.value}}" } }
   ]
 }
 ```
@@ -703,6 +738,14 @@ NPC 发言时，宿主按以下顺序拼接系统提示：
 ```
 
 用途：维护文档本地字符串数组状态。
+
+可选字段：
+
+| 字段 | 类型 | 用途 |
+|---|---|---|
+| `checked` | boolean | 初始勾选状态 |
+| `disabled` | boolean | 禁用交互（`disabled` 必须为布尔值，写字符串会报 `invalid_checkbox_field`） |
+| `variant` | string | 视觉变体，交给世界 CSS 消费 |
 
 ### `when`
 
@@ -726,7 +769,7 @@ NPC 发言时，宿主按以下顺序拼接系统提示：
 ```jsonc
 {
   "type": "for_each",
-  "source": "visible_characters",
+  "source": "$visible_characters",
   "item_as": "character",
   "index_as": "index",
   "empty": {
@@ -739,6 +782,10 @@ NPC 发言时，宿主按以下顺序拼接系统提示：
   }
 }
 ```
+
+**`source` 必须以 `$` 开头。** 后端用 `^\$[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$` 校验它，写成 `"visible_characters"` 会报 `invalid_binding`。
+
+循环体内的 `item_as` / `index_as` 是**文档本地变量**，在 `when` 表达式和 `{{ }}` 插值里直接写名字（`bar.selected`、`{{ character }}`），不要加 `$`——那不是 binding 语法。
 
 ## 8. 注册组件
 
@@ -823,7 +870,7 @@ Props：`show_map_tab`、`show_attribute_tabs`、`empty_text`、`drawer_label`�
 
 Props：`show_back`、`show_debug`、`show_settings`、`back_label`、`debug_label`、`settings_label`、`layout`。
 
-`layout`：`row`、`column` 或 `wrap`。
+`layout`：`row`、`column` 或 `wrap`。**注意：当前实现只区分 `column` 与其余值**——`column` 会加 `game-header-actions--column` 纵向排列，`row` 和 `wrap` 走同一条分支，表现完全相同。需要换行请用世界 CSS 覆盖 `.game-header-actions`。
 
 ### `ledger_book`
 
@@ -1611,7 +1658,8 @@ div.game-ui-component[data-component="message_list"]  ← class_name
 |---|---|---|
 | 导入报 `Invalid manifest: specified file not found in archive` | 压缩了外层文件夹，条目多套一层前缀 | 进入包目录压缩**内容**，让 `manifest.json` 在 ZIP 根（第 5 节） |
 | 导入报 `Invalid world data: missing field ...` | world.json 缺必填字段或键名不对（如把 `ui_assets_config` 写成 `assets`） | 对照第 5 节「world.json 必填字段」补齐 |
-| 导入报 `World package is missing character files` | manifest 用了 `characters` 等自创字段，或 `character_files` 为空 | 按第 5 节写 `character_files`，`file_path` 指向 character.json 文件 |
+| 导入报 `世界包缺少角色文件` | manifest 用了 `characters` 等自创字段，或 `character_files` 为空 | 按第 5 节写 `character_files`，`file_path` 指向 character.json 文件 |
+| `unsupported_ui_runtime_version` | bundle 的 `runtime_version` 不在客户端支持列表内（当前只支持 `3`） | 把 `runtime_version` 改为 `3`，或退回 v2 写法 |
 | `unsupported_schema_version` | UI 文档不是 schema 2 | 改为 `schema_version: 2` |
 | `unknown_component` | 使用未注册组件 | 使用本文组件表中的名称 |
 | `unknown_component_prop` | prop 名称不受支持 | 检查组件 props 表 |
@@ -1638,6 +1686,15 @@ div.game-ui-component[data-component="message_list"]  ← class_name
 | `world_records_require_runtime_v3` | 记录组件运行在 v2 | 将 `runtime_version` 改为 `3` |
 | `missing_world_records_capability` | 使用 `ledger_book` 但世界未声明存储能力 | 在 `ui_capabilities` 中加入 `supports_world_records` |
 | 一直显示“正在启动隔离界面” | 可信 frame bundle 未启动 | 查看 Tauri DevTools Console；世界 CSS 通常不是该错误来源 |
+
+常见 warning（不阻断导入，但应处理）：
+
+| Warning | 含义 | 处理 |
+|---|---|---|
+| `mixed_schema_versions` | 桌面与移动两份 UI 文档的 `schema_version` 不一致 | 统一为 `2` |
+| `platform_mismatch` | `meta.platform` 与当前校验的平台不符（如桌面文档标了 `mobile`） | 按实际入口填写 `meta.platform`，或删除该字段 |
+| `mobile_missing_input_composer` | 移动端文档没有 `input_composer`，键盘弹起时宿主无法代管输入框 | 加入 `input_composer`；纯账本界面使用了 `ledger_book` 时可忽略 |
+| `mobile_css_fixed_viewport_height` | 移动端 CSS 给会话根写了固定 `100vh` / `100dvh`，键盘弹起会挤压内容 | 改用运行时可见高度变量（见第 11 节 safe area） |
 
 开发时至少检查：
 
@@ -1694,7 +1751,9 @@ v2 数据不会被删除。当前迁移层会：
 
 - [制作手册](world-package-rpg-cookbook.md)
 - [可编辑起步包](../examples/world-packages/narrative-rpg-starter/)
-- 演示链路：角色选择题 → `interaction_answered` → session KV → `{{var:route}}` 注入后续 Prompt
+- 演示链路：`director_interaction_kinds` 允许 `choice` → 主控输出固定 ID 选项 → 玩家点击后宿主写成真实消息并自动开启下一回合 → 主控从 `current_state.runtime_attributes` 读取状态、用 `character_attribute_updates` 写回路线与数值 → `side_panel_tabs` 展示同一份权威属性。
+
+起步包**不含沙箱逻辑**（`logic` 为空对象、manifest 无 `logic_file`），所以不演示 `logic.run` / `logic.events` / 会话 KV / `{{var:key}}` 注入。想看沙箱逻辑闭环请用 [healthy-life](../examples/world-packages/healthy-life/) 示例包（含 `world/logic.js`）。
 
 `frontend/src/data/gameUi/migration.test.ts` 会逐字验证四份文档在迁移后未改变，并验证桌面与移动入口保持独立。Rust bundle 测试也会校验两套示例在 runtime v3 下仍受支持。
 
