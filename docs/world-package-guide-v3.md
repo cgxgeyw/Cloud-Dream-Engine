@@ -560,8 +560,10 @@ NPC 发言时，宿主按以下顺序拼接系统提示：
 可用键：`panel`、`button`、`chip`、`message_bubble`、`message_speaker`、`input`、`textarea`、`badge`、`avatar`。
 
 - `base` → 生成 `作用域 选择器 { … }`
-- `variants.<名字>` → 生成 `作用域 选择器[data-variant="<名字>"] { … }`，与节点上的 `variant` 字段（第 7 节）配对使用
+- `variants.<名字>` → 生成 `作用域 选择器[data-variant="<名字>"] { … }`
 - 写未列出的键会被**静默跳过**（不报错），拼错键名不会有任何提示
+
+> **`variants` 的名字必须与组件内部元素上实际的 `data-variant` 值一致，节点上的 `variant` 字段不算。** 这些值由组件自己写死，例如 `message_bubble` 的取值来自消息角色（`assistant` → `agent`、`narration` → `system`、`player` 原样），按钮类恒为 `primary` / `ghost`。写成 `variants: { "my-style": … }` 不会有任何效果，也不报错——想覆盖某类样式，先在浏览器里选中目标元素看它真实的 `data-variant`。
 
 ## 7. 布局节点
 
@@ -681,9 +683,9 @@ NPC 发言时，宿主按以下顺序拼接系统提示：
 
 | 字段 | 用途 |
 |---|---|
-| `variant` | 字符串，渲染成组件外壳的 `data-variant` 属性。要让它产生视觉效果，需在顶层 `components` 里为对应键声明 `variants.<同名>`（见第 6 节）。`text` / `image` / `badge` / `button` / `checkbox` 节点同样支持 |
+| `variant` | 字符串，渲染到组件外壳的 `data-variant` 属性上（外壳 class 为 `game-ui-component` + `game-ui-component--<名字>` + 你的 `class_name`）。**没有任何注册组件会读它**，所以它不会改变组件内部样式；顶层 `components` 的 `variants` 也不认它（那是组件内部元素自己的 `data-variant`）。要让它生效，用世界 CSS 选择 `[data-component="…"][data-variant="…"]`。`text` / `image` / `badge` / `button` / `checkbox` 节点同样支持 |
 | `slots` | 具名子区域，值为节点或节点数组，由组件通过 `renderSlot(name)` 决定插到哪里。哪些槽位可用由 catalog 的 `allowed_slots` 声明，当前只有 `side_panel_tabs` 提供 `content`；其他组件写了不报错但不会渲染 |
-| `anchor` | 绝对定位偏移，形如 `{ "top": "12px", "right": "12px" }`，四个方向可选，直接落成外壳元素的内联样式 |
+| `anchor` | 绝对定位偏移，形如 `{ "top": "12px", "right": "12px" }`，四个方向可选，直接落成外壳元素的内联样式。**仅组件节点支持**，且需要祖先是定位上下文（`stack` / `grid` 会自带 `position: relative`，或放进 `absolute` 节点），否则偏移不生效 |
 
 ```jsonc
 {
