@@ -501,11 +501,67 @@ NPC 发言时，宿主按以下顺序拼接系统提示：
 | `layout.root` | 是 | 页面布局树根节点 |
 | `state` | 否 | 文档本地交互状态，例如复选框选择列表 |
 | `tokens` | 否 | 生成 `--game-ui-token-*` CSS 变量 |
-| `components` | 否 | 注册组件的 base / variant 样式定义 |
 | `meta` | 否 | 作者、名称、说明等元数据 |
+| `effects` | 否 | 背景与入场动效（见下方「`effects` 视觉」） |
+| `components` | 否 | 宿主组件皮肤：`base` + `variants`，见下方「`components` 组件皮肤」 |
 | `custom_css` | 否 | v2 兼容 CSS；新 v3 世界优先使用入口 stylesheet |
-| `effects` | 否 | 预留的视觉效果配置字段。当前 runtime 只接受并透传它，**尚无宿主逻辑消费**，不要依赖它实现表现 |
-| `mounts` | 否 | 旧 mount 兼容字段，新文档不应依赖它扩展功能 |
+| `mounts` | 否 | 旧 mount 兼容字段。**v3 渲染器不再输出 `data-mount` 元素**，这里写的规则不会命中任何节点，新文档不应依赖它扩展功能 |
+
+运行时把这三块配置编译成 scoped CSS，插在**世界自己的 stylesheet 之前**，所以入口 stylesheet 里的同选择器规则会覆盖它们。
+
+### `effects` 视觉
+
+`effects` 是开放对象，只识别下面三组键，其余键会被静默忽略；写错类型不会报错（只有 `effects` 本身不是对象时才报 `effects must be an object.`）。
+
+```jsonc
+{
+  "effects": {
+    "background": {
+      "image": "linear-gradient(180deg, #1b2233 0%, #2c3550 100%)",
+      "overlay": "radial-gradient(circle at 50% 0%, rgba(255,255,255,.12), transparent 60%)",
+      "size": "cover",
+      "position": "center"
+    },
+    "page_enter": { "enabled": true, "duration": "220ms", "easing": "ease-out" },
+    "message_reveal": { "enabled": true, "duration": "180ms" }
+  }
+}
+```
+
+| 分组 | 键 | 说明 |
+|---|---|---|
+| `background` | `image` | 叠在世界背景图**之上**的一层（`url(...)` 或 CSS 渐变）。世界自身选中的背景图在最底层 |
+| | `overlay` | 再叠一层，通常用来做暗角或顶部高光 |
+| | `size` / `position` | 背景尺寸与位置，默认 `cover` / `center` |
+| `page_enter` | `enabled` | 打开会话时整页淡入上移 |
+| | `duration` / `easing` | 默认 `220ms` / `ease-out` |
+| `message_reveal` | `enabled` | 逐条消息淡入上移，只作用于 `.game-message-row` |
+| | `duration` | 默认 `180ms`，固定 `ease-out` |
+
+三者都只在存在对应配置时才生成规则，且都会尊重系统的 `prefers-reduced-motion`（宿主基线里已对该动画做了降级处理）。
+
+### `components` 组件皮肤
+
+给宿主注册组件（消息气泡、输入框、按钮等）套一层世界自己的皮肤，键名固定下面这九个：
+
+```jsonc
+{
+  "components": {
+    "message_bubble": {
+      "base": { "background": "#ffffff", "border-radius": "14px", "padding": "10px 14px" },
+      "variants": {
+        "narration": { "background": "rgba(255,255,255,.62)", "font-style": "italic" }
+      }
+    }
+  }
+}
+```
+
+可用键：`panel`、`button`、`chip`、`message_bubble`、`message_speaker`、`input`、`textarea`、`badge`、`avatar`。
+
+- `base` → 生成 `作用域 选择器 { … }`
+- `variants.<名字>` → 生成 `作用域 选择器[data-variant="<名字>"] { … }`，与节点上的 `variant` 字段（第 7 节）配对使用
+- 写未列出的键会被**静默跳过**（不报错），拼错键名不会有任何提示
 
 ## 7. 布局节点
 
@@ -625,7 +681,7 @@ NPC 发言时，宿主按以下顺序拼接系统提示：
 
 | 字段 | 用途 |
 |---|---|
-| `variant` | 字符串，渲染成组件外壳的 `data-variant` 属性，供世界 CSS 用 `[data-component="…"][data-variant="…"]` 选择。`text` / `image` / `badge` / `button` / `checkbox` 节点同样支持 |
+| `variant` | 字符串，渲染成组件外壳的 `data-variant` 属性。要让它产生视觉效果，需在顶层 `components` 里为对应键声明 `variants.<同名>`（见第 6 节）。`text` / `image` / `badge` / `button` / `checkbox` 节点同样支持 |
 | `slots` | 具名子区域，值为节点或节点数组，由组件通过 `renderSlot(name)` 决定插到哪里。哪些槽位可用由 catalog 的 `allowed_slots` 声明，当前只有 `side_panel_tabs` 提供 `content`；其他组件写了不报错但不会渲染 |
 | `anchor` | 绝对定位偏移，形如 `{ "top": "12px", "right": "12px" }`，四个方向可选，直接落成外壳元素的内联样式 |
 
