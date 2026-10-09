@@ -1832,11 +1832,12 @@ v2 数据不会被删除。当前迁移层会：
 | `healthy-life/` | **健康生活** | `output/healthy-life-world.zip` | `logic.js` 沙箱逻辑、`logic.events` |
 | `stock-analyst/` | **A股投研助手** | `output/stock-analyst-world.zip` | v8 内嵌 MCP 工具包 |
 | `stock-council/` | **A股投研议事厅** | `output/stock-council-world.zip` | 多角色议事 + MCP 工具 |
-| `narrative-rpg-starter/` | **甲子风云** | 无（仅源码） | 最小可玩骨架，适合从零改写 |
+| `narrative-rpg-starter/` | **甲子风云** | **无（仅本地源码，不发布）** | 最小可玩骨架：4 条属性、1 件道具、2 个角色，适合从零改写 |
 
-两点需要注意：
+三点需要注意：
 
 - **这 6 个目录不在 GitHub 上**。`.gitignore` 里排除了 `/examples/`，对外只发布 `output/*.zip`；两者内容逐字节一致，改了源码记得重新打包。
+- **`narrative-rpg-starter`（甲子风云）连 zip 都没有**，它只是本地写包时的参照骨架，读者无法导入。需要一个可导入的模板时，用凡人修仙传包（结构更完整）。
 - 想直接改的话，进入包目录后把 `manifest.json`、`world/`、`characters/` 压到 ZIP **根目录**（不要多套一层文件夹），否则导入会报 `Invalid manifest: specified file not found in archive`。用 `scripts/pack_world_zip.py` 可以避免出错。
 
 另有两个不覆盖主控交互与世界属性的补充包：[记账助手](../output/accounting-assistant-world.zip)、[健康生活](../output/healthy-life-world.zip)。
