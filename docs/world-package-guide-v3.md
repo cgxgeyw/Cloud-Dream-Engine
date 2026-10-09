@@ -2,7 +2,7 @@
 
 本文面向世界包设计者，说明如何为 Cloud Dream Engine 制作可导入、可导出、同时支持桌面与 Android 的世界包和游戏 UI。
 
-如果目标是模型驱动的剧情、冒险或角色扮演世界，请先按[叙事 RPG 世界包制作手册](world-package-rpg-cookbook.md)完成玩法闭环，再回到本文查字段。可复制的工程模板位于 [`examples/world-packages/narrative-rpg-starter`](../examples/world-packages/narrative-rpg-starter/)。
+如果目标是模型驱动的剧情、冒险或角色扮演世界，请先按[叙事 RPG 世界包制作手册](world-package-rpg-cookbook.md)完成玩法闭环，再回到本文查字段。
 
 v3 的核心原则是：**世界包拥有游戏页面的结构和视觉设计**，应用拥有可信能力与数据写入。世界包可以提供 JSONC、CSS、资源和可选的受限 Worker 逻辑，但不能在宿主页面执行 JavaScript。
 
@@ -90,7 +90,7 @@ v3 的核心原则是：**世界包拥有游戏页面的结构和视觉设计**�
 .my-composer { padding: 10px 12px; }
 ```
 
-所有内置种子世界与 `examples/world-packages/` 示例均已按此契约书写，可作为参照。
+所有内置种子世界均已按此契约书写，可作为参照。
 
 ## 3. 推荐开发流程
 
@@ -1800,20 +1800,15 @@ v2 数据不会被删除。当前迁移层会：
 - `src-tauri/src/db/seeds/assets/schedule-assistant-mobile-ui.jsonc`
 - `src-tauri/src/db/seeds/schedule_assistant_world.rs`
 
-另有一个无模型、受控持久化的完整世界包示例：
+另有一个无模型、受控持久化的完整世界包示例，可直接导入试用：
 
-- [可编辑源码](../examples/world-packages/accounting-assistant/)
-- [可直接导入的 ZIP](../output/accounting-assistant-world.zip)
+- [记账助手世界包 ZIP](../output/accounting-assistant-world.zip)
 
-模型驱动叙事世界的结构化起步包：
+模型驱动叙事世界的玩法闭环见[制作手册](world-package-rpg-cookbook.md)，其中记录的演示链路是：`director_interaction_kinds` 允许 `choice` → 主控输出固定 ID 选项 → 玩家点击后宿主写成真实消息并自动开启下一回合 → 主控从 `current_state.runtime_attributes` 读取状态、用 `character_attribute_updates` 写回路线与数值 → `side_panel_tabs` 展示同一份权威属性。
 
-- [制作手册](world-package-rpg-cookbook.md)
-- [可编辑起步包](../examples/world-packages/narrative-rpg-starter/)
-- 演示链路：`director_interaction_kinds` 允许 `choice` → 主控输出固定 ID 选项 → 玩家点击后宿主写成真实消息并自动开启下一回合 → 主控从 `current_state.runtime_attributes` 读取状态、用 `character_attribute_updates` 写回路线与数值 → `side_panel_tabs` 展示同一份权威属性。
+注意该闭环**不涉及沙箱逻辑**：`logic` 为空对象、manifest 无 `logic_file`，所以它不演示 `logic.run` / `logic.events` / 会话 KV / `{{var:key}}` 注入。需要看沙箱逻辑闭环时，导入 [healthy-life 世界包 ZIP](../output/healthy-life-world.zip)（含 `world/logic.js`）。
 
-起步包**不含沙箱逻辑**（`logic` 为空对象、manifest 无 `logic_file`），所以不演示 `logic.run` / `logic.events` / 会话 KV / `{{var:key}}` 注入。想看沙箱逻辑闭环请用 [healthy-life](../examples/world-packages/healthy-life/) 示例包（含 `world/logic.js`）。
-
-`frontend/src/data/gameUi/migration.test.ts` 会逐字验证四份文档在迁移后未改变，并验证桌面与移动入口保持独立。Rust bundle 测试也会校验两套示例在 runtime v3 下仍受支持。
+`frontend/src/data/gameUi/migration.test.ts` 会逐字验证四份文档在迁移后未改变，并验证桌面与移动入口保持独立。
 
 ## 17. 最小完整示例
 

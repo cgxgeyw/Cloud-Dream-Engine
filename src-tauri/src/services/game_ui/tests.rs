@@ -135,54 +135,6 @@
     }
 
     #[test]
-    fn validates_accounting_assistant_world_package_ui() {
-        let service = GameUiService::new();
-        let desktop = include_str!(
-            "../../../../examples/world-packages/accounting-assistant/world/ui.desktop.jsonc"
-        );
-        let mobile = include_str!(
-            "../../../../examples/world-packages/accounting-assistant/world/ui.mobile.jsonc"
-        );
-
-        let result = service.validate_world_ui_bundle(WorldUiBundleValidationRequest {
-            desktop_file: desktop.to_string(),
-            mobile_file: mobile.to_string(),
-            runtime_version: Some(3),
-            desktop_stylesheet: include_str!(
-                "../../../../examples/world-packages/accounting-assistant/world/ui.desktop.css"
-            )
-            .to_string(),
-            mobile_stylesheet: include_str!(
-                "../../../../examples/world-packages/accounting-assistant/world/ui.mobile.css"
-            )
-            .to_string(),
-            capabilities: vec![
-                "supports_world_records".to_string(),
-                "supports_world_storage".to_string(),
-            ],
-            storage: serde_json::json!({
-                "collections": { "ledger.entries": {} }
-            }),
-            logic: serde_json::json!({}),
-        });
-
-        assert!(
-            result.ok,
-            "desktop: {:?}; mobile: {:?}; bundle: {:?}",
-            result.desktop.errors, result.mobile.errors, result.errors,
-        );
-        assert!(result
-            .desktop
-            .components
-            .contains(&"ledger_book".to_string()));
-        assert!(result
-            .desktop
-            .capabilities
-            .contains(&"supports_world_records".to_string()));
-        assert!(result.mobile.warnings.is_empty());
-    }
-
-    #[test]
     fn ledger_book_requires_runtime_v3_and_explicit_capability() {
         let service = GameUiService::new();
         let document = r#"{

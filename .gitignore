@@ -85,6 +85,10 @@ Thumbs.db
 # 内部架构手册（仅本地查阅，不上传 GitHub）
 /docs/不上传到github.md
 
+# 世界包示例工程（仅本地保留，不上传 GitHub）。
+# 可导入的打包产物仍跟踪在 output/*.zip，文档里只链接那些 zip。
+/examples/
+
 # Large embedding weights: keep on disk for local-embedding builds, do not track in git.
 # Download/copy into these paths when enabling the local-embedding feature.
 **/embedding-models/**/model.safetensors

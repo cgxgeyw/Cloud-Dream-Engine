@@ -2,7 +2,7 @@
 
 本文不是字段表，而是一条可执行的制作流程。目标是让作者或制作智能体交付一个“能形成游戏循环”的世界，而不是只包含背景资料、角色人设和一套 CSS 的聊天包。字段定义仍以[世界包开发指南 v3](world-package-guide-v3.md)为准。
 
-可直接复制的工程位于 [`examples/world-packages/narrative-rpg-starter`](../examples/world-packages/narrative-rpg-starter/)。它以黄巾起义为开场，演示：
+下面这条链路以黄巾起义开场为例，是本手册要交付的最小可玩闭环：
 
 ```text
 角色生成 choice
