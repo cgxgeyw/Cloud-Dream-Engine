@@ -334,3 +334,113 @@
             .iter()
             .any(|diagnostic| diagnostic.code == "unknown_component"));
     }
+    #[test]
+    fn accepts_svg_and_canvas_nodes_with_known_shapes() {
+        let service = GameUiService::new();
+        let source = r##"{
+            "schema_version": 2,
+            "layout": {
+                "root": {
+                    "type": "stack",
+                    "children": [
+                        {
+                            "type": "svg",
+                            "view_box": "0 0 100 100",
+                            "children": [
+                                { "type": "svg_circle", "cx": "50", "cy": "50", "r": "40" },
+                                { "type": "svg_path", "d": "M0 0 L10 10", "stroke_width": "2" },
+                                { "type": "svg_text", "x": "50", "y": "10", "text": "spin" }
+                            ]
+                        },
+                        {
+                            "type": "canvas",
+                            "width": "200",
+                            "height": "120",
+                            "ops": [
+                                { "type": "clear", "color": "#ffffff" },
+                                { "type": "arc", "x": "100", "y": "60", "radius": "40",
+                                  "start_angle": "0", "end_angle": "270", "fill": "#ff0000" },
+                                { "type": "text", "x": "10", "y": "20", "text": "hi" }
+                            ]
+                        }
+                    ]
+                }
+            }
+        }"##;
+
+        let result = service.validate_world_ui_document(WorldUiDocumentRequest {
+            source: source.to_string(),
+            platform: Some("desktop".to_string()),
+        });
+        assert!(result.ok, "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn rejects_unknown_svg_primitive_and_canvas_op() {
+        let service = GameUiService::new();
+        let source = r##"{
+            "schema_version": 2,
+            "layout": {
+                "root": {
+                    "type": "svg",
+                    "children": [
+                        { "type": "svg_script", "cx": "1" },
+                        { "type": "svg_circle", "cx": "1" }
+                    ]
+                }
+            }
+        }"##;
+
+        let result = service.validate_world_ui_document(WorldUiDocumentRequest {
+            source: source.to_string(),
+            platform: Some("desktop".to_string()),
+        });
+        assert!(!result.ok);
+        assert!(result
+            .errors
+            .iter()
+            .any(|diagnostic| diagnostic.code == "invalid_svg_primitive"));
+
+        let canvas_source = r##"{
+            "schema_version": 2,
+            "layout": {
+                "root": {
+                    "type": "canvas",
+                    "ops": [ { "type": "eval", "code": "alert(1)" } ]
+                }
+            }
+        }"##;
+        let canvas_result = service.validate_world_ui_document(WorldUiDocumentRequest {
+            source: canvas_source.to_string(),
+            platform: Some("desktop".to_string()),
+        });
+        assert!(!canvas_result.ok);
+        assert!(canvas_result
+            .errors
+            .iter()
+            .any(|diagnostic| diagnostic.code == "invalid_canvas_op"));
+    }
+
+    #[test]
+    fn svg_primitives_require_their_geometry_fields() {
+        let service = GameUiService::new();
+        let source = r##"{
+            "schema_version": 2,
+            "layout": {
+                "root": {
+                    "type": "svg",
+                    "children": [ { "type": "svg_circle", "cx": "10" } ]
+                }
+            }
+        }"##;
+
+        let result = service.validate_world_ui_document(WorldUiDocumentRequest {
+            source: source.to_string(),
+            platform: Some("desktop".to_string()),
+        });
+        assert!(!result.ok);
+        assert!(result
+            .errors
+            .iter()
+            .any(|diagnostic| diagnostic.code == "invalid_svg_primitive"));
+    }

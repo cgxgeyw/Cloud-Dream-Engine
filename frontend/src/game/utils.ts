@@ -616,7 +616,7 @@ function nodeDisablesMapSideTab(node: GameUiLayoutNode | undefined): boolean {
     return true;
   }
 
-  if ("children" in node && Array.isArray(node.children)) {
+  if (node.type !== "svg" && "children" in node && Array.isArray(node.children)) {
     if (node.children.some((child) => nodeDisablesMapSideTab(child))) {
       return true;
     }

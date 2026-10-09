@@ -805,6 +805,106 @@ NPC 发言时，宿主按以下顺序拼接系统提示：
 | `disabled` | boolean | 禁用交互（`disabled` 必须为布尔值，写字符串会报 `invalid_checkbox_field`） |
 | `variant` | string | 视觉变体，交给世界 CSS 消费 |
 
+### `svg`
+
+矢量图形容器。用**图元节点**描述图形，而不是写一段 `<svg>` 标记文本——后者需要 HTML/SVG 净化器才能防止脚本注入，而运行时刻意不引入 `dangerouslySetInnerHTML`。图元类型是闭集，写错名字只会被跳过，不会让整页打不开。
+
+```jsonc
+{
+  "type": "svg",
+  "view_box": "0 0 100 100",
+  "class_name": "hp-arc",
+  "width": "240px",
+  "height": "120px",
+  "children": [
+    { "type": "svg_rect", "x": "0", "y": "0", "width": "100", "height": "100",
+      "rx": "8", "fill": "#f1f5f9" },
+    { "type": "svg_circle", "cx": "50", "cy": "50", "r": "40",
+      "stroke": "#dc2626", "stroke_width": "6", "fill": "none" },
+    { "type": "svg_text", "x": "50", "y": "54", "text": "{{$state.hp_label}}",
+      "text_anchor": "middle", "font_size": "12", "fill": "#0f172a" }
+  ]
+}
+```
+
+| 字段 | 类型 | 用途 |
+|---|---|---|
+| `view_box` | string | `minX minY width height`，决定坐标系与缩放。**可省略**，默认 `0 0 100 100` |
+| `preserve_aspect_ratio` | string | 默认 `xMidYMid meet` |
+| `children` | 图元数组 | 可省略 |
+
+**六种图元**：
+
+| `type` | 必填几何 | 说明 |
+|---|---|---|
+| `svg_circle` | `cx` `cy` `r` | 圆|
+| `svg_rect` | `x` `y` `width` `height` | 矩形，可加 `rx` / `ry` 圆角 |
+| `svg_line` | `x1` `y1` `x2` `y2` | 线段 |
+| `svg_path` | `d` | 任意路径，可加 `fill_rule: "evenodd"` |
+| `svg_polygon` | `points` | 多边形，格式 `"0,0 10,5 20,0"` |
+| `svg_text` | `x` `y` `text` | 文字 |
+
+图元公共字段：`class_name`、`fill`、`fill_opacity`、`stroke`、`stroke_width`、`stroke_opacity`、`stroke_linecap`、`stroke_linejoin`、`stroke_dasharray`、`opacity`、`rotate`、`origin`。文字另支持 `font_size`、`font_family`、`font_weight`、`text_anchor`、`dominant_baseline`。
+
+所有几何与绘制字段都是字符串，**可以写绑定**：
+
+```jsonc
+{
+  "type": "svg_line",
+  "x1": "10", "y1": "50",
+  "x2": "{{ $state.gauge_value }}", "y2": "50",
+  "stroke": "#16a34a", "stroke_width": "8", "stroke_linecap": "round"
+}
+```
+
+`rotate` 缺省绕图元自身几何中心旋转（圆用 `cx/cy`，其余用 `x/y`），`origin: "cx cy"` 可指定别的支点。
+
+`svg` 的 `children` 是图元而非布局节点，里面不能再嵌 `grid` / `stack` / 组件。
+
+### `canvas`
+
+位图画布。用**声明式绘制指令**描述画什么，宿主在 `useEffect` 里逐条重放 2D context——世界包无法借此执行任意代码。
+
+```jsonc
+{
+  "type": "canvas",
+  "width": "240",
+  "height": "120",
+  "ops": [
+    { "type": "clear", "color": "#ffffff" },
+    { "type": "arc", "x": "120", "y": "60", "radius": "48",
+      "start_angle": "$state.start", "end_angle": "$state.end",
+      "stroke": "#4f46e5", "stroke_width": "10", "fill": "none" },
+    { "type": "text", "x": "120", "y": "66", "text": "{{ $state.roll_label }}",
+      "text_align": "center", "font_size": "14", "fill": "#111827" }
+  ]
+}
+```
+
+`width` / `height` 是逻辑画布尺寸（CSS 像素），**可省略**，默认 `300` × `150`；位图按设备像素比放大，高分屏不发虚。
+
+**七种指令**：
+
+| `type` | 必填字段 | 可选 |
+|---|---|---|
+| `clear` | — | `color`（填色覆盖，否则透明） |
+| `rect` | `x` `y` `width` `height` | `fill` `stroke` `stroke_width` |
+| `circle` | `x` `y` `radius` | 同上 |
+| `arc` | `x` `y` `radius` `start_angle` `end_angle` | 同上。**角度单位是度** |
+| `line` | `x1` `y1` `x2` `y2` | `stroke` `stroke_width` |
+| `text` | `x` `y` `text` | `font_size` `font_family` `font_weight` `fill` `text_align` |
+| `image` | `x` `y` `width` `height` `src` | — |
+
+指令里的多余键（例如 `script`）在归一化阶段就被丢弃，未知 `type` 直接跳过——画面少一笔，好过整页报错。
+
+绑定字段变化会触发重绘，所以状态驱动的动画不需要作者写任何代码：
+
+```jsonc
+{ "type": "rect", "x": "0", "y": "0", "width": "{{ $state.hp }}", "height": "10", "fill": "#dc2626" }
+```
+
+> `image` 指令走异步解码，解码完成后会再重绘一次；首帧可能缺这张图。
+
 ### `when`
 
 ```jsonc

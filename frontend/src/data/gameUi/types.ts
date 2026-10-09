@@ -255,6 +255,123 @@ export type GameUiCheckboxNode = GameUiNodeBase & {
   variant?: string;
 };
 
+/**
+ * SVG 图元。声明式而非裸标记字符串：世界包写`<svg>` 文本需要净化器，
+ * 而项目刻意不引入 dangerouslySetInnerHTML，因此把图元拆成可校验的节点。
+ * 数值字段走字符串 + `{{$state.x}}` 插值，与现有节点的绑定方式一致。
+ */
+export type GameUiSvgNode = GameUiNodeBase & {
+  type: "svg";
+  /** viewBox="minX minY width height"，决定坐标系与缩放。 */
+  view_box: string;
+  preserve_aspect_ratio?: string;
+  children?: GameUiSvgPrimitiveNode[];
+};
+
+/** SVG 子图元。不再嵌套布局节点——布局由父 svg 与外层 grid/stack 负责。 */
+export type GameUiSvgPrimitiveNode =
+  | GameUiSvgCircleNode
+  | GameUiSvgRectNode
+  | GameUiSvgLineNode
+  | GameUiSvgPathNode
+  | GameUiSvgPolygonNode
+  | GameUiSvgTextNode;
+
+type GameUiSvgPaintNode = {
+  class_name?: string;
+  fill?: string;
+  fill_opacity?: string;
+  stroke?: string;
+  stroke_width?: string;
+  stroke_opacity?: string;
+  stroke_linecap?: "butt" | "round" | "square";
+  stroke_linejoin?: "miter" | "round" | "bevel";
+  stroke_dasharray?: string;
+  opacity?: string;
+  rotate?: string;
+  /** 旋转中心，缺省为图元自身几何中心（cx/cy 或 x/y）。 */
+  origin?: string;
+};
+
+export type GameUiSvgCircleNode = GameUiSvgPaintNode & {
+  type: "svg_circle";
+  cx: string;
+  cy: string;
+  r: string;
+};
+
+export type GameUiSvgRectNode = GameUiSvgPaintNode & {
+  type: "svg_rect";
+  x: string;
+  y: string;
+  width: string;
+  height: string;
+  rx?: string;
+  ry?: string;
+};
+
+export type GameUiSvgLineNode = GameUiSvgPaintNode & {
+  type: "svg_line";
+  x1: string;
+  y1: string;
+  x2: string;
+  y2: string;
+};
+
+export type GameUiSvgPathNode = GameUiSvgPaintNode & {
+  type: "svg_path";
+  d: string;
+  fill_rule?: "nonzero" | "evenodd";
+};
+
+/** points 形如 "0,0 10,5 20,0"，由宿主拆分后交给 `<polygon points>`。 */
+export type GameUiSvgPolygonNode = GameUiSvgPaintNode & {
+  type: "svg_polygon";
+  points: string;
+};
+
+export type GameUiSvgTextNode = GameUiSvgPaintNode & {
+  type: "svg_text";
+  x: string;
+  y: string;
+  text: string;
+  font_size?: string;
+  font_family?: string;
+  font_weight?: string;
+  text_anchor?: "start" | "middle" | "end";
+  dominant_baseline?:
+    | "alphabetic"
+    | "hanging"
+    | "ideographic"
+    | "mathematical"
+    | "middle"
+    | "central"
+    | "text-after-edge"
+    | "text-before-edge";
+};
+
+export type GameUiCanvasNode = GameUiNodeBase & {
+  type: "canvas";
+  /** 逻辑画布宽高（CSS 像素），同时决定位图尺寸。 */
+  width: string;
+  height: string;
+  /** 绘制指令，按顺序执行。作者不能提供可执行代码。 */
+  ops?: GameUiCanvasOp[];
+};
+
+/**
+ * Canvas 绘制指令。刻意做成数据而非脚本：宿主在 useEffect 里逐条重放，
+ * 世界包无法借此执行任意代码。所有数值字段支持 `{{$state.x}}`。
+ */
+export type GameUiCanvasOp =
+  | { type: "clear"; color?: string }
+  | { type: "rect"; x: string; y: string; width: string; height: string; fill?: string; stroke?: string; stroke_width?: string }
+  | { type: "circle"; x: string; y: string; radius: string; fill?: string; stroke?: string; stroke_width?: string }
+  | { type: "arc"; x: string; y: string; radius: string; start_angle: string; end_angle: string; fill?: string; stroke?: string; stroke_width?: string }
+  | { type: "line"; x1: string; y1: string; x2: string; y2: string; stroke?: string; stroke_width?: string }
+  | { type: "text"; x: string; y: string; text: string; font_size?: string; font_family?: string; font_weight?: string; fill?: string; text_align?: "left" | "center" | "right" }
+  | { type: "image"; x: string; y: string; width: string; height: string; src: string };
+
 export type GameUiLayoutNodeV2 =
   | GameUiGridNodeV2
   | GameUiStackNodeV2
@@ -267,7 +384,9 @@ export type GameUiLayoutNodeV2 =
   | GameUiImageNode
   | GameUiBadgeNode
   | GameUiButtonNode
-  | GameUiCheckboxNode;
+  | GameUiCheckboxNode
+  | GameUiSvgNode
+  | GameUiCanvasNode;
 
 export type GameUiGridNode = GameUiGridNodeV2;
 export type GameUiStackNode = GameUiStackNodeV2;

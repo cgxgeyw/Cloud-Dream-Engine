@@ -3,6 +3,8 @@ import type { CSSProperties } from "react";
 import type {
   GameUiActionReference,
   GameUiAnchor,
+  GameUiCanvasNode,
+  GameUiCanvasOp,
   GameUiComponentStyleDefinition,
   GameUiDocument,
   GameUiDocumentV2,
@@ -14,6 +16,8 @@ import type {
   GameUiPlatform,
   GameUiPropValue,
   GameUiStyleRecord,
+  GameUiSvgNode,
+  GameUiSvgPrimitiveNode,
   ParsedGameUiDocument,
   UiAssetConfig,
   WorldUiEnvelope,
@@ -484,6 +488,26 @@ function normalizeLayoutNodeV2(raw: unknown, fallback: GameUiLayoutNodeV2): Game
     };
   }
 
+  if (type === "svg") {
+    return {
+      ...normalizeNodeBase(value),
+      type: "svg",
+      view_box: readOptionalString(value.view_box) ?? "0 0 100 100",
+      preserve_aspect_ratio: readOptionalString(value.preserve_aspect_ratio),
+      children: normalizeSvgPrimitives(value.children),
+    };
+  }
+
+  if (type === "canvas") {
+    return {
+      ...normalizeNodeBase(value),
+      type: "canvas",
+      width: readOptionalString(value.width) ?? "300",
+      height: readOptionalString(value.height) ?? "150",
+      ops: normalizeCanvasOps(value.ops),
+    };
+  }
+
   if (type === "stack") {
     return {
       ...normalizeNodeBase(value),
@@ -511,6 +535,232 @@ function normalizeChildrenV2(raw: unknown): GameUiLayoutNodeV2[] {
     return [];
   }
   return raw.map((item) => normalizeLayoutNodeV2(item, EMPTY_V2_NODE));
+}
+
+/** SVG 图元与 canvas 指令共用的取值读取：数值字段统一走字符串，绑定由渲染期解析。 */
+function readSvgString(value: unknown): string {
+  return readOptionalString(value) ?? "";
+}
+
+function readSvgPaintFields(raw: Record<string, unknown>) {
+  const paint: Record<string, unknown> = {};
+  for (const key of [
+    "fill",
+    "fill_opacity",
+    "stroke",
+    "stroke_width",
+    "stroke_opacity",
+    "stroke_dasharray",
+    "opacity",
+    "rotate",
+    "origin",
+  ] as const) {
+    const text = readOptionalString(raw[key]);
+    if (text !== undefined) {
+      paint[key] = text;
+    }
+  }
+  const className = readOptionalString(raw.class_name);
+  if (className !== undefined) {
+    paint.class_name = className;
+  }
+  const linecap = readOptionalString(raw.stroke_linecap);
+  if (linecap === "butt" || linecap === "round" || linecap === "square") {
+    paint.stroke_linecap = linecap;
+  }
+  const linejoin = readOptionalString(raw.stroke_linejoin);
+  if (linejoin === "miter" || linejoin === "round" || linejoin === "bevel") {
+    paint.stroke_linejoin = linejoin;
+  }
+  return paint;
+}
+
+const SVG_PRIMITIVE_TYPES = new Set([
+  "svg_circle",
+  "svg_rect",
+  "svg_line",
+  "svg_path",
+  "svg_polygon",
+  "svg_text",
+]);
+
+function normalizeSvgPrimitives(raw: unknown): GameUiSvgPrimitiveNode[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const out: GameUiSvgPrimitiveNode[] = [];
+  for (const item of raw) {
+    if (!isPlainObject(item)) {
+      continue;
+    }
+    const type = readOptionalString(item.type);
+    if (!type || !SVG_PRIMITIVE_TYPES.has(type)) {
+      continue;
+    }
+    const paint = readSvgPaintFields(item);
+    // 图元几何字段缺省给 0，渲染期再由作者用绑定覆盖；丢节点比画错更好排查。
+    switch (type) {
+      case "svg_circle":
+        out.push({
+          ...paint,
+          type: "svg_circle",
+          cx: readSvgString(item.cx),
+          cy: readSvgString(item.cy),
+          r: readSvgString(item.r),
+        } as GameUiSvgPrimitiveNode);
+        break;
+      case "svg_rect":
+        out.push({
+          ...paint,
+          type: "svg_rect",
+          x: readSvgString(item.x),
+          y: readSvgString(item.y),
+          width: readSvgString(item.width),
+          height: readSvgString(item.height),
+          rx: readOptionalString(item.rx),
+          ry: readOptionalString(item.ry),
+        } as GameUiSvgPrimitiveNode);
+        break;
+      case "svg_line":
+        out.push({
+          ...paint,
+          type: "svg_line",
+          x1: readSvgString(item.x1),
+          y1: readSvgString(item.y1),
+          x2: readSvgString(item.x2),
+          y2: readSvgString(item.y2),
+        } as GameUiSvgPrimitiveNode);
+        break;
+      case "svg_path":
+        out.push({
+          ...paint,
+          type: "svg_path",
+          d: readSvgString(item.d),
+          fill_rule: readOptionalString(item.fill_rule) === "evenodd" ? "evenodd" : undefined,
+        } as GameUiSvgPrimitiveNode);
+        break;
+      case "svg_polygon":
+        out.push({
+          ...paint,
+          type: "svg_polygon",
+          points: readSvgString(item.points),
+        } as GameUiSvgPrimitiveNode);
+        break;
+      case "svg_text": {
+        const anchor = readOptionalString(item.text_anchor);
+        out.push({
+          ...paint,
+          type: "svg_text",
+          x: readSvgString(item.x),
+          y: readSvgString(item.y),
+          text: readOptionalString(item.text) ?? "",
+          font_size: readOptionalString(item.font_size),
+          font_family: readOptionalString(item.font_family),
+          font_weight: readOptionalString(item.font_weight),
+          text_anchor: anchor === "middle" || anchor === "end" ? anchor : undefined,
+          dominant_baseline: readOptionalString(item.dominant_baseline),
+        } as GameUiSvgPrimitiveNode);
+        break;
+      }
+      default:
+        break;
+    }
+  }
+  return out;
+}
+
+/**
+ * canvas 指令归一化。未知 type 直接丢弃——世界包写了宿主不支持的指令时
+ * 画面少一笔，而不是整页报错。
+ */
+function normalizeCanvasOps(raw: unknown): GameUiCanvasOp[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const out: GameUiCanvasOp[] = [];
+  for (const item of raw) {
+    if (!isPlainObject(item)) {
+      continue;
+    }
+    const type = readOptionalString(item.type);
+    const paint: Record<string, unknown> = {};
+    for (const key of ["fill", "stroke", "stroke_width", "font_size", "font_family", "font_weight", "color"] as const) {
+      const text = readOptionalString(item[key]);
+      if (text !== undefined) {
+        paint[key] = text;
+      }
+    }
+    switch (type) {
+      case "clear":
+        out.push({ type: "clear", color: readOptionalString(item.color) });
+        break;
+      case "rect":
+        out.push({
+          type: "rect",
+          x: readSvgString(item.x),
+          y: readSvgString(item.y),
+          width: readSvgString(item.width),
+          height: readSvgString(item.height),
+          ...paint,
+        } as GameUiCanvasOp);
+        break;
+      case "circle":
+        out.push({
+          type: "circle",
+          x: readSvgString(item.x),
+          y: readSvgString(item.y),
+          radius: readSvgString(item.radius),
+          ...paint,
+        } as GameUiCanvasOp);
+        break;
+      case "arc":
+        out.push({
+          type: "arc",
+          x: readSvgString(item.x),
+          y: readSvgString(item.y),
+          radius: readSvgString(item.radius),
+          start_angle: readSvgString(item.start_angle),
+          end_angle: readSvgString(item.end_angle),
+          ...paint,
+        } as GameUiCanvasOp);
+        break;
+      case "line":
+        out.push({
+          type: "line",
+          x1: readSvgString(item.x1),
+          y1: readSvgString(item.y1),
+          x2: readSvgString(item.x2),
+          y2: readSvgString(item.y2),
+          ...paint,
+        } as GameUiCanvasOp);
+        break;
+      case "text": {
+        const align = readOptionalString(item.text_align);
+        out.push({
+          type: "text",
+          x: readSvgString(item.x),
+          y: readSvgString(item.y),
+          text: readOptionalString(item.text) ?? "",
+          text_align: align === "center" || align === "right" ? align : "left",
+          ...paint,
+        } as GameUiCanvasOp);
+        break;
+      }
+      case "image":
+        out.push({
+          type: "image",
+          x: readSvgString(item.x),
+          y: readSvgString(item.y),
+          width: readSvgString(item.width),
+          height: readSvgString(item.height),
+          src: readOptionalString(item.src) ?? "",
+        });
+        break;
+      default:
+        break;
+    }
+  }
+  return out;
 }
 
 function normalizeComponentSlots(
@@ -861,8 +1111,10 @@ function validateLayoutNodeV2(raw: unknown, path: string): string | null {
     && type !== "badge"
     && type !== "button"
     && type !== "checkbox"
+    && type !== "svg"
+    && type !== "canvas"
   ) {
-    return `${path}.type must be one of grid / stack / absolute / component / slot / when / for_each / text / image / badge / button / checkbox.`;
+    return `${path}.type must be one of grid / stack / absolute / component / slot / when / for_each / text / image / badge / button / checkbox / svg / canvas.`;
   }
 
   const sharedFieldError = validateSharedNodeFields(raw, path);
@@ -1054,6 +1306,34 @@ function validateLayoutNodeV2(raw: unknown, path: string): string | null {
     }
     if (raw.variant !== undefined && typeof raw.variant !== "string") {
       return `${path}.variant must be a string.`;
+    }
+    return null;
+  }
+
+  if (type === "svg") {
+    // view_box 可省略：归一化会补 "0 0 100 100"，写死必填会让默认路径永远走不通。
+    if (raw.view_box !== undefined && (typeof raw.view_box !== "string" || !raw.view_box.trim())) {
+      return `${path}.view_box must be a non-empty string.`;
+    }
+    if (raw.preserve_aspect_ratio !== undefined && typeof raw.preserve_aspect_ratio !== "string") {
+      return `${path}.preserve_aspect_ratio must be a string.`;
+    }
+    if (raw.children !== undefined && !Array.isArray(raw.children)) {
+      return `${path}.children must be an array of svg primitives.`;
+    }
+    return null;
+  }
+
+  if (type === "canvas") {
+    // 同理：width / height 省略时归一化补 300 / 150。
+    for (const field of ["width", "height"] as const) {
+      const value = raw[field];
+      if (value !== undefined && (typeof value !== "string" || !String(value).trim())) {
+        return `${path}.${field} must be a non-empty string.`;
+      }
+    }
+    if (raw.ops !== undefined && !Array.isArray(raw.ops)) {
+      return `${path}.ops must be an array of drawing instructions.`;
     }
     return null;
   }

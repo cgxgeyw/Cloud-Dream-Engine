@@ -414,7 +414,8 @@ function resolveHostSessionDiagnosticMode(node: GameUiLayoutNodeV2): "fallback" 
   }
 
   const nestedNodes: GameUiLayoutNodeV2[] = [];
-  if ("children" in node) nestedNodes.push(...(node.children ?? []));
+  // svg 的 children 是矢量图元而非布局节点，不参与布局后代遍历。
+  if (node.type !== "svg" && "children" in node) nestedNodes.push(...(node.children ?? []));
   if ("child" in node) nestedNodes.push(node.child);
   if ("empty" in node && node.empty) nestedNodes.push(node.empty);
   if ("slots" in node) {

@@ -1,4 +1,5 @@
 import { useState, type CSSProperties, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { CanvasNodeView, SvgNodeView } from "./GameUiGraphicNodes";
 import {
   type GameUiActionReference,
   type GameUiBadgeNode,
@@ -157,6 +158,14 @@ function renderV2Node(
 
   if (node.type === "checkbox") {
     return renderCheckboxNode(node, context, actions, key);
+  }
+
+  if (node.type === "svg") {
+    return <SvgNodeView key={key} node={node} context={context} />;
+  }
+
+  if (node.type === "canvas") {
+    return <CanvasNodeView key={key} node={node} context={context} />;
   }
 
   if (node.type === "slot") {

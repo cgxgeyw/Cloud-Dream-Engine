@@ -582,6 +582,47 @@ impl GameUiService {
                 validate_children_v2(self, object, path, state);
             }
             Some("component") => self.validate_component_node(object, path, state),
+            Some("svg") => {
+                // view_box 可省略：前端归一化会补默认坐标系。
+                if let Some(value) = object.get("view_box") {
+                    if !value.as_str().is_some_and(|text| !text.trim().is_empty()) {
+                        state.error(
+                            "invalid_view_box",
+                            "view_box must be a non-empty string.",
+                            format!("{path}.view_box"),
+                        );
+                    }
+                }
+                if let Some(par) = object.get("preserve_aspect_ratio") {
+                    if !par.is_string() {
+                        state.error(
+                            "invalid_preserve_aspect_ratio",
+                            "preserve_aspect_ratio must be a string.",
+                            format!("{path}.preserve_aspect_ratio"),
+                        );
+                    }
+                }
+                if let Some(children) = object.get("children") {
+                    validate_svg_primitives(children, &format!("{path}.children"), state);
+                }
+            }
+            Some("canvas") => {
+                // width / height 可省略：前端归一化会补 300 / 150。
+                for key in ["width", "height"] {
+                    if let Some(value) = object.get(key) {
+                        if !value.as_str().is_some_and(|text| !text.trim().is_empty()) {
+                            state.error(
+                                "invalid_canvas_size",
+                                format!("{key} must be a non-empty string."),
+                                format!("{path}.{key}"),
+                            );
+                        }
+                    }
+                }
+                if let Some(ops) = object.get("ops") {
+                    validate_canvas_ops(ops, &format!("{path}.ops"), state);
+                }
+            }
             Some("slot") => {
                 read_required_string(object, "name", path, state);
             }
@@ -998,6 +1039,217 @@ fn validate_common_node_fields(
 
     if let Some(style) = object.get("style") {
         validate_style_object(style, &format!("{path}.style"), state);
+    }
+}
+
+/// SVG 图元允许的类型。刻意保持闭集：世界包只能描述已知的矢量图元，
+/// 不能借`svg` 节点塞入任意标记或脚本。
+const SVG_PRIMITIVE_TYPES: &[&str] = &[
+    "svg_circle",
+    "svg_rect",
+    "svg_line",
+    "svg_path",
+    "svg_polygon",
+    "svg_text",
+];
+
+/// Canvas 指令允许的类型 → 各自必填的数值字段。
+const CANVAS_OP_REQUIRED_FIELDS: &[(&str, &[&str])] = &[
+    ("clear", &[]),
+    ("rect", &["x", "y", "width", "height"]),
+    ("circle", &["x", "y", "radius"]),
+    ("arc", &["x", "y", "radius", "start_angle", "end_angle"]),
+    ("line", &["x1", "y1", "x2", "y2"]),
+    ("text", &["x", "y", "text"]),
+    ("image", &["x", "y", "width", "height", "src"]),
+];
+
+/// SVG 图元的必填几何字段。
+const SVG_PRIMITIVE_REQUIRED_FIELDS: &[(&str, &[&str])] = &[
+    ("svg_circle", &["cx", "cy", "r"]),
+    ("svg_rect", &["x", "y", "width", "height"]),
+    ("svg_line", &["x1", "y1", "x2", "y2"]),
+    ("svg_path", &["d"]),
+    ("svg_polygon", &["points"]),
+    ("svg_text", &["x", "y", "text"]),
+];
+
+fn validate_string_fields(
+    object: &Map<String, Value>,
+    keys: &[&str],
+    code: &str,
+    path: &str,
+    state: &mut CompilationState,
+) {
+    for key in keys {
+        match object.get(*key) {
+            Some(Value::String(_)) => {}
+            Some(_) => state.error(
+                code,
+                format!("{key} must be a string."),
+                format!("{path}.{key}"),
+            ),
+            None => state.error(
+                code,
+                format!("{key} is required."),
+                format!("{path}.{key}"),
+            ),
+        }
+    }
+}
+
+fn validate_optional_string_fields(
+    object: &Map<String, Value>,
+    keys: &[&str],
+    code: &str,
+    path: &str,
+    state: &mut CompilationState,
+) {
+    for key in keys {
+        if let Some(value) = object.get(*key) {
+            if !value.is_string() {
+                state.error(
+                    code,
+                    format!("{key} must be a string."),
+                    format!("{path}.{key}"),
+                );
+            }
+        }
+    }
+}
+
+fn validate_svg_primitives(raw: &Value, path: &str, state: &mut CompilationState) {
+    let Some(entries) = raw.as_array() else {
+        state.error(
+            "invalid_svg_children",
+            "svg children must be an array of svg primitives.",
+            path.to_string(),
+        );
+        return;
+    };
+    for (index, entry) in entries.iter().enumerate() {
+        let entry_path = format!("{path}[{index}]");
+        let Some(object) = entry.as_object() else {
+            state.error(
+                "invalid_svg_primitive",
+                "svg primitives must be objects.",
+                entry_path,
+            );
+            continue;
+        };
+        let Some(node_type) = read_required_string(object, "type", &entry_path, state) else {
+            continue;
+        };
+        let Some((_, required)) = SVG_PRIMITIVE_REQUIRED_FIELDS
+            .iter()
+            .find(|(name, _)| *name == node_type)
+        else {
+            state.error(
+                "invalid_svg_primitive",
+                format!(
+                    "svg primitives must be one of {}, got {node_type}.",
+                    SVG_PRIMITIVE_TYPES.join(", ")
+                ),
+                entry_path,
+            );
+            continue;
+        };
+        validate_string_fields(
+            object,
+            required,
+            "invalid_svg_primitive",
+            &entry_path,
+            state,
+        );
+        validate_optional_string_fields(
+            object,
+            &[
+                "class_name",
+                "fill",
+                "fill_opacity",
+                "stroke",
+                "stroke_width",
+                "stroke_opacity",
+                "stroke_dasharray",
+                "opacity",
+                "rotate",
+                "origin",
+                "rx",
+                "ry",
+                "font_size",
+                "font_family",
+                "font_weight",
+                "dominant_baseline",
+            ],
+            "invalid_svg_primitive",
+            &entry_path,
+            state,
+        );
+    }
+}
+
+fn validate_canvas_ops(raw: &Value, path: &str, state: &mut CompilationState) {
+    let Some(entries) = raw.as_array() else {
+        state.error(
+            "invalid_canvas_ops",
+            "canvas ops must be an array of drawing instructions.",
+            path.to_string(),
+        );
+        return;
+    };
+    for (index, entry) in entries.iter().enumerate() {
+        let entry_path = format!("{path}[{index}]");
+        let Some(object) = entry.as_object() else {
+            state.error(
+                "invalid_canvas_op",
+                "canvas ops must be objects.",
+                entry_path,
+            );
+            continue;
+        };
+        let Some(op_type) = read_required_string(object, "type", &entry_path, state) else {
+            continue;
+        };
+        let Some((_, required)) = CANVAS_OP_REQUIRED_FIELDS
+            .iter()
+            .find(|(name, _)| *name == op_type)
+        else {
+            state.error(
+                "invalid_canvas_op",
+                format!(
+                    "canvas ops must be one of {}, got {op_type}.",
+                    CANVAS_OP_REQUIRED_FIELDS
+                        .iter()
+                        .map(|(name, _)| *name)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                entry_path,
+            );
+            continue;
+        };
+        validate_string_fields(
+            object,
+            required,
+            "invalid_canvas_op",
+            &entry_path,
+            state,
+        );
+        validate_optional_string_fields(
+            object,
+            &[
+                "fill",
+                "stroke",
+                "stroke_width",
+                "font_size",
+                "font_family",
+                "font_weight",
+                "color",
+            ],
+            "invalid_canvas_op",
+            &entry_path,
+            state,
+        );
     }
 }
 
