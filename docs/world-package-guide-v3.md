@@ -1821,12 +1821,25 @@ v2 数据不会被删除。当前迁移层会：
 
 玩法闭环的讲解见[叙事 RPG 制作手册](world-package-rpg-cookbook.md)：主控输出固定 ID 选项 → 玩家点击后宿主写成真实消息并自动开启下一回合 → 主控从 `current_state.runtime_attributes` 读取状态、用 `character_attribute_updates` 写回路线与数值 → `side_panel_tabs` 展示同一份权威属性。
 
-另有两个补充示例包：
+### 本地示例世界包目录
 
-- [记账助手](../output/accounting-assistant-world.zip)——无模型、受控持久化，演示 `ledger_book` 与 world records
-- [健康生活](../output/healthy-life-world.zip)——含 `world/logic.js`，是 `logic.run` / `logic.events` 的唯一参考实现
+仓库工作区里另有一份完整源码目录 `examples/world-packages/`，包含全部 6 个示例包的可编辑工程：
 
-注意这两个补充包**不覆盖**主控交互与世界属性，需要的写法看凡人修仙传包。
+| 目录 | 对应可导入包 | 侧重 |
+|---|---|---|
+| `mortal-cultivation-journey/` | `output/mortal-cultivation-journey-world.zip` | 多智能体叙事 RPG，本教程的主参考 |
+| `accounting-assistant/` | `output/accounting-assistant-world.zip` | 无模型记账：`ledger_book` + world records |
+| `healthy-life/` | `output/healthy-life-world.zip` | `logic.js` 沙箱逻辑、`logic.events` |
+| `stock-analyst/` | `output/stock-analyst-world.zip` | v8 内嵌 MCP 工具包|
+| `stock-council/` | `output/stock-council-world.zip` | 多角色辩论 + MCP 工具 |
+| `narrative-rpg-starter/` | 无（仅源码） | 最小可玩骨架，适合从零改写 |
+
+两点需要注意：
+
+- **这6 个目录不在 GitHub 上**。`.gitignore` 里排除了 `/examples/`，对外只发布 `output/*.zip`；两者内容逐字节一致，改了源码记得重新打包。
+- 想直接改的话，进入包目录后把 `manifest.json`、`world/`、`characters/` 压到 ZIP **根目录**（不要多套一层文件夹），否则导入会报 `Invalid manifest: specified file not found in archive`。用 `scripts/pack_world_zip.py` 可以避免出错。
+
+另有两个不覆盖主控交互与世界属性的补充包：[记账助手](../output/accounting-assistant-world.zip)、[健康生活](../output/healthy-life-world.zip)。
 
 `frontend/src/data/gameUi/migration.test.ts` 会逐字验证四份文档在迁移后未改变，并验证桌面与移动入口保持独立。
 
