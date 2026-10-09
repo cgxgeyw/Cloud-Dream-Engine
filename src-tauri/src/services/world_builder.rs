@@ -1,9 +1,20 @@
 use rusqlite::Connection;
 use serde::Deserialize;
+use std::collections::HashMap;
 
+use crate::db::repositories::attribute_repo::AttributeRepository;
 use crate::db::repositories::character_repo::CharacterRepository;
+use crate::models::attribute::{
+    normalize_attribute_value_type, AttributeSchemaCreateRequest, ATTRIBUTE_SCOPE_WORLD,
+    ATTRIBUTE_VALUE_TYPE_BOOLEAN, ATTRIBUTE_VALUE_TYPE_LIST, ATTRIBUTE_VALUE_TYPE_NUMBER,
+    ATTRIBUTE_VALUE_TYPE_TEXT,
+};
 use crate::models::character::CharacterCreateRequest;
 use crate::models::generation_params::{GenerationParams, GENERATION_ROLE_UTILITY};
+use crate::models::interaction::{
+    INTERACTION_KIND_CHOICE, INTERACTION_KIND_CONFIRM, INTERACTION_KIND_FORM,
+    INTERACTION_KIND_MULTI_CHOICE, INTERACTION_KIND_SLIDER,
+};
 use crate::models::model_config::ModelConfig;
 use crate::models::world::{
     AiWorldCreateRequest, AiWorldCreateResponse, WorldCreateRequest, WorldOpeningMessage,
@@ -15,6 +26,7 @@ use crate::services::llm::client::{ChatMessage, ChatRequest, LlmClient};
 #[derive(Debug, Deserialize)]
 pub(crate) struct AiWorldDraft {
     world: AiWorldDraftWorld,
+    #[serde(default)]
     characters: Vec<AiCharacterDraft>,
     #[serde(default)]
     notes: Vec<String>,
@@ -31,13 +43,36 @@ struct AiWorldDraftWorld {
     #[serde(default)]
     map_nodes: serde_json::Value,
     #[serde(default)]
-    triggers: Vec<String>,
-    #[serde(default)]
     runtime_context_prompt: String,
     #[serde(default)]
     world_director_prompt: String,
     #[serde(default)]
     opening_message: String,
+    /// 玩家扮演的角色名。空字符串 = 不指定玩家角色。
+    #[serde(default)]
+    player_character: String,
+    /// 主控可下发的交互类型。空 = 由persist_world_draft 按模式兜底。
+    #[serde(default)]
+    director_interaction_kinds: Vec<String>,
+    #[serde(default)]
+    attribute_schemas: Vec<AiAttributeSchemaDraft>,
+}
+
+/// 世界级持久化属性的草稿。key 为空的一律丢弃。
+#[derive(Debug, Deserialize)]
+struct AiAttributeSchemaDraft {
+    #[serde(default)]
+    key: String,
+    #[serde(default)]
+    label: String,
+    #[serde(default)]
+    value_type: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    default_value: serde_json::Value,
+    #[serde(default)]
+    enum_options: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,7 +149,7 @@ async fn generate_world_draft(
         "multi-agent world simulation with three to five playable or NPC characters"
     };
     let system_prompt = r#"You are a world package architect for Cloud Dream Engine.
-Return only valid JSON. Do not wrap in Markdown.
+Return only valid JSON. A single ```json code fence around it is acceptable.
 Create coherent world and character data from the user's concept.
 Keep prompts directly editable by creators. Avoid meta text like "the system will".
 For single-agent mode, create exactly one assistant/agent character.
@@ -131,10 +166,14 @@ JSON shape:
     "summary": "one sentence premise",
     "time_system": "time rules",
     "map_nodes": {"version":1,"root":{"id":"root","label":"...","children":[{"id":"...","label":"..."}]},"edges":[]},
-    "triggers": ["keyword"],
     "runtime_context_prompt": "runtime context available every turn",
     "world_director_prompt": "world director behavior and orchestration guidance",
-    "opening_message": "first message shown to the player"
+    "opening_message": "first message shown to the player",
+    "player_character": "name of one character the player plays, or empty string if the player has no avatar",
+    "director_interaction_kinds": ["choice"],
+    "attribute_schemas": [
+      {"key":"health","label":"体力","value_type":"number","description":"0-100","default_value":100,"enum_options":[]}
+    ]
   },
   "characters": [
     {
@@ -151,17 +190,25 @@ JSON shape:
     }
   ],
   "notes": ["short creation note"]
-}"#;
+}
+
+Field rules:
+- "player_character" must exactly match one entry of "characters"[].name, or be empty. Never guess a name that is not in the list.
+- "director_interaction_kinds" may only contain "choice", "multi_choice", "form", "confirm", "slider". Use ["choice"] unless the concept really needs forms or sliders. Single-agent service worlds should use [].
+- "attribute_schemas" describes the world's own persistent state (health, money, reputation...). Use 2-5 entries.
+  - "key": stable lowercase identifier, no spaces.
+  - "value_type": one of "text", "number", "boolean", "list", "json".
+  - "default_value": must match the type. Omit it (or use null) to let the app pick the zero value.
+  - "enum_options": only for "list"; otherwise use [].
+  - Do not invent numeric ranges: put constraints in "description" as text."#;
     let user_prompt = format!("Mode: {target}\nConcept:\n{concept}");
     // Multi-agent drafts contain 3-5 fully-specified characters, so the JSON is
-    // far larger than single-agent. Cap the output budget by mode to avoid the
-    // response being truncated mid-JSON (which surfaces as a parse failure).
-    let output_token_floor = if mode == "single_agent" { 1200 } else { 4000 };
+    // far larger than single-agent. Cap the output budget so a generous model
+    // setting cannot balloon the request — but never *raise* it: the user's
+    // max_tokens in Settings is an explicit choice, and silently exceeding it
+    // can push the request past a hard limit the provider enforces.
     let output_token_ceiling = if mode == "single_agent" { 6000 } else { 16000 };
-    let max_output_tokens = model
-        .max_tokens
-        .max(output_token_floor)
-        .min(output_token_ceiling);
+    let max_output_tokens = model.max_tokens.min(output_token_ceiling);
     let chat_request = ChatRequest {
         model: model.model_id.clone(),
         messages: vec![
@@ -192,7 +239,9 @@ JSON shape:
                 .merge(app_generation)
         },
         stream: Some(model.streaming_enabled),
-        json_mode: Some(true),
+        // 遵从模型级的「关闭 JSON 模式」开关：部分模型在 json_object 下会把键名写坏，
+        // parse_draft_json 只兜整体截断，字段坏掉就直接解析失败。
+        json_mode: Some(!model.json_mode_disabled),
         response_schema: None,
         tools: None,
         tool_choice: None,
@@ -250,6 +299,9 @@ fn persist_world_draft(
 ) -> Result<AiWorldCreateResponse, String> {
     let mut notes = normalize_list(draft.notes);
     let characters = normalize_characters(mode, draft.characters, concept);
+    let attribute_schema_drafts = draft.world.attribute_schemas;
+    let player_character_name = clean(&draft.world.player_character);
+    let interaction_kinds = normalize_interaction_kinds(mode, &draft.world.director_interaction_kinds);
     let default_agent_id_placeholder = "__DEFAULT_AGENT__";
     let director_config = if mode == "single_agent" {
         serde_json::json!({
@@ -263,6 +315,7 @@ fn persist_world_draft(
             "world_director_prompt": clean(&draft.world.world_director_prompt),
             "prompt_presets": [],
             "return_processing_rules": [],
+            "director_interaction_kinds": interaction_kinds,
             "runtime_policy": { "memory_write_mode": "session" },
             "allowed_mcp_tool_ids": []
         })
@@ -277,6 +330,7 @@ fn persist_world_draft(
             "world_director_prompt": clean(&draft.world.world_director_prompt),
             "prompt_presets": [],
             "return_processing_rules": [],
+            "director_interaction_kinds": interaction_kinds,
             "runtime_policy": { "memory_write_mode": "session" },
             "allowed_mcp_tool_ids": []
         })
@@ -307,10 +361,16 @@ fn persist_world_draft(
                 "\u{65f6}\u{95f4}\u{968f}\u{5bf9}\u{8bdd}\u{63a8}\u{8fdb}",
             ),
             map_nodes: normalize_map_nodes(&draft.world.map_nodes, &draft.world.opening_scene),
-            triggers: normalize_triggers(draft.world.triggers, concept),
+            // triggers 运行时从不执行（自动逻辑走 logic.events），不再让模型产出无用的关键词。
+            triggers: Vec::new(),
             time_config: serde_json::json!({ "mode": "realtime", "label": "\u{5b9e}\u{65f6}" }),
             director_config,
-            ui_theme_config: serde_json::json!({}),
+            // 空对象会被 normalize_world_ui_theme_config 判成 runtime_version 2。
+            // 显式声明 3，才能拿到默认桌面/移动双入口文档（与编辑器新建世界一致）。
+            ui_theme_config: serde_json::json!({
+                "runtime_version": 3,
+                "capabilities": ["supports_file_picker", "supports_mic"],
+            }),
             opening_messages: vec![WorldOpeningMessage {
                 role: "system".to_string(),
                 content: fallback(opening_message, &clean(&draft.world.summary)),
@@ -351,11 +411,12 @@ fn persist_world_draft(
         .iter()
         .map(|item| item.id.clone())
         .collect();
-    let player_character_id = if mode == "multi_agent" {
-        opening_character_ids.first().cloned()
-    } else {
-        None
-    };
+    // 玩家角色由模型显式指定；没指定或对不上任何角色就留空，
+    // 绝不退化成「第一个角色当玩家」——那会把 NPC 错标成主角。
+    let player_character_id = created_characters
+        .iter()
+        .find(|item| item.name.trim() == player_character_name)
+        .map(|item| item.id.clone());
     let director_config = if mode == "single_agent" {
         replace_default_agent_id(
             world.director_config.clone(),
@@ -389,12 +450,181 @@ fn persist_world_draft(
     } else {
         "Created a multi-agent world with opening characters.".to_string()
     });
+    persist_attribute_schemas(conn, &world.id, &attribute_schema_drafts, &mut notes);
 
     Ok(AiWorldCreateResponse {
         world,
         characters: created_characters,
         notes,
     })
+}
+
+/// 把模型产出的属性草稿落成 world 作用域的属性定义。
+///
+/// 两个必须注意的点：
+/// - world 作用域的属性是**全局表**里的 `scope = "world"`，不加限制会串到别的世界。
+///   所以 display_policy.applicable_world_ids 必须钉死到新世界 id，与属性面板手建时一致。
+/// - 任何一条不合法（key 重复、类型不支持、默认值与类型不符）都跳过并记进 notes，
+///   绝不让一条坏数据把整个建世界流程带崩。
+fn persist_attribute_schemas(
+    conn: &Connection,
+    world_id: &str,
+    drafts: &[AiAttributeSchemaDraft],
+    notes: &mut Vec<String>,
+) -> usize {
+    if drafts.is_empty() {
+        return 0;
+    }
+    let repo = AttributeRepository::new(conn);
+    let mut existing_keys: Vec<String> = repo
+        .list_schemas(Some(ATTRIBUTE_SCOPE_WORLD))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|schema| schema.key)
+        .collect();
+    let mut created = 0usize;
+    let mut skipped: Vec<String> = Vec::new();
+
+    for draft in drafts {
+        let key = draft.key.trim().to_string();
+        if key.is_empty() {
+            continue;
+        }
+        let Some(value_type) = normalize_attribute_value_type(&draft.value_type) else {
+            skipped.push(format!("{key}（类型 {} 不受支持）", draft.value_type.trim()));
+            continue;
+        };
+        if existing_keys.iter().any(|item| item == &key) {
+            skipped.push(format!("{key}（属性 key 已存在）"));
+            continue;
+        }
+        let label = {
+            let candidate = draft.label.trim().to_string();
+            if candidate.is_empty() {
+                key.clone()
+            } else {
+                candidate
+            }
+        };
+        let enum_options = if value_type == ATTRIBUTE_VALUE_TYPE_LIST {
+            normalize_list(draft.enum_options.clone())
+        } else {
+            Vec::new()
+        };
+        let request = AttributeSchemaCreateRequest {
+            scope: ATTRIBUTE_SCOPE_WORLD.to_string(),
+            key: key.clone(),
+            label,
+            value_type: value_type.clone(),
+            description: draft.description.trim().to_string(),
+            default_value: coerce_default_value(&value_type, &draft.default_value),
+            enum_options,
+            display_policy: world_scoped_display_policy(world_id),
+            access_policy: policy(&[
+                ("creator_read", serde_json::json!(true)),
+                ("player_read", serde_json::json!(false)),
+                ("agent_self_read", serde_json::json!(false)),
+                ("agent_other_read", serde_json::json!(false)),
+                ("director_read", serde_json::json!(true)),
+                ("plugin_read", serde_json::json!(true)),
+            ]),
+            mutation_policy: policy(&[
+                ("creator_write", serde_json::json!(true)),
+                ("allowed_ops", serde_json::json!(["set"])),
+            ]),
+            influence_policy: policy(&[
+                ("prompt.director", serde_json::json!({ "enabled": true, "mode": "raw" })),
+                (
+                    "ui.status_panel",
+                    serde_json::json!({ "enabled": true, "mode": "text" }),
+                ),
+            ]),
+            projection_policy: policy(&[
+                ("inherit_to_session", serde_json::json!(true)),
+                ("session_owner_type", serde_json::json!("session")),
+                ("mutable_in_session", serde_json::json!(true)),
+            ]),
+        };
+        match repo.create_schema(&request) {
+            Ok(_) => {
+                existing_keys.push(key);
+                created += 1;
+            }
+            Err(error) => skipped.push(format!("{key}（{error}）")),
+        }
+    }
+
+    if !skipped.is_empty() {
+        notes.push(format!("已跳过无法创建的属性：{}。", skipped.join("；")));
+    }
+    created
+}
+
+fn world_scoped_display_policy(world_id: &str) -> HashMap<String, serde_json::Value> {
+    HashMap::from([
+        ("editor_visible".to_string(), serde_json::json!(true)),
+        ("game_visible".to_string(), serde_json::json!(false)),
+        ("debug_visible".to_string(), serde_json::json!(true)),
+        // world 作用域的属性存在全局表里，不钉世界id 就会显示到所有世界的面板上。
+        (
+            "applicable_world_ids".to_string(),
+            serde_json::json!([world_id]),
+        ),
+    ])
+}
+
+/// 键值对形式的策略对象，语义与属性面板手建时一致。
+fn policy(pairs: &[(&str, serde_json::Value)]) -> HashMap<String, serde_json::Value> {
+    pairs
+        .iter()
+        .map(|(key, value)| ((*key).to_string(), value.clone()))
+        .collect()
+}
+
+/// 模型给的默认值经常缺字段或类型不符；这里按声明类型收敛成一个一定合法的值。
+fn coerce_default_value(value_type: &str, provided: &serde_json::Value) -> serde_json::Value {
+    let usable = match value_type {
+        ATTRIBUTE_VALUE_TYPE_TEXT => provided.as_str().is_some(),
+        ATTRIBUTE_VALUE_TYPE_NUMBER => provided.as_f64().is_some(),
+        ATTRIBUTE_VALUE_TYPE_BOOLEAN => provided.is_boolean(),
+        ATTRIBUTE_VALUE_TYPE_LIST => provided.is_array(),
+        _ => !provided.is_null(),
+    };
+    if usable {
+        return provided.clone();
+    }
+    match value_type {
+        ATTRIBUTE_VALUE_TYPE_TEXT => serde_json::json!(""),
+        ATTRIBUTE_VALUE_TYPE_NUMBER => serde_json::json!(0),
+        ATTRIBUTE_VALUE_TYPE_BOOLEAN => serde_json::json!(false),
+        ATTRIBUTE_VALUE_TYPE_LIST => serde_json::json!([]),
+        _ => serde_json::json!({}),
+    }
+}
+
+/// 主控可下发的交互类型。模型没给或给错时按模式兜底：
+/// world_sim 默认给 choice（否则世界永远发不出选项），agent_chat 本身不支持交互，保持空。
+fn normalize_interaction_kinds(mode: &str, values: &[String]) -> Vec<String> {
+    let is_supported = |value: &str| {
+        matches!(
+            value,
+            INTERACTION_KIND_CHOICE
+                | INTERACTION_KIND_MULTI_CHOICE
+                | INTERACTION_KIND_FORM
+                | INTERACTION_KIND_CONFIRM
+                | INTERACTION_KIND_SLIDER
+        )
+    };
+    let mut kinds: Vec<String> = values
+        .iter()
+        .map(|value| clean(value))
+        .filter(|value| !value.is_empty() && is_supported(value))
+        .collect();
+    kinds.dedup();
+    if kinds.is_empty() && mode == "multi_agent" {
+        kinds.push(INTERACTION_KIND_CHOICE.to_string());
+    }
+    kinds
 }
 
 fn parse_draft_json(raw: &str) -> Result<AiWorldDraft, String> {
@@ -500,24 +730,6 @@ fn normalize_map_nodes(value: &serde_json::Value, opening_scene: &str) -> serde_
     })
 }
 
-fn normalize_triggers(values: Vec<String>, concept: &str) -> Vec<String> {
-    let mut output = normalize_list(values);
-    if output.is_empty() {
-        output.extend(
-            concept
-                .split(|c: char| c.is_whitespace() || ",.;:!?，。；、！？".contains(c))
-                .map(str::trim)
-                .filter(|item| item.chars().count() >= 2)
-                .take(5)
-                .map(str::to_string),
-        );
-    }
-    if output.is_empty() {
-        output.push("\u{5f00}\u{59cb}".to_string());
-    }
-    output
-}
-
 fn normalize_list(values: Vec<String>) -> Vec<String> {
     let mut output = Vec::new();
     for value in values {
@@ -538,5 +750,118 @@ fn fallback(value: String, fallback: &str) -> String {
         fallback.to_string()
     } else {
         value
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn draft_from(json: &str) -> AiWorldDraft {
+        parse_draft_json(json).expect("draft should parse")
+    }
+
+    #[test]
+    fn interaction_kinds_default_to_choice_for_world_sim() {
+        assert_eq!(
+            normalize_interaction_kinds("multi_agent", &[]),
+            vec![INTERACTION_KIND_CHOICE.to_string()]
+        );
+    }
+
+    #[test]
+    fn interaction_kinds_stay_empty_for_agent_chat() {
+        // agent_chat 走角色回复链路，根本不解析主控 interaction，留空才是对的。
+        assert!(normalize_interaction_kinds("single_agent", &[]).is_empty());
+    }
+
+    #[test]
+    fn interaction_kinds_drop_unknown_entries_and_dedupe() {
+        let kinds = normalize_interaction_kinds(
+            "multi_agent",
+            &[
+                "form".to_string(),
+                "form".to_string(),
+                "teleport".to_string(),
+                "  ".to_string(),
+            ],
+        );
+        assert_eq!(kinds, vec!["form".to_string()]);
+    }
+
+    #[test]
+    fn output_budget_never_exceeds_model_setting() {
+        // 用户在设置里把 max_tokens 调到 500，生成器不许偷偷抬到下限 1200。
+        let ceiling = 6000i32;
+        assert_eq!(500i32.min(ceiling), 500);
+        // 上限仍然生效：给一个极大的值也不该原样发出去。
+        assert_eq!(64_000i32.min(16_000), 16_000);
+    }
+
+    #[test]
+    fn default_value_is_coerced_to_the_declared_type() {
+        // 模型经常给错类型（text 字段填数字、number 字段留空）。
+        assert_eq!(
+            coerce_default_value(ATTRIBUTE_VALUE_TYPE_TEXT, &serde_json::json!(42)),
+            serde_json::json!("")
+        );
+        assert_eq!(
+            coerce_default_value(ATTRIBUTE_VALUE_TYPE_NUMBER, &serde_json::Value::Null),
+            serde_json::json!(0)
+        );
+        assert_eq!(
+            coerce_default_value(ATTRIBUTE_VALUE_TYPE_BOOLEAN, &serde_json::json!("true")),
+            serde_json::json!(false)
+        );
+        // 类型对得上就原样保留。
+        assert_eq!(
+            coerce_default_value(ATTRIBUTE_VALUE_TYPE_NUMBER, &serde_json::json!(7)),
+            serde_json::json!(7)
+        );
+    }
+
+    #[test]
+    fn draft_tolerates_missing_optional_blocks() {
+        // 只给必填字段：可选块全部缺省，且 characters 缺失也不该让整个解析失败。
+        let draft = draft_from(
+            r#"{"world":{"name":"n","genre":"g","background_prompt":"b","opening_scene":"s","summary":"m","time_system":"t"}}"#,
+        );
+        assert!(draft.characters.is_empty());
+        assert!(draft.world.attribute_schemas.is_empty());
+        assert!(draft.world.director_interaction_kinds.is_empty());
+    }
+
+    #[test]
+    fn draft_reads_player_and_attribute_schemas() {
+        let draft = draft_from(
+            r#"{
+                "world":{
+                    "name":"n","genre":"g","background_prompt":"b","opening_scene":"s",
+                    "summary":"m","time_system":"t",
+                    "player_character":"阿宁",
+                    "director_interaction_kinds":["choice"],
+                    "attribute_schemas":[
+                        {"key":"health","label":"体力","value_type":"number","default_value":100}
+                    ]
+                },
+                "characters":[{"name":"阿宁","role":"主角","background_prompt":"x"}]
+            }"#,
+        );
+        assert_eq!(draft.world.player_character, "阿宁");
+        assert_eq!(
+            normalize_interaction_kinds("multi_agent", &draft.world.director_interaction_kinds),
+            vec![INTERACTION_KIND_CHOICE.to_string()]
+        );
+        assert_eq!(draft.world.attribute_schemas.len(), 1);
+        assert_eq!(draft.world.attribute_schemas[0].key, "health");
+    }
+
+    #[test]
+    fn fenced_json_is_recovered() {
+        // json_mode 关闭后模型常带```json 围栏，解析必须仍然成功。
+        let draft = draft_from(
+            "```json\n{\"world\":{\"name\":\"n\",\"genre\":\"g\",\"background_prompt\":\"b\",\"opening_scene\":\"s\",\"summary\":\"m\",\"time_system\":\"t\"}}\n```",
+        );
+        assert_eq!(draft.world.name, "n");
     }
 }
