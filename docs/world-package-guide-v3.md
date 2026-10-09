@@ -1786,27 +1786,47 @@ v2 数据不会被删除。当前迁移层会：
 5. 为关键节点补充作者自己的 `class_name`。
 6. 在桌面和 Android 真机分别检查 safe area、键盘、滚动和消息动作。
 
-仓库保留两套迁移基线：
+应用内置两个世界，可作为 v3 写法与迁移基线的参照：
 
 ### 飞花令夜宴
+
+多智能体古典诗词雅集。它没有显式声明 `service_mode`，因此按默认值走 `world_sim`。
 
 - `src-tauri/src/db/seeds/assets/poetry-desktop-ui.jsonc`
 - `src-tauri/src/db/seeds/assets/poetry-mobile-ui.jsonc`
 - `src-tauri/src/db/seeds/feihualing_world.rs`
 
-### 日程助手
+### 行程助手
+
+单助手提醒向，显式声明 `service_mode: agent_chat`，示范纯角色链路与世界记录的分工。
 
 - `src-tauri/src/db/seeds/assets/schedule-assistant-desktop-ui.jsonc`
 - `src-tauri/src/db/seeds/assets/schedule-assistant-mobile-ui.jsonc`
 - `src-tauri/src/db/seeds/schedule_assistant_world.rs`
 
-另有一个无模型、受控持久化的完整世界包示例，可直接导入试用：
+### 教程参考世界包
 
-- [记账助手世界包 ZIP](../output/accounting-assistant-world.zip)
+本教程的完整参考实现，可直接导入后对照源码逐字段检查：
 
-模型驱动叙事世界的玩法闭环见[制作手册](world-package-rpg-cookbook.md)，其中记录的演示链路是：`director_interaction_kinds` 允许 `choice` → 主控输出固定 ID 选项 → 玩家点击后宿主写成真实消息并自动开启下一回合 → 主控从 `current_state.runtime_attributes` 读取状态、用 `character_attribute_updates` 写回路线与数值 → `side_panel_tabs` 展示同一份权威属性。
+- [凡人修仙：小石村问道](../output/mortal-cultivation-journey-world.zip)
 
-注意该闭环**不涉及沙箱逻辑**：`logic` 为空对象、manifest 无 `logic_file`，所以它不演示 `logic.run` / `logic.events` / 会话 KV / `{{var:key}}` 注入。需要看沙箱逻辑闭环时，导入 [healthy-life 世界包 ZIP](../output/healthy-life-world.zip)（含 `world/logic.js`）。
+它是一个多智能体叙事 RPG，覆盖了本教程的大部分关键点：
+
+| 主题 | 示范内容 |
+|---|---|
+| 主控交互 | `director_interaction_kinds` 声明 `choice` / `confirm` / `slider` |
+| 世界属性 | 17 条 `attribute_schemas`（9 number / 5 text / 3 list），示范 `session_character` 作用域——数值随角色在每局会话内变化 |
+| 开局物品 | `initial_inventory_items` 3 件 |
+| 双入口 | runtime v3，桌面与移动各一份完整 UI 文档与样式表 |
+
+玩法闭环的讲解见[叙事 RPG 制作手册](world-package-rpg-cookbook.md)：主控输出固定 ID 选项 → 玩家点击后宿主写成真实消息并自动开启下一回合 → 主控从 `current_state.runtime_attributes` 读取状态、用 `character_attribute_updates` 写回路线与数值 → `side_panel_tabs` 展示同一份权威属性。
+
+另有两个补充示例包：
+
+- [记账助手](../output/accounting-assistant-world.zip)——无模型、受控持久化，演示 `ledger_book` 与 world records
+- [健康生活](../output/healthy-life-world.zip)——含 `world/logic.js`，是 `logic.run` / `logic.events` 的唯一参考实现
+
+注意这两个补充包**不覆盖**主控交互与世界属性，需要的写法看凡人修仙传包。
 
 `frontend/src/data/gameUi/migration.test.ts` 会逐字验证四份文档在迁移后未改变，并验证桌面与移动入口保持独立。
 
