@@ -1823,20 +1823,20 @@ v2 数据不会被删除。当前迁移层会：
 
 ### 本地示例世界包目录
 
-仓库工作区里另有一份完整源码目录 `examples/world-packages/`，包含全部 6 个示例包的可编辑工程：
+仓库工作区里另有一份完整源码目录 `examples/world-packages/`，包含全部 6 个示例包的可编辑工程。**导入后你在应用里看到的世界名**如下表「世界名」一列——目录名和 zip 名都是英文，容易对不上：
 
-| 目录 | 对应可导入包 | 侧重 |
-|---|---|---|
-| `mortal-cultivation-journey/` | `output/mortal-cultivation-journey-world.zip` | 多智能体叙事 RPG，本教程的主参考 |
-| `accounting-assistant/` | `output/accounting-assistant-world.zip` | 无模型记账：`ledger_book` + world records |
-| `healthy-life/` | `output/healthy-life-world.zip` | `logic.js` 沙箱逻辑、`logic.events` |
-| `stock-analyst/` | `output/stock-analyst-world.zip` | v8 内嵌 MCP 工具包|
-| `stock-council/` | `output/stock-council-world.zip` | 多角色辩论 + MCP 工具 |
-| `narrative-rpg-starter/` | 无（仅源码） | 最小可玩骨架，适合从零改写 |
+| 目录 | 世界名（应用内显示） | 对应可导入包 | 侧重 |
+|---|---|---|---|
+| `mortal-cultivation-journey/` | **凡人修仙：小石村问道** | `output/mortal-cultivation-journey-world.zip` | 多智能体叙事 RPG，本教程的主参考 |
+| `accounting-assistant/` | **记账助手** | `output/accounting-assistant-world.zip` | 无模型记账：`ledger_book` + world records |
+| `healthy-life/` | **健康生活** | `output/healthy-life-world.zip` | `logic.js` 沙箱逻辑、`logic.events` |
+| `stock-analyst/` | **A股投研助手** | `output/stock-analyst-world.zip` | v8 内嵌 MCP 工具包 |
+| `stock-council/` | **A股投研议事厅** | `output/stock-council-world.zip` | 多角色议事 + MCP 工具 |
+| `narrative-rpg-starter/` | **甲子风云** | 无（仅源码） | 最小可玩骨架，适合从零改写 |
 
 两点需要注意：
 
-- **这6 个目录不在 GitHub 上**。`.gitignore` 里排除了 `/examples/`，对外只发布 `output/*.zip`；两者内容逐字节一致，改了源码记得重新打包。
+- **这 6 个目录不在 GitHub 上**。`.gitignore` 里排除了 `/examples/`，对外只发布 `output/*.zip`；两者内容逐字节一致，改了源码记得重新打包。
 - 想直接改的话，进入包目录后把 `manifest.json`、`world/`、`characters/` 压到 ZIP **根目录**（不要多套一层文件夹），否则导入会报 `Invalid manifest: specified file not found in archive`。用 `scripts/pack_world_zip.py` 可以避免出错。
 
 另有两个不覆盖主控交互与世界属性的补充包：[记账助手](../output/accounting-assistant-world.zip)、[健康生活](../output/healthy-life-world.zip)。

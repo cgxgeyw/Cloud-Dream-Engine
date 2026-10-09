@@ -44,8 +44,8 @@ World packs are portable, declarative content bundles rather than native plugins
 - World pack import/export
 - World package version 8: declared `records` / `kv` storage, embedded MCP tool definitions, optional `sandbox-js-v1` logic with event handlers (`logic.events`)
 - Registered world UI components including `ledger_book` (a model-free ledger with entry editing and day/month/year reports)
-- The tutorial's reference world package: [mortal cultivation journey](output/mortal-cultivation-journey-world.zip) — a multi-agent narrative RPG demonstrating director interactions (`choice` / `confirm` / `slider`), 17 world attribute schemas and an opening inventory
-- Two supplementary packages: [accounting assistant](output/accounting-assistant-world.zip) (model-free ledger over world records) and [healthy life](output/healthy-life-world.zip) (the only reference for `logic.js` sandbox logic)
+- The tutorial's reference world package: [凡人修仙：小石村问道](output/mortal-cultivation-journey-world.zip) — a multi-agent narrative RPG demonstrating director interactions (`choice` / `confirm` / `slider`), 17 world attribute schemas and an opening inventory
+- Two supplementary packages: [记账助手](output/accounting-assistant-world.zip) (model-free ledger over world records) and [健康生活](output/healthy-life-world.zip) (the only reference for `logic.js` sandbox logic)
 - A task-oriented [narrative RPG authoring cookbook](docs/world-package-rpg-cookbook.md)
 - Light/dark mode, multiple visual styles, and a platform language toggle (中文 / English)
 
