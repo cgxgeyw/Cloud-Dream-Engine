@@ -1657,6 +1657,22 @@ fn infer_dependencies_from_value(value: &Value, path: &str, state: &mut Compilat
     }
 }
 
+/// 表达式里可调用的函数名。前端求值器（`frontend/src/gameUiRuntime/expression.ts`）
+/// 里有同名闭集白名单；这里只负责提前拦住不在白名单内的调用，让作者拿到明确错误码
+/// 而不是等到运行时才失败。两处必须同步维护。
+const EXPRESSION_FUNCTION_IDS: &[&str] = &[
+    "math_min",
+    "math_max",
+    "math_abs",
+    "math_floor",
+    "math_ceil",
+    "math_round",
+    "math_random",
+    "math_random_int",
+    "math_clamp",
+    "math_lerp",
+];
+
 fn validate_expression(expr: &str, path: &str, state: &mut CompilationState) {
     let trimmed = expr.trim();
     if trimmed.is_empty() {
@@ -1664,15 +1680,34 @@ fn validate_expression(expr: &str, path: &str, state: &mut CompilationState) {
         return;
     }
 
-    let function_like = Regex::new(r"[A-Za-z_][A-Za-z0-9_]*\s*\(").expect("function regex");
     let illegal = Regex::new(r"[`\[\]{};?]|=>").expect("illegal expression regex");
 
-    if illegal.is_match(trimmed) || function_like.is_match(trimmed) {
+    if illegal.is_match(trimmed) {
         state.error(
             "unsafe_expression",
             "expr contains syntax that is outside the supported safe expression subset.",
             path,
         );
+    }
+
+    // 函数调用是允许的，但只能调白名单里的名字：世界包是外部输入，
+    // 任意函数调用等于给它 eval。未知名字在这里就报出来，作者不必等运行时。
+    let function_like = Regex::new(r"([A-Za-z_][A-Za-z0-9_]*)\s*\(").expect("function regex");
+    for capture in function_like.captures_iter(trimmed) {
+        let Some(matched) = capture.get(1) else {
+            continue;
+        };
+        let name = matched.as_str();
+        if !EXPRESSION_FUNCTION_IDS.contains(&name) {
+            state.error(
+                "unknown_expression_function",
+                format!(
+                    "expr calls {name}(), which is not in the allowed function list: {}.",
+                    EXPRESSION_FUNCTION_IDS.join(", ")
+                ),
+                path,
+            );
+        }
     }
 
     for capability in capability_ids() {

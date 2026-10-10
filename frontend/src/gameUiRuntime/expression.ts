@@ -6,11 +6,55 @@ type Token =
   | { type: "number"; value: number }
   | { type: "boolean"; value: boolean }
   | { type: "null"; value: null }
-  | { type: "operator"; value: "==" | "!=" | ">" | ">=" | "<" | "<=" | "&&" | "||" }
-  | { type: "paren"; value: "(" | ")" };
+  | { type: "operator"; value: "==" | "!=" | ">" | ">=" | "<" | "<=" | "&&" | "||" | "+" | "-" | "*" | "/" | "%" }
+  | { type: "paren"; value: "(" | ")" }
+  | { type: "comma"; value: "," };
 
 type OperatorToken = Extract<Token, { type: "operator" }>;
 type ComparisonOperator = "==" | "!=" | ">" | ">=" | "<" | "<=";
+type ArithmeticOperator = "+" | "-" | "*" | "/" | "%";
+
+/**
+ * 可在表达式里调用的函数。刻意做成**闭集白名单**而不是任意求值：
+ * 世界包是外部输入，`eval` 或任意函数调用会把它变成逃逸口。
+ * 新增函数必须同时登记到后端 `validate_expression` 的同名清单。
+ *
+ * 统一签名收成 (...args: number[]) 让分派处不必为不同形参数量写重载；
+ * 各函数内部自己做参数个数校验。
+ */
+type GameUiExpressionFunction = (...args: number[]) => unknown;
+
+const GAME_UI_EXPRESSION_FUNCTIONS: Record<string, GameUiExpressionFunction> = {
+  math_min: (...args) => Math.min(...args),
+  math_max: (...args) => Math.max(...args),
+  math_abs: (value) => Math.abs(value),
+  math_floor: (value) => Math.floor(value),
+  math_ceil: (value) => Math.ceil(value),
+  math_round: (value) => Math.round(value),
+  /** 0~1 随机小数。每次求值重新掷。 */
+  math_random: () => Math.random(),
+  /** [min, max] 闭区间随机整数；只传一个参数时返回 0~该值的整数。 */
+  math_random_int: (min, max) => {
+    const low = max === undefined ? 0 : Math.ceil(Number(min));
+    const high = max === undefined ? Math.floor(Number(min)) : Math.floor(Number(max));
+    if (!Number.isFinite(low) || !Number.isFinite(high) || high < low) {
+      return low;
+    }
+    return low + Math.floor(Math.random() * (high - low + 1));
+  },
+  math_clamp: (value, min, max) => Math.min(Math.max(value, min), max),
+  /** 线性插值，t 取 0~1；超出范围自动夹紧。 */
+  math_lerp: (from, to, t) => from + (to - from) * Math.min(Math.max(t, 0), 1),
+};
+
+const GAME_UI_EXPRESSION_FUNCTION_NAMES = new Set<string>(
+  Object.keys(GAME_UI_EXPRESSION_FUNCTIONS),
+);
+
+/** 供文档与后端核对：可调用的函数名清单。 */
+export const GAME_UI_EXPRESSION_FUNCTION_IDS: readonly string[] = [
+  ...GAME_UI_EXPRESSION_FUNCTION_NAMES,
+];
 
 export function evaluateGameUiExpression(
   expression: string,
@@ -71,15 +115,45 @@ function createParser(tokens: Token[], scope: GameUiExpressionScope) {
   }
 
   function parseComparison(): unknown {
-    let left = parsePrimary();
+    let left = parseAdditive();
 
     while (isComparisonToken(peek())) {
       const operator = (consume() as OperatorToken).value as ComparisonOperator;
-      const right = parsePrimary();
+      const right = parseAdditive();
       left = applyComparison(left, operator, right);
     }
 
     return left;
+  }
+
+  /** 加减：优先级低于比较，高于乘除模。 */
+  function parseAdditive(): unknown {
+    let left = parseMultiplicative();
+    while (isArithmeticToken(peek()) && (peek() as OperatorToken).value !== "*" && (peek() as OperatorToken).value !== "/" && (peek() as OperatorToken).value !== "%") {
+      const operator = (consume() as OperatorToken).value as ArithmeticOperator;
+      const right = parseMultiplicative();
+      left = applyArithmetic(left, operator, right);
+    }
+    return left;
+  }
+
+  function parseMultiplicative(): unknown {
+    let left = parseUnary();
+    while (isArithmeticToken(peek()) && (peek() as OperatorToken).value !== "+" && (peek() as OperatorToken).value !== "-") {
+      const operator = (consume() as OperatorToken).value as ArithmeticOperator;
+      const right = parseUnary();
+      left = applyArithmetic(left, operator, right);
+    }
+    return left;
+  }
+
+  /** 一元负号，让 `-1` 与 `hp - 1` 里的负号都能解析。 */
+  function parseUnary(): unknown {
+    if (peek()?.type === "operator" && (peek() as OperatorToken).value === "-") {
+      consume();
+      return applyArithmetic(0, "-", parseUnary());
+    }
+    return parsePrimary();
   }
 
   function parsePrimary(): unknown {
@@ -95,6 +169,10 @@ function createParser(tokens: Token[], scope: GameUiExpressionScope) {
     }
 
     if (token.type === "identifier") {
+      // 函数调用：标识符后紧跟左括号。只认白名单里的名字。
+      if (peek()?.type === "paren" && peek()?.value === "(") {
+        return parseFunctionCall(token.value);
+      }
       return resolveExpressionPath(scope, token.value);
     }
 
@@ -107,6 +185,35 @@ function createParser(tokens: Token[], scope: GameUiExpressionScope) {
     }
 
     throw new Error("表达式中出现意外标记。");
+  }
+
+  function parseFunctionCall(name: string): unknown {
+    if (!GAME_UI_EXPRESSION_FUNCTION_NAMES.has(name)) {
+      throw new Error(`表达式不支持调用 ${name}()。`);
+    }
+    consume(); // 吃掉左括号
+
+    const args: unknown[] = [];
+    if (peek()?.type === "paren" && peek()?.value === ")") {
+      consume();
+    } else {
+      for (;;) {
+        args.push(parseExpression());
+        const next = peek();
+        if (next?.type === "comma") {
+          consume();
+          continue;
+        }
+        if (next?.type === "paren" && next.value === ")") {
+          consume();
+          break;
+        }
+        throw new Error("表达式函数调用的参数列表不完整。");
+      }
+    }
+
+    const fn = GAME_UI_EXPRESSION_FUNCTIONS[name];
+    return fn(...(args as number[]));
   }
 
   return {
@@ -127,13 +234,19 @@ function tokenizeGameUiExpression(expression: string): Token[] {
       continue;
     }
 
-    const operatorMatch = expression.slice(cursor).match(/^(==|!=|>=|<=|&&|\|\||>|<)/);
+    const operatorMatch = expression.slice(cursor).match(/^(==|!=|>=|<=|&&|\|\||[+\-*/%]|>|<)/);
     if (operatorMatch) {
       tokens.push({
         type: "operator",
         value: operatorMatch[1] as OperatorToken["value"],
       });
       cursor += operatorMatch[1].length;
+      continue;
+    }
+
+    if (char === ",") {
+      tokens.push({ type: "comma", value: "," });
+      cursor += 1;
       continue;
     }
 
@@ -231,6 +344,52 @@ function resolveExpressionPath(scope: GameUiExpressionScope, path: string): unkn
 
 function isComparisonToken(token: Token | undefined): token is Extract<Token, { type: "operator" }> & { value: ComparisonOperator } {
   return token?.type === "operator" && isComparisonOperator(token.value);
+}
+
+function isArithmeticToken(token: Token | undefined): token is Extract<Token, { type: "operator" }> & { value: ArithmeticOperator } {
+  if (token?.type !== "operator") {
+    return false;
+  }
+  const value = token.value;
+  return value === "+" || value === "-" || value === "*" || value === "/" || value === "%";
+}
+
+function toArithmeticNumber(value: unknown): number {
+  if (typeof value === "number") {
+    return value;
+  }
+  if (typeof value === "boolean") {
+    return value ? 1 : 0;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
+/**
+ * 算术求值。`+` 遇到字符串走拼接（与 JS 一致，方便拼展示文案），
+ * 其余运算符把操作数转成数字；转换失败得到 NaN，交给上层比较自然为 false。
+ */
+function applyArithmetic(left: unknown, operator: ArithmeticOperator, right: unknown): unknown {
+  if (operator === "+" && (typeof left === "string" || typeof right === "string")) {
+    return `${left ?? ""}${right ?? ""}`;
+  }
+
+  const a = toArithmeticNumber(left);
+  const b = toArithmeticNumber(right);
+
+  switch (operator) {
+    case "+":
+      return a + b;
+    case "-":
+      return a - b;
+    case "*":
+      return a * b;
+    case "/":
+      // 除零得 Infinity 而非抛错：条件里出现它只会让比较为真/为假，不该炸掉整页。
+      return a / b;
+    case "%":
+      return b === 0 ? Number.NaN : a % b;
+  }
 }
 
 function isComparisonOperator(

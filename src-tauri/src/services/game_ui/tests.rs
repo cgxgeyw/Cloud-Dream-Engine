@@ -444,3 +444,74 @@
             .iter()
             .any(|diagnostic| diagnostic.code == "invalid_svg_primitive"));
     }
+
+    #[test]
+    fn accepts_whitelisted_expression_functions() {
+        let service = GameUiService::new();
+        let source = r##"{
+            "schema_version": 2,
+            "layout": {
+                "root": {
+                    "type": "when",
+                    "expr": "math_random_int(1, 6) >= 4 && math_clamp(150, 0, 100) == 100",
+                    "child": { "type": "text", "text": "high roll" }
+                }
+            }
+        }"##;
+
+        let result = service.validate_world_ui_document(WorldUiDocumentRequest {
+            source: source.to_string(),
+            platform: Some("desktop".to_string()),
+        });
+        assert!(result.ok, "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn rejects_expression_functions_outside_the_whitelist() {
+        let service = GameUiService::new();
+        let source = r##"{
+            "schema_version": 2,
+            "layout": {
+                "root": {
+                    "type": "when",
+                    "expr": "fetch('https://example.com') == 1",
+                    "child": { "type": "text", "text": "nope" }
+                }
+            }
+        }"##;
+
+        let result = service.validate_world_ui_document(WorldUiDocumentRequest {
+            source: source.to_string(),
+            platform: Some("desktop".to_string()),
+        });
+        assert!(!result.ok);
+        assert!(result
+            .errors
+            .iter()
+            .any(|diagnostic| diagnostic.code == "unknown_expression_function"));
+    }
+
+    #[test]
+    fn still_rejects_backtick_and_bracket_syntax_in_expressions() {
+        let service = GameUiService::new();
+        let source = r##"{
+            "schema_version": 2,
+            "layout": {
+                "root": {
+                    "type": "when",
+                    "expr": "state.hp[0] > 0",
+                    "child": { "type": "text", "text": "nope" }
+                }
+            }
+        }"##;
+
+        let result = service.validate_world_ui_document(WorldUiDocumentRequest {
+            source: source.to_string(),
+            platform: Some("desktop".to_string()),
+        });
+        assert!(!result.ok);
+        assert!(result
+            .errors
+            .iter()
+            .any(|diagnostic| diagnostic.code == "unsafe_expression"));
+    }

@@ -918,9 +918,43 @@ NPC 发言时，宿主按以下顺序拼接系统提示：
 }
 ```
 
-支持：`==`、`!=`、`>`、`>=`、`<`、`<=`、`&&`、`||`、括号、字符串、数字、布尔值、`null` 和点路径。
+支持的运算符：比较 `==`、`!=`、`>`、`>=`、`<`、`<=`，逻辑 `&&`、`||`，算术 `+`、`-`、`*`、`/`、`%`，以及一元负号。优先级从低到高是`||` → `&&` → 比较 → 加减 → 乘除模 → 一元负号。`/` 除零得 `Infinity`、`%` 除零得 `NaN`，不会抛错。
 
-不支持：函数调用、数组下标、模板字符串、对象字面量、赋值和任意 JavaScript。
+绑定值要写 `$` 前缀；循环变量和 `when` 的 `expr` 里**不要**写 `$`。
+
+除上述运算符外，还可调用一组**白名单函数**（闭集，不在名单内的调用会在导入时报 `unknown_expression_function`）：
+
+| 函数 | 用途 |
+|---|---|
+| `math_min(a, b, ...)` / `math_max(a, b, ...)` | 多值最小 / 最大 |
+| `math_abs(x)` | 绝对值 |
+| `math_floor(x)` / `math_ceil(x)` / `math_round(x)` | 取整 |
+| `math_clamp(x, min, max)` | 夹紧到区间 |
+| `math_lerp(from, to, t)` | 线性插值，`t` 取 0~1，超出自动夹紧 |
+| `math_random()` | 0~1 随机小数 |
+| `math_random_int(min, max)` | `[min, max]` 闭区间随机整数；只写一个参数时返回 0~该值 |
+
+> **随机数每次求值都会重新掷。** 同一次渲染里多处引用 `math_random()` 会得到不同值——适合「概率判定」「抽格子」这类一次性结果，但**不适合**做需要在一帧内保持稳定的视觉量（比如用一个随机数决定整个血条宽度，再在三个地方读它）。后者请把它算好写进 `set_state`，再用 `$state.key` 读。
+
+算术与函数的典型用法：
+
+```jsonc
+{
+  "type": "when",
+  "expr": "math_round(attributes.hp * 100 / attributes.max_hp) <= 30",
+  "child": { "type": "badge", "text": "危险", "variant": "warning" }
+}
+```
+
+```jsonc
+{
+  "type": "when",
+  "expr": "math_random_int(1, 6) >= 5",
+  "child": { "type": "text", "text": "掷出了高点数" }
+}
+```
+
+不支持：数组下标、模板字符串、对象字面量、赋值和任意 JavaScript。反引号、方括号、花括号、分号、问号在导入时直接报`unsafe_expression`。
 
 ### `for_each`
 
@@ -1824,7 +1858,8 @@ div.game-ui-component[data-component="message_list"]  ← class_name
 | `misplaced_component_prop` | 把组件 prop 写在节点顶层 | 将字段移入同一节点的 `props` 对象 |
 | `unknown_action` | action ID 不存在 | 检查动作表 |
 | `invalid_binding` | binding 不是简单点路径 | 使用 `$session.location` 形式 |
-| `unsafe_expression` | `when` 中出现函数、下标或脚本语法 | 改用安全表达式子集 |
+| `unsafe_expression` | `when` 中出现反引号、下标或脚本语法 | 改用安全表达式子集（第 7 节 `when`） |
+| `unknown_expression_function` | `when` 调用了白名单外的函数 | 只能用 `math_min` / `math_max` / `math_abs` / `math_floor` / `math_ceil` / `math_round` / `math_clamp` / `math_lerp` / `math_random` / `math_random_int` |
 | `stylesheet_too_large` | 单份 stylesheet 超过 1 MiB | 拆减 CSS 和内嵌数据 |
 | `unsupported_declared_capability` | 声明未知能力 | 使用当前五种 capability |
 | `invalid_world_storage_config` | `storage` 不是合法对象或名称不合规 | 检查 collection/namespace 名称和结构 |
