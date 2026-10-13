@@ -223,6 +223,9 @@ impl SessionOrchestrator {
                     speaker_model.streaming_enabled
                         && !speaker_request.native_tool_calling.unwrap_or(false),
                 );
+                crate::services::world_logic::apply_agent_turn_tool_choice(
+                    conn, world, session_id, speaker_name, &mut speaker_request,
+                )?;
                 let speaker_provider = normalize_provider_name(&speaker_model.provider);
                 let speaker_request_value = serde_json::json!({
                     "provider": speaker_provider,
@@ -316,15 +319,37 @@ impl SessionOrchestrator {
                 Ok(response) => {
                     // 工具循环：与主控路同键同钳制（director_tool_loop_limit，默认 4、
                     // 范围 1-12）。此前角色路只做一轮 follow-up，模型无法「查完再追问」。
-                    let tool_loop_limit = crate::services::game_engine::director::
+                    let mut tool_loop_limit = crate::services::game_engine::director::
                         WorldDirectorService::new()
                         .resolve_tool_loop_limit(world);
+                    if !crate::services::world_logic::tool_definitions(world).is_empty() {
+                        tool_loop_limit = tool_loop_limit.max(32);
+                    }
                     let notification_allowed =
                         world_allows_mcp_tool(world, MCP_TOOL_SCHEDULE_NOTIFICATION_ID);
                     let mut response = response;
                     let mut active_request = speaker_request.clone();
                     let mut all_tool_results: Vec<SpeakerNotificationToolResult> = Vec::new();
                     for _ in 0..tool_loop_limit {
+                        // Recover before dispatch: a retry may return a tool call rather than dialogue.
+                        // Keeping recovery inside the loop ensures that call is actually executed.
+                        if let Some(retry_request) = build_speaker_budget_retry_request(&active_request, &response) {
+                            if let Ok(retry_response) = llm_client
+                                .chat_completion(
+                                    &speaker_provider,
+                                    &speaker_model.base_url,
+                                    &speaker_model.api_key,
+                                    &retry_request,
+                                )
+                                .await
+                            {
+                                active_request = retry_request;
+                                response = retry_response;
+                                streamed_raw_response.clear();
+                                streamed_reasoning.clear();
+                                streamed_partial = None;
+                            }
+                        }
                         // 工具执行前先广播一次「谁在调用什么工具」的占位进度，
                         // 让前端在（非流式的）工具决策阶段也有可见反馈。
                         if let Some(calls) = response
@@ -362,6 +387,20 @@ impl SessionOrchestrator {
                             }
                         }
                         let mut round_results = Vec::new();
+                        for call in response.tool_calls.as_deref().unwrap_or(&[]) {
+                            if let Some(handler) = crate::services::world_logic::tool_handler(world, &call.tool_name, speaker_name) {
+                                let guard = db.lock().await;
+                                let result = crate::services::world_logic::invoke(guard.conn(), world, session_id,
+                                    &handler, call.arguments.clone(), "agent");
+                                round_results.push(SpeakerNotificationToolResult {
+                                    call: call.clone(),
+                                    result: match result {
+                                        Ok(value) => serde_json::json!({"ok": true, "result": value}),
+                                        Err(error) => serde_json::json!({"ok": false, "error": error}),
+                                    },
+                                });
+                            }
+                        }
                         if notification_allowed {
                             let db_guard = db.lock().await;
                             round_results.extend(execute_speaker_notification_tool_calls(
@@ -389,12 +428,18 @@ impl SessionOrchestrator {
                         if round_results.is_empty() {
                             break;
                         }
-                        let followup_request = build_speaker_tool_followup_request(
+                        let mut followup_request = build_speaker_tool_followup_request(
                             &active_request,
                             &response,
                             &round_results,
                             speaker_model.streaming_enabled,
                         );
+                        {
+                            let guard = db.lock().await;
+                            crate::services::world_logic::apply_agent_turn_tool_choice(
+                                guard.conn(), world, session_id, speaker_name, &mut followup_request,
+                            )?;
+                        }
                         all_tool_results.extend(round_results);
                         // 追问保留工具（模型可补调失败/遗漏的工具）且按模型配置
                         // 流式：玩家在「查完数据写回复」阶段能看到思维链与正文逐字
@@ -472,36 +517,6 @@ impl SessionOrchestrator {
                         }
                     }
                     let notification_tool_results = all_tool_results;
-                    // max_tokens 预算被思维链烧光时（finish_reason=length 且正文一个字都没
-                    // 出来），静默落到「没有台词」占位会掩盖真实原因。用放大的预算非流式
-                    // 自动重试一次：同样的消息再生成一遍，多数情况下能拿到完整正文。
-                    if response.content.trim().is_empty()
-                        && response
-                            .tool_calls
-                            .as_deref()
-                            .map(|calls| calls.is_empty())
-                            .unwrap_or(true)
-                        && response.finish_reason.as_deref() == Some("length")
-                    {
-                        let current_max = active_request.generation.max_tokens.unwrap_or(0);
-                        let bumped_max = current_max.saturating_mul(4).clamp(4096, 16000);
-                        if bumped_max > current_max {
-                            let mut retry_request = active_request.clone();
-                            retry_request.generation.max_tokens = Some(bumped_max);
-                            retry_request.stream = Some(false);
-                            if let Ok(retry_response) = llm_client
-                                .chat_completion(
-                                    &speaker_provider,
-                                    &speaker_model.base_url,
-                                    &speaker_model.api_key,
-                                    &retry_request,
-                                )
-                                .await
-                            {
-                                response = retry_response;
-                            }
-                        }
-                    }
                     let response = response;
                     let db_guard = db.lock().await;
                     let conn = db_guard.conn();
@@ -940,7 +955,8 @@ async fn execute_speaker_custom_tool_calls(
     let custom_calls = tool_calls
         .unwrap_or(&[])
         .iter()
-        .filter(|call| call.tool_name.trim() != "schedule_notification")
+        .filter(|call| call.tool_name.trim() != "schedule_notification"
+            && !crate::services::world_logic::tool_definitions(world).iter().any(|tool| tool.name == call.tool_name))
         .cloned()
         .collect::<Vec<_>>();
     if custom_calls.is_empty() {
@@ -1148,6 +1164,27 @@ fn summarize_tool_call_arguments(arguments: &serde_json::Value) -> Option<String
 /// native_tool_calling，模型才能对失败或遗漏的工具发起多轮补调（否则模型想
 /// 重试时没有工具可用，容易交白卷——content 只剩空白）。流式按模型配置透传；
 /// openai 流式路径支持工具调用增量累积，anthropic 不支持时由调用方回退非流式。
+fn build_speaker_budget_retry_request(
+    request: &crate::services::llm::client::ChatRequest,
+    response: &crate::services::llm::client::ChatResponse,
+) -> Option<crate::services::llm::client::ChatRequest> {
+    if !response.content.trim().is_empty()
+        || response.tool_calls.as_ref().is_some_and(|calls| !calls.is_empty())
+        || !response.is_truncated_by_token_limit()
+    {
+        return None;
+    }
+    let current_max = request.generation.max_tokens.unwrap_or(0);
+    let bumped_max = current_max.saturating_mul(4).clamp(4096, 16000);
+    if bumped_max <= current_max {
+        return None;
+    }
+    let mut retry = request.clone();
+    retry.generation.max_tokens = Some(bumped_max);
+    retry.stream = Some(false);
+    Some(retry)
+}
+
 fn build_speaker_tool_followup_request(
     request: &crate::services::llm::client::ChatRequest,
     response: &crate::services::llm::client::ChatResponse,

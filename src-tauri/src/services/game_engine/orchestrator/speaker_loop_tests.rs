@@ -428,6 +428,32 @@ use super::*;
         assert_eq!(streamed.native_tool_calling, Some(true));
     }
 
+    #[test]
+    fn truncated_tool_followup_retries_with_tools_and_keeps_expanded_budget() {
+        let mut request = base_chat_request();
+        request.generation.max_tokens = Some(1200);
+        let truncated = ChatResponse {
+            content: String::new(), reasoning: Some("planning".into()),
+            tool_calls: None, usage: None, finish_reason: Some("length".into()),
+        };
+        let retry = build_speaker_budget_retry_request(&request, &truncated).unwrap();
+        assert_eq!(retry.generation.max_tokens, Some(4800));
+        assert_eq!(retry.stream, Some(false));
+        assert_eq!(retry.tools.as_ref().unwrap().len(), request.tools.as_ref().unwrap().len());
+        let results = sample_tool_results();
+        let recovered = ChatResponse {
+            tool_calls: Some(results.iter().map(|item| item.call.clone()).collect()),
+            finish_reason: Some("tool_calls".into()), ..truncated.clone()
+        };
+        assert!(build_speaker_budget_retry_request(&retry, &recovered).is_none());
+        let followup = build_speaker_tool_followup_request(&retry, &recovered, &results, false);
+        assert_eq!(followup.generation.max_tokens, Some(4800));
+        assert_eq!(followup.messages.last().unwrap().role, "tool");
+        let mut anthropic_truncated = truncated;
+        anthropic_truncated.finish_reason = Some("max_tokens".into());
+        assert!(build_speaker_budget_retry_request(&request, &anthropic_truncated).is_some());
+    }
+
     // ---- fallback_notification_tool_response ----
 
     #[test]

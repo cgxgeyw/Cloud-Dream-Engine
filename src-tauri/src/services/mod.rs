@@ -12,3 +12,4 @@ pub mod platform_features;
 pub mod world_builder;
 pub mod world_package;
 pub mod world_storage;
+pub mod world_logic;

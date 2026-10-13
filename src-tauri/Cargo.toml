@@ -29,6 +29,7 @@ tauri-plugin-native-bridge = { path = "plugins/native-bridge" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 json5 = "0.4"
+rquickjs = "0.9"
 
 # 数据库
 rusqlite = { version = "0.31", features = ["bundled"] }

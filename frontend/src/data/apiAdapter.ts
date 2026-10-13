@@ -457,6 +457,11 @@ export async function verifyWorldPackageUiCompatibility(
     : (await getHttp()).verifyWorldPackageUiCompatibility(payload);
 }
 
+export async function runWorldLogic(worldId: string, sessionId: string, handler: string, input: unknown): Promise<Record<string, unknown>> {
+  if (!isTauri) throw new Error("此世界的权威规则需要在桌面或移动客户端运行。");
+  return (await getTauri()).runWorldLogic(worldId, sessionId, handler, input);
+}
+
 export async function downloadWorldPackage(worldId: string) {
   return isTauri ? (await getTauri()).downloadWorldPackage(worldId) : (await getHttp()).downloadWorldPackage(worldId);
 }

@@ -155,6 +155,15 @@ function normalizeWorldLogicConfig(raw: unknown): WorldLogicConfig {
     entry: typeof value.entry === "string" && value.entry.trim() ? value.entry.trim() : undefined,
     timeout_ms: timeoutMs,
     events: normalizeWorldLogicEvents(value.events),
+    execution: value.execution === "host" ? "host" : undefined,
+    entry_result_state: typeof value.entry_result_state === "string" ? value.entry_result_state : undefined,
+    agent_turn: isPlainObject(value.agent_turn)
+      && typeof value.agent_turn.when_field === "string"
+      && Array.isArray(value.agent_turn.after_handlers)
+      && value.agent_turn.after_handlers.every((v: unknown) => typeof v === "string")
+      && typeof value.agent_turn.message === "string"
+      && typeof value.agent_turn.view_handler === "string"
+      ? value.agent_turn as WorldLogicConfig["agent_turn"] : undefined,
   };
 }
 

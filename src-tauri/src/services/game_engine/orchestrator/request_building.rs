@@ -140,9 +140,12 @@ pub(crate) fn build_character_chat_request(
     );
     // 工具下发与主控路共用同一套生成与转换逻辑：世界授权的自定义 MCP 工具与内置的
     // schedule_notification 一视同仁，不再只硬编码后者。
-    let tools = Some(tool_capabilities_to_chat_definitions(
+    let mut definitions = tool_capabilities_to_chat_definitions(
         &build_character_tool_capabilities(world, mcp_tools),
-    ))
+    );
+    definitions.extend(crate::services::world_logic::tool_definitions(world).into_iter()
+        .filter(|tool| crate::services::world_logic::tool_handler(world, &tool.name, speaker_name).is_some()));
+    let tools = Some(definitions)
     .filter(|items| !items.is_empty());
     let native_tool_calling = tools
         .as_ref()

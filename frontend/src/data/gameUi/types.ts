@@ -66,6 +66,9 @@ export type WorldStorageConfig = {
 export type WorldLogicEventName = "session_start" | "turn_completed" | "interaction_answered";
 
 export type WorldLogicConfig = {
+  execution?: "host";
+  entry_result_state?: string;
+  agent_turn?: { when_field: string; after_handlers: string[]; message: string; view_handler: string };
   runtime: "disabled" | "sandbox-js-v1";
   source: string;
   entry?: string;

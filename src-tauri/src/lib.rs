@@ -76,6 +76,7 @@ pub fn run() {
             commands::platform_features::list_world_feature_grants,
             commands::platform_features::set_world_feature_grant,
             commands::game_ui::validate_world_ui_document,
+            commands::game_ui::invoke_world_logic,
             commands::game_ui::validate_world_ui_bundle,
             commands::game_ui::compile_world_ui_document,
             commands::game_ui::verify_world_package_ui_compatibility,

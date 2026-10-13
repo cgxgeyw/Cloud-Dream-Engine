@@ -515,3 +515,79 @@
             .iter()
             .any(|diagnostic| diagnostic.code == "unsafe_expression"));
     }
+
+    /// 小恶魔的毒酒宴世界包必须通过宿主真实校验器。
+    ///
+    /// 上一轮这个包线上整块牌桌不渲染（绑定写错 + for_each/when 布局属性被丢弃 +
+    /// 缺根高度链），而当时没有任何一层测试覆盖世界包文档。这里把它钉进后端测试，
+    /// 以后改坏会直接在 cargo test 阶段失败，而不是等用户截图。
+    #[test]
+    fn validates_poison_feast_world_package_ui() {
+        let service = GameUiService::new();
+        let desktop = include_str!("../../../../examples/world-packages/poison-feast/world/ui.desktop.jsonc");
+        let mobile = include_str!("../../../../examples/world-packages/poison-feast/world/ui.mobile.jsonc");
+        let desktop_css = include_str!("../../../../examples/world-packages/poison-feast/world/ui.desktop.css");
+        let mobile_css = include_str!("../../../../examples/world-packages/poison-feast/world/ui.mobile.css");
+        let logic_source = include_str!("../../../../examples/world-packages/poison-feast/world/logic.js");
+
+        for (platform, source) in [("desktop", desktop), ("mobile", mobile)] {
+            let result = service.validate_world_ui_document(WorldUiDocumentRequest {
+                source: source.to_string(),
+                platform: Some(platform.to_string()),
+            });
+            assert!(
+                result.ok,
+                "[{platform}] errors: {:?}",
+                result.errors
+            );
+        }
+
+        let bundle = service.validate_world_ui_bundle(WorldUiBundleValidationRequest {
+            desktop_file: desktop.to_string(),
+            mobile_file: mobile.to_string(),
+            runtime_version: Some(3),
+            desktop_stylesheet: desktop_css.to_string(),
+            mobile_stylesheet: mobile_css.to_string(),
+            capabilities: vec!["supports_world_storage".to_string()],
+            storage: serde_json::json!({
+                "kv_namespaces": ["game", "variables"],
+                "collections": {}
+            }),
+            logic: serde_json::json!({
+                "runtime": "sandbox-js-v1",
+                "source": logic_source,
+            }),
+        });
+        assert!(
+            bundle.ok,
+            "bundle errors: {:?}; desktop: {:?}; mobile: {:?}",
+            bundle.errors, bundle.desktop.errors, bundle.mobile.errors
+        );
+    }
+
+    #[test]
+    fn imports_poison_feast_world_package_archive() {
+        use std::io::{Cursor, Write};
+        let package_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../examples/world-packages/poison-feast");
+        let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for name in [
+            "manifest.json", "world/world.json", "world/logic.js",
+            "world/ui.desktop.jsonc", "world/ui.mobile.jsonc",
+            "world/ui.desktop.css", "world/ui.mobile.css",
+            "characters/little-devil/character.json", "assets/bg_tavern.jpg",
+        ] {
+            archive.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+            archive.write_all(&std::fs::read(package_dir.join(name)).unwrap()).unwrap();
+        }
+        let bytes = archive.finish().unwrap().into_inner();
+        let data_dir = std::env::temp_dir().join(format!("poison-feast-import-{}", uuid::Uuid::new_v4()));
+        let result = crate::services::world_package::WorldPackageService::import_package_archive(&data_dir, bytes);
+        if data_dir.exists() {
+            std::fs::remove_dir_all(&data_dir).unwrap();
+        }
+        let imported = result.unwrap_or_else(|error| panic!("package import failed: {error}"));
+        assert_eq!(imported.characters.len(), 1);
+        assert!(imported.desktop_ui_stylesheet.contains(".game-message-row--player"));
+        assert!(imported.mobile_ui_stylesheet.contains(".game-message-row--player"));
+    }

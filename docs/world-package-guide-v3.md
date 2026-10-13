@@ -1365,7 +1365,35 @@ world.register("import.ledger", async (input, api) => {
 }
 ```
 
-每次 `logic.run` 都创建独立 Worker，结束或超时后销毁。超时范围为 100-5000 ms，默认 1000 ms；输入、输出和逻辑源码都有大小限制。Worker CSP 禁止网络，且没有 DOM、父页面、Tauri、Node、文件系统、模型 API 和数据库对象。脚本只能通过上表 SDK 请求宿主操作，宿主和 Rust 后端都会重新检查 collection/namespace 声明。
+默认每次 `logic.run` 都创建独立 Worker，结束或超时后销毁。超时范围为 100-5000 ms，默认 1000 ms；输入、输出和逻辑源码都有大小限制。Worker CSP 禁止网络，且没有 DOM、父页面、Tauri、Node、文件系统、模型 API 和数据库对象。脚本只能通过上表 SDK 请求宿主操作，宿主和 Rust 后端都会重新检查 collection/namespace 声明。
+
+需要网页按钮与角色工具执行同一份权威规则时，可设置 `logic.execution: "host"`。桌面/移动 Tauri 宿主使用隔离的 QuickJS 执行同一份 `logic.js`，目前只提供声明过的 **session KV** SDK；不提供 records、平台能力、文件或网络。规则执行期间串行持有数据库锁，成功后在一个事务内提交 KV 写入，异常或超时不提交。纯 HTTP 浏览器运行暂不支持此执行方式。
+
+`logic.ui_handlers` 是网页可调用的 handler 白名单；角色只能使用 `logic.tools` 中声明且 `speakers` 允许的工具。工具的 `name`、`description`、`input_schema` 发送给模型，`handler` 指向已注册函数。宿主向函数第三个参数传入 `{actor: "player" | "agent"}`，身份不从模型或网页 input 读取。建议把公共视图、角色私有视图和动作处理函数分别注册，动作函数校验当前行动权和库存；不要从台词解析动作，也不要让模型直接写权威状态。
+
+```json
+{
+  "logic": {
+    "runtime": "sandbox-js-v1",
+    "execution": "host",
+    "timeout_ms": 3000,
+    "entry": "game.getView",
+    "entry_result_state": "view",
+    "ui_handlers": ["game.getView", "game.playerAct"],
+    "tools": [{
+      "name": "game_state", "description": "读取角色有权知道的状态",
+      "handler": "game.agentView", "speakers": ["对手"],
+      "input_schema": {"type": "object", "properties": {}, "additionalProperties": false}
+    }],
+    "agent_turn": {
+      "when_field": "awaiting_agent", "after_handlers": ["game.playerAct"],
+      "message": "轮到你，请通过工具完成行动。", "view_handler": "game.getView"
+    }
+  }
+}
+```
+
+`entry` / `entry_result_state` 在进入会话和 AI 回合结束后把宿主视图恢复到 UI state；`agent_turn` 在指定网页 handler 的结果字段为 true 时启动角色回合，完成后读取最新视图。角色工具可以连续调用，宿主上限 32 轮，规则应在交棒或终局后拒绝继续行动。模型未完成合法动作时应提供明确的继续/重试入口，不能自动替任何一方选动作。
 
 调用示例：
 

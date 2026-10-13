@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { Fragment, useEffect, useState, type CSSProperties, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { CanvasNodeView, SvgNodeView } from "./GameUiGraphicNodes";
 import {
   type GameUiActionReference,
@@ -35,6 +35,7 @@ export type GameUiComponentRenderer = (
 ) => ReactNode;
 
 type GameUiRendererProps = {
+  stateOverrides?: Record<string, unknown>;
   document: GameUiDocument;
   mounts?: Partial<Record<GameUiMountId, ReactNode>>;
   componentRenderers?: Partial<Record<string, GameUiComponentRenderer>>;
@@ -51,6 +52,7 @@ export type GameUiRenderContext = {
 };
 
 export function GameUiRenderer({
+  stateOverrides,
   document,
   mounts = {},
   componentRenderers,
@@ -62,6 +64,9 @@ export function GameUiRenderer({
   const [uiState, setUiState] = useState<Record<string, unknown>>(() =>
     normalizeInitialState(document.state),
   );
+  useEffect(() => {
+    if (stateOverrides) setUiState(current => ({ ...current, ...stateOverrides }));
+  }, [stateOverrides]);
   const context: GameUiRenderContext = {
     state: uiState,
     data: runtimeData,
@@ -385,7 +390,7 @@ function renderLoopNode(
   }
 
   return (
-    <>
+    <Fragment key={key}>
       {normalizedItems.map((item, index) => {
         const loopContext = {
           ...context,
@@ -395,18 +400,22 @@ function renderLoopNode(
             ...(node.index_as ? { [node.index_as]: index } : {}),
           },
         };
-        return renderV2Node(
-          node.child,
-          document,
-          componentRenderers,
-          evaluateCondition,
-          resolveLoopSource,
-          loopContext,
-          actions,
-          `${key}-${index}`,
+        return (
+          <Fragment key={`${key}-${index}`}>
+            {renderV2Node(
+              node.child,
+              document,
+              componentRenderers,
+              evaluateCondition,
+              resolveLoopSource,
+              loopContext,
+              actions,
+              `${key}-${index}`,
+            )}
+          </Fragment>
         );
       })}
-    </>
+    </Fragment>
   );
 }
 
@@ -519,9 +528,9 @@ function renderButtonNode(
   actions: GameUiElementActions,
   key: string,
 ): ReactNode {
-  const disabled = node.disabled_when_empty_state
+  const disabled = Boolean(node.action?.pending_state && context.state[node.action.pending_state]) || (node.disabled_when_empty_state
     ? normalizeStringArray(context.state[node.disabled_when_empty_state]).length === 0
-    : false;
+    : false);
   return (
     <button
       key={key}

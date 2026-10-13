@@ -266,6 +266,7 @@ function readBooleanProp(
 
 export function MessageListComponent({ runtime, actions, node }: MessageListComponentProps) {
   const autoScroll = readBooleanProp(node, "auto_scroll", true);
+  const hidePlayerMessages = readBooleanProp(node, "hide_player_messages", false);
   const showPendingState = readBooleanProp(node, "show_pending_state", true);
   const showAgentReasoning = readBooleanProp(node, "show_agent_reasoning", true);
   const showTypingIndicator = readBooleanProp(node, "show_typing_indicator", true);
@@ -447,6 +448,9 @@ export function MessageListComponent({ runtime, actions, node }: MessageListComp
     <div className="game-chat-messages-shell">
       <div className="game-chat-messages" ref={runtime.chat_messages_ref}>
       {runtime.messages.map((message, index) => {
+        if (hidePlayerMessages && resolveMessageVisualRole(message.role) === "player") {
+          return null;
+        }
         if (!showPendingState && message.pending) {
           return null;
         }

@@ -6,6 +6,17 @@ use crate::models::world::{
 use crate::services::game_ui::GameUiService;
 
 #[tauri::command]
+pub async fn invoke_world_logic(
+    state: tauri::State<'_, crate::state::AppState>, world_id: String,
+    session_id: String, handler: String, input: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let _permit = state.session_mutations.try_acquire(&session_id)?;
+    let db = state.db.lock().await;
+    let world = crate::services::catalog::world_service::WorldService::new().get_world(db.conn(), &world_id)?;
+    crate::services::world_logic::invoke(db.conn(), &world, &session_id, &handler, input, "player")
+}
+
+#[tauri::command]
 pub async fn validate_world_ui_document(
     request: WorldUiDocumentRequest,
 ) -> Result<WorldUiDocumentValidationResult, String> {

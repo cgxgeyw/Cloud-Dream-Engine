@@ -451,6 +451,10 @@ export function verifyWorldPackageUiCompatibility(
   return tauriCommand("verify_world_package_ui_compatibility", { request: payload });
 }
 
+export function runWorldLogic(worldId: string, sessionId: string, handler: string, input: unknown): Promise<Record<string, unknown>> {
+  return tauriCommand("invoke_world_logic", { worldId, sessionId, handler, input });
+}
+
 export async function downloadWorldPackage(worldId: string): Promise<{ blob?: Blob; filename: string; savedPath?: string }> {
   const payload = await tauriCommand<SavedFilePayload>("export_world_package_to_downloads", { worldId });
   return {

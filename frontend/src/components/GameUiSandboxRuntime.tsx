@@ -13,6 +13,7 @@ import {
   listWorldKv,
   listWorldRecords,
   requestWorldPermissions,
+  runWorldLogic,
   setWorldKv,
   updateWorldRecord,
 } from "../data/apiAdapter";
@@ -32,6 +33,7 @@ import { invokeWorldLogic } from "../worldFrame/WorldLogicRuntime";
 
 export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateBag; platform: GameUiPlatform }) {
   const navigate = useNavigate();
+  const worldLogicBusyRef = useRef(false);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -219,6 +221,35 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
 
   const handleAction = useCallback(async (action: WorldFrameAction) => {
     switch (action.type) {
+      case "world-logic-invoke": {
+        if (bag.submitting) throw new Error("角色正在行动，请等待结算完成。");
+        if (worldLogicBusyRef.current) throw new Error("牌局正在结算，请稍候。");
+        worldLogicBusyRef.current = true;
+        let releaseBusyOnBackgroundCompletion = false;
+        try {
+          const worldId = requireWorldId(bag);
+          const sessionId = bag.session?.id;
+          if (!sessionId) throw new Error("请先创建会话。");
+          const result = await runWorldLogic(worldId, sessionId, action.handler, action.input ?? {});
+          const trigger = bag.worldUiEnvelope.logic.agent_turn;
+          if (trigger && result?.[trigger.when_field] === true && trigger.after_handlers.includes(action.handler)) {
+            // 玩家结算已经完成，先把结果交回牌桌；AI 回合在后台进行，避免网络响应阻塞扣血和动画。
+            releaseBusyOnBackgroundCompletion = true;
+            void (async () => {
+              try {
+                await bag.handleSubmitAction({ mode: "submit", content: trigger.message });
+              } finally {
+                worldLogicBusyRef.current = false;
+              }
+            })();
+          }
+          return result;
+        } finally {
+          if (!releaseBusyOnBackgroundCompletion) {
+            worldLogicBusyRef.current = false;
+          }
+        }
+      }
       case "clear-action-error": bag.clearActionError(); return;
       case "set-draft-value": bag.setInputValue(action.value); return;
       case "set-auto-scroll": bag.setChatAutoScrollEnabled(action.enabled); return;

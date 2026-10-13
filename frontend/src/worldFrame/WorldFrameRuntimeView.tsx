@@ -1,5 +1,5 @@
 import type { KvScope } from "../data/types";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { GameUiRenderer, type GameUiRenderContext } from "../components/GameUiRenderer";
 import type { GameUiActionReference, GameUiPropValue, WorldLogicConfig
@@ -21,6 +21,16 @@ type Props = {
 };
 
 export function WorldFrameRuntimeView({ payload, sendAction }: Props) {
+  const [logicState, setLogicState] = useState<Record<string, unknown>>();
+  useEffect(() => {
+    const { logic } = payload;
+    if (logic.execution !== "host" || !logic.entry || !logic.entry_result_state || !payload.snapshot.session?.id || payload.snapshot.ui_state.submitting) return;
+    let cancelled = false;
+    void invokeWorldLogic(logic, logic.entry, {}, sendAction).then(result => {
+      if (!cancelled) setLogicState({ [logic.entry_result_state!]: result });
+    }).catch(() => { /* Action error states retain explicit retry controls. */ });
+    return () => { cancelled = true; };
+  }, [payload.logic, payload.scopeId, payload.snapshot.session?.id, payload.snapshot.ui_state.submitting, sendAction]);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const shouldFollowMessagesRef = useRef(true);
@@ -160,6 +170,8 @@ export function WorldFrameRuntimeView({ payload, sendAction }: Props) {
       {runtime.ui_state.page_error ? <div className="game-loading game-error-text">{runtime.ui_state.page_error}</div> : null}
       {!runtime.ui_state.loading && !runtime.ui_state.page_error && runtime.session ? (
         <GameUiRenderer
+          key={runtime.session.id}
+          stateOverrides={logicState}
           document={payload.document}
           componentRenderers={componentRenderers}
           runtimeData={runtimeData}

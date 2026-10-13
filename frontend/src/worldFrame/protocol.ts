@@ -10,6 +10,7 @@ export type WorldFramePreviewPayload = Omit<GameUiPreviewProps, "rootStyle"> & {
 };
 
 export type WorldFrameAction =
+  | { type: "world-logic-invoke"; handler: string; input: unknown }
   | { type: "clear-action-error" }
   | { type: "set-draft-value"; value: string }
   | { type: "set-auto-scroll"; enabled: boolean }
@@ -178,6 +179,9 @@ function isWorldFrameAction(value: unknown): value is WorldFrameAction {
   ].includes(value.type);
   if (known) {
     return true;
+  }
+  if (value.type === "world-logic-invoke") {
+    return typeof value.handler === "string" && /^[a-zA-Z0-9._-]{1,128}$/.test(value.handler);
   }
   if (value.type === "world-kv-list") {
     return isWorldStorageName(value.namespace);

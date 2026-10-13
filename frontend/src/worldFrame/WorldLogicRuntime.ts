@@ -33,6 +33,9 @@ export async function invokeWorldLogic(
     throw new Error("世界逻辑处理函数名无效。");
   }
   assertMessageSize(input, "世界逻辑输入");
+  if (config.execution === "host") {
+    return sendAction({ type: "world-logic-invoke", handler, input });
+  }
 
   try {
     return await invokeWorldLogicViaWorker(config, handler, input, sendAction);

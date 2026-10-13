@@ -178,6 +178,7 @@
       "props": {
         "auto_scroll": "boolean",
         "show_pending_state": "boolean",
+        "hide_player_messages": "boolean",
         "show_agent_reasoning": "boolean",
         "show_typing_indicator": "boolean",
         "mobile_simple": "boolean",
