@@ -147,6 +147,8 @@ pub struct WorldPackageAssetEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorldPackageWorldData {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub knowledge_bases: Option<Vec<crate::commands::knowledge::BundledKnowledgeBase>>,
     pub name: String,
     pub genre: String,
     pub background_prompt: String,

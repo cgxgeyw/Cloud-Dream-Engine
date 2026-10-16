@@ -15,11 +15,11 @@ use crate::services::game_ui::GameUiService;
 use crate::state::AppState;
 
 const WORLD_PACKAGE_FORMAT: &str = "dream-world-package";
-const WORLD_PACKAGE_VERSION: u32 = 8;
-const LEGACY_WORLD_PACKAGE_VERSIONS: [u32; 3] = [5, 6, 7];
+const WORLD_PACKAGE_VERSION: u32 = 9;
+const LEGACY_WORLD_PACKAGE_VERSIONS: [u32; 0] = [];
 const WORLD_PACKAGE_FILE: &str = "world/world.json";
-const WORLD_PACKAGE_DESKTOP_UI_FILE: &str = "world/ui.desktop.jsonc";
-const WORLD_PACKAGE_MOBILE_UI_FILE: &str = "world/ui.mobile.jsonc";
+const WORLD_PACKAGE_DESKTOP_UI_FILE: &str = "world/ui.desktop.html";
+const WORLD_PACKAGE_MOBILE_UI_FILE: &str = "world/ui.mobile.html";
 const WORLD_PACKAGE_DESKTOP_UI_STYLESHEET: &str = "world/ui.desktop.css";
 const WORLD_PACKAGE_MOBILE_UI_STYLESHEET: &str = "world/ui.mobile.css";
 const WORLD_PACKAGE_LOGIC_FILE: &str = "world/logic.js";
@@ -834,7 +834,7 @@ fn build_manifest(
                 .ui_theme_config
                 .get("runtime_version")
                 .and_then(|value| value.as_u64())
-                .unwrap_or(2) as u32,
+                .unwrap_or(3) as u32,
         ),
         desktop_ui_stylesheet_file: Some(WORLD_PACKAGE_DESKTOP_UI_STYLESHEET.to_string()),
         mobile_ui_stylesheet_file: Some(WORLD_PACKAGE_MOBILE_UI_STYLESHEET.to_string()),
@@ -855,6 +855,7 @@ fn to_world_package_data(
         .map(|character| (character.id.clone(), character.name.clone()))
         .collect::<HashMap<_, _>>();
     WorldPackageWorldData {
+        knowledge_bases: Some(serde_json::from_value(world.ui_theme_config.get("knowledge_bases").cloned().unwrap_or_else(|| serde_json::json!([]))).unwrap_or_default()),
         name: world.name.clone(),
         genre: world.genre.clone(),
         background_prompt: world.background_prompt.clone(),

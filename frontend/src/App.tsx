@@ -18,6 +18,7 @@ const GamePage = lazy(() => import("./pages/GamePage").then((module) => ({ defau
 const DebugPage = lazy(() => import("./pages/DebugPage").then((module) => ({ default: module.DebugPage })));
 const SettingsPage = lazy(() => import("./pages/SettingsPage").then((module) => ({ default: module.SettingsPage })));
 const McpToolsPage = lazy(() => import("./pages/McpToolsPage").then((module) => ({ default: module.McpToolsPage })));
+const KnowledgePage = lazy(() => import("./pages/KnowledgePage").then((module) => ({ default: module.KnowledgePage })));
 
 function AppRoutes() {
   return (
@@ -37,6 +38,7 @@ function AppRoutes() {
         <Route path="/debug/:sessionId" element={<DebugPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/mcp-tools" element={<McpToolsPage />} />
+        <Route path="/knowledge" element={<KnowledgePage />} />
         <Route path="*" element={<HomePage />} />
       </Routes>
     </Suspense>

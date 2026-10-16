@@ -58,6 +58,8 @@ anyhow = "1"
 # 编码与压缩
 base64 = "0.22"
 encoding_rs = "0.8"
+quick-xml = "0.37"
+pdf-extract = "0.7"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]

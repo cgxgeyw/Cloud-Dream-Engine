@@ -388,6 +388,11 @@ impl SessionOrchestrator {
                         }
                         let mut round_results = Vec::new();
                         for call in response.tool_calls.as_deref().unwrap_or(&[]) {
+                            if call.tool_name == "search_knowledge" && world.director_config["knowledge_access"] == true {
+                                let guard = db.lock().await;
+                                let result = crate::commands::knowledge::search(guard.conn(), &world.id, &call.arguments);
+                                round_results.push(SpeakerNotificationToolResult { call: call.clone(), result: match result { Ok(value) => serde_json::json!({"ok":true,"result":value}), Err(error) => serde_json::json!({"ok":false,"error":error}) } });
+                            }
                             if let Some(handler) = crate::services::world_logic::tool_handler(world, &call.tool_name, speaker_name) {
                                 let guard = db.lock().await;
                                 let result = crate::services::world_logic::invoke(guard.conn(), world, session_id,
@@ -956,6 +961,7 @@ async fn execute_speaker_custom_tool_calls(
         .unwrap_or(&[])
         .iter()
         .filter(|call| call.tool_name.trim() != "schedule_notification"
+            && call.tool_name.trim() != "search_knowledge"
             && !crate::services::world_logic::tool_definitions(world).iter().any(|tool| tool.name == call.tool_name))
         .cloned()
         .collect::<Vec<_>>();

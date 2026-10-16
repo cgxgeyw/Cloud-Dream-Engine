@@ -769,3 +769,12 @@ export function assetUrl(path: string | null | undefined): string {
   }
   return isTauri ? getTauriSync().assetUrl(path) : getHttpSync().assetUrl(path ?? "");
 }
+export async function fetchKnowledgeBases() { return (await getTauri()).fetchKnowledgeBases(); }
+export async function createKnowledgeBase(name: string, description: string, worldId: string | null) { return (await getTauri()).createKnowledgeBase(name, description, worldId); }
+export async function deleteKnowledgeBase(id: string) { return (await getTauri()).deleteKnowledgeBase(id); }
+export async function fetchKnowledgeDocuments(id: string) { return (await getTauri()).fetchKnowledgeDocuments(id); }
+export async function addKnowledgeDocument(id: string, file: File) { return (await getTauri()).addKnowledgeDocument(id, file); }
+export async function deleteKnowledgeDocument(id: string) { return (await getTauri()).deleteKnowledgeDocument(id); }
+export async function updateKnowledgeDocument(id: string, title: string, content: string) { return (await getTauri()).updateKnowledgeDocument(id, title, content); }
+export async function getKnowledgeBindings(id: string) { return (await getTauri()).getKnowledgeBindings(id); }
+export async function setKnowledgeBinding(id: string, worldId: string, enabled: boolean) { return (await getTauri()).setKnowledgeBinding(id, worldId, enabled); }

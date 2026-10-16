@@ -1000,7 +1000,7 @@ export function useGameSession(
       const audios = inputAudios;
 
       if (!textContent && images.length === 0 && audios.length === 0) {
-        return;
+        return { ok: false, error: "请输入行动或添加附件。" };
       }
 
       const resolvedTurnIndex =
@@ -1012,16 +1012,16 @@ export function useGameSession(
       const isReplay = mode !== "submit";
 
       if (isReplay && resolvedTurnIndex === undefined) {
-        setActionError(
+        const error =
           mode === "edit"
             ? "未找到要编辑的回合，无法重新生成。"
-            : "未找到要重发的回合，无法重新生成。",
-        );
-        return;
+            : "未找到要重发的回合，无法重新生成。";
+        setActionError(error);
+        return { ok: false, error };
       }
 
       if (submitInFlightRef.current) {
-        return;
+        return { ok: false, error: "上一条行动仍在处理，请稍候。" };
       }
       submitInFlightRef.current = true;
       // 自己刚发送的回合必须接管到底部；之后用户手动上滚仍会解除跟随。
@@ -1040,17 +1040,15 @@ export function useGameSession(
           for (const file of images) {
             const inspection = await inspectImageFile(file);
             if (!inspection.ok) {
-              setActionError(`无法发送「${file.name}」：${inspection.reason}`);
-              return;
+              throw new Error(`无法发送「${file.name}」：${inspection.reason}`);
             }
             const packed = await compressImageForChat(file);
             if (packed.size > MAX_CHAT_IMAGE_BYTES) {
-              setActionError(
+              throw new Error(
                 `「${file.name}」压缩后仍有 ${(packed.size / 1024 / 1024).toFixed(1)}MB，超过 ${
                   MAX_CHAT_IMAGE_BYTES / 1024 / 1024
                 }MB 上限，请换一张更小的图片。`,
               );
-              return;
             }
             const base64 = await fileToDataUrl(packed);
             parts.push({
@@ -1092,7 +1090,7 @@ export function useGameSession(
           audios.length > 0,
         );
         if (!notificationPermissionReady) {
-          return;
+          return { ok: false, error: "行动尚未发送，请完成所需的通知权限设置后重试。" };
         }
 
         setStreamingResponseActive(true);
@@ -1118,6 +1116,7 @@ export function useGameSession(
         }
 
         const playerContent = textContent;
+        let streamError: string | undefined;
         const snapshot = await streamPlayerAction(
           sessionId,
           {
@@ -1145,7 +1144,8 @@ export function useGameSession(
               applySessionSnapshot(nextSnapshot, { streaming: true });
             },
             onError: (detail) => {
-              setActionError(formatActionErrorMessage(detail));
+              streamError = formatActionErrorMessage(detail);
+              setActionError(streamError);
             },
           },
         );
@@ -1171,14 +1171,14 @@ export function useGameSession(
           setEditingTurn(null);
           setInputValue("");
         }
+        return streamError ? { ok: false, error: streamError } : { ok: true };
       } catch (submitError) {
-        setActionError(
-          formatActionErrorMessage(
-            submitError instanceof Error
-              ? submitError.message
-              : String(submitError ?? "发言失败"),
-          ),
+        const error = formatActionErrorMessage(
+          submitError instanceof Error
+            ? submitError.message
+            : String(submitError ?? "发言失败"),
         );
+        setActionError(error);
         setOptimisticPlayerMessage(null);
         setInputImages(images);
         setInputAudios(audios);
@@ -1191,6 +1191,7 @@ export function useGameSession(
         } else {
           setEditingTurn(null);
         }
+        return { ok: false, error };
       } finally {
         setStreamingResponseActive(false);
         setSubmitting(false);

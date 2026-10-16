@@ -10,6 +10,7 @@ import {
   type WorldFramePreviewPayload,
 } from "../worldFrame/protocol";
 import type { WorldFrameRuntimePayload } from "../worldFrame/runtimeSnapshot";
+import { createHtmlWorldDocument } from '../worldFrame/htmlDocument';
 export { createWorldFrameDocument } from "../worldFrame/frameDocument";
 
 type FrameConnection = {
@@ -33,10 +34,7 @@ export function WorldFrameHost({ mode, payload, title, className, onAction }: Wo
   const onActionRef = useRef(onAction);
   const [frameState, setFrameState] = useState<"connecting" | "ready" | "error">("connecting");
   const [frameError, setFrameError] = useState<string | null>(null);
-  const frameUrl = useMemo(
-    () => resolveWorldFrameAssetUrl(import.meta.env.DEV ? "frame.dev.html" : "frame.html"),
-    [],
-  );
+  const htmlDocument = useMemo(() => createHtmlWorldDocument(payload.document.html || '', payload.stylesheet), [payload.document.html, payload.stylesheet]);
 
   latestPayloadRef.current = payload;
   onActionRef.current = onAction;
@@ -121,7 +119,7 @@ export function WorldFrameHost({ mode, payload, title, className, onAction }: Wo
     <div className={["world-ui-sandbox-preview", className].filter(Boolean).join(" ")}>
       <iframe
         ref={iframeRef}
-        src={frameUrl}
+        srcDoc={htmlDocument}
         title={title}
         sandbox="allow-scripts"
         onLoad={() => {

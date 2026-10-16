@@ -125,7 +125,7 @@ export interface GameSessionStateBag {
   handleRetryFailedStep: (request: RetryFailedLlmStepRequest) => Promise<void>;
 
   handleBranch: () => Promise<void>;
-  handleSubmitAction: (options: SubmitActionOptions) => Promise<void>;
+  handleSubmitAction: (options: SubmitActionOptions) => Promise<{ ok: boolean; error?: string }>;
   /** 回答消息交互；newlyAnswered=false 表示重复提交（幂等返回首次结果） */
   handleAnswerInteraction: (
     messageId: string,

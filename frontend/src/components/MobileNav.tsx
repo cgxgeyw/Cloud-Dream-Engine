@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { ArrowLeft, Globe, Menu, Moon, Play, Save, Settings, Sun, Wrench, X } from "lucide-react";
+import { ArrowLeft, Globe, Menu, Moon, Play, Save, Settings, Sun, Wrench, X, BookOpen } from "lucide-react";
 import appIconUrl from "../assets/app-icon.svg";
 import {
   applyMode,
@@ -36,6 +36,7 @@ const navItems = [
   { path: "/worlds", label: "世界设定", Icon: Globe },
   { path: "/settings", label: "设置", Icon: Settings },
   { path: "/mcp-tools", label: "MCP 工具", Icon: Wrench },
+  { path: '/knowledge', label: '知识库', Icon: BookOpen },
 ];
 
 const DRAG_OPEN_THRESHOLD = 40;

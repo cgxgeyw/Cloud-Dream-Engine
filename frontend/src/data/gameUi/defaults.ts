@@ -1,7 +1,7 @@
 import { parse } from "jsonc-parser";
 import type { GameUiDocument, GameUiPlatform } from "./types";
-import defaultDesktopUiSource from "../../../../src-tauri/src/db/seeds/assets/default-desktop-ui.jsonc?raw";
-import defaultMobileUiSource from "../../../../src-tauri/src/db/seeds/assets/default-mobile-ui.jsonc?raw";
+import defaultDesktopUiSource from "../../../../src-tauri/src/db/seeds/assets/default-world-ui.html?raw";
+import defaultMobileUiSource from "../../../../src-tauri/src/db/seeds/assets/default-world-ui.html?raw";
 
 export const DEFAULT_DESKTOP_UI_SOURCE = ensureDefaultGameUiSource(
   defaultDesktopUiSource,
@@ -30,6 +30,7 @@ function ensureDefaultGameUiSource(source: string, platform: GameUiPlatform): st
 }
 
 function parseDefaultGameUiDocument(source: string, platform: GameUiPlatform): GameUiDocument {
+  if (source.trim().startsWith('<')) return { html: source, schema_version: 2, layout: { root: { type: 'stack', children: [] } } };
   const parsed = parse(source) as unknown;
   if (!parsed || typeof parsed !== "object") {
     throw new Error(`Default ${platform} game UI source is not an object.`);

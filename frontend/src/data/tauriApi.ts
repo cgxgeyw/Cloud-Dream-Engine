@@ -781,3 +781,12 @@ function normalizeAssetReference(path: string | null | undefined): string {
   }
   return `assets/${unix.replace(/^\/+/, "")}`;
 }
+export function fetchKnowledgeBases(): Promise<import('./types').KnowledgeBase[]> { return tauriCommand('list_knowledge_bases'); }
+export function createKnowledgeBase(name: string, description: string, worldId: string | null): Promise<import('./types').KnowledgeBase> { return tauriCommand('create_knowledge_base', { name, description, worldId }); }
+export function deleteKnowledgeBase(id: string): Promise<void> { return tauriCommand('delete_knowledge_base', { id }); }
+export function fetchKnowledgeDocuments(knowledgeBaseId: string): Promise<import('./types').KnowledgeDocument[]> { return tauriCommand('list_knowledge_documents', { knowledgeBaseId }); }
+export async function addKnowledgeDocument(knowledgeBaseId: string, file: File): Promise<import('./types').KnowledgeDocument> { return tauriCommand('add_knowledge_document', { knowledgeBaseId, filename: file.name, data: Array.from(new Uint8Array(await file.arrayBuffer())) }); }
+export function deleteKnowledgeDocument(id: string): Promise<void> { return tauriCommand('delete_knowledge_document', { id }); }
+export function updateKnowledgeDocument(id: string, title: string, content: string): Promise<void> { return tauriCommand('update_knowledge_document', { id, title, content }); }
+export function getKnowledgeBindings(knowledgeBaseId: string): Promise<string[]> { return tauriCommand('get_knowledge_bindings', { knowledgeBaseId }); }
+export function setKnowledgeBinding(knowledgeBaseId: string, worldId: string, enabled: boolean): Promise<void> { return tauriCommand('set_knowledge_binding', { knowledgeBaseId, worldId, enabled }); }

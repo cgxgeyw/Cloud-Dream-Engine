@@ -182,7 +182,7 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
   const payload = useMemo<WorldFrameRuntimePayload>(() => ({
     platform,
     document: bag.parsedGameUi.document,
-    stylesheet: bag.themeCustomCss,
+    stylesheet: bag.worldUiEnvelope.entries[platform].stylesheet,
     scopeId: bag.gameUiScopeId,
     rootStyle: serializeRootStyle(bag.runtimeBackgroundStyle),
     storage: bag.worldUiEnvelope.storage,
@@ -253,7 +253,11 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
       case "clear-action-error": bag.clearActionError(); return;
       case "set-draft-value": bag.setInputValue(action.value); return;
       case "set-auto-scroll": bag.setChatAutoScrollEnabled(action.enabled); return;
-      case "submit-message": await bag.handleSubmitAction(action.options); return;
+      case "submit-message": {
+        const result = await bag.handleSubmitAction(action.options);
+        if (!result.ok) throw new Error(result.error || "行动发送失败，请重试。");
+        return result;
+      }
       case "answer-interaction": {
         const result = await bag.handleAnswerInteraction(action.messageId, action.interactionId, action.answer);
         // 第 4 项事件接线：仅首次回答触发，重复提交（幂等）不重复计分。

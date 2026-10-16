@@ -163,6 +163,15 @@ pub fn run() {
             // 上传
             commands::uploads::upload_file,
             commands::uploads::get_asset_base_dir,
+            commands::knowledge::list_knowledge_bases,
+            commands::knowledge::create_knowledge_base,
+            commands::knowledge::delete_knowledge_base,
+            commands::knowledge::list_knowledge_documents,
+            commands::knowledge::add_knowledge_document,
+            commands::knowledge::delete_knowledge_document,
+            commands::knowledge::update_knowledge_document,
+            commands::knowledge::get_knowledge_bindings,
+            commands::knowledge::set_knowledge_binding,
             commands::uploads::delete_asset,
             commands::permissions::request_world_permissions,
         ])

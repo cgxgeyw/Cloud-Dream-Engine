@@ -312,12 +312,13 @@ impl WorldService {
     {
         let world_repo = WorldRepository::new(conn);
         let char_repo = CharacterRepository::new(conn);
-        let world = Self::enrich_world(
+        let mut world = Self::enrich_world(
             world_repo
                 .get(world_id)?
                 .ok_or_else(|| "世界不存在".to_string())?,
         );
         let characters = char_repo.list_by_world(world_id)?;
+        world.ui_theme_config["knowledge_bases"] = serde_json::to_value(crate::commands::knowledge::export_bundled(conn, world_id)?).map_err(|e| e.to_string())?;
         // v8：世界白名单引用到的 MCP 工具一并打包，导入方开箱即用。
         let mcp_tools =
             crate::db::repositories::mcp_tool_repo::McpToolRepository::new(conn).list()?;
@@ -406,7 +407,7 @@ impl WorldService {
             .get("character_memory_hit_turns")
             .and_then(|value| value.as_i64())
             .map(|value| value.clamp(1, 6))
-            .unwrap_or(2);
+            .unwrap_or(3);
         let character_memory_event_window_rounds = object
             .get("character_memory_event_window_rounds")
             .and_then(|value| value.as_i64())
@@ -515,6 +516,7 @@ impl WorldService {
 
         serde_json::json!({
             "service_mode": service_mode,
+            "knowledge_access": object.get("knowledge_access").and_then(|v| v.as_bool()).unwrap_or(false),
             "default_agent_id": default_agent_id,
             "runtime_policy": {
                 "memory_write_mode": memory_write_mode,
@@ -675,11 +677,11 @@ impl WorldService {
     }
 
     fn default_desktop_ui_file() -> String {
-        include_str!("../../db/seeds/assets/default-desktop-ui.jsonc").to_string()
+        include_str!("../../db/seeds/assets/default-world-ui.html").to_string()
     }
 
     fn default_mobile_ui_file() -> String {
-        include_str!("../../db/seeds/assets/default-mobile-ui.jsonc").to_string()
+        include_str!("../../db/seeds/assets/default-world-ui.html").to_string()
     }
 
     fn persist_imported_world_package(
@@ -789,6 +791,7 @@ impl WorldService {
         };
 
         let attribute_repo = AttributeRepository::new(&tx);
+        if let Some(bases) = &imported_world.knowledge_bases { crate::commands::knowledge::import_bundled(&tx, &world_id, bases)?; }
         let existing_schemas = attribute_repo.list_schemas(None)?;
         for schema in &imported_world.attribute_schemas {
             if let Some(existing) = existing_schemas.iter().find(|existing| {
@@ -886,7 +889,7 @@ impl WorldService {
                     .as_ref()
                     .and_then(|name| name_map.get(name).cloned())
             };
-        let director_config = remap_director_default_agent_id(
+        let mut director_config = remap_director_default_agent_id(
             imported_world.director_config.clone(),
             &id_map,
             Some(&name_map),
@@ -894,6 +897,7 @@ impl WorldService {
 
         // 包即事实来源：升级已有世界时把界面/文案/地图这些一并刷成包内定义，
         // 只改 director_config 和角色关联会留下一半新一半旧的世界。
+        if imported_world.knowledge_bases.as_ref().is_some_and(|bases| !bases.is_empty()) { director_config["knowledge_access"] = serde_json::json!(true); }
         let updated_world = world_repo.update(
             &world_id,
             &WorldUpdateRequest {
@@ -1325,6 +1329,7 @@ mod tests {
             .expect("character count");
         let imported = ImportedWorldPackage {
             world: WorldPackageWorldData {
+                knowledge_bases: None,
                 name: "事务式导入".to_string(),
                 genre: String::new(),
                 background_prompt: String::new(),
@@ -1401,6 +1406,7 @@ mod tests {
     ) -> ImportedWorldPackage {
         ImportedWorldPackage {
             world: WorldPackageWorldData {
+                knowledge_bases: None,
                 name: "健康生活".to_string(),
                 genre: "生活".to_string(),
                 background_prompt: String::new(),

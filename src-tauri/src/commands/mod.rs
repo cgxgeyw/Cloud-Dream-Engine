@@ -17,3 +17,4 @@ pub mod uploads;
 pub mod world_records;
 pub mod world_kv;
 pub mod worlds;
+pub mod knowledge;

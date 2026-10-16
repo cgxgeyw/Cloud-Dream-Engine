@@ -47,6 +47,7 @@ export const DEFAULT_DESKTOP_UI_FILE = DEFAULT_DESKTOP_UI_SOURCE;
 export const DEFAULT_MOBILE_UI_FILE = DEFAULT_MOBILE_UI_SOURCE;
 
 export function stringifyGameUiDocument(document: GameUiDocument): string {
+  if (document.html !== undefined) return document.html;
   return `${JSON.stringify(document, null, 2)}\n`;
 }
 
@@ -183,7 +184,7 @@ export function normalizeWorldUiEnvelope(raw: unknown): WorldUiEnvelope {
     DEFAULT_MOBILE_UI_FILE,
   );
   return {
-    runtime_version: value.runtime_version === 3 ? 3 : 2,
+    runtime_version: 3,
     capabilities: Array.isArray(value.capabilities)
       ? value.capabilities.map((item) => String(item).trim()).filter(Boolean)
       : [],
@@ -249,6 +250,10 @@ export function parseGameUiDocument(
   const fallbackDocument = defaultGameUiDocument(platform);
   const fallbackSource = defaultGameUiFile(platform);
   const trimmed = source.trim();
+  if (trimmed.startsWith('<')) {
+    return { document: { html: source, schema_version: 2, layout: { root: { type: 'stack', children: [] } } }, source, error: null, usedFallback: false };
+  }
+  if (trimmed) return { document: fallbackDocument, source: fallbackSource, error: '世界界面必须是 HTML 文档，JSONC 布局已停用。', usedFallback: true };
 
   if (!trimmed) {
     return {

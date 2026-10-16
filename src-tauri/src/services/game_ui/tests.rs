@@ -5,6 +5,7 @@
     };
 
     #[test]
+    #[ignore = "legacy JSONC UI tests removed with the HTML UI runtime"]
     fn validates_and_compiles_v2_seed_documents() {
         let service = GameUiService::new();
         let desktop = include_str!("../../db/seeds/assets/gwtw-desktop-ui.jsonc");
@@ -44,6 +45,7 @@
     }
 
     #[test]
+    #[ignore = "legacy JSONC UI tests removed with the HTML UI runtime"]
     fn warns_on_unknown_game_class_in_stylesheet() {
         let service = GameUiService::new();
         let desktop = include_str!("../../db/seeds/assets/gwtw-desktop-ui.jsonc");
@@ -79,6 +81,7 @@
     }
 
     #[test]
+    #[ignore = "legacy JSONC UI tests removed with the HTML UI runtime"]
     fn validates_additional_mobile_seed_documents() {
         let service = GameUiService::new();
         for mobile in [
@@ -101,6 +104,7 @@
     }
 
     #[test]
+    #[ignore = "legacy JSONC UI tests removed with the HTML UI runtime"]
     fn validates_v3_migration_bundles_for_preserved_example_worlds() {
         let service = GameUiService::new();
         for (desktop, mobile) in [
@@ -135,6 +139,7 @@
     }
 
     #[test]
+    #[ignore = "legacy JSONC UI tests removed with the HTML UI runtime"]
     fn ledger_book_requires_runtime_v3_and_explicit_capability() {
         let service = GameUiService::new();
         let document = r#"{
@@ -221,6 +226,28 @@
     }
 
     #[test]
+    fn validates_html_world_ui_document() {
+        let result = GameUiService::new().validate_world_ui_document(WorldUiDocumentRequest {
+            source: "<!doctype html><html><body><main id='game'></main><script>document.body.dataset.ready='yes'</script></body></html>".into(),
+            platform: Some("desktop".into()),
+        });
+        assert!(result.ok, "HTML UI errors: {:?}", result.errors);
+        assert_eq!(result.schema_version, None);
+        assert!(result.normalized_document.unwrap()["html"].as_str().unwrap().contains("<main"));
+    }
+
+    #[test]
+    fn rejects_jsonc_world_ui_document() {
+        let result = GameUiService::new().validate_world_ui_document(WorldUiDocumentRequest {
+            source: r#"{"schema_version":2,"layout":{"root":{"type":"stack","children":[]}}}"#.into(),
+            platform: Some("mobile".into()),
+        });
+        assert!(!result.ok);
+        assert_eq!(result.errors[0].code, "invalid_html_entry");
+    }
+
+    #[test]
+    #[ignore = "legacy JSONC UI tests removed with the HTML UI runtime"]
     fn button_nodes_may_carry_children_without_a_label() {
         let service = GameUiService::new();
         let validate = |source: &str| {
@@ -294,6 +321,7 @@
     }
 
     #[test]
+    #[ignore = "legacy JSONC UI tests removed with the HTML UI runtime"]
     fn compatibility_reports_unsupported_components() {
         let service = GameUiService::new();
         let report = service.verify_world_package_ui_compatibility(
@@ -335,6 +363,7 @@
             .any(|diagnostic| diagnostic.code == "unknown_component"));
     }
     #[test]
+    #[ignore = "legacy JSONC UI tests removed with the HTML UI runtime"]
     fn accepts_svg_and_canvas_nodes_with_known_shapes() {
         let service = GameUiService::new();
         let source = r##"{
@@ -376,6 +405,7 @@
     }
 
     #[test]
+    #[ignore = "legacy JSONC UI tests removed with the HTML UI runtime"]
     fn rejects_unknown_svg_primitive_and_canvas_op() {
         let service = GameUiService::new();
         let source = r##"{
@@ -422,6 +452,7 @@
     }
 
     #[test]
+    #[ignore = "legacy JSONC UI tests removed with the HTML UI runtime"]
     fn svg_primitives_require_their_geometry_fields() {
         let service = GameUiService::new();
         let source = r##"{
@@ -446,6 +477,7 @@
     }
 
     #[test]
+    #[ignore = "legacy JSONC UI tests removed with the HTML UI runtime"]
     fn accepts_whitelisted_expression_functions() {
         let service = GameUiService::new();
         let source = r##"{
@@ -467,6 +499,7 @@
     }
 
     #[test]
+    #[ignore = "legacy JSONC UI tests removed with the HTML UI runtime"]
     fn rejects_expression_functions_outside_the_whitelist() {
         let service = GameUiService::new();
         let source = r##"{
@@ -492,6 +525,7 @@
     }
 
     #[test]
+    #[ignore = "legacy JSONC UI tests removed with the HTML UI runtime"]
     fn still_rejects_backtick_and_bracket_syntax_in_expressions() {
         let service = GameUiService::new();
         let source = r##"{
@@ -522,6 +556,7 @@
     /// 缺根高度链），而当时没有任何一层测试覆盖世界包文档。这里把它钉进后端测试，
     /// 以后改坏会直接在 cargo test 阶段失败，而不是等用户截图。
     #[test]
+    #[ignore = "legacy JSONC UI tests removed with the HTML UI runtime"]
     fn validates_poison_feast_world_package_ui() {
         let service = GameUiService::new();
         let desktop = include_str!("../../../../examples/world-packages/poison-feast/world/ui.desktop.jsonc");
@@ -566,6 +601,7 @@
     }
 
     #[test]
+    #[ignore = "legacy JSONC UI tests removed with the HTML UI runtime"]
     fn imports_poison_feast_world_package_archive() {
         use std::io::{Cursor, Write};
         let package_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

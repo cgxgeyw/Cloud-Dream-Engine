@@ -404,6 +404,7 @@ export type GameUiDocumentBase = {
 };
 
 export type GameUiDocumentV2 = GameUiDocumentBase & {
+  html?: string;
   schema_version: 2;
   state?: Record<string, GameUiPropValue>;
   layout: {

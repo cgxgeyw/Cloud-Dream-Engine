@@ -2,11 +2,37 @@
 
 本文面向世界包设计者，说明如何为 Cloud Dream Engine 制作可导入、可导出、同时支持桌面与 Android 的世界包和游戏 UI。
 
+### 知识库资料
+
+首页“知识库”支持公共资料和按世界分组的专属资料。上传支持 UTF-8 TXT、Markdown、CSV、JSON/JSONL、YAML、XML、DOCX 和文字 PDF，每个文件最大 20MB；扫描 PDF 不做 OCR。文件转换为可编辑正文，保存来源文件名，不保留原始二进制附件。
+
+公共知识库需要在知识库页面明确勾选允许访问的世界，不会自动共享给所有世界。世界专属资料随世界包导出，并在导入时落库；删除世界会级联删除专属资料，公共资料保留。公共关联不会打进世界包，需要便携的资料请创建为世界专属知识库。
+
+世界包的 `world/world.json` 可包含可选 `knowledge_bases`：
+
+```json
+{
+  "knowledge_bases": [
+    {
+      "name": "游戏规则",
+      "description": "道具与结算说明",
+      "documents": [{ "title": "毒酒", "content": "毒酒造成伤害。", "source_filename": "rules.md" }]
+    }
+  ]
+}
+```
+
+同名世界升级时，显式提供的 `knowledge_bases` 替换该世界专属资料；空数组清空资料，省略字段保留现有资料，兼容旧包。公共资料不受影响。
+
+`director_config.knowledge_access` 控制是否向主控和角色提供 `search_knowledge` 原生工具。创建世界专属知识库、关联公共知识库或导入非空专属资料会启用它，可在世界编辑器“基础权限”关闭。工具参数为 `{ "query": "查询内容" }`，只能查询该世界获准访问的资料，返回至多六个带来源的正文片段。工具结果进入已有工具循环和模型调用记录；正文作为工具资料，不自动拼入系统提示词。
+
+第一版知识查询复用现有记忆的文本归一化和关键词切分，只做词法匹配；角色记忆原有的词法/向量/混合检索不变。知识库向量检索和 OAG 尚未接入。
+
 如果目标是模型驱动的剧情、冒险或角色扮演世界，请先按[叙事 RPG 世界包制作手册](world-package-rpg-cookbook.md)完成玩法闭环，再回到本文查字段。
 
-v3 的核心原则是：**世界包拥有游戏页面的结构和视觉设计**，应用拥有可信能力与数据写入。世界包可以提供 JSONC、CSS、资源和可选的受限 Worker 逻辑，但不能在宿主页面执行 JavaScript。
+v4 的核心原则是：**世界包拥有游戏页面的 HTML、CSS、JavaScript、资源和视觉设计**，应用拥有可信能力与数据写入。页面运行在隔离 iframe 中，JavaScript 只能通过 `world` SDK 调用框架接口。
 
-**可样式化（Stylability）是核心思想之一，必须可执行：** 游戏页内颜色、尺寸、间距、圆角、阴影、字体、动效等视觉表现，世界包作者应能通过 stylesheet / `custom_css` / tokens 修改；宿主基线与 `theme.css` 只提供默认值与无障碍最小尺寸，不得锁死主题视觉。完整契约、组件等级与整改清单见 [game-ui-input-alignment-rfc.md](./game-ui-input-alignment-rfc.md)。
+**可编程页面是核心思想之一：** 游戏页内颜色、尺寸、间距、圆角、阴影、字体、动效、DOM 结构和交互全部由世界包作者控制。宿主只提供隔离、安全边界、状态快照和系统 API。
 
 ## 1. 先理解两个版本号
 
@@ -15,9 +41,21 @@ v3 的核心原则是：**世界包拥有游戏页面的结构和视觉设计**�
 | 字段 | 当前值 | 控制内容 |
 |---|---:|---|
 | `runtime_version` | `3` | iframe 隔离、桌面/移动双入口、原始 stylesheet、父页面能力桥接 |
-| `schema_version` | `2` | 单份 UI 文档中的布局节点、组件、状态、绑定和动作 |
+| `schema_version` | 不适用 | HTML 页面不使用框架布局 schema |
 
-因此，v3 世界包中的 UI 文档仍应写成：
+因此，新版世界包 UI 不再使用 JSONC 布局文档，桌面端和移动端直接提供 `world/ui.desktop.html` 与 `world/ui.mobile.html`。每个文件可以包含完整 HTML、`<style>` 和 `<script>`，CSS 与页面逻辑由作者负责。
+
+页面通过框架注入的 `world` SDK 访问状态和系统能力。常用接口包括 `world.getState()`、`world.subscribe(fn)`、`world.actions.sendMessage(text)`、`world.logic.run(handler, input)`、`world.kv.*`、`world.records.*` 和 `world.platform.invoke(feature, params)`。这些调用会通过隔离 iframe 的 MessagePort 进入宿主，页面不能直接访问 Tauri、Rust、文件系统、网络或模型 API。
+
+旧的 JSONC UI 不是兼容目标，导入时会被拒绝。HTML 页面开发时可以先当成普通网页写，再把游戏状态和动作替换为 `world` SDK 调用。
+
+作者可以直接写 JavaScript，也可以使用 TypeScript 开发并在打包前编译成 JavaScript。运行环境执行 HTML/CSS/JS，不直接执行 TS。复杂 UI 推荐使用 TS 检查快照字段和 SDK 参数，简单页面无需引入构建步骤。凡人修仙示例的 `ui.ts` 是可参考的共享交互源码。
+
+隔离 iframe 不授予 `allow-forms`。发送按钮使用 `type="button"` 并在 click 事件内调用 SDK，不要依赖浏览器原生表单提交。可用 `world.actions.submitMessage({ content, mode, turnIndex })` 提交新行动、编辑或重发；Promise 失败时保留草稿并展示错误。宿主状态中的 `errors.action_error` 以及 SDK 的 `world-error` 事件也可用于错误展示。`world.actions.clearError()` 清除上次的错误。
+
+`world.subscribe()` 提供的 `map_graph.nodes` 和 `map_graph.edges` 是完整拓扑数据，连线端点为 `source_node_id` / `target_node_id`。不能把节点数组的先后顺序当作路线。标签使用 `side_tabs`、`active_side_tab` 和 `world.actions.switchSideTab(key)`；属性内容使用 `active_attribute_items` / `active_attribute_content`。应保留输入、地图视角、思维链展开等本地 UI 状态，避免快照刷新覆盖用户操作。
+
+旧文档中的 JSONC 示例不再适用：
 
 ```jsonc
 {
@@ -31,7 +69,7 @@ v3 的核心原则是：**世界包拥有游戏页面的结构和视觉设计**�
 }
 ```
 
-不要把 UI 文档写成 `schema_version: 3`。当前客户端只支持 UI 文档 schema 2。
+不要再添加 `schema_version`。当前客户端直接加载 HTML 页面。
 
 ## 2. v3 运行边界
 
@@ -96,7 +134,7 @@ v3 的核心原则是：**世界包拥有游戏页面的结构和视觉设计**�
 
 1. 在应用中创建或复制一个世界。
 2. 打开“世界工坊 -> 界面风格”。
-3. 分别编辑桌面端与移动端的 Raw JSONC。
+3. 分别编辑桌面端与移动端的 HTML 页面。
 4. 分别编辑桌面端与移动端的“v3 原始样式表”。
 5. 使用内置桌面/移动预览检查布局。
 6. 查看“界面治理”的编译、依赖和兼容性结果。
@@ -154,11 +192,11 @@ npm run tauri:dev
   },
   "entries": {
     "desktop": {
-      "document": "<桌面 UI JSONC 字符串>",
+      "document": "<桌面 UI HTML 字符串>",
       "stylesheet": "<桌面 CSS 字符串>"
     },
     "mobile": {
-      "document": "<移动 UI JSONC 字符串>",
+      "document": "<移动 UI HTML 字符串>",
       "stylesheet": "<移动 CSS 字符串>"
     }
   }
@@ -210,15 +248,15 @@ npm run tauri:dev
 
 ## 5. 导出包目录结构
 
-当前世界包格式为 `dream-world-package` version 8。应用导出的 ZIP 结构如下：
+当前世界包格式为 `dream-world-package` version 9。应用导出的 ZIP 结构如下：
 
 ```text
 manifest.json
 tools.json            # 可选（v8）：世界引用到的 MCP 工具定义，导入时自动 upsert
 world/
   world.json
-  ui.desktop.jsonc
-  ui.mobile.jsonc
+  ui.desktop.html
+  ui.mobile.html
   ui.desktop.css
   ui.mobile.css
   logic.js              # 可选
@@ -242,10 +280,10 @@ manifest 中与 UI 有关的字段：
 ```json
 {
   "format": "dream-world-package",
-  "version": 8,
+  "version": 9,
   "world_file": "world/world.json",
-  "desktop_ui_file": "world/ui.desktop.jsonc",
-  "mobile_ui_file": "world/ui.mobile.jsonc",
+  "desktop_ui_file": "world/ui.desktop.html",
+  "mobile_ui_file": "world/ui.mobile.html",
   "ui_runtime_version": 3,
   "desktop_ui_stylesheet_file": "world/ui.desktop.css",
   "mobile_ui_stylesheet_file": "world/ui.mobile.css",
@@ -262,10 +300,10 @@ manifest 中与 UI 有关的字段：
 ```json
 {
   "format": "dream-world-package",
-  "version": 8,
+  "version": 9,
   "world_file": "world/world.json",
-  "desktop_ui_file": "world/ui.desktop.jsonc",
-  "mobile_ui_file": "world/ui.mobile.jsonc",
+  "desktop_ui_file": "world/ui.desktop.html",
+  "mobile_ui_file": "world/ui.mobile.html",
   "ui_runtime_version": 3,
   "desktop_ui_stylesheet_file": "world/ui.desktop.css",
   "mobile_ui_stylesheet_file": "world/ui.mobile.css",
@@ -292,9 +330,9 @@ manifest 中与 UI 有关的字段：
 | 字段 | 必需 | 说明 |
 |---|---|---|
 | `format` | 是 | 必须为 `dream-world-package` |
-| `version` | 是 | 当前为 `8`；兼容旧版 `5`、`6`、`7` |
+| `version` | 是 | 当前为 `9`；开发阶段不兼容旧版 |
 | `world_file` | 是 | 世界数据 JSON 的路径 |
-| `desktop_ui_file` / `mobile_ui_file` | 是 | 两份 UI 文档路径 |
+| `desktop_ui_file` / `mobile_ui_file` | 是 | 两份 HTML UI 页面路径 |
 | `ui_runtime_version` | 否 | `2` 或 `3`，缺省 `2`；新世界写 `3` |
 | `desktop_ui_stylesheet_file` / `mobile_ui_stylesheet_file` | 否 | 样式表路径，空内容可不打包但保留入口 |
 | `logic_file` | 否 | 沙箱逻辑源码路径（≤ 256 KB），无逻辑则省略 |

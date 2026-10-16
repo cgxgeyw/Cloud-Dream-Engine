@@ -628,6 +628,7 @@ pub(crate) fn build_character_tool_capabilities(
         .into_iter()
         .collect::<BTreeSet<_>>();
     let mut tools = Vec::new();
+    if let Some(tool) = crate::commands::knowledge::tool_capability(world) { tools.push(tool); }
     if allowed.contains(MCP_TOOL_SCHEDULE_NOTIFICATION_ID) {
         tools.push(notification_tool_definition());
     }
@@ -713,6 +714,7 @@ pub(crate) fn is_builtin_tool_name(tool_name: &str) -> bool {
     matches!(
         tool_name,
         "list_scenes"
+            | "search_knowledge"
             | "list_characters"
             | "change_scene"
             | "switch_player_character"

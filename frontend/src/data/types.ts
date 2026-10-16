@@ -841,3 +841,5 @@ export type UploadResponse = {
   asset_path?: string;
   url: string;
 };
+export interface KnowledgeBase { id: string; world_id: string | null; name: string; description: string; enabled: boolean }
+export interface KnowledgeDocument { id: string; knowledge_base_id: string; title: string; content: string; source_filename: string; updated_at: string }

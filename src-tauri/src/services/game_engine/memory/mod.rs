@@ -1598,7 +1598,7 @@ fn journal_has_completed_step(journal: &[serde_json::Value], step: &str) -> bool
     })
 }
 
-fn build_memory_search_terms(text: &str) -> Vec<String> {
+pub(crate) fn build_memory_search_terms(text: &str) -> Vec<String> {
     let normalized = normalize_memory_text(text);
     let chars = normalized.chars().collect::<Vec<_>>();
     let mut terms = Vec::new();
@@ -1742,7 +1742,7 @@ fn recency_bonus(created_at: &str, newest_created_at: Option<&str>) -> f64 {
     }
 }
 
-fn normalize_memory_text(text: &str) -> String {
+pub(crate) fn normalize_memory_text(text: &str) -> String {
     let compact = text.trim().to_lowercase().replace(char::is_whitespace, "");
     compact
         .chars()

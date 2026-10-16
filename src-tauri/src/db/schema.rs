@@ -36,6 +36,28 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             FOREIGN KEY (world_id) REFERENCES worlds(id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS knowledge_bases (
+            id TEXT PRIMARY KEY,
+            world_id TEXT REFERENCES worlds(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            enabled INTEGER NOT NULL DEFAULT 1
+        );
+        CREATE TABLE IF NOT EXISTS knowledge_documents (
+            id TEXT PRIMARY KEY,
+            knowledge_base_id TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            source_filename TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_knowledge_documents_base ON knowledge_documents(knowledge_base_id);
+        CREATE TABLE IF NOT EXISTS world_knowledge_bindings (
+            world_id TEXT NOT NULL REFERENCES worlds(id) ON DELETE CASCADE,
+            knowledge_base_id TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+            PRIMARY KEY (world_id, knowledge_base_id)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_world_records_scope
             ON world_records(world_id, collection, updated_at);
 

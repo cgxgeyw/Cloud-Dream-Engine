@@ -113,7 +113,7 @@ impl GameUiService {
         &self,
         request: WorldUiBundleValidationRequest,
     ) -> WorldUiBundleValidationResult {
-        let runtime_version = request.runtime_version.unwrap_or(2);
+        let runtime_version = request.runtime_version.unwrap_or(3);
         let desktop = self.validate_world_ui_document(WorldUiDocumentRequest {
             source: request.desktop_file,
             platform: Some("desktop".to_string()),
@@ -424,6 +424,16 @@ impl GameUiService {
         source: &str,
         requested_platform: Option<&str>,
     ) -> CompilationSnapshot {
+        let valid = source.trim_start().starts_with('<') && source.len() <= 2 * 1024 * 1024;
+        return CompilationSnapshot {
+            platform: requested_platform.map(str::to_string),
+            schema_version: None,
+            normalized_document: valid.then(|| serde_json::json!({"html":source})),
+            diagnostics: if valid { Vec::new() } else { vec![WorldUiDiagnostic { severity: "error".into(), code: "invalid_html_entry".into(), message: "世界 UI 必须是 HTML 文档，最大 2MiB；JSONC 布局不再支持。".into(), path: Some("document".into()) }] },
+            components: Vec::new(), actions: Vec::new(), capabilities: Vec::new(),
+        };
+        #[allow(unreachable_code)]
+        {
         let parsed = parse_document_source(source);
         let mut state = CompilationState::new();
         let mut platform = requested_platform
@@ -558,6 +568,7 @@ impl GameUiService {
         }
 
         build_snapshot(platform, schema_version, normalized, state)
+        }
     }
 
     fn validate_v2_node(&self, node: &Value, path: &str, state: &mut CompilationState) {

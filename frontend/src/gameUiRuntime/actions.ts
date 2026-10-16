@@ -50,7 +50,7 @@ export function createGameUiRuntimeActions(
     clearActionError: bag.clearActionError,
     setDraftValue: bag.setInputValue,
     setAutoScrollEnabled: bag.setChatAutoScrollEnabled,
-    submitMessage: (options = {}) => bag.handleSubmitAction(options),
+    submitMessage: (options = {}) => bag.handleSubmitAction(options).then(() => undefined),
     answerInteraction: async (messageId, interactionId, answer) => {
       const result = await bag.handleAnswerInteraction(messageId, interactionId, answer);
       if (!result?.newlyAnswered || !result.interaction) return;

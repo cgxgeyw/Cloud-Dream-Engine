@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>世界</title>
+  <style>
+    :root{color-scheme:light dark;font-family:system-ui,sans-serif;background:#191d25;color:#e7eaf1}
+    body{height:100%;display:grid;grid-template-rows:auto minmax(0,1fr) auto}
+    header{display:flex;align-items:center;gap:16px;padding:16px 24px;border-bottom:1px solid #363d4b}
+    header h1{font-size:20px;margin:0;flex:1}button{font:inherit;cursor:pointer;border:1px solid #59667d;background:#283447;color:inherit;border-radius:8px;padding:10px 16px}
+    button:disabled{opacity:.5;cursor:wait}button:focus-visible,textarea:focus-visible{outline:2px solid #92b5ef;outline-offset:3px}
+    #messages{overflow:auto;min-height:0;padding:24px;display:flex;flex-direction:column;gap:20px}
+    article{max-width:75ch;width:100%;margin:0 auto;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7}article strong{display:block;color:#a9bddd;font-size:14px}
+    form{padding:16px 24px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;border-top:1px solid #363d4b}
+    textarea{min-width:0;resize:vertical;font:inherit;background:#222a36;color:inherit;border:1px solid #59667d;border-radius:8px;padding:12px}
+    #status{grid-column:1/-1;margin:0;color:#a9bddd;font-size:13px}
+    @media(max-width:767px){header{padding:12px}header h1{font-size:17px}#messages{padding:16px}form{padding:12px;grid-template-columns:minmax(0,1fr)}form button{justify-self:end}}
+  </style>
+</head>
+<body>
+  <header><button id="back" type="button">返回</button><h1 id="title">世界</h1><span id="location"></span></header>
+  <main id="messages" aria-live="polite"></main>
+  <form id="composer"><textarea id="input" aria-label="你的行动" placeholder="说些什么，或描述你的行动…" rows="2"></textarea><button id="send" type="submit">发送</button><p id="status" role="status"></p></form>
+  <script>
+    const input = document.querySelector('#input');
+    const messages = document.querySelector('#messages');
+    const status = document.querySelector('#status');
+    document.querySelector('#back').onclick = () => world.actions.navigate('home').catch(error => status.textContent = error.message);
+    world.subscribe(state => {
+      document.querySelector('#title').textContent = state.world?.name || '世界';
+      document.querySelector('#location').textContent = state.session?.location || '';
+      const following = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 80;
+      messages.replaceChildren();
+      for (const message of state.messages || []) {
+        const article = document.createElement('article');
+        const label = document.createElement('strong');
+        label.textContent = message.speaker || (message.role === 'user' ? state.player?.name || '玩家' : '旁白');
+        const body = document.createElement('div');
+        body.textContent = typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
+        article.append(label, body); messages.append(article);
+      }
+      if (following) messages.scrollTop = messages.scrollHeight;
+      document.querySelector('#send').disabled = !!state.ui_state?.submitting;
+      status.textContent = state.ui_state?.submitting ? '正在回应…' : state.preview ? '预览模式，操作不会写入游戏。' : '';
+    });
+    document.querySelector('#composer').onsubmit = async event => {
+      event.preventDefault(); const text = input.value.trim(); if (!text) return;
+      try { await world.actions.sendMessage(text); input.value = ''; } catch (error) { status.textContent = error.message; }
+    };
+  </script>
+</body>
+</html>

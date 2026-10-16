@@ -647,7 +647,7 @@ export function WorldEditorPage() {
             <div className="text-muted" style={{ fontSize: 12 }}>
               {parsed.error
                 ? "Current source is invalid. Preview is using fallback."
-                : `schema_version: ${parsed.document.schema_version} (component tree)`}
+                : 'HTML / CSS / JavaScript，隔离页面 + world SDK'}
             </div>
           </div>
           <div className="flex flex--gap-sm" style={{ flexWrap: "wrap" }}>
@@ -664,7 +664,7 @@ export function WorldEditorPage() {
         {parsed.error ? <div className="game-input-bubble">{parsed.error}</div> : null}
 
         <label className="editor-field">
-          <span className="editor-field-label">Raw JSONC</span>
+          <span className="editor-field-label">HTML（可包含 style 和 script）</span>
           <textarea
             value={source}
             onChange={(event) => updateGameUiFile(platform, event.target.value)}
@@ -742,7 +742,7 @@ export function WorldEditorPage() {
           </div>
         ) : null}
 
-        {!parsed.error && parsed.document.schema_version === 2 ? (
+        {!parsed.error && !parsed.document.html && parsed.document.schema_version === 2 ? (
           <GameUiStructureEditor
             platform={platform}
             document={parsed.document as GameUiDocumentV2}
@@ -1596,6 +1596,11 @@ export function WorldEditorPage() {
               {directorConfig.service_mode === "world_sim" ? (
                 <FoldableEditorSection title="基础权限" defaultOpen>
                   <div className="settings-form-grid">
+                    <label className="editor-field">
+                      <span className="editor-field-label">允许主控和角色查询知识库</span>
+                      <div className="settings-inline-toggle"><input type="checkbox" checked={directorConfig.knowledge_access} onChange={e => updateDirectorPatch({ knowledge_access: e.target.checked })} /></div>
+                      <span>仅可查询此世界自带及在知识库页面关联的公共资料，通过 search_knowledge 工具按需读取。</span>
+                    </label>
                     <label className="editor-field">
                       <span className="editor-field-label">允许切换场景</span>
                       <div className="settings-inline-toggle">

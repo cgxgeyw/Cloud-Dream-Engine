@@ -1419,6 +1419,12 @@ impl WorldDirectorService {
                 .cloned()
                 .unwrap_or_default();
             match tool_name.as_str() {
+                "search_knowledge" => {
+                    let result = if world.director_config["knowledge_access"] != true { Err("Knowledge access is disabled".into()) } else {
+                        notification_conn.ok_or("Knowledge database is unavailable".to_string()).and_then(|conn| crate::commands::knowledge::search(conn, &world.id, &serde_json::Value::Object(arguments.clone())))
+                    };
+                    tool_results.push(match result { Ok(value) => serde_json::json!({"id":call_id,"tool_name":tool_name,"ok":true,"result":value}), Err(error) => serde_json::json!({"id":call_id,"tool_name":tool_name,"ok":false,"error":error}) });
+                }
                 "list_scenes" => {
                     tool_results.push(serde_json::json!({
                         "id": call_id,
@@ -2726,6 +2732,7 @@ impl WorldDirectorService {
             tools.push(notification_tool_definition());
         }
         tools.extend(custom_mcp_tool_capabilities(&allowed, mcp_tools));
+        if let Some(tool) = crate::commands::knowledge::tool_capability(world) { tools.push(tool); }
         tools
     }
 

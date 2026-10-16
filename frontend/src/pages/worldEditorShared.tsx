@@ -101,6 +101,7 @@ export type DirectorConfig = {
     memory_write_mode: "session" | "character" | "world_and_character";
   };
   allow_scene_transition: boolean;
+  knowledge_access: boolean;
   allow_npc_spawn: boolean;
   allow_player_character_switch: boolean;
   director_interaction_kinds: InteractionKind[];
@@ -188,6 +189,7 @@ export const defaultDirectorConfig: DirectorConfig = {
     memory_write_mode: "session",
   },
   allow_scene_transition: true,
+  knowledge_access: false,
   allow_npc_spawn: true,
   allow_player_character_switch: true,
   director_interaction_kinds: [],
@@ -430,6 +432,7 @@ export function normalizeDirectorConfig(raw: Record<string, unknown> | undefined
             ? raw.memory_write_mode
           : defaultDirectorConfig.runtime_policy.memory_write_mode,
     },
+    knowledge_access: raw?.knowledge_access === true,
     allow_scene_transition:
       typeof raw?.allow_scene_transition === "boolean"
         ? raw.allow_scene_transition
