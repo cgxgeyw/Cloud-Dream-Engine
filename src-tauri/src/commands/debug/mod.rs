@@ -69,6 +69,8 @@ pub async fn get_session_debug(
     let prompt_calls = common::query_prompt_calls(db.conn(), &session_id)?;
     let prompt_call_index = common::build_prompt_trace_index(&prompt_calls);
     let llm_calls = common::query_llm_calls(db.conn(), &session_id, &prompt_call_index)?;
+    let world_logic_traces = common::query_world_logic_traces(db.conn(), &session_id)?;
+    let game_turn_state = common::query_game_turn_state(db.conn(), &session_id)?;
 
     let agent_sessions = common::query_agent_sessions(db.conn(), &session_id)?;
     let latest_checkpoints = common::query_latest_checkpoints(db.conn(), &session_id)?;
@@ -603,6 +605,8 @@ pub async fn get_session_debug(
         "system_prompt_coverage": system_prompt_coverage,
         "character_prompt_traces": character_prompt_traces,
         "llm_calls": llm_calls,
+        "world_logic_traces": world_logic_traces,
+        "game_turn_state": game_turn_state,
         "prompt_calls": prompt_calls,
         "turn_journal_timeline": turn_journal_timeline,
         "trace_timeline": trace_timeline,

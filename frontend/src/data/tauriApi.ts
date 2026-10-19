@@ -77,6 +77,8 @@ import type {
   WorldUiCompatibilityReport,
   WorldUiDocumentRequest,
   WorldUiDocumentValidationResult,
+  WorldPackageInspectionResult,
+  WorldEventResponse,
   WorldUpsertRequest,
   WorldPermissionStatus,
   WorldFeatureGrantStatus,
@@ -104,6 +106,8 @@ export type {
   WorldUiCompileRequest, WorldUiCompileResult,
   VerifyWorldPackageUiCompatibilityRequest, WorldUiCompatibilityReport, WorldPermissionStatus,
   WorldRecord, WorldRecordWriteRequest, WorldKvEntry,
+  WorldPackageInspectionResult,
+  WorldEventResponse,
 } from "./types";
 
 
@@ -451,8 +455,8 @@ export function verifyWorldPackageUiCompatibility(
   return tauriCommand("verify_world_package_ui_compatibility", { request: payload });
 }
 
-export function runWorldLogic(worldId: string, sessionId: string, handler: string, input: unknown): Promise<Record<string, unknown>> {
-  return tauriCommand("invoke_world_logic", { worldId, sessionId, handler, input });
+export function dispatchWorldEvent(worldId: string, sessionId: string, event: import("./types").WorldEvent): Promise<WorldEventResponse> {
+  return tauriCommand("dispatch_world_event", { worldId, sessionId, event });
 }
 
 export async function downloadWorldPackage(worldId: string): Promise<{ blob?: Blob; filename: string; savedPath?: string }> {
@@ -466,6 +470,11 @@ export async function downloadWorldPackage(worldId: string): Promise<{ blob?: Bl
 export async function importWorldPackage(file: File): Promise<WorldResponse> {
   const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
   return tauriCommand("import_world_package", { filename: file.name, data: bytes });
+}
+
+export async function inspectWorldPackage(file: File): Promise<WorldPackageInspectionResult> {
+  const data = Array.from(new Uint8Array(await file.arrayBuffer()));
+  return tauriCommand("inspect_world_package", { request: { data } });
 }
 
 export function importWorldPackageFromPath(path: string): Promise<WorldResponse> {

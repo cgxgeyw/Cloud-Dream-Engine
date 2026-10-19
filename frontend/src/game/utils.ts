@@ -11,12 +11,7 @@ import {
   type WorldResponse,
 } from "../data/apiAdapter";
 import type { ContentPart } from "../data/types";
-import {
-  resolveSidePanelTabOrder,
-  type GameUiDocument,
-  type GameUiLayoutNode,
-  type UiAssetConfig,
-} from "../data/gameUi";
+import type { UiAssetConfig } from "../data/gameUi";
 
 function getMessageText(content: string | ContentPart[]): string {
   if (typeof content === "string") {
@@ -603,69 +598,16 @@ export function resolveDialogueSpeakerLabel(
   return message.speaker?.trim() || "系统";
 }
 
-function nodeDisablesMapSideTab(node: GameUiLayoutNode | undefined): boolean {
-  if (!node || typeof node !== "object") {
-    return false;
-  }
-
-  if (
-    node.type === "component" &&
-    node.component === "side_panel_tabs" &&
-    node.props?.show_map_tab === false
-  ) {
-    return true;
-  }
-
-  if (node.type !== "svg" && "children" in node && Array.isArray(node.children)) {
-    if (node.children.some((child) => nodeDisablesMapSideTab(child))) {
-      return true;
-    }
-  }
-
-  if (node.type === "component" && node.slots) {
-    for (const slot of Object.values(node.slots)) {
-      const slotNodes = Array.isArray(slot) ? slot : [slot];
-      if (slotNodes.some((child) => nodeDisablesMapSideTab(child))) {
-        return true;
-      }
-    }
-  }
-
-  if ("child" in node && nodeDisablesMapSideTab(node.child)) {
-    return true;
-  }
-
-  if ("empty" in node && nodeDisablesMapSideTab(node.empty)) {
-    return true;
-  }
-
-  return false;
-}
-
-function shouldOfferMapSideTab(document: GameUiDocument, mapCount: number): boolean {
-  if (mapCount <= 0) {
-    return false;
-  }
-  return !nodeDisablesMapSideTab(document.layout.root);
-}
-
 export function resolveStatusTabs(
-  document: GameUiDocument,
   mapCount: number,
   attributeTabs: Array<[string, string]>,
 ): Array<{ key: string; label: string }> {
   const available = new Map<string, { key: string; label: string }>();
-  if (shouldOfferMapSideTab(document, mapCount)) {
+  if (mapCount > 0) {
     available.set("map", { key: "map", label: "地图" });
   }
   for (const [key] of attributeTabs) {
     available.set(`attribute:${key}`, { key: `attribute:${key}`, label: key });
   }
-  const availableTabs = Array.from(available.values());
-  const orderedTabs = resolveSidePanelTabOrder(document, availableTabs);
-  const orderedKeys = new Set(orderedTabs.map((tab) => tab.key));
-  return [
-    ...orderedTabs,
-    ...availableTabs.filter((tab) => !orderedKeys.has(tab.key)),
-  ];
+  return Array.from(available.values());
 }

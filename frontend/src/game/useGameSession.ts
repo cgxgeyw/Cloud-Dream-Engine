@@ -50,8 +50,6 @@ import {
 } from "../data/apiAdapter";
 import type { ContentPart, MessageInteraction } from "../data/types";
 import {
-  buildGameUiStylesheet,
-  createGameUiScopeSelector,
   normalizeGameUiScopeId,
   normalizeWorldUiEnvelope,
   parseGameUiDocument,
@@ -185,10 +183,6 @@ export function useGameSession(
   const worldId = themeWorld?.id ?? "";
   const playerCharacterId = session?.player_character_id ?? "";
   const gameUiScopeId = normalizeGameUiScopeId(useId());
-  const gameUiScopeSelector = useMemo(
-    () => createGameUiScopeSelector(gameUiScopeId),
-    [gameUiScopeId],
-  );
 
   useEffect(() => {
     runtimeAttributeSessionIdRef.current = sessionId;
@@ -652,23 +646,7 @@ export function useGameSession(
     } as React.CSSProperties & Record<string, string>;
   }, [runtimeBackgroundAsset, themeStyle]);
 
-  const themeCustomCss = useMemo(
-    () => {
-      const generatedStylesheet = buildGameUiStylesheet(
-        parsedGameUi.document,
-        runtimeBackgroundAsset ? assetUrl(runtimeBackgroundAsset) : undefined,
-        gameUiScopeSelector,
-      );
-      const worldStylesheet = resolveUiStylesheet(
-        worldUiEnvelope,
-        isMobile ? "mobile" : "desktop",
-      ).trim();
-      return worldStylesheet
-        ? `${generatedStylesheet}\n/* World UI v3 stylesheet */\n${worldStylesheet}`
-        : generatedStylesheet;
-    },
-    [gameUiScopeSelector, isMobile, parsedGameUi.document, runtimeBackgroundAsset, worldUiEnvelope],
-  );
+  const themeCustomCss = resolveUiStylesheet(worldUiEnvelope, isMobile ? "mobile" : "desktop");
 
   const mapGraphNodes = committedMapGraph.nodes;
   const mapGraphEdges = committedMapGraph.edges;
@@ -696,8 +674,8 @@ export function useGameSession(
   );
   const sideTabs = useMemo(
     () =>
-      resolveStatusTabs(parsedGameUi.document, mapGraphNodes.length, attributeSideTabs),
-    [attributeSideTabs, mapGraphNodes.length, parsedGameUi.document],
+      resolveStatusTabs(mapGraphNodes.length, attributeSideTabs),
+    [attributeSideTabs, mapGraphNodes.length],
   );
 
   useEffect(() => {

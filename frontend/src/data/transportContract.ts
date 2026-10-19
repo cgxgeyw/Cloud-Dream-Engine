@@ -27,6 +27,7 @@ export type DirectTransportMethod =
   | "verifyWorldPackageUiCompatibility"
   | "downloadWorldPackage"
   | "importWorldPackage"
+  | "inspectWorldPackage"
   | "uploadFile"
   | "fetchSession"
   | "createSession"

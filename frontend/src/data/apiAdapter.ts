@@ -41,6 +41,8 @@ import type {
   WorldUiCompatibilityReport,
   WorldUiDocumentRequest,
   WorldUiDocumentValidationResult,
+  WorldPackageInspectionResult,
+  WorldEventResponse,
   WorldPermissionStatus,
   WorldFeatureGrantStatus,
   WorldUpsertRequest,
@@ -457,9 +459,9 @@ export async function verifyWorldPackageUiCompatibility(
     : (await getHttp()).verifyWorldPackageUiCompatibility(payload);
 }
 
-export async function runWorldLogic(worldId: string, sessionId: string, handler: string, input: unknown): Promise<Record<string, unknown>> {
+export async function dispatchWorldEvent(worldId: string, sessionId: string, event: import("./types").WorldEvent): Promise<WorldEventResponse> {
   if (!isTauri) throw new Error("此世界的权威规则需要在桌面或移动客户端运行。");
-  return (await getTauri()).runWorldLogic(worldId, sessionId, handler, input);
+  return (await getTauri()).dispatchWorldEvent(worldId, sessionId, event);
 }
 
 export async function downloadWorldPackage(worldId: string) {
@@ -468,6 +470,10 @@ export async function downloadWorldPackage(worldId: string) {
 
 export async function importWorldPackage(file: File) {
   return isTauri ? (await getTauri()).importWorldPackage(file) : (await getHttp()).importWorldPackage(file);
+}
+
+export async function inspectWorldPackage(file: File): Promise<WorldPackageInspectionResult> {
+  return isTauri ? (await getTauri()).inspectWorldPackage(file) : (await getHttp()).inspectWorldPackage(file);
 }
 
 export async function importWorldPackageFromPath(path: string) {

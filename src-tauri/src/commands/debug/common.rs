@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 
 use crate::models::attribute::{AttributeSchema, AttributeValue};
 use crate::models::character::CharacterDefinition;
@@ -352,6 +352,76 @@ pub fn query_llm_calls(
         .map_err(|e| e.to_string())?;
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())
+}
+
+pub fn query_world_logic_traces(
+    db: &rusqlite::Connection,
+    session_id: &str,
+) -> Result<Vec<serde_json::Value>, String> {
+    let mut stmt = db
+        .prepare(
+            "SELECT trace_id, request_id, world_id, session_id, actor, handler, status,
+                    latency_ms, input_json, result_json, error, created_at
+             FROM world_logic_traces
+             WHERE session_id = ?1
+             ORDER BY created_at DESC, trace_id DESC
+             LIMIT 200",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![session_id], |row| {
+            let parse = |index: usize| -> rusqlite::Result<serde_json::Value> {
+                Ok(serde_json::from_str::<serde_json::Value>(
+                    &row.get::<_, String>(index)?,
+                )
+                .unwrap_or(serde_json::Value::Null))
+            };
+            Ok(serde_json::json!({
+                "trace_id": row.get::<_, String>(0)?,
+                "request_id": row.get::<_, String>(1)?,
+                "world_id": row.get::<_, String>(2)?,
+                "session_id": row.get::<_, String>(3)?,
+                "actor": row.get::<_, String>(4)?,
+                "handler": row.get::<_, String>(5)?,
+                "status": row.get::<_, String>(6)?,
+                "latency_ms": row.get::<_, i64>(7)?,
+                "input": parse(8)?,
+                "result": parse(9)?,
+                "error": row.get::<_, String>(10)?,
+                "created_at": row.get::<_, String>(11)?,
+            }))
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
+}
+
+pub fn query_game_turn_state(
+    db: &rusqlite::Connection,
+    session_id: &str,
+) -> Result<serde_json::Value, String> {
+    db.query_row(
+        "SELECT session_id, world_id, phase, active_actor, turn_index, sequence, terminal,
+                last_handler, updated_at
+         FROM game_turn_states WHERE session_id = ?1",
+        params![session_id],
+        |row| {
+            Ok(serde_json::json!({
+                "session_id": row.get::<_, String>(0)?,
+                "world_id": row.get::<_, String>(1)?,
+                "phase": row.get::<_, String>(2)?,
+                "active_actor": row.get::<_, String>(3)?,
+                "turn_index": row.get::<_, i64>(4)?,
+                "sequence": row.get::<_, i64>(5)?,
+                "terminal": row.get::<_, i64>(6)? != 0,
+                "last_handler": row.get::<_, String>(7)?,
+                "updated_at": row.get::<_, String>(8)?,
+            }))
+        },
+    )
+    .optional()
+    .map_err(|error| error.to_string())?
+    .map_or(Ok(serde_json::Value::Null), Ok)
 }
 
 // ---------------------------------------------------------------------------

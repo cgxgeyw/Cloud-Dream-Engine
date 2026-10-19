@@ -60,5 +60,16 @@ pub async fn set_world_feature_grant(
     granted: bool,
 ) -> Result<(), String> {
     let db = state.db.lock().await;
+    let world = WorldRepository::new(db.conn())
+        .get(&world_id)?
+        .ok_or_else(|| "世界不存在或已删除。".to_string())?;
+    if !platform_features::declared_features(&world.ui_theme_config)
+        .iter()
+        .any(|declared| declared == &feature)
+    {
+        return Err(format!(
+            "not_declared: 世界包未声明平台能力 `{feature}`，无法授权。"
+        ));
+    }
     platform_features::set_grant(db.conn(), &world_id, &feature, granted)
 }

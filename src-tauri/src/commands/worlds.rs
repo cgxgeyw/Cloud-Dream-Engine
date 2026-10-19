@@ -174,6 +174,13 @@ pub async fn import_world_package(
 }
 
 #[tauri::command]
+pub async fn inspect_world_package(
+    request: WorldPackageInspectionRequest,
+) -> Result<WorldPackageInspectionResult, String> {
+    Ok(WorldPackageService::inspect_package_archive(request.data))
+}
+
+#[tauri::command]
 pub async fn import_world_package_from_path(
     state: State<'_, AppState>,
     path: String,

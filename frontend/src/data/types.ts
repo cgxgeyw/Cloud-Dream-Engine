@@ -231,6 +231,54 @@ export type WorldUiCompatibilityReport = {
   diagnostics: WorldUiDiagnostic[];
 };
 
+export type WorldPackageInspectionRequest = {
+  data: number[];
+};
+
+export type WorldPackageInspectionResult = {
+  ok: boolean;
+  format?: string | null;
+  version?: number | null;
+  diagnostics: WorldUiDiagnostic[];
+};
+
+export type WorldGameTurnTransition = {
+  known: boolean;
+  command_id: string;
+  actor: string;
+  previous_actor?: string | null;
+  next_actor?: string | null;
+  phase?: string | null;
+  turn_index: number;
+  sequence: number;
+  continue_action: boolean;
+  turn_ended: boolean;
+  game_over: boolean;
+};
+
+export type WorldEventResponse = {
+  result: unknown;
+  transition: WorldGameTurnTransition;
+  event: WorldEvent;
+  status: WorldWorkflowStatus;
+};
+
+export type WorldEvent =
+  | { type: "session_started" }
+  | { type: "player_message"; content: string }
+  | { type: "game_action"; handler: string; input: unknown }
+  | { type: "agent_action"; handler: string; input: unknown }
+  | { type: "end_turn"; handler: string; input: unknown }
+  | { type: "interaction_answered"; message_id: string; interaction_id: string; answer: unknown }
+  | { type: "tool_result"; tool_call_id: string; result: unknown };
+
+export type WorldWorkflowStatus = {
+  phase: string;
+  active_actor?: string | null;
+  waiting_for?: string | null;
+  terminal: boolean;
+};
+
 // ==============================
 // Character
 // ==============================

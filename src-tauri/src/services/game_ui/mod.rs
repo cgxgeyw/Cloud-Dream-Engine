@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use regex::Regex;
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 use crate::models::world::{
     VerifyWorldPackageUiCompatibilityRequest, WorldUiBundleValidationRequest,
@@ -9,68 +9,12 @@ use crate::models::world::{
     WorldUiCompatibilityTarget, WorldUiCompileRequest, WorldUiCompileResult, WorldUiDiagnostic,
     WorldUiDocumentRequest, WorldUiDocumentValidationResult,
 };
-use crate::services::game_ui_catalog::{
-    capability_ids, find_action, find_component, game_ui_catalog, is_supported_capability,
-};
+use crate::services::game_ui_catalog::{game_ui_catalog, is_supported_capability};
 
 // 组件 / 动作 / 能力 / 受支持版本列表的唯一来源是仓库根 `shared/game-ui/catalog.json`
 // （经 `game_ui_catalog` 模块加载）。本文件不再维护任何硬编码清单。
 
 const MAX_WORLD_STYLESHEET_BYTES: usize = 1024 * 1024;
-
-struct CompilationState {
-    diagnostics: Vec<WorldUiDiagnostic>,
-    components: BTreeSet<String>,
-    actions: BTreeSet<String>,
-    capabilities: BTreeSet<String>,
-}
-
-impl CompilationState {
-    fn new() -> Self {
-        Self {
-            diagnostics: Vec::new(),
-            components: BTreeSet::new(),
-            actions: BTreeSet::new(),
-            capabilities: BTreeSet::new(),
-        }
-    }
-
-    fn error(&mut self, code: &str, message: impl Into<String>, path: impl Into<String>) {
-        self.diagnostics.push(WorldUiDiagnostic {
-            severity: "error".to_string(),
-            code: code.to_string(),
-            message: message.into(),
-            path: Some(path.into()),
-        });
-    }
-
-    fn warn(&mut self, code: &str, message: impl Into<String>, path: impl Into<String>) {
-        self.diagnostics.push(WorldUiDiagnostic {
-            severity: "warning".to_string(),
-            code: code.to_string(),
-            message: message.into(),
-            path: Some(path.into()),
-        });
-    }
-
-    fn add_action(&mut self, action_id: &str) {
-        self.actions.insert(action_id.to_string());
-        match find_action(action_id) {
-            Some(action) => {
-                for capability in &action.implies_capabilities {
-                    self.capabilities.insert(capability.clone());
-                }
-            }
-            None => {
-                self.error(
-                    "unknown_action",
-                    format!("未知的动作 ID：{action_id}。"),
-                    "action",
-                );
-            }
-        }
-    }
-}
 
 struct CompilationSnapshot {
     platform: Option<String>,
@@ -83,6 +27,93 @@ struct CompilationSnapshot {
 }
 
 pub struct GameUiService;
+
+pub const MAX_WORLD_LOGIC_BYTES: usize = 256 * 1024;
+
+pub fn validate_world_logic_source(source: &str) -> Vec<WorldUiDiagnostic> {
+    let mut diagnostics = Vec::new();
+    if source.len() > MAX_WORLD_LOGIC_BYTES {
+        push_source_diagnostic(
+            &mut diagnostics,
+            "error",
+            "logic_too_large",
+            "世界逻辑脚本超过 256 KiB 上限。",
+            source,
+            0,
+            "logic.js",
+        );
+    }
+    for forbidden in [
+        "fetch(",
+        "XMLHttpRequest",
+        "WebSocket",
+        "import ",
+        "export ",
+        "eval(",
+        "Function(",
+        "document.",
+        "window.",
+    ] {
+        if let Some(offset) = source.find(forbidden) {
+            push_source_diagnostic(
+                &mut diagnostics,
+                "error",
+                "forbidden_logic_api",
+                format!("logic.js 不能直接使用 `{forbidden}`；请通过 world SDK 或框架事件访问系统能力。"),
+                source,
+                offset,
+                "logic.js",
+            );
+        }
+    }
+    let mut braces = 0i32;
+    let mut parentheses = 0i32;
+    let mut brackets = 0i32;
+    let mut quote = None;
+    let bytes = source.as_bytes();
+    for (index, byte) in bytes.iter().copied().enumerate() {
+        match quote {
+            Some(current) if byte == current && (index == 0 || bytes[index - 1] != b'\\') => {
+                quote = None
+            }
+            Some(_) => {}
+            None => match byte {
+                b'\'' | b'"' | b'`' => quote = Some(byte),
+                b'{' => braces += 1,
+                b'}' => braces -= 1,
+                b'(' => parentheses += 1,
+                b')' => parentheses -= 1,
+                b'[' => brackets += 1,
+                b']' => brackets -= 1,
+                _ => {}
+            },
+        }
+        if braces < 0 || parentheses < 0 || brackets < 0 {
+            push_source_diagnostic(
+                &mut diagnostics,
+                "error",
+                "invalid_logic_syntax",
+                "logic.js 包含不匹配的括号。",
+                source,
+                index,
+                "logic.js",
+            );
+            break;
+        }
+    }
+    if quote.is_some() || braces != 0 || parentheses != 0 || brackets != 0 {
+        push_source_diagnostic(
+            &mut diagnostics,
+            "error",
+            "invalid_logic_syntax",
+            "logic.js 包含未闭合的字符串或括号。",
+            source,
+            source.len().saturating_sub(1),
+            "logic.js",
+        );
+    }
+    diagnostics
+}
 
 impl GameUiService {
     pub fn new() -> Self {
@@ -147,6 +178,7 @@ impl GameUiService {
                     path: Some(format!("bundle.{platform}_stylesheet")),
                 });
             }
+            validate_stylesheet(stylesheet, platform, &mut diagnostics);
             for unknown in find_unknown_game_classes(stylesheet) {
                 diagnostics.push(WorldUiDiagnostic {
                     severity: "warning".to_string(),
@@ -424,511 +456,409 @@ impl GameUiService {
         source: &str,
         requested_platform: Option<&str>,
     ) -> CompilationSnapshot {
-        let valid = source.trim_start().starts_with('<') && source.len() <= 2 * 1024 * 1024;
-        return CompilationSnapshot {
-            platform: requested_platform.map(str::to_string),
-            schema_version: None,
-            normalized_document: valid.then(|| serde_json::json!({"html":source})),
-            diagnostics: if valid { Vec::new() } else { vec![WorldUiDiagnostic { severity: "error".into(), code: "invalid_html_entry".into(), message: "世界 UI 必须是 HTML 文档，最大 2MiB；JSONC 布局不再支持。".into(), path: Some("document".into()) }] },
-            components: Vec::new(), actions: Vec::new(), capabilities: Vec::new(),
-        };
-        #[allow(unreachable_code)]
-        {
-        let parsed = parse_document_source(source);
-        let mut state = CompilationState::new();
-        let mut platform = requested_platform
+        let platform = requested_platform
             .map(|value| value.trim().to_ascii_lowercase())
             .filter(|value| !value.is_empty());
+        let mut diagnostics = Vec::new();
+        validate_html_document(source, &mut diagnostics);
 
-        let parsed_value = match parsed {
-            Ok(value) => value,
-            Err(error) => {
-                return CompilationSnapshot {
-                    platform,
-                    schema_version: None,
-                    normalized_document: None,
-                    diagnostics: vec![WorldUiDiagnostic {
-                        severity: "error".to_string(),
-                        code: "parse_error".to_string(),
-                        message: error,
-                        path: Some("document".to_string()),
-                    }],
-                    components: Vec::new(),
-                    actions: Vec::new(),
-                    capabilities: Vec::new(),
-                };
-            }
-        };
+        CompilationSnapshot {
+            platform,
+            schema_version: None,
+            normalized_document: (!source.trim().is_empty())
+                .then(|| serde_json::json!({"html": source})),
+            diagnostics,
+            components: Vec::new(),
+            actions: Vec::new(),
+            capabilities: Vec::new(),
+        }
+    }
 
-        let Some(object) = parsed_value.as_object() else {
-            return CompilationSnapshot {
-                platform,
-                schema_version: None,
-                normalized_document: None,
-                diagnostics: vec![WorldUiDiagnostic {
-                    severity: "error".to_string(),
-                    code: "invalid_document_root".to_string(),
-                    message: "UI 文档根节点必须是对象。".to_string(),
-                    path: Some("document".to_string()),
-                }],
-                components: Vec::new(),
-                actions: Vec::new(),
-                capabilities: Vec::new(),
+}
+
+
+const MAX_WORLD_HTML_BYTES: usize = 2 * 1024 * 1024;
+
+fn validate_html_document(source: &str, diagnostics: &mut Vec<WorldUiDiagnostic>) {
+    if source.trim().is_empty() {
+        push_html_diagnostic(
+            diagnostics,
+            "error",
+            "empty_html_document",
+            "世界 UI HTML 不能为空。",
+            source,
+            0,
+        );
+        return;
+    }
+    if source.len() > MAX_WORLD_HTML_BYTES {
+        push_html_diagnostic(
+            diagnostics,
+            "error",
+            "html_too_large",
+            format!("世界 UI HTML 不能超过 {} MiB。", MAX_WORLD_HTML_BYTES / 1024 / 1024),
+            source,
+            0,
+        );
+    }
+    if !source.trim_start().starts_with('<') {
+        push_html_diagnostic(
+            diagnostics,
+            "error",
+            "invalid_html_entry",
+            "世界 UI 必须是 HTML 文档；旧 JSONC UI DSL 已移除。",
+            source,
+            0,
+        );
+        return;
+    }
+
+    let lower = source.to_ascii_lowercase();
+    let bytes = source.as_bytes();
+    let mut cursor = 0usize;
+    let mut stack: Vec<(String, usize)> = Vec::new();
+    let void_tags = [
+        "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
+        "param", "source", "track", "wbr",
+    ];
+    let forbidden_tags = ["iframe", "object", "embed", "base"];
+    let mut has_html = false;
+    let mut has_body = false;
+    let mut has_viewport = false;
+
+    while let Some(relative) = source[cursor..].find('<') {
+        let start = cursor + relative;
+        if lower[start..].starts_with("<!--") {
+            let Some(comment_end) = lower[start + 4..].find("-->") else {
+                push_html_diagnostic(
+                    diagnostics,
+                    "error",
+                    "unterminated_html_comment",
+                    "HTML 注释没有闭合。",
+                    source,
+                    start,
+                );
+                break;
             };
-        };
-
-        let normalized = parsed_value.clone();
-
-        let schema_version = match object.get("schema_version") {
-            Some(Value::Number(number)) => number.as_u64().map(|value| value as u32),
-            Some(_) => {
-                state.error(
-                    "invalid_schema_version",
-                    "schema_version must be a number.",
-                    "schema_version",
-                );
-                None
-            }
-            None => {
-                state.error(
-                    "missing_schema_version",
-                    "schema_version is missing. UI documents must declare schema_version 2.",
-                    "schema_version",
-                );
-                None
-            }
-        };
-
-        if let Some(version) = schema_version {
-            if !game_ui_catalog()
-                .supported_document_schema_versions
-                .contains(&version)
-            {
-                state.error(
-                    "unsupported_schema_version",
-                    format!("不支持的 schema_version：{version}。"),
-                    "schema_version",
-                );
-            }
+            cursor = start + 4 + comment_end + 3;
+            continue;
         }
-
-        if let Some(meta) = object.get("meta") {
-            if !meta.is_object() {
-                state.error("invalid_meta", "meta must be an object.", "meta");
-            } else if let Some(meta_platform) = meta.get("platform").and_then(Value::as_str) {
-                let normalized_meta_platform = meta_platform.trim().to_ascii_lowercase();
-                if !normalized_meta_platform.is_empty() {
-                    if let Some(requested) = requested_platform {
-                        if normalized_meta_platform != requested {
-                            state.warn(
-                                "platform_mismatch",
-                                format!(
-                                    "meta.platform is `{normalized_meta_platform}` but the request platform is `{requested}`."
-                                ),
-                                "meta.platform",
-                            );
-                        }
-                    }
-                    platform = Some(normalized_meta_platform);
-                }
-            }
-        }
-
-        if let Some(ui_state) = object.get("state") {
-            let Some(ui_state_object) = ui_state.as_object() else {
-                state.error("invalid_state", "state must be an object.", "state");
-                return build_snapshot(platform, schema_version, normalized, state);
-            };
-            for (key, value) in ui_state_object {
-                validate_prop_value(value, &format!("state.{key}"), &mut state);
-                infer_dependencies_from_value(value, &format!("state.{key}"), &mut state);
-            }
-        }
-
-        let Some(layout) = object.get("layout").and_then(Value::as_object) else {
-            state.error("missing_layout", "layout.root is required.", "layout");
-            return build_snapshot(platform, schema_version, normalized, state);
-        };
-        let Some(root) = layout.get("root") else {
-            state.error(
-                "missing_layout_root",
-                "layout.root is required.",
-                "layout.root",
+        let Some(end) = find_html_tag_end(bytes, start) else {
+            push_html_diagnostic(
+                diagnostics,
+                "error",
+                "unterminated_html_tag",
+                "HTML 标签缺少 `>`。",
+                source,
+                start,
             );
-            return build_snapshot(platform, schema_version, normalized, state);
+            break;
         };
-
-        match schema_version {
-            Some(2) => self.validate_v2_node(root, "layout.root", &mut state),
-            Some(_) | None => {}
+        let raw = source[start..=end].trim();
+        if raw.starts_with("<!") || raw.starts_with("<?") {
+            cursor = end + 1;
+            continue;
         }
 
-        if platform.as_deref() == Some("mobile") {
-            validate_mobile_document_rules(root, object.get("custom_css"), &mut state);
+        let inner = raw
+            .trim_start_matches('<')
+            .trim_end_matches('>')
+            .trim();
+        let closing = inner.starts_with('/');
+        let inner = inner.trim_start_matches('/').trim_start();
+        let name_end = inner
+            .find(|character: char| character.is_ascii_whitespace() || character == '/')
+            .unwrap_or(inner.len());
+        let name = inner[..name_end].to_ascii_lowercase();
+        if name.is_empty() {
+            push_html_diagnostic(
+                diagnostics,
+                "error",
+                "invalid_html_tag",
+                "HTML 标签缺少有效的标签名。",
+                source,
+                start,
+            );
+            cursor = end + 1;
+            continue;
         }
 
-        build_snapshot(platform, schema_version, normalized, state)
+        if closing {
+            match stack.pop() {
+                Some((open, _)) if open == name => {}
+                Some((open, open_offset)) => {
+                    push_html_diagnostic(
+                        diagnostics,
+                        "error",
+                        "mismatched_html_tag",
+                        format!("HTML 标签 `</{name}>` 与 `<{open}>` 不匹配。"),
+                        source,
+                        start,
+                    );
+                    stack.push((open, open_offset));
+                }
+                None => push_html_diagnostic(
+                    diagnostics,
+                    "error",
+                    "unexpected_html_closing_tag",
+                    format!("HTML 关闭标签 `</{name}>` 没有对应的开始标签。"),
+                    source,
+                    start,
+                ),
+            }
+            cursor = end + 1;
+            continue;
         }
-    }
 
-    fn validate_v2_node(&self, node: &Value, path: &str, state: &mut CompilationState) {
-        let Some(object) = node.as_object() else {
-            state.error("invalid_node", "布局节点必须是对象。", path);
-            return;
-        };
-
-        let node_type = read_required_string(object, "type", path, state);
-        validate_common_node_fields(object, path, state);
-
-        match node_type.as_deref() {
-            Some("grid") => {
-                validate_grid_fields(object, path, state);
-                validate_children_v2(self, object, path, state);
-            }
-            Some("stack") => {
-                validate_stack_fields(object, path, state);
-                validate_children_v2(self, object, path, state);
-            }
-            Some("absolute") => {
-                validate_children_v2(self, object, path, state);
-            }
-            Some("component") => self.validate_component_node(object, path, state),
-            Some("svg") => {
-                // view_box 可省略：前端归一化会补默认坐标系。
-                if let Some(value) = object.get("view_box") {
-                    if !value.as_str().is_some_and(|text| !text.trim().is_empty()) {
-                        state.error(
-                            "invalid_view_box",
-                            "view_box must be a non-empty string.",
-                            format!("{path}.view_box"),
-                        );
-                    }
-                }
-                if let Some(par) = object.get("preserve_aspect_ratio") {
-                    if !par.is_string() {
-                        state.error(
-                            "invalid_preserve_aspect_ratio",
-                            "preserve_aspect_ratio must be a string.",
-                            format!("{path}.preserve_aspect_ratio"),
-                        );
-                    }
-                }
-                if let Some(children) = object.get("children") {
-                    validate_svg_primitives(children, &format!("{path}.children"), state);
-                }
-            }
-            Some("canvas") => {
-                // width / height 可省略：前端归一化会补 300 / 150。
-                for key in ["width", "height"] {
-                    if let Some(value) = object.get(key) {
-                        if !value.as_str().is_some_and(|text| !text.trim().is_empty()) {
-                            state.error(
-                                "invalid_canvas_size",
-                                format!("{key} must be a non-empty string."),
-                                format!("{path}.{key}"),
-                            );
-                        }
-                    }
-                }
-                if let Some(ops) = object.get("ops") {
-                    validate_canvas_ops(ops, &format!("{path}.ops"), state);
-                }
-            }
-            Some("slot") => {
-                read_required_string(object, "name", path, state);
-            }
-            Some("when") => {
-                let expr = read_required_string(object, "expr", path, state);
-                if let Some(expr) = expr {
-                    validate_expression(&expr, &format!("{path}.expr"), state);
-                }
-                match object.get("child") {
-                    Some(child) => self.validate_v2_node(child, &format!("{path}.child"), state),
-                    None => state.error(
-                        "missing_child",
-                        "`when` nodes require a child node.",
-                        format!("{path}.child"),
-                    ),
-                }
-            }
-            Some("for_each") => {
-                let source = read_required_string(object, "source", path, state);
-                if let Some(source) = source {
-                    validate_binding(&source, &format!("{path}.source"), state);
-                }
-                read_required_string(object, "item_as", path, state);
-                if let Some(index_as) = object.get("index_as").and_then(Value::as_str) {
-                    if index_as.trim().is_empty() {
-                        state.error(
-                            "invalid_index_as",
-                            "index_as cannot be an empty string.",
-                            format!("{path}.index_as"),
-                        );
-                    }
-                }
-                match object.get("child") {
-                    Some(child) => self.validate_v2_node(child, &format!("{path}.child"), state),
-                    None => state.error(
-                        "missing_child",
-                        "`for_each` nodes require a child node.",
-                        format!("{path}.child"),
-                    ),
-                }
-                if let Some(empty) = object.get("empty") {
-                    self.validate_v2_node(empty, &format!("{path}.empty"), state);
-                }
-            }
-            Some("text") | Some("badge") => {
-                read_required_string(object, "text", path, state);
-                if let Some(variant) = object.get("variant") {
-                    if !variant.is_string() {
-                        state.error(
-                            "invalid_variant",
-                            "variant must be a string.",
-                            format!("{path}.variant"),
-                        );
-                    }
-                }
-            }
-            Some("image") => {
-                read_required_string(object, "src", path, state);
-                if let Some(alt) = object.get("alt") {
-                    if !alt.is_string() {
-                        state.error(
-                            "invalid_alt",
-                            "alt must be a string.",
-                            format!("{path}.alt"),
-                        );
-                    }
-                }
-                if let Some(fit) = object.get("fit").and_then(Value::as_str) {
-                    if !matches!(fit, "cover" | "contain" | "fill" | "none" | "scale-down") {
-                        state.error(
-                            "invalid_fit",
-                            "fit must be cover, contain, fill, none, or scale-down.",
-                            format!("{path}.fit"),
-                        );
-                    }
-                }
-            }
-            Some("button") => {
-                // 有子内容的按钮（例如整根图表柱子做成可点区域）可以没有 label，
-                // 可读名称由子内容本身承担；既没 label 又没 children 的按钮既看不见
-                // 也没有可读名称，仍然要求 label。
-                let has_children = object
-                    .get("children")
-                    .and_then(Value::as_array)
-                    .is_some_and(|children| !children.is_empty());
-                if has_children {
-                    if let Some(label) = object.get("label") {
-                        if !label.is_string() {
-                            state.error(
-                                "invalid_label",
-                                "label must be a string.",
-                                format!("{path}.label"),
-                            );
-                        }
-                    }
-                } else {
-                    read_required_string(object, "label", path, state);
-                }
-                if let Some(variant) = object.get("variant") {
-                    if !variant.is_string() {
-                        state.error(
-                            "invalid_variant",
-                            "variant must be a string.",
-                            format!("{path}.variant"),
-                        );
-                    }
-                }
-                if let Some(disabled_when_empty_state) = object.get("disabled_when_empty_state") {
-                    if !disabled_when_empty_state.is_string() {
-                        state.error(
-                            "invalid_disabled_when_empty_state",
-                            "disabled_when_empty_state must be a string.",
-                            format!("{path}.disabled_when_empty_state"),
-                        );
-                    }
-                }
-                if let Some(action) = object.get("action") {
-                    validate_action_reference(action, &format!("{path}.action"), state);
-                    infer_dependencies_from_value(action, &format!("{path}.action"), state);
-                }
-                validate_children_v2(self, object, path, state);
-            }
-            Some("checkbox") => {
-                read_required_string(object, "label", path, state);
-                read_required_string(object, "value", path, state);
-                read_required_string(object, "bind_checked_list", path, state);
-                for key in ["checked", "disabled"] {
-                    if let Some(value) = object.get(key) {
-                        if !value.is_boolean() {
-                            state.error(
-                                "invalid_checkbox_field",
-                                format!("{key} must be a boolean."),
-                                format!("{path}.{key}"),
-                            );
-                        }
-                    }
-                }
-                if let Some(variant) = object.get("variant") {
-                    if !variant.is_string() {
-                        state.error(
-                            "invalid_variant",
-                            "variant must be a string.",
-                            format!("{path}.variant"),
-                        );
-                    }
-                }
-            }
-            Some(other) => state.error(
-                "unsupported_v2_node",
-                format!("节点类型 `{other}` 在 schema_version 2 中无效。"),
-                path,
-            ),
-            None => {}
+        has_html |= name == "html";
+        has_body |= name == "body";
+        if name == "meta" && lower[start..=end].contains("name=\"viewport\"") {
+            has_viewport = true;
         }
-    }
-
-    fn validate_component_node(
-        &self,
-        object: &Map<String, Value>,
-        path: &str,
-        state: &mut CompilationState,
-    ) {
-        let Some(component_id) = read_required_string(object, "component", path, state) else {
-            return;
-        };
-
-        state.components.insert(component_id.clone());
-        if let Some(support) = find_component(&component_id) {
-            for action in &support.implicit_actions {
-                state.add_action(action);
-            }
-            for capability in &support.implicit_capabilities {
-                state.capabilities.insert(capability.clone());
-            }
-
-            for prop_key in support.props.keys() {
-                if object.contains_key(prop_key.as_str()) {
-                    state.error(
-                        "misplaced_component_prop",
-                        format!(
-                            "组件属性 `{prop_key}` 必须放在 `props` 对象内。"
-                        ),
-                        format!("{path}.{prop_key}"),
-                    );
-                }
-            }
-
-            if let Some(props) = object.get("props") {
-                let Some(props_object) = props.as_object() else {
-                    state.error(
-                        "invalid_component_props",
-                        "component.props must be an object.",
-                        format!("{path}.props"),
-                    );
-                    return;
-                };
-
-                for (prop_key, prop_value) in props_object {
-                    if !support.props.contains_key(prop_key.as_str()) {
-                        state.error(
-                            "unknown_component_prop",
-                            format!(
-                                "组件 `{component_id}` 不支持属性 `{prop_key}`。"
-                            ),
-                            format!("{path}.props.{prop_key}"),
-                        );
-                    }
-                    validate_prop_value(prop_value, &format!("{path}.props.{prop_key}"), state);
-                    infer_dependencies_from_value(
-                        prop_value,
-                        &format!("{path}.props.{prop_key}"),
-                        state,
-                    );
-                }
-            }
-
-            if let Some(slots) = object.get("slots") {
-                let Some(slots_object) = slots.as_object() else {
-                    state.error(
-                        "invalid_component_slots",
-                        "component.slots must be an object.",
-                        format!("{path}.slots"),
-                    );
-                    return;
-                };
-
-                let allowed_slots = support
-                    .allowed_slots
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<BTreeSet<_>>();
-                for (slot_name, slot_value) in slots_object {
-                    if !allowed_slots.contains(slot_name.as_str()) {
-                        state.error(
-                            "unknown_component_slot",
-                            format!(
-                                "组件 `{component_id}` 没有插槽 `{slot_name}`。"
-                            ),
-                            format!("{path}.slots.{slot_name}"),
-                        );
-                    }
-                    if let Some(items) = slot_value.as_array() {
-                        for (index, item) in items.iter().enumerate() {
-                            self.validate_v2_node(
-                                item,
-                                &format!("{path}.slots.{slot_name}[{index}]"),
-                                state,
-                            );
-                        }
-                    } else {
-                        self.validate_v2_node(
-                            slot_value,
-                            &format!("{path}.slots.{slot_name}"),
-                            state,
-                        );
-                    }
-                }
-            }
-        } else {
-            state.error(
-                "unknown_component",
-                format!("未知组件：{component_id}。"),
-                format!("{path}.component"),
+        if forbidden_tags.contains(&name.as_str()) {
+            push_html_diagnostic(
+                diagnostics,
+                "error",
+                "forbidden_html_element",
+                format!("HTML 元素 `<{name}>` 由世界 UI 运行时禁止使用。"),
+                source,
+                start,
+            );
+        }
+        let attributes = &inner[name_end..];
+        let external_url = Regex::new(r#"(?i)(?:src|href|action)\s*=\s*['\"]\s*(?:https?:|//)"#)
+            .expect("external URL regex");
+        if external_url.is_match(attributes) {
+            push_html_diagnostic(
+                diagnostics,
+                "error",
+                "external_html_resource",
+                "世界 UI 只能引用包内资源或由框架提供的 asset URL。",
+                source,
+                start,
+            );
+        }
+        if name == "script" && attributes.to_ascii_lowercase().contains("src=") {
+            push_html_diagnostic(
+                diagnostics,
+                "error",
+                "external_script_not_supported",
+                "世界 UI 不支持外链脚本；请把脚本写在 HTML 内，或通过 world SDK 调用框架能力。",
+                source,
+                start,
+            );
+        }
+        if name == "link" && attributes.to_ascii_lowercase().contains("stylesheet") {
+            push_html_diagnostic(
+                diagnostics,
+                "error",
+                "external_stylesheet_not_supported",
+                "世界 UI 不支持外链样式表；请使用包内 stylesheet 文件。",
+                source,
+                start,
             );
         }
 
-        if let Some(anchor) = object.get("anchor") {
-            validate_anchor(anchor, &format!("{path}.anchor"), state);
+        let self_closing = raw.ends_with("/>") || void_tags.contains(&name.as_str());
+        if !self_closing {
+            stack.push((name.clone(), start));
+        }
+        cursor = end + 1;
+        if name == "script" || name == "style" {
+            let close_marker = format!("</{name}");
+            if let Some(close_offset) = lower[cursor..].find(&close_marker) {
+                cursor += close_offset;
+            } else {
+                push_html_diagnostic(
+                    diagnostics,
+                    "error",
+                    "unterminated_html_element",
+                    format!("`<{name}>` 没有对应的关闭标签。"),
+                    source,
+                    start,
+                );
+                break;
+            }
         }
     }
-}
 
-fn build_snapshot(
-    platform: Option<String>,
-    schema_version: Option<u32>,
-    normalized_document: Value,
-    state: CompilationState,
-) -> CompilationSnapshot {
-    CompilationSnapshot {
-        platform,
-        schema_version,
-        normalized_document: Some(normalized_document),
-        components: state.components.into_iter().collect(),
-        actions: state.actions.into_iter().collect(),
-        capabilities: state.capabilities.into_iter().collect(),
-        diagnostics: state.diagnostics,
+    for (name, offset) in stack.into_iter().rev() {
+        push_html_diagnostic(
+            diagnostics,
+            "error",
+            "unclosed_html_tag",
+            format!("HTML 标签 `<{name}>` 没有关闭。"),
+            source,
+            offset,
+        );
+    }
+    if !has_html {
+        push_html_diagnostic(
+            diagnostics,
+            "warning",
+            "html_root_missing",
+            "建议提供完整的 `<html>` 根元素；浏览器会自动补齐文档片段。",
+            source,
+            0,
+        );
+    }
+    if !has_body {
+        push_html_diagnostic(
+            diagnostics,
+            "warning",
+            "html_body_missing",
+            "建议提供 `<body>` 元素，以便桌面和移动端保持一致的布局基线。",
+            source,
+            0,
+        );
+    }
+    if !has_viewport {
+        push_html_diagnostic(
+            diagnostics,
+            "warning",
+            "viewport_meta_missing",
+            "移动端 UI 建议声明 `<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">`。",
+            source,
+            0,
+        );
     }
 }
 
-fn parse_document_source(source: &str) -> Result<Value, String> {
-    let trimmed = source.trim();
-    if trimmed.is_empty() {
-        return Err("UI 文档内容为空。".to_string());
+fn find_html_tag_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut quote = None;
+    for (offset, byte) in bytes.iter().enumerate().skip(start) {
+        match (quote, *byte) {
+            (Some(current), value) if value == current => quote = None,
+            (None, b'\'' | b'"') => quote = Some(*byte),
+            (None, b'>') => return Some(offset),
+            _ => {}
+        }
     }
-    json5::from_str::<Value>(trimmed).map_err(|error| error.to_string())
+    None
+}
+
+fn push_html_diagnostic(
+    diagnostics: &mut Vec<WorldUiDiagnostic>,
+    severity: &str,
+    code: &str,
+    message: impl Into<String>,
+    source: &str,
+    offset: usize,
+) {
+    push_source_diagnostic(diagnostics, severity, code, message, source, offset, "document");
+}
+
+fn push_source_diagnostic(
+    diagnostics: &mut Vec<WorldUiDiagnostic>,
+    severity: &str,
+    code: &str,
+    message: impl Into<String>,
+    source: &str,
+    offset: usize,
+    path_prefix: &str,
+) {
+    let prefix = &source[..offset.min(source.len())];
+    let line = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
+    let column = prefix
+        .rsplit_once('\n')
+        .map(|(_, tail)| tail.chars().count() + 1)
+        .unwrap_or_else(|| prefix.chars().count() + 1);
+    diagnostics.push(WorldUiDiagnostic {
+        severity: severity.to_string(),
+        code: code.to_string(),
+        message: message.into(),
+        path: Some(format!("{path_prefix}:{line}:{column}")),
+    });
+}
+
+fn validate_stylesheet(
+    source: &str,
+    platform: &str,
+    diagnostics: &mut Vec<WorldUiDiagnostic>,
+) {
+    let mut braces = 0i32;
+    let mut quote = None;
+    let mut index = 0usize;
+    let bytes = source.as_bytes();
+    while index < bytes.len() {
+        if bytes[index..].starts_with(b"/*") {
+            let Some(end) = source[index + 2..].find("*/") else {
+                push_source_diagnostic(
+                    diagnostics,
+                    "error",
+                    "unterminated_css_comment",
+                    format!("{platform} stylesheet 的注释没有闭合。"),
+                    source,
+                    index,
+                    &format!("bundle.{platform}_stylesheet"),
+                );
+                break;
+            };
+            index += end + 4;
+            continue;
+        }
+        let byte = bytes[index];
+        match quote {
+            Some(current) if byte == current => quote = None,
+            Some(_) => {}
+            None => match byte {
+                b'\'' | b'"' => quote = Some(byte),
+                b'{' => braces += 1,
+                b'}' => {
+                    braces -= 1;
+                    if braces < 0 {
+                        push_source_diagnostic(
+                            diagnostics,
+                            "error",
+                            "unexpected_css_closing_brace",
+                            format!("{platform} stylesheet 出现多余的 `}}`。"),
+                            source,
+                            index,
+                            &format!("bundle.{platform}_stylesheet"),
+                        );
+                        braces = 0;
+                    }
+                }
+                _ => {}
+            },
+        }
+        index += 1;
+    }
+    if quote.is_some() {
+        push_source_diagnostic(
+            diagnostics,
+            "error",
+            "unterminated_css_string",
+            format!("{platform} stylesheet 的字符串没有闭合。"),
+            source,
+            source.len().saturating_sub(1),
+            &format!("bundle.{platform}_stylesheet"),
+        );
+    }
+    if braces > 0 {
+        push_source_diagnostic(
+            diagnostics,
+            "error",
+            "unclosed_css_block",
+            format!("{platform} stylesheet 的 CSS 块没有闭合。"),
+            source,
+            source.len().saturating_sub(1),
+            &format!("bundle.{platform}_stylesheet"),
+        );
+    }
+    let external_url = Regex::new(r#"(?i)url\(\s*['\"]?\s*(?:https?:|//)"#)
+        .expect("external CSS URL regex");
+    if let Some(matched) = external_url.find(source) {
+        push_source_diagnostic(
+            diagnostics,
+            "error",
+            "external_css_resource",
+            "世界 UI stylesheet 只能引用包内资源或 asset URL。",
+            source,
+            matched.start(),
+            &format!("bundle.{platform}_stylesheet"),
+        );
+    }
 }
 
 /// 计算 bundle 级特征标志。特征 id 与 catalog 能力条目的
@@ -970,774 +900,6 @@ fn partition_diagnostics(
         }
     }
     (errors, warnings)
-}
-
-fn read_required_string(
-    object: &Map<String, Value>,
-    key: &str,
-    path: &str,
-    state: &mut CompilationState,
-) -> Option<String> {
-    match object.get(key) {
-        Some(Value::String(text)) if !text.trim().is_empty() => Some(text.trim().to_string()),
-        Some(Value::String(_)) => {
-            state.error(
-                "empty_string",
-                format!("{key} cannot be empty."),
-                format!("{path}.{key}"),
-            );
-            None
-        }
-        Some(_) => {
-            state.error(
-                "invalid_string",
-                format!("{key} must be a string."),
-                format!("{path}.{key}"),
-            );
-            None
-        }
-        None => {
-            state.error(
-                "missing_string",
-                format!("{key} is required."),
-                format!("{path}.{key}"),
-            );
-            None
-        }
-    }
-}
-
-fn validate_common_node_fields(
-    object: &Map<String, Value>,
-    path: &str,
-    state: &mut CompilationState,
-) {
-    for key in [
-        "id",
-        "class_name",
-        "area",
-        "width",
-        "height",
-        "min_width",
-        "min_height",
-        "max_width",
-        "max_height",
-        "padding",
-        "margin",
-        "align",
-        "justify",
-    ] {
-        if let Some(value) = object.get(key) {
-            if !value.is_string() {
-                state.error(
-                    "invalid_node_field",
-                    format!("{key} must be a string."),
-                    format!("{path}.{key}"),
-                );
-            }
-        }
-    }
-
-    if let Some(visible) = object.get("visible") {
-        if !visible.is_boolean() {
-            state.error(
-                "invalid_visible",
-                "visible must be a boolean.",
-                format!("{path}.visible"),
-            );
-        }
-    }
-
-    if let Some(style) = object.get("style") {
-        validate_style_object(style, &format!("{path}.style"), state);
-    }
-}
-
-/// SVG 图元允许的类型。刻意保持闭集：世界包只能描述已知的矢量图元，
-/// 不能借`svg` 节点塞入任意标记或脚本。
-const SVG_PRIMITIVE_TYPES: &[&str] = &[
-    "svg_circle",
-    "svg_rect",
-    "svg_line",
-    "svg_path",
-    "svg_polygon",
-    "svg_text",
-];
-
-/// Canvas 指令允许的类型 → 各自必填的数值字段。
-const CANVAS_OP_REQUIRED_FIELDS: &[(&str, &[&str])] = &[
-    ("clear", &[]),
-    ("rect", &["x", "y", "width", "height"]),
-    ("circle", &["x", "y", "radius"]),
-    ("arc", &["x", "y", "radius", "start_angle", "end_angle"]),
-    ("line", &["x1", "y1", "x2", "y2"]),
-    ("text", &["x", "y", "text"]),
-    ("image", &["x", "y", "width", "height", "src"]),
-];
-
-/// SVG 图元的必填几何字段。
-const SVG_PRIMITIVE_REQUIRED_FIELDS: &[(&str, &[&str])] = &[
-    ("svg_circle", &["cx", "cy", "r"]),
-    ("svg_rect", &["x", "y", "width", "height"]),
-    ("svg_line", &["x1", "y1", "x2", "y2"]),
-    ("svg_path", &["d"]),
-    ("svg_polygon", &["points"]),
-    ("svg_text", &["x", "y", "text"]),
-];
-
-fn validate_string_fields(
-    object: &Map<String, Value>,
-    keys: &[&str],
-    code: &str,
-    path: &str,
-    state: &mut CompilationState,
-) {
-    for key in keys {
-        match object.get(*key) {
-            Some(Value::String(_)) => {}
-            Some(_) => state.error(
-                code,
-                format!("{key} must be a string."),
-                format!("{path}.{key}"),
-            ),
-            None => state.error(
-                code,
-                format!("{key} is required."),
-                format!("{path}.{key}"),
-            ),
-        }
-    }
-}
-
-fn validate_optional_string_fields(
-    object: &Map<String, Value>,
-    keys: &[&str],
-    code: &str,
-    path: &str,
-    state: &mut CompilationState,
-) {
-    for key in keys {
-        if let Some(value) = object.get(*key) {
-            if !value.is_string() {
-                state.error(
-                    code,
-                    format!("{key} must be a string."),
-                    format!("{path}.{key}"),
-                );
-            }
-        }
-    }
-}
-
-fn validate_svg_primitives(raw: &Value, path: &str, state: &mut CompilationState) {
-    let Some(entries) = raw.as_array() else {
-        state.error(
-            "invalid_svg_children",
-            "svg children must be an array of svg primitives.",
-            path.to_string(),
-        );
-        return;
-    };
-    for (index, entry) in entries.iter().enumerate() {
-        let entry_path = format!("{path}[{index}]");
-        let Some(object) = entry.as_object() else {
-            state.error(
-                "invalid_svg_primitive",
-                "svg primitives must be objects.",
-                entry_path,
-            );
-            continue;
-        };
-        let Some(node_type) = read_required_string(object, "type", &entry_path, state) else {
-            continue;
-        };
-        let Some((_, required)) = SVG_PRIMITIVE_REQUIRED_FIELDS
-            .iter()
-            .find(|(name, _)| *name == node_type)
-        else {
-            state.error(
-                "invalid_svg_primitive",
-                format!(
-                    "svg primitives must be one of {}, got {node_type}.",
-                    SVG_PRIMITIVE_TYPES.join(", ")
-                ),
-                entry_path,
-            );
-            continue;
-        };
-        validate_string_fields(
-            object,
-            required,
-            "invalid_svg_primitive",
-            &entry_path,
-            state,
-        );
-        validate_optional_string_fields(
-            object,
-            &[
-                "class_name",
-                "fill",
-                "fill_opacity",
-                "stroke",
-                "stroke_width",
-                "stroke_opacity",
-                "stroke_dasharray",
-                "opacity",
-                "rotate",
-                "origin",
-                "rx",
-                "ry",
-                "font_size",
-                "font_family",
-                "font_weight",
-                "dominant_baseline",
-            ],
-            "invalid_svg_primitive",
-            &entry_path,
-            state,
-        );
-    }
-}
-
-fn validate_canvas_ops(raw: &Value, path: &str, state: &mut CompilationState) {
-    let Some(entries) = raw.as_array() else {
-        state.error(
-            "invalid_canvas_ops",
-            "canvas ops must be an array of drawing instructions.",
-            path.to_string(),
-        );
-        return;
-    };
-    for (index, entry) in entries.iter().enumerate() {
-        let entry_path = format!("{path}[{index}]");
-        let Some(object) = entry.as_object() else {
-            state.error(
-                "invalid_canvas_op",
-                "canvas ops must be objects.",
-                entry_path,
-            );
-            continue;
-        };
-        let Some(op_type) = read_required_string(object, "type", &entry_path, state) else {
-            continue;
-        };
-        let Some((_, required)) = CANVAS_OP_REQUIRED_FIELDS
-            .iter()
-            .find(|(name, _)| *name == op_type)
-        else {
-            state.error(
-                "invalid_canvas_op",
-                format!(
-                    "canvas ops must be one of {}, got {op_type}.",
-                    CANVAS_OP_REQUIRED_FIELDS
-                        .iter()
-                        .map(|(name, _)| *name)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
-                entry_path,
-            );
-            continue;
-        };
-        validate_string_fields(
-            object,
-            required,
-            "invalid_canvas_op",
-            &entry_path,
-            state,
-        );
-        validate_optional_string_fields(
-            object,
-            &[
-                "fill",
-                "stroke",
-                "stroke_width",
-                "font_size",
-                "font_family",
-                "font_weight",
-                "color",
-            ],
-            "invalid_canvas_op",
-            &entry_path,
-            state,
-        );
-    }
-}
-
-fn validate_grid_fields(object: &Map<String, Value>, path: &str, state: &mut CompilationState) {
-    validate_string_array(object.get("columns"), &format!("{path}.columns"), state);
-    validate_string_array(object.get("rows"), &format!("{path}.rows"), state);
-
-    if let Some(areas) = object.get("areas") {
-        let Some(rows) = areas.as_array() else {
-            state.error(
-                "invalid_areas",
-                "areas must be a 2D string array.",
-                format!("{path}.areas"),
-            );
-            return;
-        };
-
-        let mut width = None;
-        for (row_index, row) in rows.iter().enumerate() {
-            let Some(columns) = row.as_array() else {
-                state.error(
-                    "invalid_areas_row",
-                    "areas 的每一行都必须是字符串数组。",
-                    format!("{path}.areas[{row_index}]"),
-                );
-                continue;
-            };
-
-            if let Some(expected) = width {
-                if expected != columns.len() {
-                    state.error(
-                        "inconsistent_grid_areas",
-                        "areas 的每一行列数必须一致。",
-                        format!("{path}.areas[{row_index}]"),
-                    );
-                }
-            } else {
-                width = Some(columns.len());
-            }
-
-            for (column_index, area_name) in columns.iter().enumerate() {
-                if area_name
-                    .as_str()
-                    .map(|value| value.trim().is_empty())
-                    .unwrap_or(true)
-                {
-                    state.error(
-                        "invalid_grid_area_name",
-                        "网格区域名不能为空字符串。",
-                        format!("{path}.areas[{row_index}][{column_index}]"),
-                    );
-                }
-            }
-        }
-    }
-}
-
-fn validate_stack_fields(object: &Map<String, Value>, path: &str, state: &mut CompilationState) {
-    if let Some(direction) = object.get("direction").and_then(Value::as_str) {
-        if direction != "horizontal" && direction != "vertical" {
-            state.error(
-                "invalid_direction",
-                "direction must be `horizontal` or `vertical`.",
-                format!("{path}.direction"),
-            );
-        }
-    }
-
-    if let Some(wrap) = object.get("wrap") {
-        if !wrap.is_boolean() {
-            state.error(
-                "invalid_wrap",
-                "wrap must be a boolean.",
-                format!("{path}.wrap"),
-            );
-        }
-    }
-}
-
-fn validate_children_v2(
-    service: &GameUiService,
-    object: &Map<String, Value>,
-    path: &str,
-    state: &mut CompilationState,
-) {
-    if let Some(children) = object.get("children") {
-        let Some(children) = children.as_array() else {
-            state.error(
-                "invalid_children",
-                "children must be an array.",
-                format!("{path}.children"),
-            );
-            return;
-        };
-        for (index, child) in children.iter().enumerate() {
-            service.validate_v2_node(child, &format!("{path}.children[{index}]"), state);
-        }
-    }
-}
-
-fn validate_string_array(value: Option<&Value>, path: &str, state: &mut CompilationState) {
-    let Some(value) = value else {
-        return;
-    };
-    let Some(items) = value.as_array() else {
-        state.error(
-            "invalid_string_array",
-            "取值必须是字符串数组。",
-            path,
-        );
-        return;
-    };
-    for (index, item) in items.iter().enumerate() {
-        if item
-            .as_str()
-            .map(|text| text.trim().is_empty())
-            .unwrap_or(true)
-        {
-            state.error(
-                "invalid_string_array_item",
-                "数组项不能为空字符串。",
-                format!("{path}[{index}]"),
-            );
-        }
-    }
-}
-
-fn validate_style_object(value: &Value, path: &str, state: &mut CompilationState) {
-    let Some(object) = value.as_object() else {
-        state.error("invalid_style", "style must be an object.", path);
-        return;
-    };
-
-    for (key, entry) in object {
-        if !matches!(
-            entry,
-            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)
-        ) {
-            state.error(
-                "invalid_style_value",
-                format!("样式值 `{key}` 必须是基础类型或 null。"),
-                format!("{path}.{key}"),
-            );
-        }
-    }
-}
-
-fn validate_anchor(value: &Value, path: &str, state: &mut CompilationState) {
-    let Some(object) = value.as_object() else {
-        state.error("invalid_anchor", "anchor must be an object.", path);
-        return;
-    };
-    for key in ["top", "right", "bottom", "left"] {
-        if let Some(entry) = object.get(key) {
-            if !entry.is_string() {
-                state.error(
-                    "invalid_anchor_value",
-                    format!("anchor.{key} must be a string."),
-                    format!("{path}.{key}"),
-                );
-            }
-        }
-    }
-}
-
-fn validate_mobile_document_rules(
-    root: &Value,
-    custom_css: Option<&Value>,
-    state: &mut CompilationState,
-) {
-    let is_standalone_ledger = state.components.contains("ledger_book");
-    if !is_standalone_ledger && !state.components.contains("input_composer") {
-        state.warn(
-            "mobile_missing_input_composer",
-            "Mobile UI documents should include input_composer so the runtime can keep the composer visible when the keyboard opens.",
-            "layout.root",
-        );
-    }
-
-    if !is_standalone_ledger && !state.components.contains("side_panel_tabs")
-    {
-        state.warn(
-            "mobile_missing_side_panel_tabs",
-            "移动端 UI 文档应提供 side_panel_tabs 承载状态与地图，而不是把内容内联进聊天列。",
-            "layout.root",
-        );
-    }
-
-    inspect_mobile_node(root, "layout.root", state);
-
-    if let Some(Value::String(css)) = custom_css {
-        let normalized = css.to_ascii_lowercase();
-        if normalized.contains("game-root--mobile-session")
-            && (normalized.contains("height: 100dvh")
-                || normalized.contains("height:100dvh")
-                || normalized.contains("min-height: 100dvh")
-                || normalized.contains("min-height:100dvh")
-                || normalized.contains("height: 100vh")
-                || normalized.contains("height:100vh")
-                || normalized.contains("min-height: 100vh")
-                || normalized.contains("min-height:100vh"))
-        {
-            state.warn(
-                "mobile_css_fixed_viewport_height",
-                "Mobile custom_css should avoid fixed 100vh/100dvh heights on the session root; use the runtime visible-height variable so the keyboard can resize content.",
-                "custom_css",
-            );
-        }
-    }
-}
-
-fn inspect_mobile_node(node: &Value, path: &str, state: &mut CompilationState) {
-    let Some(object) = node.as_object() else {
-        return;
-    };
-
-    for key in ["height", "min_height"] {
-        if object
-            .get(key)
-            .and_then(Value::as_str)
-            .map(is_fixed_mobile_viewport_height)
-            .unwrap_or(false)
-        {
-            state.warn(
-                "mobile_fixed_viewport_height",
-                "Mobile layout nodes should not use fixed 100vh/100dvh heights; keyboard resizing works best with the runtime visible-height variable.",
-                format!("{path}.{key}"),
-            );
-        }
-    }
-
-    if let Some(style) = object.get("style").and_then(Value::as_object) {
-        for key in ["height", "min_height"] {
-            if style
-                .get(key)
-                .and_then(Value::as_str)
-                .map(is_fixed_mobile_viewport_height)
-                .unwrap_or(false)
-            {
-                state.warn(
-                    "mobile_fixed_viewport_height",
-                    "Mobile layout style should not use fixed 100vh/100dvh heights; keyboard resizing works best with the runtime visible-height variable.",
-                    format!("{path}.style.{key}"),
-                );
-            }
-        }
-
-        let has_fixed_viewport_height = ["height", "min_height"].iter().any(|key| {
-            style
-                .get(*key)
-                .and_then(Value::as_str)
-                .map(is_fixed_mobile_viewport_height)
-                .unwrap_or(false)
-        });
-
-        if path == "layout.root"
-            && has_fixed_viewport_height
-            && style
-                .get("overflow")
-                .and_then(Value::as_str)
-                .map(|value| value.trim().eq_ignore_ascii_case("hidden"))
-                .unwrap_or(false)
-        {
-            state.warn(
-                "mobile_root_overflow_hidden",
-                "Mobile root overflow:hidden can trap the focused composer under the keyboard. Prefer constraining the scroll area inside the layout.",
-                format!("{path}.style.overflow"),
-            );
-        }
-    }
-
-    for key in ["children"] {
-        if let Some(children) = object.get(key).and_then(Value::as_array) {
-            for (index, child) in children.iter().enumerate() {
-                inspect_mobile_node(child, &format!("{path}.{key}[{index}]"), state);
-            }
-        }
-    }
-
-    for key in ["child", "empty"] {
-        if let Some(child) = object.get(key) {
-            inspect_mobile_node(child, &format!("{path}.{key}"), state);
-        }
-    }
-
-    if let Some(slots) = object.get("slots").and_then(Value::as_object) {
-        for (slot_name, slot_value) in slots {
-            if let Some(items) = slot_value.as_array() {
-                for (index, item) in items.iter().enumerate() {
-                    inspect_mobile_node(item, &format!("{path}.slots.{slot_name}[{index}]"), state);
-                }
-            } else {
-                inspect_mobile_node(slot_value, &format!("{path}.slots.{slot_name}"), state);
-            }
-        }
-    }
-}
-
-fn is_fixed_mobile_viewport_height(value: &str) -> bool {
-    let normalized = value.trim().to_ascii_lowercase();
-    normalized == "100vh" || normalized == "100dvh"
-}
-
-fn validate_prop_value(value: &Value, path: &str, state: &mut CompilationState) {
-    match value {
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
-        Value::Array(items) => {
-            for (index, item) in items.iter().enumerate() {
-                validate_prop_value(item, &format!("{path}[{index}]"), state);
-            }
-        }
-        Value::Object(object) => {
-            for (key, item) in object {
-                validate_prop_value(item, &format!("{path}.{key}"), state);
-            }
-        }
-    }
-}
-
-fn validate_action_reference(value: &Value, path: &str, state: &mut CompilationState) {
-    let Some(object) = value.as_object() else {
-        state.error("invalid_action", "action must be an object.", path);
-        return;
-    };
-
-    let Some(action_id) = read_required_string(object, "id", path, state) else {
-        return;
-    };
-    let normalized_action_id = action_id.trim().trim_start_matches('@');
-    state.add_action(normalized_action_id);
-
-    if let Some(args) = object.get("args") {
-        let Some(args_object) = args.as_object() else {
-            state.error(
-                "invalid_action_args",
-                "action.args must be an object.",
-                format!("{path}.args"),
-            );
-            return;
-        };
-        for (key, item) in args_object {
-            validate_prop_value(item, &format!("{path}.args.{key}"), state);
-            infer_dependencies_from_value(item, &format!("{path}.args.{key}"), state);
-        }
-    }
-
-    for key in [
-        "content",
-        "content_template",
-        "set_state",
-        "key",
-        "value",
-        "mode",
-        "result_state",
-        "error_state",
-        "pending_state",
-    ] {
-        if let Some(item) = object.get(key) {
-            if !item.is_string() {
-                state.error(
-                    "invalid_action_field",
-                    format!("action.{key} must be a string."),
-                    format!("{path}.{key}"),
-                );
-            }
-        }
-    }
-}
-
-fn infer_dependencies_from_value(value: &Value, path: &str, state: &mut CompilationState) {
-    match value {
-        Value::String(text) => {
-            let trimmed = text.trim();
-            if let Some(action_id) = trimmed.strip_prefix('@') {
-                state.add_action(action_id);
-            } else if trimmed.starts_with('$') {
-                validate_binding(trimmed, path, state);
-            }
-
-            for capability in capability_ids() {
-                let binding_token = format!("$capabilities.{capability}");
-                let expr_token = format!("capabilities.{capability}");
-                if trimmed == binding_token || trimmed.contains(&expr_token) {
-                    state.capabilities.insert(capability.to_string());
-                }
-            }
-        }
-        Value::Array(items) => {
-            for (index, item) in items.iter().enumerate() {
-                infer_dependencies_from_value(item, &format!("{path}[{index}]"), state);
-            }
-        }
-        Value::Object(object) => {
-            if let Some(action_id) = object.get("id").and_then(Value::as_str) {
-                if let Some(action_id) = action_id.trim().strip_prefix('@') {
-                    state.add_action(action_id);
-                }
-            }
-
-            for (key, item) in object {
-                infer_dependencies_from_value(item, &format!("{path}.{key}"), state);
-            }
-        }
-        Value::Null | Value::Bool(_) | Value::Number(_) => {}
-    }
-}
-
-/// 表达式里可调用的函数名。前端求值器（`frontend/src/gameUiRuntime/expression.ts`）
-/// 里有同名闭集白名单；这里只负责提前拦住不在白名单内的调用，让作者拿到明确错误码
-/// 而不是等到运行时才失败。两处必须同步维护。
-const EXPRESSION_FUNCTION_IDS: &[&str] = &[
-    "math_min",
-    "math_max",
-    "math_abs",
-    "math_floor",
-    "math_ceil",
-    "math_round",
-    "math_random",
-    "math_random_int",
-    "math_clamp",
-    "math_lerp",
-];
-
-fn validate_expression(expr: &str, path: &str, state: &mut CompilationState) {
-    let trimmed = expr.trim();
-    if trimmed.is_empty() {
-        state.error("empty_expression", "expr cannot be empty.", path);
-        return;
-    }
-
-    let illegal = Regex::new(r"[`\[\]{};?]|=>").expect("illegal expression regex");
-
-    if illegal.is_match(trimmed) {
-        state.error(
-            "unsafe_expression",
-            "expr contains syntax that is outside the supported safe expression subset.",
-            path,
-        );
-    }
-
-    // 函数调用是允许的，但只能调白名单里的名字：世界包是外部输入，
-    // 任意函数调用等于给它 eval。未知名字在这里就报出来，作者不必等运行时。
-    let function_like = Regex::new(r"([A-Za-z_][A-Za-z0-9_]*)\s*\(").expect("function regex");
-    for capture in function_like.captures_iter(trimmed) {
-        let Some(matched) = capture.get(1) else {
-            continue;
-        };
-        let name = matched.as_str();
-        if !EXPRESSION_FUNCTION_IDS.contains(&name) {
-            state.error(
-                "unknown_expression_function",
-                format!(
-                    "expr calls {name}(), which is not in the allowed function list: {}.",
-                    EXPRESSION_FUNCTION_IDS.join(", ")
-                ),
-                path,
-            );
-        }
-    }
-
-    for capability in capability_ids() {
-        if trimmed.contains(&format!("capabilities.{capability}")) {
-            state.capabilities.insert(capability.to_string());
-        }
-    }
-}
-
-fn validate_binding(binding: &str, path: &str, state: &mut CompilationState) {
-    let binding_pattern = Regex::new(r"^\$[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
-        .expect("binding regex");
-    if !binding_pattern.is_match(binding.trim()) {
-        state.error(
-            "invalid_binding",
-            "绑定值必须使用简单点路径，例如 $session.location。",
-            path,
-        );
-    }
 }
 
 fn current_compatibility_target() -> WorldUiCompatibilityTarget {

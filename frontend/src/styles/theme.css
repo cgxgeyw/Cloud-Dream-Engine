@@ -2277,6 +2277,44 @@ select:focus,
   color: var(--color-danger);
 }
 
+.world-ui-sandbox-debug {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 20;
+  max-width: min(520px, calc(100% - 20px));
+  font-size: 12px;
+}
+.world-ui-sandbox-debug-toggle,
+.world-ui-sandbox-debug-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--color-border, #d8cfd0);
+  border-radius: 8px;
+  padding: 5px 8px;
+  background: color-mix(in srgb, var(--color-surface, #fff) 92%, transparent);
+  color: var(--color-text, #443b40);
+  cursor: pointer;
+}
+.world-ui-sandbox-debug-panel {
+  display: grid;
+  gap: 5px;
+  margin-top: 5px;
+  max-height: 220px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--color-border, #d8cfd0);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-surface, #fff) 96%, transparent);
+  box-shadow: 0 6px 24px rgba(30, 20, 25, .16);
+}
+.world-ui-sandbox-debug-actions { display: flex; justify-content: flex-end; gap: 5px; }
+.world-ui-sandbox-debug-entry { display: grid; grid-template-columns: auto 1fr; gap: 7px; line-height: 1.4; overflow-wrap: anywhere; }
+.world-ui-sandbox-debug-entry code { color: var(--color-text-muted, #756a70); }
+.world-ui-sandbox-debug-entry--error { color: #a6382e; }
+.world-ui-sandbox-debug-entry--warn { color: #8a5a16; }
+
 .world-ui-runtime-host,
 .world-ui-sandbox-runtime {
   width: 100%;

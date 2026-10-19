@@ -131,6 +131,19 @@ pub struct WorldPackageManifest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorldPackageInspectionRequest {
+    pub data: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorldPackageInspectionResult {
+    pub ok: bool,
+    pub format: Option<String>,
+    pub version: Option<u32>,
+    pub diagnostics: Vec<WorldUiDiagnostic>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorldPackageCharacterFileEntry {
     pub source_character_id: String,
     pub character_name: String,

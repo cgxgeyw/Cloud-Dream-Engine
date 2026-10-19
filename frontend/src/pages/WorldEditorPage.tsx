@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useId } from "react";
 import { useLayoutEffect, useRef } from "react";
 import {
   assetUrl,
@@ -36,21 +35,15 @@ import { useIsMobile } from "../components/ResponsiveLayout";
 import { useSectionParam } from "../hooks/useSectionParam";
 import { useWorldPromptPreview } from "../hooks/useWorldPromptPreview";
 import { GameUiSandboxPreview } from "../components/GameUiSandboxPreview";
-import { GameUiStructureEditor } from "../components/game-ui-editor/GameUiStructureEditor";
 import { PromptSendPreviewCard } from "../components/PromptTraceView";
 import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
 import { showToast } from "../components/Toast";
 import { ArrowLeft, Save, X } from "lucide-react";
 import {
-  buildGameUiStylesheet,
-  createGameUiScopeSelector,
   defaultGameUiFile,
-  normalizeGameUiScopeId,
   normalizeAssetConfig,
   normalizeWorldUiEnvelope,
   parseGameUiDocument,
-  stringifyGameUiDocument,
-  type GameUiDocumentV2,
   type GameUiPlatform,
   type ParsedGameUiDocument,
 } from "../data/gameUi";
@@ -100,7 +93,6 @@ import {
   resolveExposurePolicyMode,
   resolveOpeningSceneCharacters,
   resolveOpeningSpeakerLabel,
-  resolvePreviewBackgroundAsset,
   resolveSceneNames,
 } from "./worldEditorShared";
 
@@ -271,21 +263,13 @@ export function WorldEditorPage() {
     () => parseGameUiDocument(uiThemeConfig.mobile_file, "mobile"),
     [uiThemeConfig.mobile_file],
   );
-  const previewBackgroundAsset = useMemo(
-    () => resolvePreviewBackgroundAsset(uiThemeConfig, world?.opening_scene?.trim() || sceneNames[0] || "未命名场景"),
-    [sceneNames, uiThemeConfig, world?.opening_scene],
-  );
-  const desktopPreviewScopeId = normalizeGameUiScopeId(useId());
-  const desktopPreviewScopeSelector = useMemo(() => createGameUiScopeSelector(desktopPreviewScopeId), [desktopPreviewScopeId]);
   const desktopPreviewStylesheet = useMemo(
-    () => `${buildGameUiStylesheet(parsedDesktopGameUi.document, previewBackgroundAsset ? assetUrl(previewBackgroundAsset) : undefined, desktopPreviewScopeSelector)}\n${uiThemeConfig.desktop_stylesheet}`,
-    [desktopPreviewScopeSelector, parsedDesktopGameUi.document, previewBackgroundAsset, uiThemeConfig.desktop_stylesheet],
+    () => uiThemeConfig.desktop_stylesheet,
+    [uiThemeConfig.desktop_stylesheet],
   );
-  const mobilePreviewScopeId = normalizeGameUiScopeId(useId());
-  const mobilePreviewScopeSelector = useMemo(() => createGameUiScopeSelector(mobilePreviewScopeId), [mobilePreviewScopeId]);
   const mobilePreviewStylesheet = useMemo(
-    () => `${buildGameUiStylesheet(parsedMobileGameUi.document, previewBackgroundAsset ? assetUrl(previewBackgroundAsset) : undefined, mobilePreviewScopeSelector)}\n${uiThemeConfig.mobile_stylesheet}`,
-    [mobilePreviewScopeSelector, parsedMobileGameUi.document, previewBackgroundAsset, uiThemeConfig.mobile_stylesheet],
+    () => uiThemeConfig.mobile_stylesheet,
+    [uiThemeConfig.mobile_stylesheet],
   );
   const totalSceneBackgroundCount = useMemo(
     () => countGroupedAssets(uiThemeConfig.local_scene_backgrounds),
@@ -615,10 +599,6 @@ export function WorldEditorPage() {
       : { mobile_stylesheet: source, runtime_version: 3 });
   }
 
-  function updateStructuredGameUiDocument(platform: GameUiPlatform, nextDocument: GameUiDocumentV2) {
-    updateGameUiFile(platform, stringifyGameUiDocument(nextDocument));
-  }
-
   function loadDefaultGameUiTemplate(platform: GameUiPlatform) {
     updateGameUiFile(platform, defaultGameUiFile(platform));
     setError(null);
@@ -645,9 +625,7 @@ export function WorldEditorPage() {
           <div style={{ display: "grid", gap: 6 }}>
             <div className="editor-field-label">{label}</div>
             <div className="text-muted" style={{ fontSize: 12 }}>
-              {parsed.error
-                ? "Current source is invalid. Preview is using fallback."
-                : 'HTML / CSS / JavaScript，隔离页面 + world SDK'}
+              HTML / CSS / JavaScript，隔离页面 + world SDK
             </div>
           </div>
           <div className="flex flex--gap-sm" style={{ flexWrap: "wrap" }}>
@@ -661,7 +639,15 @@ export function WorldEditorPage() {
           </div>
         </div>
 
-        {parsed.error ? <div className="game-input-bubble">{parsed.error}</div> : null}
+        {parsed.diagnostics.length > 0 ? (
+          <div className="game-input-bubble" role="status" style={{ display: "grid", gap: 5 }}>
+            {parsed.diagnostics.map((diagnostic, index) => (
+              <div key={`${diagnostic.code}-${index}`}>
+                [{diagnostic.severity}] {diagnostic.code}: {diagnostic.message}
+              </div>
+            ))}
+          </div>
+        ) : null}
 
         <label className="editor-field">
           <span className="editor-field-label">HTML（可包含 style 和 script）</span>
@@ -721,7 +707,7 @@ export function WorldEditorPage() {
             </div>
             {compileResult.diagnostics.length > 0 ? (
               <div style={{ display: "grid", gap: 6 }}>
-                {compileResult.diagnostics.slice(0, 6).map((diagnostic, index) => (
+                {compileResult.diagnostics.map((diagnostic, index) => (
                   <div key={`${diagnostic.code}-${index}`} className="text-muted" style={{ fontSize: 12 }}>
                     [{diagnostic.severity}] {diagnostic.code}
                     {diagnostic.path ? ` @ ${diagnostic.path}` : ""}: {diagnostic.message}
@@ -742,13 +728,6 @@ export function WorldEditorPage() {
           </div>
         ) : null}
 
-        {!parsed.error && !parsed.document.html && parsed.document.schema_version === 2 ? (
-          <GameUiStructureEditor
-            platform={platform}
-            document={parsed.document as GameUiDocumentV2}
-            onChangeDocument={(nextDocument) => updateStructuredGameUiDocument(platform, nextDocument)}
-          />
-        ) : null}
       </div>
     );
   }
@@ -756,7 +735,6 @@ export function WorldEditorPage() {
   function renderGameUiPreviewSection() {
     const previewLabel = previewPlatform === "mobile" ? "手机端预览" : "电脑端预览";
     const parsedPreview = previewPlatform === "mobile" ? parsedMobileGameUi : parsedDesktopGameUi;
-    const previewScopeId = previewPlatform === "mobile" ? mobilePreviewScopeId : desktopPreviewScopeId;
     const previewStylesheet = previewPlatform === "mobile" ? mobilePreviewStylesheet : desktopPreviewStylesheet;
     return (
       <FoldableEditorSection title="界面预览">
@@ -769,7 +747,6 @@ export function WorldEditorPage() {
               platform={previewPlatform}
               document={parsedPreview.document}
               stylesheet={previewStylesheet}
-              scopeId={previewScopeId}
               rootStyle={stylePreview}
               worldName={previewWorldName}
               location={previewLocation}
@@ -818,6 +795,15 @@ export function WorldEditorPage() {
               <div className="text-muted" style={{ fontSize: 12 }}>
                 桌面端警告：{uiGovernance.bundle.desktop.warnings.length} | 移动端警告：{uiGovernance.bundle.mobile.warnings.length}
               </div>
+              {[...uiGovernance.bundle.errors, ...uiGovernance.bundle.warnings].length > 0 ? (
+                <div style={{ display: "grid", gap: 5 }}>
+                  {[...uiGovernance.bundle.errors, ...uiGovernance.bundle.warnings].map((diagnostic, index) => (
+                    <div key={`${diagnostic.code}-${index}`} className="text-muted" style={{ fontSize: 12 }}>
+                      [{diagnostic.severity}] {diagnostic.code}{diagnostic.path ? ` @ ${diagnostic.path}` : ""}: {diagnostic.message}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </>
           ) : null}
           {compatibilityDocuments.length > 0 ? (
@@ -828,6 +814,15 @@ export function WorldEditorPage() {
                   {report.unsupported_components.length > 0 ? ` | components: ${report.unsupported_components.join(", ")}` : ""}
                   {report.unsupported_actions.length > 0 ? ` | actions: ${report.unsupported_actions.join(", ")}` : ""}
                   {report.unsupported_capabilities.length > 0 ? ` | capabilities: ${report.unsupported_capabilities.join(", ")}` : ""}
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {uiGovernance.compatibility?.diagnostics.length ? (
+            <div style={{ display: "grid", gap: 5 }}>
+              {uiGovernance.compatibility.diagnostics.map((diagnostic, index) => (
+                <div key={`${diagnostic.code}-${index}`} className="text-muted" style={{ fontSize: 12 }}>
+                  [{diagnostic.severity}] {diagnostic.code}{diagnostic.path ? ` @ ${diagnostic.path}` : ""}: {diagnostic.message}
                 </div>
               ))}
             </div>

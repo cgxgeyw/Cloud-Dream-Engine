@@ -148,6 +148,122 @@ pub fn validate_logic_config(logic: &Value) -> Result<(), String> {
     if !matches!(runtime, "disabled" | "sandbox-js-v1") {
         return Err(format!("不支持的世界逻辑运行时：{runtime}"));
     }
+    if let Some(execution) = object.get("execution").and_then(Value::as_str) {
+        if !matches!(execution, "host" | "disabled") {
+            return Err(format!("不支持的世界逻辑执行模式：{execution}"));
+        }
+    }
+    let validate_handler = |path: &str, value: &Value| -> Result<(), String> {
+        let handler = value
+            .as_str()
+            .ok_or_else(|| format!("{path} must be a handler name string"))?;
+        if handler.is_empty()
+            || handler.len() > 128
+            || !handler
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        {
+            return Err(format!("{path} handler name is invalid"));
+        }
+        Ok(())
+    };
+    for key in ["ui_handlers"] {
+        if let Some(handlers) = object.get(key) {
+            let handlers = handlers
+                .as_array()
+                .ok_or_else(|| format!("logic.{key} must be an array"))?;
+            for (index, handler) in handlers.iter().enumerate() {
+                validate_handler(&format!("logic.{key}[{index}]"), handler)?;
+            }
+        }
+    }
+    if let Some(tools) = object.get("tools") {
+        let tools = tools
+            .as_array()
+            .ok_or_else(|| "logic.tools must be an array".to_string())?;
+        for (index, tool) in tools.iter().enumerate() {
+            let tool = tool
+                .as_object()
+                .ok_or_else(|| format!("logic.tools[{index}] must be an object"))?;
+            let handler = tool
+                .get("handler")
+                .ok_or_else(|| format!("logic.tools[{index}].handler is required"))?;
+            validate_handler(&format!("logic.tools[{index}].handler"), handler)?;
+            if let Some(speakers) = tool.get("speakers") {
+                let speakers = speakers
+                    .as_array()
+                    .ok_or_else(|| format!("logic.tools[{index}].speakers must be an array"))?;
+                if speakers.iter().any(|speaker| speaker.as_str().is_none()) {
+                    return Err(format!("logic.tools[{index}].speakers entries must be strings"));
+                }
+            }
+        }
+    }
+    if let Some(view_handler) = object
+        .get("agent_turn")
+        .and_then(Value::as_object)
+        .and_then(|agent_turn| agent_turn.get("view_handler"))
+    {
+        validate_handler("logic.agent_turn.view_handler", view_handler)?;
+    }
+    if let Some(protocol) = object.get("turn_protocol") {
+        let protocol = protocol
+            .as_object()
+            .ok_or_else(|| "logic.turn_protocol must be an object".to_string())?;
+        if let Some(state_handler) = protocol.get("state_handler") {
+            validate_handler("logic.turn_protocol.state_handler", state_handler)?;
+        } else {
+            return Err("logic.turn_protocol.state_handler is required".to_string());
+        }
+        for key in ["phase_field", "active_actor_field"] {
+            if let Some(value) = protocol.get(key) {
+                let field = value
+                    .as_str()
+                    .filter(|value| !value.trim().is_empty() && value.len() <= 128)
+                    .ok_or_else(|| format!("logic.turn_protocol.{key} must be a non-empty string"))?;
+                if !field.chars().all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.')) {
+                    return Err(format!("logic.turn_protocol.{key} contains invalid characters"));
+                }
+            }
+        }
+        if let Some(values) = protocol.get("actor_values") {
+            let values = values
+                .as_object()
+                .ok_or_else(|| "logic.turn_protocol.actor_values must be an object".to_string())?;
+            for (actor, value) in values {
+                if !matches!(actor.as_str(), "player" | "agent" | "system") || value.as_str().is_none() {
+                    return Err("logic.turn_protocol.actor_values must map player/agent/system to strings".to_string());
+                }
+            }
+        }
+        if let Some(handlers) = protocol.get("command_handlers") {
+            let handlers = handlers
+                .as_object()
+                .ok_or_else(|| "logic.turn_protocol.command_handlers must be an object".to_string())?;
+            for (handler, actor) in handlers {
+                validate_handler("logic.turn_protocol.command_handlers key", &Value::String(handler.clone()))?;
+                if !matches!(actor.as_str(), Some("player" | "agent" | "system")) {
+                    return Err(format!("logic.turn_protocol.command_handlers.{handler} has invalid actor"));
+                }
+            }
+        }
+        if let Some(values) = protocol.get("terminal_phase_values") {
+            let values = values
+                .as_array()
+                .ok_or_else(|| "logic.turn_protocol.terminal_phase_values must be an array".to_string())?;
+            if values.iter().any(|value| value.as_str().is_none()) {
+                return Err("logic.turn_protocol.terminal_phase_values entries must be strings".to_string());
+            }
+        }
+        if let Some(handlers) = protocol.get("initialize_handlers") {
+            let handlers = handlers
+                .as_array()
+                .ok_or_else(|| "logic.turn_protocol.initialize_handlers must be an array".to_string())?;
+            for (index, handler) in handlers.iter().enumerate() {
+                validate_handler(&format!("logic.turn_protocol.initialize_handlers[{index}]"), handler)?;
+            }
+        }
+    }
     if let Some(events) = object.get("events") {
         let events = events
             .as_object()
@@ -160,14 +276,7 @@ pub fn validate_logic_config(logic: &Value) -> Result<(), String> {
             let handler = handler
                 .as_str()
                 .ok_or_else(|| format!("logic.events.{name} must be a handler name string"))?;
-            if !handler
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
-                || handler.is_empty()
-                || handler.len() > 128
-            {
-                return Err(format!("logic.events.{name} handler name is invalid"));
-            }
+            validate_handler(&format!("logic.events.{name}"), &Value::String(handler.to_string()))?;
         }
     }
     if runtime == "sandbox-js-v1" {

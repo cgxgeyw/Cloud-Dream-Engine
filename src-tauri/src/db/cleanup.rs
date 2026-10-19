@@ -63,6 +63,16 @@ pub fn purge_session_data(conn: &Connection, session_id: &str) -> Result<(), Str
     )?;
     exec(
         conn,
+        "DELETE FROM world_logic_traces WHERE session_id = ?1",
+        params![session_id],
+    )?;
+    exec(
+        conn,
+        "DELETE FROM game_turn_states WHERE session_id = ?1",
+        params![session_id],
+    )?;
+    exec(
+        conn,
         "DELETE FROM llm_retry_capsules WHERE session_id = ?1",
         params![session_id],
     )?;
@@ -150,6 +160,8 @@ pub fn purge_all_session_scoped_data(conn: &Connection) -> Result<(), String> {
         "DELETE FROM turn_journal",
         "DELETE FROM prompt_call_traces",
         "DELETE FROM llm_call_traces",
+        "DELETE FROM world_logic_traces",
+        "DELETE FROM game_turn_states",
         "DELETE FROM llm_retry_capsules",
         "DELETE FROM agent_sessions",
         "DELETE FROM scheduled_notifications",

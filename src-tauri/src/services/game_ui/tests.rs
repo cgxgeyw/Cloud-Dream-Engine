@@ -247,6 +247,33 @@
     }
 
     #[test]
+    fn reports_html_security_and_source_locations() {
+        let result = GameUiService::new().validate_world_ui_document(WorldUiDocumentRequest {
+            source: "<html>\n<body><iframe src=\"https://example.test\"></iframe>\n</body>".into(),
+            platform: Some("desktop".into()),
+        });
+        assert!(!result.ok);
+        assert!(result
+            .errors
+            .iter()
+            .any(|diagnostic| diagnostic.code == "forbidden_html_element"));
+        assert!(result
+            .errors
+            .iter()
+            .all(|diagnostic| diagnostic.path.as_deref().unwrap_or("").contains(':')));
+    }
+
+    #[test]
+    fn validates_logic_source_without_network_or_host_access() {
+        let diagnostics = crate::services::game_ui::validate_world_logic_source(
+            "export function run() { fetch('https://example.test'); }",
+        );
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "forbidden_logic_api"));
+    }
+
+    #[test]
     #[ignore = "legacy JSONC UI tests removed with the HTML UI runtime"]
     fn button_nodes_may_carry_children_without_a_label() {
         let service = GameUiService::new();

@@ -37,24 +37,11 @@ import { useIsMobile } from "../components/ResponsiveLayout";
 import { useSectionParam } from "../hooks/useSectionParam";
 import { useWorldPromptPreview } from "../hooks/useWorldPromptPreview";
 import { GameUiSandboxPreview } from "../components/GameUiSandboxPreview";
-import { GameUiStructureEditor } from "../components/game-ui-editor/GameUiStructureEditor";
 import { PromptSendPreviewCard } from "../components/PromptTraceView";
 import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
 import { showToast } from "../components/Toast";
 import { ArrowLeft, Save, X } from "lucide-react";
-import {
-  buildGameUiStylesheet,
-  createGameUiScopeSelector,
-  defaultGameUiFile,
-  normalizeGameUiScopeId,
-  normalizeAssetConfig,
-  normalizeWorldUiEnvelope,
-  parseGameUiDocument,
-  stringifyGameUiDocument,
-  type GameUiDocumentV2,
-  type GameUiPlatform,
-  type ParsedGameUiDocument,
-} from "../data/gameUi";
+import { defaultGameUiFile, normalizeAssetConfig, normalizeWorldUiEnvelope } from "../data/gameUi";
 
 
 export const fixedTabs = [

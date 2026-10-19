@@ -34,6 +34,7 @@ import type {
   WorldUiCompatibilityReport,
   WorldUiDocumentRequest,
   WorldUiDocumentValidationResult,
+  WorldPackageInspectionResult,
 } from "./types";
 import type { SessionDebugResponse } from "./tauriApi";
 
@@ -57,6 +58,7 @@ export type {
   WorldUiBundleValidationRequest, WorldUiBundleValidationResult,
   WorldUiCompileRequest, WorldUiCompileResult,
   VerifyWorldPackageUiCompatibilityRequest, WorldUiCompatibilityReport,
+  WorldPackageInspectionResult,
 } from "./types";
 
 export type { SessionDebugResponse } from "./tauriApi";
@@ -329,6 +331,10 @@ export async function importWorldPackage(file: File): Promise<WorldResponse> {
   }
 
   return (await response.json()) as WorldResponse;
+}
+
+export function inspectWorldPackage(_file: File): Promise<WorldPackageInspectionResult> {
+  unsupportedInHttpMode("inspectWorldPackage");
 }
 
 export function createWorldCharacter(worldId: string, payload: CharacterUpsertRequest) {

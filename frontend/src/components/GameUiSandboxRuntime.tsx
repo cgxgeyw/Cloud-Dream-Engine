@@ -13,12 +13,11 @@ import {
   listWorldKv,
   listWorldRecords,
   requestWorldPermissions,
-  runWorldLogic,
+  dispatchWorldEvent as dispatchWorldEventCommand,
   setWorldKv,
   updateWorldRecord,
 } from "../data/apiAdapter";
-import type { GameUiLayoutNodeV2, GameUiPlatform
-} from "../data/gameUi";
+import type { GameUiPlatform } from "../data/gameUi";
 import type { GameSessionStateBag } from "../game/useGameSession";
 import { compressImagesForChat } from "../game/imageCompress";
 import type { WorldFrameAction } from "../worldFrame/protocol";
@@ -230,14 +229,26 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
           const worldId = requireWorldId(bag);
           const sessionId = bag.session?.id;
           if (!sessionId) throw new Error("请先创建会话。");
-          const result = await runWorldLogic(worldId, sessionId, action.handler, action.input ?? {});
-          const trigger = bag.worldUiEnvelope.logic.agent_turn;
-          if (trigger && result?.[trigger.when_field] === true && trigger.after_handlers.includes(action.handler)) {
+          const command = await dispatchWorldEventCommand(worldId, sessionId, {
+            type: "game_action",
+            handler: action.handler,
+            input: action.input ?? {},
+          });
+          const result = command.result as Record<string, unknown>;
+          const transition = command.transition;
+          if (transition?.known === true
+            && transition.next_actor === "agent"
+            && transition.turn_ended === true
+            && transition.game_over !== true) {
             // 玩家结算已经完成，先把结果交回牌桌；AI 回合在后台进行，避免网络响应阻塞扣血和动画。
             releaseBusyOnBackgroundCompletion = true;
             void (async () => {
               try {
-                await bag.handleSubmitAction({ mode: "submit", content: trigger.message });
+                const trigger = bag.worldUiEnvelope.logic.agent_turn;
+                await bag.handleSubmitAction({
+                  mode: "submit",
+                  content: trigger?.message ?? "请按当前回合规则完成你的行动。",
+                });
               } finally {
                 worldLogicBusyRef.current = false;
               }
@@ -389,7 +400,6 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
   }, [bag.lastCompletedTurn, bag.session, dispatchWorldEvent]);
 
   const activeSessionId = bag.session?.id ?? "";
-  const hostSessionDiagnosticMode = resolveHostSessionDiagnosticMode(bag.parsedGameUi.document.layout.root);
 
   return (
     <div className="world-ui-runtime-host">
@@ -410,7 +420,7 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
         }}
       />
       {/* 手机端不展示框架附带的会话 ID 诊断条 */}
-      {activeSessionId && platform !== "mobile" && hostSessionDiagnosticMode === "fallback" ? (
+      {activeSessionId && platform !== "mobile" ? (
         <button
           type="button"
           className="world-session-diagnostic"
@@ -432,40 +442,6 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
       />
     </div>
   );
-}
-
-function resolveHostSessionDiagnosticMode(node: GameUiLayoutNodeV2): "fallback" | "world" | "hidden" {
-  if (node.visible === false) {
-    return "fallback";
-  }
-  if (node.type === "component" && node.component === "scene_header") {
-    const value = node.props?.show_session_id;
-    if (value === true) {
-      return "world";
-    }
-    if (value === false) {
-      return "hidden";
-    }
-  }
-
-  const nestedNodes: GameUiLayoutNodeV2[] = [];
-  // svg 的 children 是矢量图元而非布局节点，不参与布局后代遍历。
-  if (node.type !== "svg" && "children" in node) nestedNodes.push(...(node.children ?? []));
-  if ("child" in node) nestedNodes.push(node.child);
-  if ("empty" in node && node.empty) nestedNodes.push(node.empty);
-  if ("slots" in node) {
-    for (const slotValue of Object.values(node.slots ?? {})) {
-      nestedNodes.push(...(Array.isArray(slotValue) ? slotValue : [slotValue]));
-    }
-  }
-
-  for (const child of nestedNodes) {
-    const mode = resolveHostSessionDiagnosticMode(child);
-    if (mode !== "fallback") {
-      return mode;
-    }
-  }
-  return "fallback";
 }
 
 function requireWorldRecordScope(bag: GameSessionStateBag, collection: string): string {

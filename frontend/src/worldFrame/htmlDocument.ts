@@ -39,15 +39,17 @@ function installWorldSdk() {
     }
     notice.textContent = message;
     window.dispatchEvent(new CustomEvent('world-error', { detail: { message } }));
+    if (port && channelId) port.postMessage({ type: 'world-frame/diagnostic', protocolVersion: 3, channelId, level: 'error', phase: 'runtime', message });
   };
   window.addEventListener('error', event => { if (event.message) showError(event.message); });
   window.addEventListener('unhandledrejection', event => showError(event.reason));
   const request = (action: Record<string, unknown>) => new Promise<unknown>((resolve, reject) => {
     if (!port) { reject(new Error('World SDK is not connected yet. Use world.subscribe().')); return; }
     const requestId = String(++sequence);
-    const timer = window.setTimeout(() => { pending.delete(requestId); reject(new Error('World action timed out')); }, 120000);
+    const timer = window.setTimeout(() => { pending.delete(requestId); const error = new Error('World action timed out'); if (port) port.postMessage({ type: 'world-frame/diagnostic', protocolVersion: 3, channelId, level: 'error', phase: 'action', message: error.message, requestId }); reject(error); }, 120000);
     pending.set(requestId, { resolve, reject, timer });
     port.postMessage({ type: 'world-frame/action', protocolVersion: 3, channelId, requestId, action });
+    port.postMessage({ type: 'world-frame/diagnostic', protocolVersion: 3, channelId, level: 'info', phase: 'action', message: String(action.type), requestId });
   });
   const action = (type: string, args: Record<string, unknown> = {}) => request({ ...args, type }).catch(error => { showError(error); throw error; });
   Object.defineProperty(window, 'world', { value: Object.freeze({
@@ -100,11 +102,16 @@ function installWorldSdk() {
       if (message.type === 'world-frame/action-result') {
         const entry = pending.get(message.requestId); if (!entry) return;
         pending.delete(message.requestId); window.clearTimeout(entry.timer);
-        if (message.ok) entry.resolve(message.result); else entry.reject(new Error(message.error));
+        if (message.ok) { port?.postMessage({ type: 'world-frame/diagnostic', protocolVersion: 3, channelId, level: 'info', phase: 'action', message: 'action completed', requestId: message.requestId }); entry.resolve(message.result); } else { port?.postMessage({ type: 'world-frame/diagnostic', protocolVersion: 3, channelId, level: 'error', phase: 'action', message: message.error || 'World UI action failed', requestId: message.requestId }); entry.reject(new Error(message.error)); }
         return;
       }
-      if (!['world-frame/render-runtime', 'world-frame/render-preview'].includes(message.type) || message.revision <= revision) return;
+      if (!['world-frame/render-runtime', 'world-frame/render-preview'].includes(message.type)) return;
+      if (message.revision <= revision) {
+        port?.postMessage({ type: 'world-frame/diagnostic', protocolVersion: 3, channelId, level: 'warn', phase: 'render', message: 'ignored stale snapshot', revision: message.revision });
+        return;
+      }
       revision = message.revision;
+      port?.postMessage({ type: 'world-frame/diagnostic', protocolVersion: 3, channelId, level: 'info', phase: 'render', message: 'snapshot rendered', revision });
       const payload = message.payload;
       state = payload.snapshot || { preview: true, world: { name: payload.worldName }, session: { location: payload.location, time_label: payload.timeLabel }, player: { name: payload.playerName }, messages: payload.messages, visible_characters: payload.visibleCharacters, ui_state: { submitting: false }, draft_input: { value: '' } };
       const viewport = (state?.viewport || {}) as { safe_area?: Record<string, number>; keyboard_height?: number };

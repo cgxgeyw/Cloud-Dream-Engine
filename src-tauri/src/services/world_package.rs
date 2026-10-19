@@ -3,19 +3,21 @@ use std::fs;
 use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 
+use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
 use crate::models::character::{CharacterDefinition, CharacterPackageData};
 use crate::models::world::{
     BinaryFileResponse, SavedFileResponse, WorldDefinition, WorldPackageAssetEntry,
-    WorldPackageCharacterFileEntry, WorldPackageManifest, WorldPackageWorldData,
+    WorldPackageCharacterFileEntry, WorldPackageInspectionResult, WorldPackageManifest,
+    WorldPackageWorldData, WorldUiDiagnostic,
     WorldUiBundleValidationRequest,
 };
 use crate::services::game_ui::GameUiService;
 use crate::state::AppState;
 
 const WORLD_PACKAGE_FORMAT: &str = "dream-world-package";
-const WORLD_PACKAGE_VERSION: u32 = 9;
+const WORLD_PACKAGE_VERSION: u32 = 10;
 const LEGACY_WORLD_PACKAGE_VERSIONS: [u32; 0] = [];
 const WORLD_PACKAGE_FILE: &str = "world/world.json";
 const WORLD_PACKAGE_DESKTOP_UI_FILE: &str = "world/ui.desktop.html";
@@ -25,6 +27,9 @@ const WORLD_PACKAGE_MOBILE_UI_STYLESHEET: &str = "world/ui.mobile.css";
 const WORLD_PACKAGE_LOGIC_FILE: &str = "world/logic.js";
 const WORLD_PACKAGE_MCP_TOOLS_FILE: &str = "tools.json";
 const MAX_WORLD_LOGIC_BYTES: usize = 256 * 1024;
+const MAX_WORLD_PACKAGE_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_WORLD_PACKAGE_ENTRY_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_WORLD_PACKAGE_ENTRIES: usize = 4096;
 
 pub struct ImportedWorldPackage {
     pub world: WorldPackageWorldData,
@@ -43,6 +48,165 @@ pub struct ImportedWorldPackage {
 pub struct WorldPackageService;
 
 impl WorldPackageService {
+    pub fn inspect_package_archive(data: Vec<u8>) -> WorldPackageInspectionResult {
+        let mut diagnostics = Vec::new();
+        let mut archive = match zip::ZipArchive::new(Cursor::new(data)) {
+            Ok(archive) => archive,
+            Err(error) => {
+                diagnostics.push(package_diagnostic(
+                    "invalid_zip",
+                    format!("无法读取世界包 ZIP：{error}"),
+                    "archive",
+                ));
+                return WorldPackageInspectionResult {
+                    ok: false,
+                    format: None,
+                    version: None,
+                    diagnostics,
+                };
+            }
+        };
+        if let Err(error) = validate_archive_limits(&mut archive) {
+            diagnostics.push(package_diagnostic("archive_limits_exceeded", error, "archive"));
+        }
+        let manifest = match read_json_from_zip::<WorldPackageManifest>(&mut archive, "manifest.json")
+        {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                diagnostics.push(package_diagnostic(
+                    "invalid_manifest",
+                    format!("manifest.json 无效：{error}"),
+                    "manifest.json",
+                ));
+                return WorldPackageInspectionResult {
+                    ok: false,
+                    format: None,
+                    version: None,
+                    diagnostics,
+                };
+            }
+        };
+        if manifest.format != WORLD_PACKAGE_FORMAT {
+            diagnostics.push(package_diagnostic(
+                "unsupported_package_format",
+                format!("不支持的世界包格式：{}", manifest.format),
+                "manifest.format",
+            ));
+        }
+        if manifest.version != WORLD_PACKAGE_VERSION {
+            diagnostics.push(package_diagnostic(
+                "unsupported_package_version",
+                format!("不支持的世界包版本：{}，当前版本为 {}。", manifest.version, WORLD_PACKAGE_VERSION),
+                "manifest.version",
+            ));
+        }
+        for (path, field) in [
+            (manifest.world_file.as_deref(), "manifest.world_file"),
+            (manifest.desktop_ui_file.as_deref(), "manifest.desktop_ui_file"),
+            (manifest.mobile_ui_file.as_deref(), "manifest.mobile_ui_file"),
+            (manifest.logic_file.as_deref(), "manifest.logic_file"),
+            (manifest.desktop_ui_stylesheet_file.as_deref(), "manifest.desktop_ui_stylesheet_file"),
+            (manifest.mobile_ui_stylesheet_file.as_deref(), "manifest.mobile_ui_stylesheet_file"),
+            (manifest.mcp_tools_file.as_deref(), "manifest.mcp_tools_file"),
+        ] {
+            if let Some(path) = path {
+                if let Err(error) = validate_manifest_path(path, field) {
+                    diagnostics.push(package_diagnostic("invalid_manifest_path", error, field));
+                }
+            }
+        }
+        for entry in &manifest.character_files {
+            if let Err(error) = validate_manifest_path(&entry.file_path, "manifest.character_files.file_path") {
+                diagnostics.push(package_diagnostic("invalid_manifest_path", error, "manifest.character_files"));
+            }
+        }
+        for asset in &manifest.assets {
+            if let Err(error) = validate_manifest_path(&asset.archive_path, "manifest.assets.archive_path") {
+                diagnostics.push(package_diagnostic("invalid_manifest_path", error, "manifest.assets"));
+            }
+        }
+        let desktop_path = manifest
+            .desktop_ui_file
+            .as_deref()
+            .unwrap_or(WORLD_PACKAGE_DESKTOP_UI_FILE);
+        let mobile_path = manifest
+            .mobile_ui_file
+            .as_deref()
+            .unwrap_or(WORLD_PACKAGE_MOBILE_UI_FILE);
+        let desktop = read_text_from_zip(&mut archive, desktop_path);
+        let mobile = read_text_from_zip(&mut archive, mobile_path);
+        let desktop_stylesheet = manifest
+            .desktop_ui_stylesheet_file
+            .as_deref()
+            .map(|path| read_text_from_zip(&mut archive, path));
+        let mobile_stylesheet = manifest
+            .mobile_ui_stylesheet_file
+            .as_deref()
+            .map(|path| read_text_from_zip(&mut archive, path));
+        let service = GameUiService::new();
+        for (platform, source) in [("desktop", desktop), ("mobile", mobile)] {
+            match source {
+                Ok(source) => {
+                    let result = service.validate_world_ui_document(crate::models::world::WorldUiDocumentRequest {
+                        source,
+                        platform: Some(platform.to_string()),
+                    });
+                    diagnostics.extend(result.errors.into_iter().map(|diagnostic| {
+                        WorldUiDiagnostic {
+                            path: diagnostic.path.map(|path| format!("{platform}/{path}")),
+                            ..diagnostic
+                        }
+                    }));
+                }
+                Err(error) => diagnostics.push(package_diagnostic(
+                    "missing_ui_file",
+                    format!("{platform} UI 文件无法读取：{error}"),
+                    if platform == "desktop" { desktop_path } else { mobile_path },
+                )),
+            }
+        }
+        for (platform, path, stylesheet) in [
+            ("desktop", manifest.desktop_ui_stylesheet_file.as_deref(), desktop_stylesheet),
+            ("mobile", manifest.mobile_ui_stylesheet_file.as_deref(), mobile_stylesheet),
+        ] {
+            if let Some(result) = stylesheet {
+                if let Err(error) = result {
+                    diagnostics.push(package_diagnostic(
+                        "missing_stylesheet_file",
+                        format!("{platform} stylesheet 文件无法读取：{error}"),
+                        path.unwrap_or("stylesheet"),
+                    ));
+                }
+            }
+        }
+        let world_path = manifest.world_file.as_deref().unwrap_or(WORLD_PACKAGE_FILE);
+        if let Ok(package_world) = read_json_from_zip::<WorldPackageWorldData>(&mut archive, world_path) {
+            if let Err(error) = crate::services::world_storage::validate_storage_config(&package_world.ui_storage_config) {
+                diagnostics.push(package_diagnostic("invalid_world_storage_config", error, "world.storage"));
+            }
+            if let Err(error) = crate::services::world_storage::validate_logic_config(&package_world.ui_logic_config) {
+                diagnostics.push(package_diagnostic("invalid_world_logic_config", error, "world.logic"));
+            }
+            if let Some(source) = package_world.ui_logic_config.get("source").and_then(Value::as_str) {
+                diagnostics.extend(crate::services::game_ui::validate_world_logic_source(source));
+            }
+        } else {
+            diagnostics.push(package_diagnostic("missing_world_file", "无法读取 world/world.json。", world_path));
+        }
+        if let Some(logic_path) = manifest.logic_file.as_deref() {
+            match read_text_from_zip(&mut archive, logic_path) {
+                Ok(source) => diagnostics.extend(crate::services::game_ui::validate_world_logic_source(&source)),
+                Err(error) => diagnostics.push(package_diagnostic("missing_logic_file", format!("logic.js 无法读取：{error}"), logic_path)),
+            }
+        }
+        WorldPackageInspectionResult {
+            ok: diagnostics.iter().all(|diagnostic| diagnostic.severity != "error"),
+            format: Some(manifest.format),
+            version: Some(manifest.version),
+            diagnostics,
+        }
+    }
+
     pub fn build_package(
         data_dir: &Path,
         world: &WorldDefinition,
@@ -273,6 +437,7 @@ impl WorldPackageService {
     ) -> Result<ImportedWorldPackage, String> {
         let assets_root = assets_root(data_dir);
         let mut archive = zip::ZipArchive::new(Cursor::new(data)).map_err(|e| e.to_string())?;
+        validate_archive_limits(&mut archive)?;
         let manifest: WorldPackageManifest = read_json_from_zip(&mut archive, "manifest.json")
             .map_err(|e| format!("Invalid manifest: {e}"))?;
         if manifest.format != WORLD_PACKAGE_FORMAT
@@ -282,14 +447,54 @@ impl WorldPackageService {
             return Err("不支持的世界包格式".to_string());
         }
 
-        let mut asset_map = HashMap::new();
+        validate_manifest_path(
+            manifest.world_file.as_deref().unwrap_or(WORLD_PACKAGE_FILE),
+            "manifest.world_file",
+        )?;
+        validate_manifest_path(
+            manifest
+                .desktop_ui_file
+                .as_deref()
+                .unwrap_or(WORLD_PACKAGE_DESKTOP_UI_FILE),
+            "manifest.desktop_ui_file",
+        )?;
+        validate_manifest_path(
+            manifest
+                .mobile_ui_file
+                .as_deref()
+                .unwrap_or(WORLD_PACKAGE_MOBILE_UI_FILE),
+            "manifest.mobile_ui_file",
+        )?;
+        for (path, field) in [
+            (manifest.logic_file.as_deref(), "manifest.logic_file"),
+            (manifest.mcp_tools_file.as_deref(), "manifest.mcp_tools_file"),
+            (
+                manifest.desktop_ui_stylesheet_file.as_deref(),
+                "manifest.desktop_ui_stylesheet_file",
+            ),
+            (
+                manifest.mobile_ui_stylesheet_file.as_deref(),
+                "manifest.mobile_ui_stylesheet_file",
+            ),
+        ] {
+            if let Some(path) = path {
+                validate_manifest_path(path, field)?;
+            }
+        }
+        for entry in &manifest.character_files {
+            validate_manifest_path(&entry.file_path, "manifest.character_files.file_path")?;
+        }
+        for asset in &manifest.assets {
+            validate_manifest_path(&asset.archive_path, "manifest.assets.archive_path")?;
+        }
+
+        // 先完整读取并校验包内容，再写入 assets 目录。导入失败时不应留下半个包的文件。
+        let mut pending_assets = Vec::with_capacity(manifest.assets.len());
         for asset in &manifest.assets {
             let mut file = open_zip_entry(&mut archive, &asset.archive_path)?;
             let mut bytes = Vec::new();
             file.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
-            let target_asset = persist_asset_file(&assets_root, &asset.archive_path, &bytes)?;
-            asset_map.insert(asset.source_path.clone(), target_asset.clone());
-            asset_map.insert(asset.archive_path.clone(), target_asset);
+            pending_assets.push((asset.source_path.clone(), asset.archive_path.clone(), bytes));
         }
 
         let world_file = manifest
@@ -319,6 +524,28 @@ impl WorldPackageService {
         }
         crate::services::world_storage::validate_storage_config(&package_world.ui_storage_config)?;
         crate::services::world_storage::validate_logic_config(&package_world.ui_logic_config)?;
+        if let Some(logic_source) = package_world
+            .ui_logic_config
+            .get("source")
+            .and_then(|value| value.as_str())
+        {
+            let diagnostics = crate::services::game_ui::validate_world_logic_source(logic_source);
+            let errors = diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.severity == "error")
+                .map(|diagnostic| {
+                    format!(
+                        "{} at {}: {}",
+                        diagnostic.code,
+                        diagnostic.path.as_deref().unwrap_or("logic.js"),
+                        diagnostic.message
+                    )
+                })
+                .collect::<Vec<_>>();
+            if !errors.is_empty() {
+                return Err(format!("世界逻辑脚本无效：{}", errors.join("; ")));
+            }
+        }
         // 第 12 项：manifest 声明的平台能力必须都在当前目录内，未知 action 导入即拦。
         crate::services::platform_features::validate_declared_features(&serde_json::json!({
             "platform_features": package_world.platform_features,
@@ -327,24 +554,24 @@ impl WorldPackageService {
             .desktop_ui_file
             .clone()
             .unwrap_or_else(|| WORLD_PACKAGE_DESKTOP_UI_FILE.to_string());
-        let desktop_ui_source =
-            read_text_from_zip(&mut archive, &desktop_ui_file).unwrap_or_default();
+        let desktop_ui_source = read_text_from_zip(&mut archive, &desktop_ui_file)
+            .map_err(|_| format!("世界包缺少桌面 UI 文件：{desktop_ui_file}"))?;
         let mobile_ui_file = manifest
             .mobile_ui_file
             .clone()
             .unwrap_or_else(|| WORLD_PACKAGE_MOBILE_UI_FILE.to_string());
-        let mobile_ui_source =
-            read_text_from_zip(&mut archive, &mobile_ui_file).unwrap_or_default();
-        let desktop_ui_stylesheet = manifest
-            .desktop_ui_stylesheet_file
-            .as_deref()
-            .and_then(|path| read_text_from_zip(&mut archive, path).ok())
-            .unwrap_or_default();
-        let mobile_ui_stylesheet = manifest
-            .mobile_ui_stylesheet_file
-            .as_deref()
-            .and_then(|path| read_text_from_zip(&mut archive, path).ok())
-            .unwrap_or_default();
+        let mobile_ui_source = read_text_from_zip(&mut archive, &mobile_ui_file)
+            .map_err(|_| format!("世界包缺少移动 UI 文件：{mobile_ui_file}"))?;
+        let desktop_ui_stylesheet = match manifest.desktop_ui_stylesheet_file.as_deref() {
+            Some(path) => read_text_from_zip(&mut archive, path)
+                .map_err(|_| format!("世界包缺少桌面 stylesheet 文件：{path}"))?,
+            None => String::new(),
+        };
+        let mobile_ui_stylesheet = match manifest.mobile_ui_stylesheet_file.as_deref() {
+            Some(path) => read_text_from_zip(&mut archive, path)
+                .map_err(|_| format!("世界包缺少移动 stylesheet 文件：{path}"))?,
+            None => String::new(),
+        };
         let mut package_characters = Vec::new();
         for entry in &manifest.character_files {
             let mut character: CharacterPackageData =
@@ -389,7 +616,6 @@ impl WorldPackageService {
                 .iter()
                 .chain(ui_validation.mobile.errors.iter())
                 .chain(ui_validation.errors.iter())
-                .take(12)
                 .map(|diagnostic| {
                     let path = diagnostic.path.as_deref().unwrap_or("bundle");
                     format!("{} at {}: {}", diagnostic.code, path, diagnostic.message)
@@ -397,6 +623,13 @@ impl WorldPackageService {
                 .collect::<Vec<_>>()
                 .join("; ");
             return Err(format!("世界 UI 包无效：{details}"));
+        }
+
+        let mut asset_map = HashMap::new();
+        for (source_path, archive_path, bytes) in pending_assets {
+            let target_asset = persist_asset_file(&assets_root, &archive_path, &bytes)?;
+            asset_map.insert(source_path, target_asset.clone());
+            asset_map.insert(archive_path, target_asset);
         }
 
         let ui_capabilities = package_world.ui_capabilities.clone();
@@ -1021,6 +1254,56 @@ fn persist_asset_file(
         .to_string_lossy()
         .replace('\\', "/");
     Ok(format!("/assets/{relative_saved}"))
+}
+
+fn validate_archive_limits(
+    archive: &mut zip::ZipArchive<Cursor<Vec<u8>>>,
+) -> Result<(), String> {
+    if archive.len() > MAX_WORLD_PACKAGE_ENTRIES {
+        return Err(format!(
+            "世界包文件数量超过上限 {}",
+            MAX_WORLD_PACKAGE_ENTRIES
+        ));
+    }
+    let mut total = 0u64;
+    let mut names = HashSet::new();
+    for index in 0..archive.len() {
+        let file = archive.by_index(index).map_err(|e| e.to_string())?;
+        let name = file.name().replace('\\', "/");
+        validate_manifest_path(&name, "archive entry")?;
+        if !names.insert(name.clone()) {
+            return Err(format!("世界包包含重复文件：{name}"));
+        }
+        if file.size() > MAX_WORLD_PACKAGE_ENTRY_BYTES {
+            return Err(format!("世界包文件超过单文件大小上限：{name}"));
+        }
+        total = total.saturating_add(file.size());
+        if total > MAX_WORLD_PACKAGE_BYTES {
+            return Err("世界包解压后总大小超过 64 MiB 上限".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn package_diagnostic(code: &str, message: impl Into<String>, path: &str) -> WorldUiDiagnostic {
+    WorldUiDiagnostic {
+        severity: "error".to_string(),
+        code: code.to_string(),
+        message: message.into(),
+        path: Some(path.to_string()),
+    }
+}
+
+fn validate_manifest_path(path: &str, field: &str) -> Result<(), String> {
+    let normalized = path.trim().replace('\\', "/");
+    if normalized.is_empty()
+        || normalized.starts_with('/')
+        || normalized.contains(':')
+        || normalized.split('/').any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return Err(format!("{field} 路径无效：{path}"));
+    }
+    Ok(())
 }
 
 fn read_json_from_zip<T: serde::de::DeserializeOwned>(

@@ -389,6 +389,39 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_llm_call_traces_session_turn
             ON llm_call_traces(session_id, turn_index, created_at);
 
+        CREATE TABLE IF NOT EXISTS world_logic_traces (
+            trace_id TEXT PRIMARY KEY,
+            request_id TEXT NOT NULL,
+            world_id TEXT NOT NULL DEFAULT '',
+            session_id TEXT NOT NULL DEFAULT '',
+            actor TEXT NOT NULL DEFAULT '',
+            handler TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'completed',
+            latency_ms INTEGER NOT NULL DEFAULT 0,
+            input_json TEXT NOT NULL DEFAULT '{}',
+            result_json TEXT NOT NULL DEFAULT '{}',
+            error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_world_logic_traces_session_time
+            ON world_logic_traces(session_id, created_at, trace_id);
+
+        CREATE TABLE IF NOT EXISTS game_turn_states (
+            session_id TEXT PRIMARY KEY,
+            world_id TEXT NOT NULL DEFAULT '',
+            phase TEXT NOT NULL DEFAULT '',
+            active_actor TEXT NOT NULL DEFAULT '',
+            turn_index INTEGER NOT NULL DEFAULT 0,
+            sequence INTEGER NOT NULL DEFAULT 0,
+            terminal INTEGER NOT NULL DEFAULT 0,
+            last_handler TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_game_turn_states_world
+            ON game_turn_states(world_id, updated_at);
+
         CREATE TABLE IF NOT EXISTS llm_retry_capsules (
             id TEXT PRIMARY KEY,
             session_id TEXT NOT NULL,

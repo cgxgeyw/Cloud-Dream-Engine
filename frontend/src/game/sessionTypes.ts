@@ -45,9 +45,6 @@ import {
 } from "../data/apiAdapter";
 import type { ContentPart, MessageInteraction } from "../data/types";
 import {
-  buildGameUiStylesheet,
-  createGameUiScopeSelector,
-  normalizeGameUiScopeId,
   normalizeWorldUiEnvelope,
   parseGameUiDocument,
   resolveUiFile,

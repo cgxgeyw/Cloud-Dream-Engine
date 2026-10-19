@@ -11,6 +11,8 @@ import {
   fetchWorldCharacters,
   fetchWorlds,
   importWorldPackage,
+  inspectWorldPackage,
+  isTauriEnvironment,
   type CharacterResponse,
   type AiWorldCreateMode,
   type WorldResponse,
@@ -236,6 +238,15 @@ export function WorldsPage() {
     try {
       setImporting(true);
       setError(null);
+      if (isTauriEnvironment()) {
+        const inspection = await inspectWorldPackage(file);
+        if (!inspection.ok) {
+          const details = inspection.diagnostics
+            .map((diagnostic) => `${diagnostic.code} at ${diagnostic.path ?? "package"}: ${diagnostic.message}`)
+            .join("\n");
+          throw new Error(details || "世界包导入前检查失败。");
+        }
+      }
       const importedWorld = await importWorldPackage(file);
       const isUpgrade = worldsRef.current.some((world) => world.id === importedWorld.id);
       const importedCharacters = await fetchWorldCharacters(importedWorld.id);

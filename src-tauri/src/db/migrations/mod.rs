@@ -17,7 +17,9 @@ const MIGRATION_MODEL_INPUT_MODALITIES: i64 = 10;
 const MIGRATION_WORLD_FEATURE_GRANTS: i64 = 11;
 const MIGRATION_MCP_TOOL_IMPL: i64 = 12;
 const MIGRATION_MODEL_JSON_MODE: i64 = 13;
-const CURRENT_SCHEMA_VERSION: i64 = MIGRATION_MODEL_JSON_MODE;
+const MIGRATION_WORLD_LOGIC_TRACES: i64 = 14;
+const MIGRATION_GAME_TURN_STATES: i64 = 15;
+const CURRENT_SCHEMA_VERSION: i64 = MIGRATION_GAME_TURN_STATES;
 
 fn ensure_column(
     conn: &Connection,
@@ -369,6 +371,53 @@ fn migrate_mcp_tool_impl(conn: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
+/// v14：宿主执行世界逻辑的审计记录。记录调用边界和结果摘要，便于运行时调试，
+/// 不把执行权限交给世界脚本本身。
+fn migrate_world_logic_traces(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS world_logic_traces (
+            trace_id TEXT PRIMARY KEY,
+            request_id TEXT NOT NULL,
+            world_id TEXT NOT NULL DEFAULT '',
+            session_id TEXT NOT NULL DEFAULT '',
+            actor TEXT NOT NULL DEFAULT '',
+            handler TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'completed',
+            latency_ms INTEGER NOT NULL DEFAULT 0,
+            input_json TEXT NOT NULL DEFAULT '{}',
+            result_json TEXT NOT NULL DEFAULT '{}',
+            error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_world_logic_traces_session_time
+            ON world_logic_traces(session_id, created_at, trace_id);
+        ",
+    )?;
+    Ok(())
+}
+
+fn migrate_game_turn_states(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS game_turn_states (
+            session_id TEXT PRIMARY KEY,
+            world_id TEXT NOT NULL DEFAULT '',
+            phase TEXT NOT NULL DEFAULT '',
+            active_actor TEXT NOT NULL DEFAULT '',
+            turn_index INTEGER NOT NULL DEFAULT 0,
+            sequence INTEGER NOT NULL DEFAULT 0,
+            terminal INTEGER NOT NULL DEFAULT 0,
+            last_handler TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_game_turn_states_world
+            ON game_turn_states(world_id, updated_at);
+        ",
+    )?;
+    Ok(())
+}
+
 /// v9：生成参数（第 8 项）的应用级与会话级存储列。世界级存在
 /// `worlds.director_config_json` 的 `generation_params` 字段里，随世界包走，不需要新列。
 /// 两列都默认 `{}`（本层不覆盖任何参数），旧库升级后行为与改造前一致。
@@ -476,6 +525,14 @@ pub(crate) fn run(conn: &Connection) -> Result<(), rusqlite::Error> {
             "INTEGER NOT NULL DEFAULT 0",
         )?;
         set_schema_version(&tx, MIGRATION_MODEL_JSON_MODE)?;
+    }
+    if version < MIGRATION_WORLD_LOGIC_TRACES {
+        migrate_world_logic_traces(&tx)?;
+        set_schema_version(&tx, MIGRATION_WORLD_LOGIC_TRACES)?;
+    }
+    if version < MIGRATION_GAME_TURN_STATES {
+        migrate_game_turn_states(&tx)?;
+        set_schema_version(&tx, MIGRATION_GAME_TURN_STATES)?;
     }
 
     tx.commit()

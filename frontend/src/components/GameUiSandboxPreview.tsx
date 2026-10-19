@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Bug, ChevronDown, ChevronUp, Copy } from "lucide-react";
 
 import type { GameUiPreviewProps } from "./GameUiPreview";
 import {
@@ -11,11 +12,19 @@ import {
 } from "../worldFrame/protocol";
 import type { WorldFrameRuntimePayload } from "../worldFrame/runtimeSnapshot";
 import { createHtmlWorldDocument } from '../worldFrame/htmlDocument';
-export { createWorldFrameDocument } from "../worldFrame/frameDocument";
 
 type FrameConnection = {
   channelId: string;
   port: MessagePort;
+};
+
+export type WorldFrameDiagnostic = {
+  timestamp: number;
+  level: "info" | "warn" | "error";
+  phase: "boot" | "connect" | "render" | "action" | "runtime";
+  message: string;
+  requestId?: string;
+  revision?: number;
 };
 
 type WorldFrameHostProps = {
@@ -24,20 +33,31 @@ type WorldFrameHostProps = {
   title: string;
   className?: string;
   onAction?: (action: WorldFrameAction) => unknown | Promise<unknown>;
+  onDiagnostic?: (diagnostic: WorldFrameDiagnostic) => void;
 };
 
-export function WorldFrameHost({ mode, payload, title, className, onAction }: WorldFrameHostProps) {
+export function WorldFrameHost({ mode, payload, title, className, onAction, onDiagnostic }: WorldFrameHostProps) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const connectionRef = useRef<FrameConnection | null>(null);
   const revisionRef = useRef(0);
   const latestPayloadRef = useRef(payload);
   const onActionRef = useRef(onAction);
+  const onDiagnosticRef = useRef(onDiagnostic);
+  const [diagnostics, setDiagnostics] = useState<WorldFrameDiagnostic[]>([]);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [frameState, setFrameState] = useState<"connecting" | "ready" | "error">("connecting");
   const [frameError, setFrameError] = useState<string | null>(null);
   const htmlDocument = useMemo(() => createHtmlWorldDocument(payload.document.html || '', payload.stylesheet), [payload.document.html, payload.stylesheet]);
 
   latestPayloadRef.current = payload;
   onActionRef.current = onAction;
+  onDiagnosticRef.current = onDiagnostic;
+
+  const recordDiagnostic = (entry: Omit<WorldFrameDiagnostic, "timestamp">) => {
+    const diagnostic = { ...entry, timestamp: Date.now() };
+    setDiagnostics((current) => [...current.slice(-99), diagnostic]);
+    onDiagnosticRef.current?.(diagnostic);
+  };
 
   const sendLatestPayload = () => {
     const connection = connectionRef.current;
@@ -63,6 +83,7 @@ export function WorldFrameHost({ mode, payload, title, className, onAction }: Wo
     connectionRef.current?.port.close();
     setFrameState("connecting");
     setFrameError(null);
+    recordDiagnostic({ level: "info", phase: "connect", message: "正在连接世界界面。" });
 
     const channel = new MessageChannel();
     const channelId = createChannelId();
@@ -75,12 +96,18 @@ export function WorldFrameHost({ mode, payload, title, className, onAction }: Wo
       }
       if (event.data.type === "world-frame/ready") {
         setFrameState("ready");
+        recordDiagnostic({ level: "info", phase: "connect", message: "世界界面已连接。" });
         sendLatestPayload();
         return;
       }
       if (event.data.type === "world-frame/error") {
         setFrameState("error");
         setFrameError(event.data.message);
+        recordDiagnostic({ level: "error", phase: "runtime", message: event.data.message });
+        return;
+      }
+      if (event.data.type === "world-frame/diagnostic") {
+        recordDiagnostic({ level: event.data.level, phase: event.data.phase, message: event.data.message, requestId: event.data.requestId, revision: event.data.revision });
         return;
       }
       void handleFrameAction(connection, event.data.requestId, event.data.action, onActionRef.current);
@@ -125,9 +152,31 @@ export function WorldFrameHost({ mode, payload, title, className, onAction }: Wo
         onLoad={() => {
           setFrameState("connecting");
           setFrameError(null);
+          recordDiagnostic({ level: "info", phase: "boot", message: "iframe 已加载，等待 SDK 握手。" });
         }}
         className="world-ui-sandbox-preview-frame"
       />
+      <div className="world-ui-sandbox-debug">
+        <button type="button" className="world-ui-sandbox-debug-toggle" onClick={() => setShowDiagnostics((value) => !value)} title="查看世界界面运行时诊断">
+          <Bug size={14} aria-hidden="true" />
+          <span>诊断 {diagnostics.length}</span>
+          {showDiagnostics ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
+        </button>
+        {showDiagnostics ? (
+          <div className="world-ui-sandbox-debug-panel">
+            <div className="world-ui-sandbox-debug-actions">
+              <button type="button" onClick={() => void copyDiagnostics(diagnostics)} title="复制诊断信息"><Copy size={13} aria-hidden="true" />复制</button>
+              <button type="button" onClick={() => setDiagnostics([])}>清空</button>
+            </div>
+            {diagnostics.length === 0 ? <div className="text-muted">暂无运行时事件。</div> : diagnostics.slice().reverse().map((entry, index) => (
+              <div key={`${entry.timestamp}-${index}`} className={`world-ui-sandbox-debug-entry world-ui-sandbox-debug-entry--${entry.level}`}>
+                <code>{new Date(entry.timestamp).toLocaleTimeString()}</code>
+                <span>[{entry.phase}] {entry.message}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
       {frameState === "connecting" ? (
         <div className="world-ui-sandbox-preview-status">{"\u6b63\u5728\u542f\u52a8\u9694\u79bb\u754c\u9762..."}</div>
       ) : null}
@@ -152,6 +201,20 @@ export function GameUiSandboxPreview(props: GameUiPreviewProps) {
       title={`${props.platform === "mobile" ? "\u79fb\u52a8\u7aef" : "\u684c\u9762\u7aef"}\u4e16\u754c\u754c\u9762\u9884\u89c8`}
     />
   );
+}
+
+async function copyDiagnostics(entries: WorldFrameDiagnostic[]) {
+  const text = entries.map((entry) => `${new Date(entry.timestamp).toISOString()} [${entry.level}/${entry.phase}] ${entry.message}`).join("\n");
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const area = document.createElement("textarea");
+    area.value = text;
+    document.body.append(area);
+    area.select();
+    document.execCommand("copy");
+    area.remove();
+  }
 }
 
 async function handleFrameAction(

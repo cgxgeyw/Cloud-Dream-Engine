@@ -59,6 +59,7 @@ pub struct GameUiCatalogAction {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct GameUiCatalogComponent {
     pub id: String,
     #[allow(dead_code)]
@@ -103,32 +104,11 @@ pub fn game_ui_catalog() -> &'static GameUiCatalog {
     &CATALOG
 }
 
-pub fn find_component(component_id: &str) -> Option<&'static GameUiCatalogComponent> {
-    game_ui_catalog()
-        .components
-        .iter()
-        .find(|component| component.id == component_id)
-}
-
-pub fn find_action(action_id: &str) -> Option<&'static GameUiCatalogAction> {
-    game_ui_catalog()
-        .actions
-        .iter()
-        .find(|action| action.id == action_id)
-}
-
 pub fn is_supported_capability(capability_id: &str) -> bool {
     game_ui_catalog()
         .capabilities
         .iter()
         .any(|capability| capability.id == capability_id)
-}
-
-pub fn capability_ids() -> impl Iterator<Item = &'static str> {
-    game_ui_catalog()
-        .capabilities
-        .iter()
-        .map(|capability| capability.id.as_str())
 }
 
 fn validate_catalog(catalog: &GameUiCatalog) {

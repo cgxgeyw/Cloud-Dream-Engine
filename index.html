@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>健康生活 · 四页签与记录统计预览</title>
+  <link rel="stylesheet" href="preview.css" />
+  <style>
+    /* 外层壳不能叫 .pane：下面 .tab-panel 的 display 切换会把整页藏掉导致白屏 */
+    .preview-shell {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 24px 16px 40px;
+    }
+    .tabs {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    .tab {
+      border: 0;
+      border-radius: 10px;
+      min-height: 40px;
+      background: #e2e7ef;
+      color: #5a657a;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .tab.is-active {
+      background: #fff;
+      color: #1b2233;
+      box-shadow: -2px -2px 5px rgba(255, 255, 255, 0.95), 3px 3px 8px rgba(100, 116, 139, 0.12);
+    }
+    .tab[data-tab="records"].is-active { color: #2b5fe3; }
+    .tab-panel { display: none; }
+    .tab-panel.is-active {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .modes { display: flex; gap: 8px; margin: 10px 0; }
+    .mode-btn {
+      border: 0;
+      border-radius: 10px;
+      min-height: 36px;
+      padding: 0 16px;
+      background: #e2e7ef;
+      color: #5a657a;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .mode-btn.is-active {
+      background: #fff;
+      color: #1b2233;
+      box-shadow: -2px -2px 5px rgba(255, 255, 255, 0.95), 3px 3px 8px rgba(100, 116, 139, 0.12);
+    }
+    .chart-card {
+      background: #fff;
+      border-radius: 16px;
+      padding: 14px;
+      margin-top: 4px;
+    }
+    .bars {
+      display: flex;
+      align-items: flex-end;
+      gap: 6px;
+      min-height: 110px;
+      margin-top: 8px;
+    }
+    .bar-col {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .bar-pair {
+      display: flex;
+      align-items: flex-end;
+      gap: 2px;
+      height: 96px;
+    }
+    .bar {
+      flex: 1;
+      min-height: 2px;
+      border-radius: 4px 4px 1px 1px;
+    }
+    .bar--on { background: #1a4fb4; box-shadow: 0 2px 8px rgba(26, 79, 180, 0.28); }
+    .bar--off { background: #a8c0ef; }
+    .bar-value {
+      font-size: 10px;
+      font-weight: 700;
+      color: #1a4fb4;
+      text-align: center;
+      min-height: 12px;
+    }
+    .bar-label {
+      font-size: 10px;
+      color: #8b95a8;
+      text-align: center;
+    }
+    .bar-label--selected {
+      color: #1a4fb4;
+      font-weight: 700;
+    }
+    .day-list {
+      margin-top: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .day-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 12px;
+      background: #f3f5f9;
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+    }
+    .day-date { color: #5a657a; font-weight: 600; }
+    .in { color: #c4682a; }
+    .out { color: #0e7c57; }
+    .sync-btn {
+      width: 100%;
+      margin-top: 10px;
+      min-height: 44px;
+      border: 0;
+      border-radius: 12px;
+      background: #2b5fe3;
+      color: #fff;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .hint {
+      color: #5a657a;
+      font-size: 12px;
+      margin-top: 8px;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="preview-shell">
+    <div class="tabs" role="tablist">
+      <button class="tab is-active" data-tab="chat" type="button">对话</button>
+      <button class="tab" data-tab="records" type="button">记录</button>
+      <button class="tab" data-tab="plan" type="button">计划</button>
+      <button class="tab" data-tab="profile" type="button">我的</button>
+    </div>
+
+    <div class="tab-panel is-active" data-pane="chat">
+      <div class="check-card">
+        <div class="section-label">对话</div>
+        <p class="hint">消息流 + 输入区。今日摄入/消耗由小助手在对话里用 session_attribute_updates 维护。</p>
+      </div>
+    </div>
+
+    <div class="tab-panel" data-pane="records">
+      <div class="energy-card">
+        <div class="ring-core">
+          <div class="ring-label">今日净能量</div>
+          <div class="ring-value">−120</div>
+          <div class="ring-unit">kcal</div>
+        </div>
+        <div class="stat-grid">
+          <div class="stat-card stat-card--in">
+            <div class="stat-label">今日摄入</div>
+            <div class="stat-value">1800 kcal</div>
+          </div>
+          <div class="stat-card stat-card--out">
+            <div class="stat-label">今日消耗</div>
+            <div class="stat-value">1920 kcal</div>
+          </div>
+        </div>
+        <button class="sync-btn" type="button">同步统计（写入今日并刷新）</button>
+        <p class="hint">游戏内：世界存储 <code>health.energy_days</code> + logic.js <code>health.syncStats</code>。此页仅为静态示意。</p>
+      </div>
+
+      <div class="chart-card">
+        <div class="section-label">消耗统计</div>
+        <div class="modes">
+          <button class="mode-btn" data-mode="day" type="button">日</button>
+          <button class="mode-btn is-active" data-mode="week" type="button">周</button>
+          <button class="mode-btn" data-mode="month" type="button">月</button>
+        </div>
+        <div class="bars" id="bars"></div>
+        <div class="day-list" id="dayList" hidden></div>
+        <p class="hint">选中柱深蓝并显示能量消耗；未选中浅蓝。周/月柱状图；「日」可逐日查看。</p>
+      </div>
+    </div>
+
+    <div class="tab-panel" data-pane="plan">
+      <div class="check-card">
+        <div class="section-label">今日重点</div>
+        <p class="hint">先走 8000 步，晚餐清淡。</p>
+        <div class="section-label" style="margin-top:12px">今日行动清单</div>
+        <label class="check-item"><input type="checkbox" checked /> 午餐后散步 15 分钟</label>
+        <label class="check-item"><input type="checkbox" /> 晚上 11 点前睡</label>
+      </div>
+    </div>
+
+    <div class="tab-panel" data-pane="profile">
+      <div class="check-card">
+        <div class="section-label">我的</div>
+        <p class="hint">BMI / BMR / 身高体重等身体档案，仅展示属性。</p>
+      </div>
+    </div>
+  </div>
+  <script src="preview.js"></script>
+</body>
+</html>

@@ -395,12 +395,23 @@ impl SessionOrchestrator {
                             }
                             if let Some(handler) = crate::services::world_logic::tool_handler(world, &call.tool_name, speaker_name) {
                                 let guard = db.lock().await;
-                                let result = crate::services::world_logic::invoke(guard.conn(), world, session_id,
-                                    &handler, call.arguments.clone(), "agent");
+                                let result = crate::services::world_logic::resolve_action(
+                                    guard.conn(),
+                                    world,
+                                    session_id,
+                                    &handler,
+                                    call.arguments.clone(),
+                                    "agent",
+                                    Some(speaker_name.as_str()),
+                                );
                                 round_results.push(SpeakerNotificationToolResult {
                                     call: call.clone(),
                                     result: match result {
-                                        Ok(value) => serde_json::json!({"ok": true, "result": value}),
+                                        Ok(value) => serde_json::json!({
+                                            "ok": true,
+                                            "result": value.result,
+                                            "transition": value.transition,
+                                        }),
                                         Err(error) => serde_json::json!({"ok": false, "error": error}),
                                     },
                                 });

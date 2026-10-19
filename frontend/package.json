@@ -5,10 +5,7 @@
   "private": true,
   "scripts": {
     "postinstall": "node ./scripts/patch-vite-net-use.js",
-    "world-frame:build": "vite build --config vite.world-frame.config.ts && node ./scripts/check-world-frame-bundle.mjs",
-    "predev": "npm run world-frame:build",
     "dev": "vite --config vite.config.ts",
-    "prebuild": "npm run world-frame:build",
     "build": "vite build --config vite.config.ts",
     "preview": "vite preview --config vite.config.ts",
     "test": "vitest run"
@@ -35,7 +32,6 @@
     "@xyflow/react": "^12.11.0",
     "elkjs": "^0.11.1",
     "framer-motion": "^12.38.0",
-    "jsonc-parser": "^3.3.1",
     "katex": "^0.18.4",
     "lucide-react": "^1.16.0",
     "react": "^19.2.5",

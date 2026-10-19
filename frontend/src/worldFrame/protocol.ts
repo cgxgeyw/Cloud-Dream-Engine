@@ -97,6 +97,17 @@ export type WorldFrameErrorMessage = {
   message: string;
 };
 
+export type WorldFrameDiagnosticMessage = {
+  type: "world-frame/diagnostic";
+  protocolVersion: typeof WORLD_FRAME_PROTOCOL_VERSION;
+  channelId: string;
+  level: "info" | "warn" | "error";
+  phase: "boot" | "connect" | "render" | "action" | "runtime";
+  message: string;
+  requestId?: string;
+  revision?: number;
+};
+
 export type WorldFrameActionMessage = {
   type: "world-frame/action";
   protocolVersion: typeof WORLD_FRAME_PROTOCOL_VERSION;
@@ -108,6 +119,7 @@ export type WorldFrameActionMessage = {
 export type WorldFrameClientMessage =
   | WorldFrameReadyMessage
   | WorldFrameErrorMessage
+  | WorldFrameDiagnosticMessage
   | WorldFrameActionMessage;
 
 export function isWorldFrameConnectMessage(value: unknown): value is WorldFrameConnectMessage {
@@ -145,6 +157,11 @@ export function isWorldFrameClientMessage(value: unknown): value is WorldFrameCl
   }
   if (value.type === "world-frame/error") {
     return typeof value.message === "string";
+  }
+  if (value.type === "world-frame/diagnostic") {
+    return (value.level === "info" || value.level === "warn" || value.level === "error")
+      && (value.phase === "boot" || value.phase === "connect" || value.phase === "render" || value.phase === "action" || value.phase === "runtime")
+      && typeof value.message === "string";
   }
   return value.type === "world-frame/action"
     && typeof value.requestId === "string"

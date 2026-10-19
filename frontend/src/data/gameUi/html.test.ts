@@ -15,5 +15,17 @@ describe('HTML world UI', () => {
     const parsed = parseGameUiDocument('{"schema_version":2,"layout":{"root":{"type":"stack","children":[]}}}', 'desktop');
     expect(parsed.usedFallback).toBe(true);
     expect(parsed.error).toContain('HTML');
+    expect(parsed.diagnostics.some((item) => item.code === 'ui.legacy_dsl')).toBe(true);
+  });
+
+  it('reports unsafe or incomplete HTML before preview', () => {
+    const parsed = parseGameUiDocument('<div><iframe src="https://example.test"></iframe><form></form></div>', 'mobile');
+    expect(parsed.usedFallback).toBe(true);
+    expect(parsed.diagnostics.map((item) => item.code)).toEqual(expect.arrayContaining([
+      'ui.document_structure',
+      'ui.nested_frame',
+      'ui.mobile_viewport',
+      'ui.form_submit',
+    ]));
   });
 });
