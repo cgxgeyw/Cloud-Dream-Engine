@@ -75,6 +75,16 @@ function installWorldSdk() {
       removeImage: (index: number) => action('remove-image', { index }),
       removeAudio: (index: number) => action('remove-audio', { index }),
     }),
+    game: Object.freeze({
+      getState: () => state,
+      getAvailableActions: () => Array.isArray(state?.available_actions) ? state.available_actions : [],
+      dispatch: (event: unknown) => action('world-game-event', { event }),
+      subscribe: (listener: (value: Record<string, unknown>) => void) => {
+        listeners.add(listener);
+        if (state) listener(state);
+        return () => listeners.delete(listener);
+      },
+    }),
     logic: Object.freeze({ run: (handler: string, input: unknown = {}) => action('world-logic-invoke', { handler, input }) }),
     kv: Object.freeze({
       list: (namespace: string, scope?: unknown) => action('world-kv-list', { namespace, scope }),

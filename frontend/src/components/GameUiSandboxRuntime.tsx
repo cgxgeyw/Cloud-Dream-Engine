@@ -220,11 +220,37 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
 
   const handleAction = useCallback(async (action: WorldFrameAction) => {
     switch (action.type) {
+      case "world-game-event": {
+        const event = action.event;
+        if (event.type === "player_message") {
+          const result = await bag.handleSubmitAction({ content: event.content, eventType: "player_message" });
+          if (!result.ok) throw new Error(result.error || "行动发送失败，请重试。");
+          return result;
+        }
+        if (event.type === "agent_action") {
+          throw new Error("世界界面不能直接发起代理行动。");
+        }
+        if (event.type === "game_action" || event.type === "end_turn") {
+          if (bag.submitting || worldLogicBusyRef.current) throw new Error("牌局正在结算，请稍候。");
+          worldLogicBusyRef.current = true;
+          try {
+            const worldId = requireWorldId(bag);
+            const sessionId = bag.session?.id;
+            if (!sessionId) throw new Error("请先创建会话。");
+            return (await dispatchWorldEventCommand(worldId, sessionId, event)).result;
+          } finally {
+            worldLogicBusyRef.current = false;
+          }
+        }
+        if (event.type === "interaction_answered") {
+          return handleAction({ type: "answer-interaction", messageId: event.message_id, interactionId: event.interaction_id, answer: event.answer });
+        }
+        throw new Error(`不支持的世界事件：${event.type}`);
+      }
       case "world-logic-invoke": {
         if (bag.submitting) throw new Error("角色正在行动，请等待结算完成。");
         if (worldLogicBusyRef.current) throw new Error("牌局正在结算，请稍候。");
         worldLogicBusyRef.current = true;
-        let releaseBusyOnBackgroundCompletion = false;
         try {
           const worldId = requireWorldId(bag);
           const sessionId = bag.session?.id;
@@ -235,30 +261,11 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
             input: action.input ?? {},
           });
           const result = command.result as Record<string, unknown>;
-          const transition = command.transition;
-          if (transition?.known === true
-            && transition.next_actor === "agent"
-            && transition.turn_ended === true
-            && transition.game_over !== true) {
-            // 玩家结算已经完成，先把结果交回牌桌；AI 回合在后台进行，避免网络响应阻塞扣血和动画。
-            releaseBusyOnBackgroundCompletion = true;
-            void (async () => {
-              try {
-                const trigger = bag.worldUiEnvelope.logic.agent_turn;
-                await bag.handleSubmitAction({
-                  mode: "submit",
-                  content: trigger?.message ?? "请按当前回合规则完成你的行动。",
-                });
-              } finally {
-                worldLogicBusyRef.current = false;
-              }
-            })();
-          }
+          // Agent continuation is owned by the backend workflow runner. The
+          // session event stream delivers its progress and final snapshot.
           return result;
         } finally {
-          if (!releaseBusyOnBackgroundCompletion) {
-            worldLogicBusyRef.current = false;
-          }
+          worldLogicBusyRef.current = false;
         }
       }
       case "clear-action-error": bag.clearActionError(); return;

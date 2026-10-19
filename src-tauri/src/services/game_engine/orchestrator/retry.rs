@@ -40,6 +40,7 @@ impl SessionOrchestrator {
                     content: MessageContent::Text(content),
                     action_mode: PlayerActionMode::Resend,
                     resend_from_turn_index: Some(turn_index),
+                    event_type: "player_message".to_string(),
                 }));
             }
             // 未完成但缺 created 的错位回合:跳过,继续向前找。
@@ -388,6 +389,7 @@ mod tests {
             content: MessageContent::Text("Open the sealed door".to_string()),
             action_mode: PlayerActionMode::Submit,
             resend_from_turn_index: None,
+            event_type: "player_message".to_string(),
         };
         conn.execute(
             "INSERT INTO llm_retry_capsules (id, session_id, turn_index, message_id, retry_token, stage, provider, model_id, request_json, prompt_trace_json, input_snapshot_json, tool_context_json, status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, '{}', '{}', '{}', '{}', 'active', ?9)",
@@ -691,6 +693,7 @@ mod tests {
             content: MessageContent::Text("推开密室的门".to_string()),
             action_mode: PlayerActionMode::Submit,
             resend_from_turn_index: None,
+            event_type: "player_message".to_string(),
         };
         let failure = StructuredOutputFailure {
             stage: StructuredFailureStage::DirectorMain,

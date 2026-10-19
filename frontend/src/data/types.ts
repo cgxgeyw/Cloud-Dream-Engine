@@ -261,6 +261,7 @@ export type WorldEventResponse = {
   transition: WorldGameTurnTransition;
   event: WorldEvent;
   status: WorldWorkflowStatus;
+  snapshot?: SessionSnapshotResponse | null;
 };
 
 export type WorldEvent =
@@ -507,6 +508,7 @@ export type PlayerActionRequest = {
   content: string | ContentPart[];
   action_mode: PlayerActionMode;
   resend_from_turn_index?: number;
+  event_type?: "player_message" | "agent_action";
 };
 
 export type RetryFailedLlmStepRequest = {

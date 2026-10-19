@@ -1101,6 +1101,7 @@ export function useGameSession(
             content,
             action_mode: mode,
             resend_from_turn_index: resolvedTurnIndex,
+            event_type: options.eventType ?? "player_message",
           },
           {
             onSnapshot: (nextSnapshot) => {

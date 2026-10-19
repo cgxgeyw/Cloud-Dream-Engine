@@ -42,6 +42,7 @@ export type SubmitActionOptions = {
   content?: string;
   turnIndex?: number;
   mode?: PlayerActionMode;
+  eventType?: "player_message" | "agent_action";
 };
 
 export type CharacterCreationView = {

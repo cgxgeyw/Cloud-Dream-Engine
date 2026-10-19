@@ -31,6 +31,8 @@ export type GameUiRuntimeSnapshot = Omit<
   GameUiRuntimeContext,
   "draft_input" | "message_state" | "chat_messages_ref"
 > & {
+  /** World-defined actions the current actor may dispatch. */
+  available_actions: unknown[];
   draft_input: {
     value: string;
     images: Exclude<GameUiDraftAttachment, File>[];
@@ -74,7 +76,9 @@ export function createGameUiRuntimeSnapshot(
   },
 ): GameUiRuntimeSnapshot {
   const runtime = createGameUiRuntimeContext(bag, platform);
+  const availableActions = (runtime.session as unknown as { available_actions?: unknown[] } | null)?.available_actions;
   return {
+    available_actions: Array.isArray(availableActions) ? availableActions : [],
     capabilities: createGameUiPlatformCapabilities(platform),
     session: runtime.session,
     world: runtime.world,

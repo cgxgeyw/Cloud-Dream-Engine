@@ -2,6 +2,7 @@ import type { KvScope } from "../data/types";
 import type { GameUiPreviewProps } from "../components/GameUiPreview";
 import type { SubmitActionOptions, SwitchProposalView } from "../game/utils";
 import type { WorldFrameRuntimePayload } from "./runtimeSnapshot";
+import type { WorldEvent } from "../data/types";
 
 export const WORLD_FRAME_PROTOCOL_VERSION = 3 as const;
 
@@ -11,6 +12,7 @@ export type WorldFramePreviewPayload = Omit<GameUiPreviewProps, "rootStyle"> & {
 
 export type WorldFrameAction =
   | { type: "world-logic-invoke"; handler: string; input: unknown }
+  | { type: "world-game-event"; event: WorldEvent }
   | { type: "clear-action-error" }
   | { type: "set-draft-value"; value: string }
   | { type: "set-auto-scroll"; enabled: boolean }
@@ -200,6 +202,9 @@ function isWorldFrameAction(value: unknown): value is WorldFrameAction {
   if (value.type === "world-logic-invoke") {
     return typeof value.handler === "string" && /^[a-zA-Z0-9._-]{1,128}$/.test(value.handler);
   }
+  if (value.type === "world-game-event") {
+    return isWorldGameEvent(value.event);
+  }
   if (value.type === "world-kv-list") {
     return isWorldStorageName(value.namespace);
   }
@@ -230,6 +235,19 @@ function isWorldFrameAction(value: unknown): value is WorldFrameAction {
   return value.type === "world-record-delete"
     && typeof value.recordId === "string"
     && value.recordId.length > 0;
+}
+
+function isWorldGameEvent(value: unknown): value is WorldEvent {
+  if (!isRecord(value) || typeof value.type !== "string") return false;
+  if (value.type === "player_message") return typeof value.content === "string";
+  if (value.type === "game_action" || value.type === "agent_action" || value.type === "end_turn") {
+    return typeof value.handler === "string" && value.handler.length > 0 && Object.prototype.hasOwnProperty.call(value, "input");
+  }
+  if (value.type === "interaction_answered") {
+    return typeof value.message_id === "string" && typeof value.interaction_id === "string" && Object.prototype.hasOwnProperty.call(value, "answer");
+  }
+  return value.type === "session_started"
+    || (value.type === "tool_result" && typeof value.tool_call_id === "string" && Object.prototype.hasOwnProperty.call(value, "result"));
 }
 
 function isWorldRecordCollection(value: unknown): value is string {

@@ -104,15 +104,20 @@ pub async fn submit_player_action(
     request: PlayerActionRequest,
 ) -> Result<SessionSnapshot, String> {
     let _mutation_permit = state.session_mutations.try_acquire(&session_id)?;
-    submit_player_action_inner(app, state, session_id, request).await
+    submit_player_action_inner(app, &state, session_id, request).await
 }
 
-async fn submit_player_action_inner(
+pub(crate) async fn submit_player_action_inner(
     app: AppHandle,
-    state: State<'_, AppState>,
+    state: &State<'_, AppState>,
     session_id: String,
     request: PlayerActionRequest,
 ) -> Result<SessionSnapshot, String> {
+    let workflow_event = crate::services::workflow::WorldEvent::from_message(
+        &request.event_type,
+        request.content.as_prompt_text(),
+    )?;
+    let workflow_actor = workflow_event.actor();
     let prepared = {
         let db = state.db.lock().await;
         state
@@ -197,6 +202,10 @@ async fn submit_player_action_inner(
             &mcp_servers,
         )
         .await;
+    }
+
+    if workflow_actor != "system" && workflow_actor != "agent" {
+        return Err("Narrative workflow event has an invalid actor".to_string());
     }
 
     let director_service = &state.services.runtime.world_director;
@@ -494,6 +503,29 @@ async fn submit_player_action_inner(
     Ok(updated)
 }
 
+/// Continues a unified workflow after deterministic rules hand control to an
+/// agent. This is deliberately a backend continuation: the UI does not submit
+/// a synthetic chat message to make an agent act.
+pub(crate) async fn run_workflow_agent_action(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    session_id: String,
+    content: String,
+) -> Result<SessionSnapshot, String> {
+    submit_player_action_inner(
+        app.clone(),
+        state,
+        session_id,
+        PlayerActionRequest {
+            content: MessageContent::Text(content),
+            action_mode: PlayerActionMode::Submit,
+            resend_from_turn_index: None,
+            event_type: "agent_action".to_string(),
+        },
+    )
+    .await
+}
+
 #[tauri::command]
 pub async fn switch_player_character(
     app: AppHandle,
@@ -573,7 +605,7 @@ async fn resume_last_incomplete_turn_inner(
     };
 
     if let Some(player_request) = player_request {
-        submit_player_action_inner(app, state, session_id, player_request).await
+        submit_player_action_inner(app, &state, session_id, player_request).await
     } else {
         get_session(state, session_id).await
     }
@@ -1141,12 +1173,13 @@ pub async fn regenerate_last_turn(
     };
     submit_player_action_inner(
         app,
-        state,
+        &state,
         session_id,
         PlayerActionRequest {
             content: MessageContent::Text(player_input),
             action_mode: PlayerActionMode::Resend,
             resend_from_turn_index: Some(turn_index),
+            event_type: "player_message".to_string(),
         },
     )
     .await

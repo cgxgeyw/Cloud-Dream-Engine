@@ -26,6 +26,17 @@ pub enum WorldEvent {
 }
 
 impl WorldEvent {
+    pub fn from_message(event_type: &str, content: String) -> Result<Self, String> {
+        match event_type.trim() {
+            "player_message" => Ok(Self::PlayerMessage { content }),
+            "agent_action" => Ok(Self::AgentAction {
+                handler: "__narrative__".to_string(),
+                input: serde_json::json!({ "content": content }),
+            }),
+            other => Err(format!("Unsupported workflow event type: {other}")),
+        }
+    }
+
     pub fn actor(&self) -> &'static str {
         match self {
             Self::GameAction { .. } | Self::EndTurn { .. } => "player",
@@ -61,6 +72,8 @@ pub struct WorldEventResult {
     pub result: Value,
     pub transition: crate::services::world_logic::GameTurnTransition,
     pub status: WorkflowStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<crate::models::session::SessionSnapshot>,
 }
 
 impl WorldEventResult {
@@ -77,7 +90,7 @@ impl WorldEventResult {
             waiting_for: transition.next_actor.clone(),
             terminal: transition.game_over,
         };
-        Self { event, result, transition, status }
+        Self { event, result, transition, status, snapshot: None }
     }
 }
 

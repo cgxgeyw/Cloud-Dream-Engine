@@ -424,6 +424,12 @@ pub struct PlayerActionRequest {
     pub content: MessageContent,
     pub action_mode: PlayerActionMode,
     pub resend_from_turn_index: Option<i32>,
+    #[serde(default = "default_workflow_event_type")]
+    pub event_type: String,
+}
+
+fn default_workflow_event_type() -> String {
+    "player_message".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
