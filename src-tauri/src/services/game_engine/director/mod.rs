@@ -10,7 +10,7 @@ use crate::models::model_config::ModelConfig;
 use crate::models::session::{ChatMessage, MessageContent, SessionSnapshot};
 use crate::models::world::WorldDefinition;
 use crate::services::game_engine::prompting::{
-    build_prompt_call, llm_chat_messages_to_values, recent_messages_text, resolve_prompt_modules,
+    assemble_prompt_values, build_prompt_call, llm_chat_messages_to_values, recent_messages_text, resolve_prompt_modules,
     render_prompt_variables, resolve_runtime_context_prompt,
 };
 use crate::services::llm::client::{
@@ -235,6 +235,7 @@ impl WorldDirectorService {
                 &payload_text,
                 tool_loop_messages.clone(),
                 player_media,
+                &module_resolution.depth_insertions,
             ),
             self.build_director_prompt_modules(
                 &module_resolution.traces,
@@ -254,7 +255,7 @@ impl WorldDirectorService {
                 "tool_loop_messages": tool_loop_messages,
             }),
         );
-        // 历史深度插入（第 6 项）：由 build_chat_request_from_prompt_call 在实际请求中落位。
+        // 保留插入元数据用于 prompt trace；messages 本身已经是最终发送顺序。
         if !module_resolution.depth_insertions.is_empty() {
             prompt_call["depth_insertions"] = serde_json::json!(
                 module_resolution
@@ -305,6 +306,7 @@ impl WorldDirectorService {
         user_prompt: &str,
         tool_loop_messages: Vec<serde_json::Value>,
         player_media: &[crate::models::session::ContentPart],
+        depth_insertions: &[(usize, String)],
     ) -> Vec<serde_json::Value> {
         // system_prefix 模块在核心系统提示之前，system_suffix 在其后。
         let mut messages: Vec<serde_json::Value> = prefix_contents
@@ -336,7 +338,7 @@ impl WorldDirectorService {
             }),
         );
         messages.extend(tool_loop_messages);
-        messages
+        assemble_prompt_values(messages, depth_insertions)
     }
 
     fn build_director_prompt_modules(
@@ -758,7 +760,7 @@ impl WorldDirectorService {
         stream_enabled: bool,
         json_mode_disabled: bool,
     ) -> ChatRequest {
-        let mut messages: Vec<crate::services::llm::client::ChatMessage> = prompt_call
+        let messages: Vec<crate::services::llm::client::ChatMessage> = prompt_call
             .get("messages")
             .and_then(|value| value.as_array())
             .cloned()
@@ -779,40 +781,6 @@ impl WorldDirectorService {
                 })
             })
             .collect::<Vec<_>>();
-        // 历史深度插入（第 6 项）：depth:N 表示插到距末尾 N 条的位置。
-        if let Some(insertions) = prompt_call
-            .get("depth_insertions")
-            .and_then(|value| value.as_array())
-        {
-            for insertion in insertions {
-                let depth = insertion
-                    .get("depth")
-                    .and_then(|value| value.as_u64())
-                    .unwrap_or(0) as usize;
-                let content = insertion
-                    .get("content")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or_default()
-                    .trim()
-                    .to_string();
-                if content.is_empty() {
-                    continue;
-                }
-                let index = messages.len().saturating_sub(depth);
-                messages.insert(
-                    index,
-                    crate::services::llm::client::ChatMessage {
-                        role: "system".to_string(),
-                        content: serde_json::Value::String(content),
-                        reasoning_content: None,
-                        speaker: None,
-                        tool_call_id: None,
-                        tool_calls: None,
-                        metadata: None,
-                    },
-                );
-            }
-        }
         let tools = prompt_call
             .get("raw_debug")
             .and_then(|value| value.get("payload"))

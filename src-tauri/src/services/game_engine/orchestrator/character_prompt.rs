@@ -6,8 +6,8 @@ use crate::models::session::*;
 use crate::models::world::WorldDefinition;
 use crate::services::game_engine::dialogue::DialoguePipeline;
 use crate::services::game_engine::prompting::{
-    build_prompt_call, llm_chat_messages_to_values, recent_messages_text, render_prompt_variables,
-    resolve_prompt_modules, resolve_runtime_context_prompt,
+    assemble_prompt_messages, build_prompt_call, llm_chat_messages_to_values, recent_messages_text,
+    render_prompt_variables, resolve_prompt_modules, resolve_runtime_context_prompt,
 };
 
 use super::turn_context::{
@@ -314,25 +314,7 @@ pub(crate) fn build_character_prompt_artifacts(
         },
     ]);
 
-    // 历史深度插入（第 6 项）：depth:N = 距末尾 N 条处插入系统消息。
-    for (depth, content) in &module_resolution.depth_insertions {
-        if content.trim().is_empty() {
-            continue;
-        }
-        let index = messages.len().saturating_sub(*depth);
-        messages.insert(
-            index,
-            crate::services::llm::client::ChatMessage {
-                role: "system".to_string(),
-                content: serde_json::Value::String(content.clone()),
-                reasoning_content: None,
-                speaker: None,
-                tool_call_id: None,
-                tool_calls: None,
-                metadata: None,
-            },
-        );
-    }
+    messages = assemble_prompt_messages(messages, &module_resolution.depth_insertions);
     CharacterPromptArtifacts {
         system_prompt,
         narration_prompt,

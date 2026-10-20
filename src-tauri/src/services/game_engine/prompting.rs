@@ -2,6 +2,7 @@ use chrono::Local;
 use std::collections::HashMap;
 
 use crate::models::world::WorldDefinition;
+use crate::services::llm::client::ChatMessage;
 
 pub fn render_prompt_variables(template: &str) -> String {
     let current_time = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
@@ -81,6 +82,57 @@ pub struct PromptModuleResolution {
     pub suffix: Vec<String>,
     pub depth_insertions: Vec<(usize, String)>,
     pub traces: Vec<serde_json::Value>,
+}
+
+/// Shared prompt assembly primitive used by director and character calls.
+/// Sections are collected in their already-visible order; depth insertions are
+/// applied against the final history list in one place so traces and requests
+/// cannot drift apart.
+pub fn assemble_prompt_messages(
+    mut messages: Vec<ChatMessage>,
+    depth_insertions: &[(usize, String)],
+) -> Vec<ChatMessage> {
+    for (depth, content) in depth_insertions {
+        let content = content.trim();
+        if content.is_empty() {
+            continue;
+        }
+        let index = messages.len().saturating_sub(*depth);
+        messages.insert(
+            index,
+            ChatMessage {
+                role: "system".to_string(),
+                content: serde_json::Value::String(content.to_string()),
+                reasoning_content: None,
+                speaker: None,
+                tool_call_id: None,
+                tool_calls: None,
+                metadata: None,
+            },
+        );
+    }
+    messages
+}
+
+/// Same assembly operation for prompt trace JSON values. Keeping this beside
+/// the typed variant ensures the trace and the provider request have identical
+/// depth semantics without converting tool metadata through an lossy path.
+pub fn assemble_prompt_values(
+    mut messages: Vec<serde_json::Value>,
+    depth_insertions: &[(usize, String)],
+) -> Vec<serde_json::Value> {
+    for (depth, content) in depth_insertions {
+        let content = content.trim();
+        if content.is_empty() {
+            continue;
+        }
+        let index = messages.len().saturating_sub(*depth);
+        messages.insert(index, serde_json::json!({
+            "role": "system",
+            "content": content,
+        }));
+    }
+    messages
 }
 
 fn parse_prompt_position(raw: Option<&serde_json::Value>) -> PromptPosition {
@@ -553,6 +605,44 @@ mod tests {
         assert!(resolution.suffix.is_empty());
         assert!(resolution.prefix.is_empty());
         assert!(resolution.traces.is_empty());
+    }
+
+    #[test]
+    fn shared_assembly_applies_depth_to_typed_and_trace_messages() {
+        let insertions = vec![(1usize, "near latest".to_string()), (3, "older".to_string())];
+        let typed = vec![
+            ChatMessage {
+                role: "system".to_string(),
+                content: serde_json::json!("rules"),
+                reasoning_content: None,
+                speaker: None,
+                tool_call_id: None,
+                tool_calls: None,
+                metadata: None,
+            },
+            ChatMessage {
+                role: "user".to_string(),
+                content: serde_json::json!("event"),
+                reasoning_content: None,
+                speaker: None,
+                tool_call_id: None,
+                tool_calls: None,
+                metadata: None,
+            },
+        ];
+        let typed = assemble_prompt_messages(typed, &insertions);
+        let trace = assemble_prompt_values(
+            vec![
+                serde_json::json!({"role":"system","content":"rules"}),
+                serde_json::json!({"role":"user","content":"event"}),
+            ],
+            &insertions,
+        );
+        assert_eq!(typed.len(), trace.len());
+        for (typed_message, trace_message) in typed.iter().zip(trace.iter()) {
+            assert_eq!(typed_message.role, trace_message["role"].as_str().unwrap());
+            assert_eq!(typed_message.content, trace_message["content"]);
+        }
     }
 }
 
