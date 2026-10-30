@@ -411,8 +411,6 @@ pub async fn get_session_debug(
         "visible_characters": latest_scene_payload.get("visible_characters").cloned().unwrap_or_else(|| serde_json::Value::Array(vec![])),
         "present_characters": latest_scene_payload.get("present_characters").cloned().unwrap_or_else(|| serde_json::Value::Array(vec![])),
         "state_phase": latest_scene_payload.get("state_phase").cloned().unwrap_or(serde_json::Value::Null),
-        "state_tags": latest_scene_payload.get("state_tags").cloned().unwrap_or_else(|| serde_json::Value::Array(vec![])),
-        "state_metrics": latest_scene_payload.get("state_metrics").cloned().unwrap_or(serde_json::Value::Null),
     });
 
     let latest_turn_timeline_events = trace_timeline

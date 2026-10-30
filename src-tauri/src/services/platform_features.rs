@@ -170,7 +170,11 @@ fn resolve_world_file(data_dir: &Path, world_id: &str, raw_path: &str) -> Result
 // ---- 调用入口 ----
 
 /// 声明 + 授权检查（世界包调用平台能力的前置闸门，与平台实现解耦、可单测）。
-pub fn check_allowed(conn: &Connection, world: &WorldDefinition, feature: &str) -> Result<(), String> {
+pub fn check_allowed(
+    conn: &Connection,
+    world: &WorldDefinition,
+    feature: &str,
+) -> Result<(), String> {
     if !KNOWN_FEATURES.contains(&feature) {
         return Err(format!(
             "unsupported: 未知的平台能力 `{feature}`（当前目录：{}）。",
@@ -313,8 +317,8 @@ fn read_external_file(path: &Path) -> Result<Value, String> {
             MAX_FILE_BYTES / 1024 / 1024
         ));
     }
-    let bytes = std::fs::read(path)
-        .map_err(|e| format!("io: 无法读取所选文件 {}：{e}", path.display()))?;
+    let bytes =
+        std::fs::read(path).map_err(|e| format!("io: 无法读取所选文件 {}：{e}", path.display()))?;
     let name = path
         .file_name()
         .map(|value| value.to_string_lossy().to_string())
@@ -337,8 +341,8 @@ fn read_world_file(
     use base64::Engine;
 
     let path = resolve_world_file(data_dir, &world.id, read_string_param(params, "path")?)?;
-    let bytes = std::fs::read(&path)
-        .map_err(|e| format!("io: 读取失败（{}）：{e}", path.display()))?;
+    let bytes =
+        std::fs::read(&path).map_err(|e| format!("io: 读取失败（{}）：{e}", path.display()))?;
     if bytes.len() > MAX_FILE_BYTES {
         return Err(format!(
             "io: 文件超过 {} MB 上限。",
@@ -388,7 +392,8 @@ fn write_world_file(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("io: 创建目录失败：{e}"))?;
     }
-    std::fs::write(&path, &bytes).map_err(|e| format!("io: 写入失败（{}）：{e}", path.display()))?;
+    std::fs::write(&path, &bytes)
+        .map_err(|e| format!("io: 写入失败（{}）：{e}", path.display()))?;
     Ok(serde_json::json!({
         "path": read_string_param(params, "path")?,
         "size": bytes.len(),
@@ -488,7 +493,6 @@ mod tests {
             summary: String::new(),
             time_system: String::new(),
             map_nodes: serde_json::json!({}),
-            triggers: Vec::new(),
             time_config: serde_json::json!({}),
             director_config: serde_json::json!({}),
             ui_theme_config: serde_json::json!({
@@ -609,9 +613,11 @@ mod tests {
         assert_eq!(String::from_utf8(bytes).unwrap(), "第一行");
 
         // 读不存在的文件 → io 错误，不静默成功
-        assert!(read_world_file(&dir, &world, &serde_json::json!({ "path": "none.txt" }))
-            .unwrap_err()
-            .starts_with("io:"));
+        assert!(
+            read_world_file(&dir, &world, &serde_json::json!({ "path": "none.txt" }))
+                .unwrap_err()
+                .starts_with("io:")
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }

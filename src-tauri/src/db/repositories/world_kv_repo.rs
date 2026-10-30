@@ -32,7 +32,8 @@ impl<'a> WorldKvRepository<'a> {
         let rows = stmt
             .query_map(params![owner_type, owner_id, namespace], row_to_entry)
             .map_err(|error| error.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())
     }
 
     pub fn get(
@@ -64,18 +65,25 @@ impl<'a> WorldKvRepository<'a> {
         if encoded.len() > MAX_VALUE_BYTES {
             return Err(format!("KV 值超过 {MAX_VALUE_BYTES} 字节上限"));
         }
-        let (entries, bytes, existing_bytes): (i64, i64, i64) = self.conn.query_row(
-            "SELECT COUNT(*), COALESCE(SUM(length(CAST(value_json AS BLOB))), 0),
+        let (entries, bytes, existing_bytes): (i64, i64, i64) = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*), COALESCE(SUM(length(CAST(value_json AS BLOB))), 0),
                     COALESCE(MAX(CASE WHEN namespace = ?3 AND key = ?4
                                       THEN length(CAST(value_json AS BLOB)) ELSE 0 END), 0)
              FROM scoped_kv WHERE owner_type = ?1 AND owner_id = ?2",
-            params![owner_type, owner_id, namespace, key],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        ).map_err(|error| error.to_string())?;
+                params![owner_type, owner_id, namespace, key],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(|error| error.to_string())?;
         if existing_bytes == 0 && entries >= MAX_OWNER_ENTRIES {
             return Err(format!("KV 存储已达 {MAX_OWNER_ENTRIES} 条上限"));
         }
-        if bytes.saturating_sub(existing_bytes).saturating_add(encoded.len() as i64) > MAX_OWNER_BYTES {
+        if bytes
+            .saturating_sub(existing_bytes)
+            .saturating_add(encoded.len() as i64)
+            > MAX_OWNER_BYTES
+        {
             return Err(format!("KV 存储将超过 {MAX_OWNER_BYTES} 字节上限"));
         }
         self.conn.execute(

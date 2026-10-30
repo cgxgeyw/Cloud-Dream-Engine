@@ -1,8 +1,7 @@
 pub mod feihualing_world;
 pub mod schedule_assistant_world;
 
-use rusqlite::{params, Connection, OptionalExtension};
-use serde_json::Value;
+use rusqlite::{params, Connection};
 
 use crate::models::mcp_tool::MCP_TOOL_SCHEDULE_NOTIFICATION_ID;
 
@@ -17,7 +16,6 @@ fn default_seed_world_director_config_json() -> String {
         "director_tool_loop_limit": 6,
         "runtime_context_prompt": "",
         "world_director_prompt": "",
-        "prompt_presets": [],
         "return_processing_rules": [],
         "allowed_mcp_tool_ids": [
             "mcp-tool-list-scenes",
@@ -74,18 +72,6 @@ pub(crate) fn mark_all_seed_worlds_tombstoned(conn: &Connection) -> Result<(), r
     Ok(())
 }
 
-fn seed_character_ids() -> [&'static str; 7] {
-    [
-        SEED_CHARACTER_SCHEDULE_ASSISTANT_ID,
-        SEED_CHARACTER_GUEST_ID,
-        SEED_CHARACTER_LIBAI_ID,
-        SEED_CHARACTER_DUFU_ID,
-        SEED_CHARACTER_WANGWEI_ID,
-        SEED_CHARACTER_LIQINGZHAO_ID,
-        SEED_CHARACTER_SUSHI_ID,
-    ]
-}
-
 fn insert_seed_world(
     conn: &Connection,
     id: &str,
@@ -96,7 +82,6 @@ fn insert_seed_world(
     summary: &str,
     time_system: &str,
     map_nodes_json: String,
-    triggers_json: String,
     time_config_json: String,
     director_config_json: String,
     ui_theme_config_json: String,
@@ -112,9 +97,9 @@ fn insert_seed_world(
         "
         INSERT INTO worlds (
             id, name, genre, background_prompt, opening_scene, summary, time_system,
-            map_nodes_json, triggers_json, time_config_json, director_config_json, ui_theme_config_json,
+            map_nodes_json, time_config_json, director_config_json, ui_theme_config_json,
             director_system_prompt_base, director_runtime_system_prompt, opening_messages_json, opening_character_ids_json, player_character_id
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, '', '', ?13, ?14, ?15)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, '', '', ?12, ?13, ?14)
         ",
         params![
             id,
@@ -125,7 +110,6 @@ fn insert_seed_world(
             summary,
             time_system,
             map_nodes_json,
-            triggers_json,
             time_config_json,
             director_config_json,
             ui_theme_config_json,
@@ -147,7 +131,6 @@ fn update_seed_world(
     summary: &str,
     time_system: &str,
     map_nodes_json: String,
-    triggers_json: String,
     time_config_json: String,
     director_config_json: String,
     ui_theme_config_json: String,
@@ -160,7 +143,7 @@ fn update_seed_world(
         return Ok(());
     }
     let updated = conn.execute(
-        "UPDATE worlds SET name = ?1, genre = ?2, background_prompt = ?3, opening_scene = ?4, summary = ?5, time_system = ?6, map_nodes_json = ?7, triggers_json = ?8, time_config_json = ?9, director_config_json = ?10, ui_theme_config_json = ?11, opening_messages_json = ?12, opening_character_ids_json = ?13, player_character_id = ?14 WHERE id = ?15",
+        "UPDATE worlds SET name = ?1, genre = ?2, background_prompt = ?3, opening_scene = ?4, summary = ?5, time_system = ?6, map_nodes_json = ?7, time_config_json = ?8, director_config_json = ?9, ui_theme_config_json = ?10, opening_messages_json = ?11, opening_character_ids_json = ?12, player_character_id = ?13 WHERE id = ?14",
         params![
             name,
             genre,
@@ -169,7 +152,6 @@ fn update_seed_world(
             summary,
             time_system,
             map_nodes_json,
-            triggers_json,
             time_config_json,
             director_config_json,
             ui_theme_config_json,
@@ -190,7 +172,6 @@ fn update_seed_world(
             summary,
             time_system,
             map_nodes_json,
-            triggers_json,
             time_config_json,
             director_config_json,
             ui_theme_config_json,
@@ -256,120 +237,6 @@ fn update_seed_character(
             id
         ],
     )?;
-    Ok(())
-}
-
-fn looks_like_corrupted_prompt(value: &str) -> bool {
-    let trimmed = value.trim();
-    if trimmed.len() < 16 {
-        return false;
-    }
-
-    let question_marks = trimmed.chars().filter(|ch| *ch == '?').count();
-    if question_marks < 8 {
-        return false;
-    }
-
-    !trimmed
-        .chars()
-        .any(|ch| ('\u{4E00}'..='\u{9FFF}').contains(&ch))
-}
-
-fn repair_corrupted_world_prompts(conn: &Connection) -> Result<(), rusqlite::Error> {
-    let mut stmt = conn.prepare("SELECT id, director_config_json FROM worlds")?;
-    let rows = stmt.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-    })?;
-
-    for row in rows {
-        let (world_id, director_config_json) = row?;
-        let Ok(mut director_config) = serde_json::from_str::<Value>(&director_config_json) else {
-            continue;
-        };
-        let Some(config) = director_config.as_object_mut() else {
-            continue;
-        };
-        let current_prompt = config
-            .get("world_director_prompt")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-
-        if !looks_like_corrupted_prompt(current_prompt) {
-            continue;
-        }
-
-        config.insert(
-            "world_director_prompt".to_string(),
-            Value::String(String::new()),
-        );
-
-        let Ok(repaired_json) = serde_json::to_string(&director_config) else {
-            continue;
-        };
-
-        conn.execute(
-            "UPDATE worlds SET director_config_json = ?1 WHERE id = ?2",
-            params![repaired_json, world_id],
-        )?;
-    }
-
-    Ok(())
-}
-
-fn remove_retired_gwtw_seed_world(conn: &Connection) -> Result<(), rusqlite::Error> {
-    let world_name = conn
-        .query_row(
-            "SELECT name FROM worlds WHERE id = ?1",
-            params!["gwtw"],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()?;
-    let Some(world_name) = world_name else {
-        return Ok(());
-    };
-    let session_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM sessions WHERE world_name = ?1",
-        params![world_name],
-        |row| row.get(0),
-    )?;
-    if session_count > 0 {
-        return Ok(());
-    }
-
-    conn.execute(
-        "DELETE FROM attribute_values WHERE owner_id IN (?1, ?2, ?3, ?4)",
-        params![
-            "character-seed-scarlett",
-            "character-seed-ashley",
-            "character-seed-rhett",
-            "character-seed-melanie"
-        ],
-    )?;
-    conn.execute("DELETE FROM memories WHERE world_id = ?1", params!["gwtw"])?;
-    conn.execute("DELETE FROM worlds WHERE id = ?1", params!["gwtw"])?;
-    Ok(())
-}
-
-fn clear_legacy_seed_character_model_overrides(conn: &Connection) -> Result<(), rusqlite::Error> {
-    for character_id in seed_character_ids() {
-        conn.execute(
-            "
-            UPDATE characters
-            SET model = ''
-            WHERE id = ?1
-              AND TRIM(model) = 'gpt-4.1'
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM model_configs
-                  WHERE LOWER(TRIM(id)) = 'gpt-4.1'
-                     OR LOWER(TRIM(model_id)) = 'gpt-4.1'
-                     OR LOWER(TRIM(name)) = 'gpt-4.1'
-              )
-            ",
-            params![character_id],
-        )?;
-    }
-
     Ok(())
 }
 
@@ -582,7 +449,6 @@ fn ensure_core_seed_data(conn: &Connection) -> Result<(), rusqlite::Error> {
                 SEED_WORLD_POETRY_SUMMARY,
                 SEED_WORLD_POETRY_TIME_SYSTEM,
                 poetry_world_map_nodes_json(),
-                poetry_world_triggers_json(),
                 poetry_world_time_config_json(),
                 default_seed_world_director_config_json(),
                 poetry_world_ui_theme_config_json(),
@@ -679,8 +545,6 @@ fn ensure_core_seed_data(conn: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 fn ensure_localized_builtin_content(conn: &Connection) -> Result<(), rusqlite::Error> {
-    remove_retired_world_tension_seed(conn)?;
-    remove_retired_character_trust_seed(conn)?;
     ensure_poetry_ling_word_attribute_schema(conn)?;
     ensure_schedule_assistant_task_attribute_schemas(conn)?;
     update_seed_world(
@@ -693,7 +557,6 @@ fn ensure_localized_builtin_content(conn: &Connection) -> Result<(), rusqlite::E
         SEED_WORLD_SCHEDULE_ASSISTANT_SUMMARY,
         SEED_WORLD_SCHEDULE_ASSISTANT_TIME_SYSTEM,
         schedule_assistant_world_map_nodes_json(),
-        schedule_assistant_world_triggers_json(),
         schedule_assistant_world_time_config_json(),
         schedule_assistant_world_director_config_json(),
         schedule_assistant_world_ui_theme_config_json(),
@@ -730,7 +593,6 @@ fn ensure_localized_builtin_content(conn: &Connection) -> Result<(), rusqlite::E
         SEED_WORLD_POETRY_SUMMARY,
         SEED_WORLD_POETRY_TIME_SYSTEM,
         poetry_world_map_nodes_json(),
-        poetry_world_triggers_json(),
         poetry_world_time_config_json(),
         default_seed_world_director_config_json(),
         poetry_world_ui_theme_config_json(),
@@ -795,7 +657,9 @@ fn ensure_localized_builtin_content(conn: &Connection) -> Result<(), rusqlite::E
     Ok(())
 }
 
-fn ensure_schedule_assistant_task_attribute_schemas(conn: &Connection) -> Result<(), rusqlite::Error> {
+fn ensure_schedule_assistant_task_attribute_schemas(
+    conn: &Connection,
+) -> Result<(), rusqlite::Error> {
     for (id, key, label, description) in [
         (
             SCHEDULE_TODO_SCHEMA_ID,
@@ -841,36 +705,6 @@ fn ensure_schedule_assistant_task_attribute_schemas(conn: &Connection) -> Result
             ],
         )?;
     }
-    Ok(())
-}
-
-fn remove_retired_world_tension_seed(conn: &Connection) -> Result<(), rusqlite::Error> {
-    conn.execute(
-        "DELETE FROM attribute_values WHERE schema_id = ?1",
-        params!["attr-seed-world-tension"],
-    )?;
-    conn.execute(
-        "DELETE FROM attribute_schemas WHERE id = ?1 OR key = ?2",
-        params!["attr-seed-world-tension", "world_tension"],
-    )?;
-    conn.execute(
-        "DELETE FROM rules WHERE id = ?1",
-        params!["rule-seed-lockdown-escalation"],
-    )?;
-    Ok(())
-}
-
-/// 信任度是种子时代的通用示例属性：对诗酒会/日程助手这类世界毫无意义，
-/// 引擎与 UI 也从未按 key 消费它。随种子启动统一退役，老库下次启动自动清理。
-fn remove_retired_character_trust_seed(conn: &Connection) -> Result<(), rusqlite::Error> {
-    conn.execute(
-        "DELETE FROM attribute_values WHERE schema_id = ?1",
-        params!["attr-seed-character-trust"],
-    )?;
-    conn.execute(
-        "DELETE FROM attribute_schemas WHERE id = ?1 OR key = ?2",
-        params!["attr-seed-character-trust", "trust_level"],
-    )?;
     Ok(())
 }
 
@@ -928,11 +762,8 @@ fn ensure_poetry_ling_word_attribute_schema(conn: &Connection) -> Result<(), rus
 pub(crate) fn ensure_all(conn: &Connection) -> Result<(), rusqlite::Error> {
     ensure_default_plugins(conn)?;
     ensure_builtin_mcp_tools(conn)?;
-    remove_retired_gwtw_seed_world(conn)?;
     ensure_core_seed_data(conn)?;
     ensure_localized_builtin_content(conn)?;
-    repair_corrupted_world_prompts(conn)?;
-    clear_legacy_seed_character_model_overrides(conn)?;
     Ok(())
 }
 
@@ -961,8 +792,11 @@ mod tests {
         assert_eq!(poetry_count, 1, "poetry world should be seeded initially");
 
         // 模拟用户在世界列表里删除飞花令（poetry）世界。
-        conn.execute("DELETE FROM worlds WHERE id = ?1", params![SEED_WORLD_POETRY_ID])
-            .unwrap();
+        conn.execute(
+            "DELETE FROM worlds WHERE id = ?1",
+            params![SEED_WORLD_POETRY_ID],
+        )
+        .unwrap();
         super::mark_seed_world_tombstoned(&conn, SEED_WORLD_POETRY_ID).unwrap();
 
         // 再次触发播种（等价于下次启动）。
@@ -1024,7 +858,10 @@ mod tests {
             .cloned()
             .unwrap_or_default();
 
-        assert_eq!(config.get("service_mode").and_then(Value::as_str), Some("agent_chat"));
+        assert_eq!(
+            config.get("service_mode").and_then(Value::as_str),
+            Some("agent_chat")
+        );
         assert_eq!(
             config.get("default_agent_id").and_then(Value::as_str),
             Some(schedule_assistant_world::SEED_CHARACTER_SCHEDULE_ASSISTANT_ID)

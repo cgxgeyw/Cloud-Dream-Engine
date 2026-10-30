@@ -5,11 +5,14 @@ import {
   createWorldCharacter,
   deleteWorldCharacter,
   fetchCharacter,
+  fetchAttributeSchemas,
   fetchModels,
   fetchWorlds,
+  updateWorld,
   updateWorldCharacter,
   uploadFile,
   type CharacterResponse,
+  type AttributeSchemaResponse,
   type ModelConfigResponse,
   type WorldResponse,
 } from "../data/apiAdapter";
@@ -17,10 +20,13 @@ import { AttributePanel } from "../components/AttributePanel";
 import { ConfirmDialog } from "../components/ModalDialog";
 import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
 import { showToast } from "../components/Toast";
+import { GripVertical } from "lucide-react";
+import { characterPromptSections } from "./worldEditorShared";
 
 const fixedTabs = [
   { id: "basic", label: "基础信息" },
   { id: "prompt", label: "提示词" },
+  { id: "promptPlan", label: "NPC 提示词编排" },
   { id: "runtimeContext", label: "运行时上下文" },
   { id: "avatar", label: "头像" },
   { id: "portrait", label: "立绘" },
@@ -77,6 +83,7 @@ export function CharacterEditorPage() {
 
   const [activeTab, setActiveTab] = useState<FixedTabId>("basic");
   const [character, setCharacter] = useState<CharacterResponse | null>(isNew ? newCharacterDraft : null);
+  const [attributeSchemas, setAttributeSchemas] = useState<AttributeSchemaResponse[]>([]);
   const [worlds, setWorlds] = useState<WorldResponse[]>([]);
   const [textModels, setTextModels] = useState<ModelConfigResponse[]>([]);
   const [loading, setLoading] = useState(true);
@@ -84,6 +91,7 @@ export function CharacterEditorPage() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [draggedSectionId, setDraggedSectionId] = useState<string | null>(null);
 
   const backTarget = character?.world_id
     ? `/worlds/${character.world_id}/characters`
@@ -153,8 +161,38 @@ export function CharacterEditorPage() {
   }, [id, isNew, preselectedWorldId, sourceCharacterId]);
 
   const selectedWorld = worlds.find((world) => world.id === character?.world_id) ?? null;
+  useEffect(() => {
+    let cancelled = false;
+    if (!character?.world_id) {
+      setAttributeSchemas([]);
+      return;
+    }
+    void fetchAttributeSchemas("character", character.world_id)
+      .then((schemas) => { if (!cancelled) setAttributeSchemas(schemas); })
+      .catch(() => { if (!cancelled) setAttributeSchemas([]); });
+    return () => { cancelled = true; };
+  }, [character?.world_id]);
   const attributesText = useMemo(() => (character?.attributes ?? []).join("\n"), [character]);
   const savedCharacterId = !isNew && character?.id ? character.id : undefined;
+  const availablePromptSections = useMemo(
+    () => [
+      ...characterPromptSections.filter(([id]) => id !== "character_attributes"),
+      ["character_attributes", "角色基础属性"] as const,
+      ...attributeSchemas.map((schema) => [`character_attribute:${schema.key}`, schema.label] as const),
+    ],
+    [attributeSchemas],
+  );
+  const promptOrder = useMemo(() => {
+    const configured = selectedWorld?.director_config.character_prompt_order;
+    const valid = Array.isArray(configured)
+      ? configured.filter((id): id is string => typeof id === "string" && availablePromptSections.some(([sectionId]) => sectionId === id))
+      : [];
+    const movable = Array.from(new Set(valid));
+    for (const [sectionId] of availablePromptSections) {
+      if (!movable.includes(sectionId)) movable.push(sectionId);
+    }
+    return movable;
+  }, [availablePromptSections, selectedWorld]);
 
   const previewJson = useMemo(
     () =>
@@ -196,6 +234,21 @@ export function CharacterEditorPage() {
 
   function updateDraft(patch: Partial<CharacterResponse>) {
     setCharacter((current) => (current ? { ...current, ...patch } : current));
+  }
+
+  function reorderPromptSections(draggedId: string, targetId: string) {
+    if (!selectedWorld || draggedId === targetId) return;
+    const movable = [...promptOrder];
+    const sourceIndex = movable.indexOf(draggedId);
+    if (sourceIndex < 0) return;
+    const [moved] = movable.splice(sourceIndex, 1);
+    const targetIndex = movable.indexOf(targetId);
+    if (!moved || targetIndex < 0) return;
+    movable.splice(targetIndex, 0, moved);
+    const nextOrder = movable;
+    setWorlds((current) => current.map((world) => world.id === selectedWorld.id
+      ? { ...world, director_config: { ...world.director_config, character_prompt_order: nextOrder } }
+      : world));
   }
 
   async function handleUploadPortrait(file: File | null) {
@@ -259,6 +312,25 @@ export function CharacterEditorPage() {
       const saved = isNew
         ? await createWorldCharacter(character.world_id, payload)
         : await updateWorldCharacter(character.world_id, character.id, payload);
+
+      if (selectedWorld) {
+        const worldDraft = await updateWorld(selectedWorld.id, {
+          name: selectedWorld.name,
+          genre: selectedWorld.genre,
+          background_prompt: selectedWorld.background_prompt,
+          opening_scene: selectedWorld.opening_scene,
+          summary: selectedWorld.summary,
+          time_system: selectedWorld.time_system,
+          map_nodes: selectedWorld.map_nodes,
+          time_config: selectedWorld.time_config,
+          director_config: selectedWorld.director_config,
+          ui_theme_config: selectedWorld.ui_theme_config,
+          opening_messages: selectedWorld.opening_messages,
+          opening_character_ids: selectedWorld.opening_character_ids,
+          player_character_id: selectedWorld.player_character_id ?? null,
+        });
+        setWorlds((current) => current.map((world) => world.id === worldDraft.id ? worldDraft : world));
+      }
 
       setCharacter(saved);
       showToast("角色已保存");
@@ -446,6 +518,9 @@ export function CharacterEditorPage() {
                 </label>
                 <label className="editor-field">
                   <span className="editor-field-label">返回格式提示词</span>
+                  <div className="text-muted" style={{ fontSize: 12 }}>
+                    留空使用内置返回格式；填写后<b>完全替代</b>内置契约，需自行包含 speaker/content/narration 等引擎必需字段的格式说明。
+                  </div>
                   <textarea
                     value={character.response_contract_prompt}
                     onChange={(event) => updateDraft({ response_contract_prompt: event.target.value })}
@@ -462,6 +537,49 @@ export function CharacterEditorPage() {
                     style={{ minHeight: 160 }}
                   />
                 </label>
+              </div>
+            ) : null}
+
+            {activeTab === "promptPlan" ? (
+              <div className="editor-content">
+                {promptOrder.map((sectionId) => {
+                  const [_, label] = availablePromptSections.find(([id]) => id === sectionId)!;
+                  const preview = (() => {
+                    switch (sectionId) {
+                      case "world_background": return selectedWorld?.background_prompt || "";
+                      case "oag_context": return "由当前会话的记忆检索结果生成，并遵循角色可见范围。";
+                      case "character_background": return character.background_prompt;
+                      case "character_rules": return character.system_prompt_template;
+                      case "character_attributes": return JSON.stringify({ role: character.role, attributes: character.attributes }, null, 2);
+                      case "world_runtime_context": return String(selectedWorld?.director_config.runtime_context_prompt ?? "");
+                      case "character_runtime_context": return character.runtime_system_prompt;
+                      case "visible_characters": return "由当前场景角色、地点、场景状态和可见性规则生成。";
+                      case "chat_history": return `最近 ${character.recent_dialogue_rounds} 轮对话与命中的记忆。`;
+                      case "narration_prompt": return character.narration_prompt;
+                      case "player_input": return "当前玩家输入与附件。";
+                      case "response_contract": return character.response_contract_prompt;
+                      case "fact_memory_rules": return "框架返回字段与记忆提取规则。";
+                      default: {
+                        const schema = attributeSchemas.find((item) => `character_attribute:${item.key}` === sectionId);
+                        return schema ? `${schema.label}（${schema.key}）\n默认值：${JSON.stringify(schema.default_value)}` : "由当前角色可用工具生成。";
+                      }
+                    }
+                  })();
+                  return (
+                    <details key={sectionId} draggable
+                      onDragStart={(event) => { setDraggedSectionId(sectionId); event.dataTransfer.setData("text/plain", sectionId); event.dataTransfer.effectAllowed = "move"; }}
+                      onDragOver={(event) => { event.preventDefault(); }}
+                      onDrop={(event) => { event.preventDefault(); const dragged = event.dataTransfer.getData("text/plain") || draggedSectionId; if (dragged) reorderPromptSections(dragged, sectionId); setDraggedSectionId(null); }}
+                      onDragEnd={() => setDraggedSectionId(null)}
+                      style={{ border: "1px solid var(--color-border)", borderRadius: 6, opacity: draggedSectionId === sectionId ? 0.5 : 1 }}>
+                      <summary style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", cursor: "grab", listStyle: "none" }}>
+                        <GripVertical size={15} aria-label="拖动排序" />
+                        <span style={{ flex: 1 }}>{label}</span>
+                      </summary>
+                      <pre style={{ margin: "0 12px 12px 34px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontSize: 12, lineHeight: 1.5 }}>{preview || "当前内容为空。"}</pre>
+                    </details>
+                  );
+                })}
               </div>
             ) : null}
 
@@ -617,6 +735,10 @@ export function CharacterEditorPage() {
                       scope="character"
                       ownerType="character"
                       ownerId={savedCharacterId}
+                      worldId={character.world_id}
+                      onSchemaChange={() => {
+                        void fetchAttributeSchemas("character", character.world_id).then(setAttributeSchemas);
+                      }}
                     />
                   </div>
                 </SurfacePanel>

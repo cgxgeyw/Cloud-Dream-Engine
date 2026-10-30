@@ -16,9 +16,7 @@ import type {
   AppSettings,
   AiWorldCreateRequest,
   AiWorldCreateResponse,
-  AiWorldCreateMode,
   AttributeSchemaUpsertRequest,
-  AttributeValueType,
   AttributeValueUpsertRequest,
   CharacterCreateFromTemplateRequest,
   CharacterCreateRequest,
@@ -33,7 +31,6 @@ import type {
   SessionSnapshot,
   SwitchPlayerCharacterRequest,
   VerifyWorldPackageUiCompatibilityRequest,
-  WorldMapTopology,
   WorldUiBundleValidationResult,
   WorldUiBundleValidationRequest,
   WorldUiCompileRequest,
@@ -150,7 +147,6 @@ export type {
   SessionSnapshotResponse,
   SessionMapNode,
   SessionMapEdge,
-  InventoryItem,
   SceneRuntime,
   AssetSelection,
   CharacterVisualState,
@@ -435,8 +431,12 @@ export async function createCharacterInWorldFromCharacter(worldId: string, chara
   return isTauri ? (await getTauri()).createCharacterInWorldFromCharacter(worldId, characterId, payload) : (await getHttp()).createCharacterInWorldFromCharacter(worldId, characterId, payload);
 }
 
-export async function fetchWorldOpeningPromptPreview(worldId: string, params?: { playerCharacterId?: string | null; playerInput?: string }) {
+export async function fetchWorldOpeningPromptPreview(worldId: string, params?: { playerCharacterId?: string | null; playerInput?: string; directorConfig?: Record<string, unknown> }) {
   return isTauri ? (await getTauri()).fetchWorldOpeningPromptPreview(worldId, params) : (await getHttp()).fetchWorldOpeningPromptPreview(worldId, params);
+}
+
+export async function fetchDefaultDirectorResponseContract(): Promise<string> {
+  return isTauri ? (await getTauri()).fetchDefaultDirectorResponseContract() : (await getHttp()).fetchDefaultDirectorResponseContract();
 }
 
 export async function validateWorldUiDocument(payload: WorldUiDocumentRequest): Promise<WorldUiDocumentValidationResult> {
@@ -683,8 +683,8 @@ export async function importMcpTools(json: string): Promise<McpToolImportSummary
   return (await getTauri()).importMcpTools(json);
 }
 
-export async function fetchAttributeSchemas(scope?: string) {
-  return isTauri ? (await getTauri()).fetchAttributeSchemas(scope) : (await getHttp()).fetchAttributeSchemas(scope);
+export async function fetchAttributeSchemas(scope?: string, worldId?: string) {
+  return isTauri ? (await getTauri()).fetchAttributeSchemas(scope, worldId) : (await getHttp()).fetchAttributeSchemas(scope, worldId);
 }
 
 export async function createAttributeSchema(payload: AttributeSchemaUpsertRequest) {

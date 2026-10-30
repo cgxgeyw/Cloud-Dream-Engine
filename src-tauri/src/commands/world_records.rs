@@ -10,9 +10,7 @@ pub async fn list_world_records(
     collection: String,
 ) -> Result<Vec<WorldRecord>, String> {
     let db = state.db.lock().await;
-    crate::services::world_storage::require_record_collection(
-        db.conn(), &world_id, &collection,
-    )?;
+    crate::services::world_storage::require_record_collection(db.conn(), &world_id, &collection)?;
     let repository =
         crate::db::repositories::world_record_repo::WorldRecordRepository::new(db.conn());
     repository.list(&world_id, &collection)
@@ -26,11 +24,11 @@ pub async fn create_world_record(
 ) -> Result<WorldRecord, String> {
     let db = state.db.lock().await;
     let schema = crate::services::world_storage::require_record_collection(
-        db.conn(), &world_id, &request.collection,
+        db.conn(),
+        &world_id,
+        &request.collection,
     )?;
-    crate::services::world_storage::validate_record_against_schema(
-        &request.data, schema.as_ref(),
-    )?;
+    crate::services::world_storage::validate_record_against_schema(&request.data, schema.as_ref())?;
     let repository =
         crate::db::repositories::world_record_repo::WorldRecordRepository::new(db.conn());
     repository.create(&world_id, &request)
@@ -45,11 +43,11 @@ pub async fn update_world_record(
 ) -> Result<WorldRecord, String> {
     let db = state.db.lock().await;
     let schema = crate::services::world_storage::require_record_collection(
-        db.conn(), &world_id, &request.collection,
+        db.conn(),
+        &world_id,
+        &request.collection,
     )?;
-    crate::services::world_storage::validate_record_against_schema(
-        &request.data, schema.as_ref(),
-    )?;
+    crate::services::world_storage::validate_record_against_schema(&request.data, schema.as_ref())?;
     let repository =
         crate::db::repositories::world_record_repo::WorldRecordRepository::new(db.conn());
     repository.update(&world_id, &id, &request)
@@ -63,9 +61,7 @@ pub async fn delete_world_record(
     id: String,
 ) -> Result<(), String> {
     let db = state.db.lock().await;
-    crate::services::world_storage::require_record_collection(
-        db.conn(), &world_id, &collection,
-    )?;
+    crate::services::world_storage::require_record_collection(db.conn(), &world_id, &collection)?;
     let repository =
         crate::db::repositories::world_record_repo::WorldRecordRepository::new(db.conn());
     repository.delete(&world_id, &collection, &id)

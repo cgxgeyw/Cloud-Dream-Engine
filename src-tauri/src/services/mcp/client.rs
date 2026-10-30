@@ -1,7 +1,7 @@
 use crate::models::mcp_server::{McpServerConfig, TRANSPORT_HTTP, TRANSPORT_STDIO};
 use serde_json::{json, Value};
-use tokio::io::AsyncBufReadExt;
 use std::time::Duration;
+use tokio::io::AsyncBufReadExt;
 
 /// 客户端声明的协议版本。server 返回其它版本时按其返回值继续（MCP 允许协商）。
 const PROTOCOL_VERSION: &str = "2025-06-18";
@@ -56,9 +56,12 @@ impl McpSession {
             TRANSPORT_HTTP => McpSession::Http(HttpSession::new(config)?),
             other => return Err(format!("未知的 MCP 传输方式：{other}")),
         };
-        let init = tokio::time::timeout(timeout, session.request("initialize", initialize_params()))
-            .await
-            .map_err(|_| format!("MCP initialize 超时（{} ms）", config.resolved_timeout_ms()))??;
+        let init =
+            tokio::time::timeout(timeout, session.request("initialize", initialize_params()))
+                .await
+                .map_err(|_| {
+                    format!("MCP initialize 超时（{} ms）", config.resolved_timeout_ms())
+                })??;
         let _ = init;
         session
             .notify("notifications/initialized", json!({}))
@@ -178,7 +181,8 @@ impl StdioSession {
     async fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
         let id = self.next_id;
         self.next_id += 1;
-        self.write_line(&jsonrpc_request(id, method, params)).await?;
+        self.write_line(&jsonrpc_request(id, method, params))
+            .await?;
         // server 可能先推送通知/日志行，读到 id 匹配的响应为止。
         loop {
             let line = self

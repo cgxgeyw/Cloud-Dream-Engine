@@ -112,8 +112,14 @@ pub fn is_supported_capability(capability_id: &str) -> bool {
 }
 
 fn validate_catalog(catalog: &GameUiCatalog) {
-    assert_unique("capability", catalog.capabilities.iter().map(|entry| entry.id.as_str()));
-    assert_unique("action", catalog.actions.iter().map(|entry| entry.id.as_str()));
+    assert_unique(
+        "capability",
+        catalog.capabilities.iter().map(|entry| entry.id.as_str()),
+    );
+    assert_unique(
+        "action",
+        catalog.actions.iter().map(|entry| entry.id.as_str()),
+    );
     assert_unique(
         "component",
         catalog.components.iter().map(|entry| entry.id.as_str()),
@@ -149,7 +155,10 @@ fn validate_catalog(catalog: &GameUiCatalog) {
         }
         for dependency in &capability.requires_capabilities {
             assert!(
-                catalog.capabilities.iter().any(|entry| &entry.id == dependency),
+                catalog
+                    .capabilities
+                    .iter()
+                    .any(|entry| &entry.id == dependency),
                 "catalog capability `{}` requires unknown capability `{dependency}`",
                 capability.id
             );

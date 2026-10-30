@@ -457,9 +457,7 @@ function requireWorldRecordScope(bag: GameSessionStateBag, collection: string): 
     bag.worldUiEnvelope.storage.collections,
     normalized,
   );
-  const legacy = Object.keys(bag.worldUiEnvelope.storage.collections).length === 0
-    && bag.worldUiEnvelope.capabilities.includes("supports_world_records");
-  if (!declared && !legacy) {
+  if (!declared) {
     throw new Error(`This world package did not declare storage collection: ${normalized}`);
   }
   return requireWorldId(bag);

@@ -1,6 +1,6 @@
 use tauri::State;
 
-use crate::models::world_kv::{KV_OWNER_CHARACTER, KV_OWNER_SESSION, KV_OWNER_WORLD, WorldKvEntry};
+use crate::models::world_kv::{WorldKvEntry, KV_OWNER_CHARACTER, KV_OWNER_SESSION, KV_OWNER_WORLD};
 use crate::state::AppState;
 
 /// 作用域参数（全部可选，缺省为世界级，保持旧调用兼容）：
@@ -92,12 +92,14 @@ pub async fn list_world_kv(
     scope: Option<KvScope>,
 ) -> Result<Vec<WorldKvEntry>, String> {
     let db = state.db.lock().await;
-    let namespace = crate::services::world_storage::require_kv_namespace(
-        db.conn(), &world_id, &namespace,
-    )?;
+    let namespace =
+        crate::services::world_storage::require_kv_namespace(db.conn(), &world_id, &namespace)?;
     let (owner_type, owner_id) = resolve_owner(db.conn(), &world_id, &scope.unwrap_or_default())?;
-    crate::db::repositories::world_kv_repo::WorldKvRepository::new(db.conn())
-        .list(&owner_type, &owner_id, &namespace)
+    crate::db::repositories::world_kv_repo::WorldKvRepository::new(db.conn()).list(
+        &owner_type,
+        &owner_id,
+        &namespace,
+    )
 }
 
 #[tauri::command]
@@ -109,12 +111,15 @@ pub async fn get_world_kv(
     scope: Option<KvScope>,
 ) -> Result<Option<WorldKvEntry>, String> {
     let db = state.db.lock().await;
-    let namespace = crate::services::world_storage::require_kv_namespace(
-        db.conn(), &world_id, &namespace,
-    )?;
+    let namespace =
+        crate::services::world_storage::require_kv_namespace(db.conn(), &world_id, &namespace)?;
     let (owner_type, owner_id) = resolve_owner(db.conn(), &world_id, &scope.unwrap_or_default())?;
-    crate::db::repositories::world_kv_repo::WorldKvRepository::new(db.conn())
-        .get(&owner_type, &owner_id, &namespace, &key)
+    crate::db::repositories::world_kv_repo::WorldKvRepository::new(db.conn()).get(
+        &owner_type,
+        &owner_id,
+        &namespace,
+        &key,
+    )
 }
 
 #[tauri::command]
@@ -127,12 +132,16 @@ pub async fn set_world_kv(
     scope: Option<KvScope>,
 ) -> Result<WorldKvEntry, String> {
     let db = state.db.lock().await;
-    let namespace = crate::services::world_storage::require_kv_namespace(
-        db.conn(), &world_id, &namespace,
-    )?;
+    let namespace =
+        crate::services::world_storage::require_kv_namespace(db.conn(), &world_id, &namespace)?;
     let (owner_type, owner_id) = resolve_owner(db.conn(), &world_id, &scope.unwrap_or_default())?;
-    crate::db::repositories::world_kv_repo::WorldKvRepository::new(db.conn())
-        .set(&owner_type, &owner_id, &namespace, &key, &value)
+    crate::db::repositories::world_kv_repo::WorldKvRepository::new(db.conn()).set(
+        &owner_type,
+        &owner_id,
+        &namespace,
+        &key,
+        &value,
+    )
 }
 
 #[tauri::command]
@@ -144,12 +153,15 @@ pub async fn delete_world_kv(
     scope: Option<KvScope>,
 ) -> Result<(), String> {
     let db = state.db.lock().await;
-    let namespace = crate::services::world_storage::require_kv_namespace(
-        db.conn(), &world_id, &namespace,
-    )?;
+    let namespace =
+        crate::services::world_storage::require_kv_namespace(db.conn(), &world_id, &namespace)?;
     let (owner_type, owner_id) = resolve_owner(db.conn(), &world_id, &scope.unwrap_or_default())?;
-    crate::db::repositories::world_kv_repo::WorldKvRepository::new(db.conn())
-        .delete(&owner_type, &owner_id, &namespace, &key)
+    crate::db::repositories::world_kv_repo::WorldKvRepository::new(db.conn()).delete(
+        &owner_type,
+        &owner_id,
+        &namespace,
+        &key,
+    )
 }
 
 #[cfg(test)]
@@ -164,10 +176,16 @@ mod tests {
              CREATE TABLE sessions (id TEXT PRIMARY KEY, world_name TEXT NOT NULL);",
         )
         .unwrap();
-        conn.execute("INSERT INTO worlds (id, name) VALUES ('w1', 'World 1'), ('w2', 'World 2')", [])
-            .unwrap();
-        conn.execute("INSERT INTO sessions (id, world_name) VALUES ('s1', 'World 1'), ('s2', 'World 2')", [])
-            .unwrap();
+        conn.execute(
+            "INSERT INTO worlds (id, name) VALUES ('w1', 'World 1'), ('w2', 'World 2')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO sessions (id, world_name) VALUES ('s1', 'World 1'), ('s2', 'World 2')",
+            [],
+        )
+        .unwrap();
 
         let scope = KvScope {
             scope: Some(KV_OWNER_SESSION.to_string()),
@@ -175,6 +193,14 @@ mod tests {
             character_id: None,
         };
         assert_eq!(resolve_owner(&conn, "w1", &scope).unwrap().1, "s1");
-        assert!(resolve_owner(&conn, "w1", &KvScope { session_id: Some("s2".to_string()), ..scope }).is_err());
+        assert!(resolve_owner(
+            &conn,
+            "w1",
+            &KvScope {
+                session_id: Some("s2".to_string()),
+                ..scope
+            }
+        )
+        .is_err());
     }
 }

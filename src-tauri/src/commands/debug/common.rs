@@ -371,10 +371,10 @@ pub fn query_world_logic_traces(
     let rows = stmt
         .query_map(params![session_id], |row| {
             let parse = |index: usize| -> rusqlite::Result<serde_json::Value> {
-                Ok(serde_json::from_str::<serde_json::Value>(
-                    &row.get::<_, String>(index)?,
+                Ok(
+                    serde_json::from_str::<serde_json::Value>(&row.get::<_, String>(index)?)
+                        .unwrap_or(serde_json::Value::Null),
                 )
-                .unwrap_or(serde_json::Value::Null))
             };
             Ok(serde_json::json!({
                 "trace_id": row.get::<_, String>(0)?,
@@ -519,18 +519,10 @@ pub fn build_event_chain_v2(system_log: &[String]) -> Vec<String> {
         .map(|entry| {
             if entry.contains("涓栫晫涓绘帶") {
                 format!("World Director -> {entry}")
-            } else if entry.contains("TriggerEngine") || entry.contains("瑙﹀彂") {
-                format!("Trigger Engine -> {entry}")
-            } else if entry.contains("RuleEngine") || entry.contains("瑙勫垯") {
-                format!("Rule Engine -> {entry}")
-            } else if entry.contains("InventoryRuntime") || entry.contains("鑳屽寘") {
-                format!("Inventory Runtime -> {entry}")
             } else if entry.contains("SpeakerSelector") || entry.contains("鍙戣█鎺掑簭") {
                 format!("Speaker Selector -> {entry}")
             } else if entry.contains("CharacterRuntime") || entry.contains("DialoguePipeline") {
                 format!("Character Runtime -> {entry}")
-            } else if entry.contains("StateEngine") {
-                format!("State Engine -> {entry}")
             } else {
                 entry.clone()
             }

@@ -9,21 +9,18 @@ use crate::models::character::CharacterDefinition;
 use crate::models::memory::{FactUpdate, MemoryEntry};
 use crate::models::scheduled_notification::PendingScheduledNotification;
 use crate::models::session::{
-    ChatMessage, InventoryItem, MessageContent, RuntimeAttributeItem, SceneRuntime, SessionSnapshot,
+    ChatMessage, MessageContent, RuntimeAttributeItem, SceneRuntime, SessionSnapshot,
 };
 use crate::services::game_engine::orchestrator::DirectorDecision;
 
 #[derive(Clone, Default)]
 pub(crate) struct DirectorRuntimeApplication {
     pub scene_runtime: Option<SceneRuntime>,
-    pub inventory_items: Option<Vec<InventoryItem>>,
     pub system_messages: Vec<ChatMessage>,
     pub system_log_lines: Vec<String>,
     pub tool_call_logs: Vec<String>,
     pub pending_notifications: Vec<PendingScheduledNotification>,
     pub scene_tags: Vec<String>,
-    pub state_tags: Vec<String>,
-    pub state_metrics: HashMap<String, f64>,
     pub state_phase: String,
     pub player_stats: Option<Vec<String>>,
     pub session_attribute_updates: Vec<ParsedAttributeUpdate>,
@@ -47,11 +44,7 @@ pub(crate) struct ParsedCharacterAttributeUpdate {
 
 pub(crate) fn apply_director_runtime_effects(
     conn: &Connection,
-    inventory_service: &crate::services::game_engine::inventory::InventoryService,
-    trigger_engine: &crate::services::game_engine::trigger::TriggerEngineService,
-    rule_engine: &crate::services::game_engine::rule::RuleEngineService,
     scene_manager: &crate::services::game_engine::scene::SceneManager,
-    state_engine: &crate::services::game_engine::state::StateEngineService,
     world: &crate::models::world::WorldDefinition,
     session: &SessionSnapshot,
     characters: &[CharacterDefinition],
@@ -60,12 +53,6 @@ pub(crate) fn apply_director_runtime_effects(
     parsed: &serde_json::Value,
 ) -> Result<DirectorRuntimeApplication, String> {
     let mut runtime = DirectorRuntimeApplication {
-        inventory_items: parse_optional_inventory_items(
-            parsed
-                .get("inventory_items")
-                .or_else(|| parsed.get("inventory")),
-            &session.inventory_items,
-        ),
         system_messages: Vec::new(),
         system_log_lines: Vec::new(),
         tool_call_logs: parse_tool_call_logs(parsed.get("tool_calls")),
@@ -75,14 +62,6 @@ pub(crate) fn apply_director_runtime_effects(
                 .get("next_scene_tags")
                 .or_else(|| parsed.get("scene_tags")),
             &session.scene.temporary_tags,
-        ),
-        state_tags: session.state.tags.clone(),
-        state_metrics: parse_metrics_object(
-            parsed
-                .get("state_metrics")
-                .or_else(|| parsed.get("session_metrics"))
-                .or_else(|| parsed.get("metrics")),
-            &session.state.metrics,
         ),
         state_phase: parsed
             .get("state_phase")
@@ -101,45 +80,11 @@ pub(crate) fn apply_director_runtime_effects(
         turn_index,
     ));
 
-    let inventory_runtime = inventory_service.evaluate_turn(
-        session,
-        player_input,
-        parsed
-            .get("next_location")
-            .and_then(|value| value.as_str())
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty()),
-    );
-    if runtime.inventory_items.is_none() {
-        runtime.inventory_items = Some(inventory_runtime.inventory_items.clone());
-    }
-    runtime
-        .system_log_lines
-        .extend(inventory_runtime.debug_lines.clone());
-    runtime
-        .system_messages
-        .extend(
-            inventory_runtime
-                .system_messages
-                .iter()
-                .map(|content| ChatMessage {
-                    message_id: ChatMessage::generate_id(),
-                    created_at: chrono::Utc::now().to_rfc3339(),
-                    parent_message_id: None,
-                    role: "system".to_string(),
-                    content: MessageContent::Text(content.clone()),
-                    speaker: None,
-                    metadata: Some(serde_json::json!({
-                        "turn_index": turn_index,
-                        "action_type": "inventory_runtime_message",
-                    })),
-                }),
-        );
-
     let attribute_repo = AttributeRepository::new(conn);
     let schema_map = attribute_repo
         .list_schemas(None)?
         .into_iter()
+        .filter(|schema| schema.world_id.as_deref().is_none_or(|id| id == world.id))
         .map(|schema| (schema.key.trim().to_string(), schema))
         .collect::<HashMap<_, _>>();
 
@@ -156,7 +101,7 @@ pub(crate) fn apply_director_runtime_effects(
         &session.id,
     );
 
-    let mut runtime_session_attributes =
+    let runtime_session_attributes =
         load_runtime_session_attributes(conn, &session.id, &schema_map)?;
     let director_decision = DirectorDecision {
         world_phase: parsed
@@ -187,107 +132,6 @@ pub(crate) fn apply_director_runtime_effects(
         .get("scene_visible_characters")
         .and_then(|value| value.as_array())
         .is_some();
-
-    let trigger_evaluation = trigger_engine.evaluate_turn(
-        session,
-        player_input,
-        &director_decision,
-        &runtime_session_attributes,
-    );
-    runtime
-        .system_log_lines
-        .extend(trigger_evaluation.debug_lines.clone());
-    runtime
-        .system_messages
-        .extend(
-            trigger_evaluation
-                .system_messages
-                .iter()
-                .map(|content| ChatMessage {
-                    message_id: ChatMessage::generate_id(),
-                    created_at: chrono::Utc::now().to_rfc3339(),
-                    parent_message_id: None,
-                    role: "system".to_string(),
-                    content: MessageContent::Text(content.clone()),
-                    speaker: None,
-                    metadata: Some(serde_json::json!({
-                        "turn_index": turn_index,
-                        "action_type": "trigger_runtime_message",
-                    })),
-                }),
-        );
-    for update in &trigger_evaluation.attribute_updates {
-        if let Some(schema) = schema_map.get(update.schema_key.as_str()) {
-            runtime
-                .session_attribute_updates
-                .push(ParsedAttributeUpdate {
-                    schema_id: schema.id.clone(),
-                    value: update.value.clone(),
-                });
-        }
-    }
-    let rules =
-        crate::db::repositories::rule_repo::RuleRepository::new(conn).list(Some("session"))?;
-    let rule_evaluation = rule_engine.evaluate_turn(
-        session,
-        player_input,
-        &director_decision,
-        &trigger_evaluation,
-        &runtime_session_attributes,
-        &session.state,
-        &rules,
-    );
-    runtime
-        .system_log_lines
-        .extend(rule_evaluation.debug_lines.clone());
-    runtime
-        .system_messages
-        .extend(
-            rule_evaluation
-                .system_messages
-                .iter()
-                .map(|content| ChatMessage {
-                    message_id: ChatMessage::generate_id(),
-                    created_at: chrono::Utc::now().to_rfc3339(),
-                    parent_message_id: None,
-                    role: "system".to_string(),
-                    content: MessageContent::Text(content.clone()),
-                    speaker: None,
-                    metadata: Some(serde_json::json!({
-                        "turn_index": turn_index,
-                        "action_type": "rule_runtime_message",
-                    })),
-                }),
-        );
-    for update in &rule_evaluation.attribute_updates {
-        if update.owner_type.trim() == "session_character" {
-            if let Some(schema) = schema_map.get(update.schema_key.as_str()) {
-                let character_id = update
-                    .owner_id
-                    .trim()
-                    .split(':')
-                    .next_back()
-                    .unwrap_or_default()
-                    .to_string();
-                if !character_id.is_empty() {
-                    runtime
-                        .character_attribute_updates
-                        .push(ParsedCharacterAttributeUpdate {
-                            character_id,
-                            schema_id: schema.id.clone(),
-                            value: update.value.clone(),
-                        });
-                }
-            }
-        } else if let Some(schema) = schema_map.get(update.schema_key.as_str()) {
-            runtime
-                .session_attribute_updates
-                .push(ParsedAttributeUpdate {
-                    schema_id: schema.id.clone(),
-                    value: update.value.clone(),
-                });
-        }
-    }
 
     for update in &runtime.session_attribute_updates {
         attribute_repo.upsert_value(&AttributeValueUpsertRequest {
@@ -352,41 +196,6 @@ pub(crate) fn apply_director_runtime_effects(
                 .collect(),
         );
     }
-    runtime_session_attributes = load_runtime_session_attributes(conn, &session.id, &schema_map)?;
-    let state_result = state_engine.evaluate_turn(
-        session,
-        player_input,
-        &director_decision,
-        &trigger_evaluation,
-        &rule_evaluation,
-        &runtime_session_attributes,
-    );
-    runtime.state_metrics = state_result.state.metrics.clone();
-    runtime.state_tags = state_result.state.tags.clone();
-    runtime.state_phase = state_result.state.phase.clone();
-    runtime
-        .system_log_lines
-        .extend(state_result.debug_lines.clone());
-    runtime
-        .system_messages
-        .extend(
-            state_result
-                .system_messages
-                .iter()
-                .map(|content| ChatMessage {
-                    message_id: ChatMessage::generate_id(),
-                    created_at: chrono::Utc::now().to_rfc3339(),
-                    parent_message_id: None,
-                    role: "system".to_string(),
-                    content: MessageContent::Text(content.clone()),
-                    speaker: None,
-                    metadata: Some(serde_json::json!({
-                        "turn_index": turn_index,
-                        "action_type": "state_runtime_message",
-                    })),
-                }),
-        );
-
     runtime.memory_entries = parse_memory_entries(
         world,
         session,
@@ -396,105 +205,12 @@ pub(crate) fn apply_director_runtime_effects(
         parsed.get("memory_events"),
     );
     runtime.fact_updates = parse_fact_extractions(parsed.get("fact_extractions"));
-    runtime
-        .memory_entries
-        .extend(trigger_evaluation.memory_events.iter().flat_map(|event| {
-            let targets = parse_memory_target_characters(
-                Some(&serde_json::Value::Array(
-                    event
-                        .character_names
-                        .iter()
-                        .cloned()
-                        .map(serde_json::Value::String)
-                        .collect(),
-                )),
-                characters,
-                session,
-            );
-            targets.into_iter().map(|character_id| {
-                build_memory_entry(
-                    world,
-                    session,
-                    turn_index,
-                    &character_id,
-                    "short_term",
-                    event.content.as_str(),
-                    event.source.as_str(),
-                    event.importance,
-                    event.memory_type.as_str(),
-                    event.speaker.as_deref(),
-                    event.role.as_deref(),
-                    event
-                        .location
-                        .as_deref()
-                        .or(Some(session.location.as_str())),
-                    event
-                        .scene_id
-                        .as_deref()
-                        .or(Some(session.scene.scene_id.as_str())),
-                    if event.participants.is_empty() {
-                        session.scene.present_characters.clone()
-                    } else {
-                        event.participants.clone()
-                    },
-                )
-            })
-        }));
-    runtime
-        .memory_entries
-        .extend(rule_evaluation.memory_events.iter().flat_map(|event| {
-            let targets = parse_memory_target_characters(
-                Some(&serde_json::Value::Array(
-                    event
-                        .character_names
-                        .iter()
-                        .cloned()
-                        .map(serde_json::Value::String)
-                        .collect(),
-                )),
-                characters,
-                session,
-            );
-            targets.into_iter().map(|character_id| {
-                build_memory_entry(
-                    world,
-                    session,
-                    turn_index,
-                    &character_id,
-                    "short_term",
-                    event.content.as_str(),
-                    event.source.as_str(),
-                    event.importance,
-                    event.memory_type.as_str(),
-                    None,
-                    Some("system"),
-                    event
-                        .location
-                        .as_deref()
-                        .or(Some(session.location.as_str())),
-                    event
-                        .scene_id
-                        .as_deref()
-                        .or(Some(session.scene.scene_id.as_str())),
-                    if event.participants.is_empty() {
-                        session.scene.present_characters.clone()
-                    } else {
-                        event.participants.clone()
-                    },
-                )
-            })
-        }));
-
     Ok(runtime)
 }
 
 pub(crate) fn apply_director_runtime_effects_with_preface(
     conn: &Connection,
-    inventory_service: &crate::services::game_engine::inventory::InventoryService,
-    trigger_engine: &crate::services::game_engine::trigger::TriggerEngineService,
-    rule_engine: &crate::services::game_engine::rule::RuleEngineService,
     scene_manager: &crate::services::game_engine::scene::SceneManager,
-    state_engine: &crate::services::game_engine::state::StateEngineService,
     world: &crate::models::world::WorldDefinition,
     session: &SessionSnapshot,
     characters: &[CharacterDefinition],
@@ -505,11 +221,7 @@ pub(crate) fn apply_director_runtime_effects_with_preface(
 ) -> Result<DirectorRuntimeApplication, String> {
     let mut runtime = apply_director_runtime_effects(
         conn,
-        inventory_service,
-        trigger_engine,
-        rule_engine,
         scene_manager,
-        state_engine,
         world,
         session,
         characters,
@@ -539,7 +251,9 @@ fn load_runtime_session_attributes(
             schema_id: value.schema_id.clone(),
             key: schema.key.clone(),
             label: schema.label.clone(),
+            description: schema.description.clone(),
             value_type: schema.value_type.clone(),
+            enum_options: schema.enum_options.clone(),
             value: value.value.clone(),
             source: value.source.clone(),
             display_policy: serde_json::to_value(&schema.display_policy).unwrap_or_default(),
@@ -578,113 +292,6 @@ fn parse_string_array(value: Option<&serde_json::Value>, fallback: &[String]) ->
             }
             acc
         })
-}
-
-fn parse_metrics_object(
-    value: Option<&serde_json::Value>,
-    fallback: &HashMap<String, f64>,
-) -> HashMap<String, f64> {
-    let Some(object) = value.and_then(|value| value.as_object()) else {
-        return fallback.clone();
-    };
-    let mut merged = fallback.clone();
-    for (key, value) in object {
-        let Some(number) = value
-            .as_f64()
-            .or_else(|| value.as_i64().map(|item| item as f64))
-        else {
-            continue;
-        };
-        let key = key.trim();
-        if !key.is_empty() {
-            merged.insert(key.to_string(), number);
-        }
-    }
-    merged
-}
-
-fn parse_optional_inventory_items(
-    value: Option<&serde_json::Value>,
-    fallback: &[InventoryItem],
-) -> Option<Vec<InventoryItem>> {
-    let Some(items) = value.and_then(|value| value.as_array()) else {
-        return None;
-    };
-    let mut parsed = Vec::new();
-    for item in items {
-        let Some(object) = item.as_object() else {
-            continue;
-        };
-        let name = object
-            .get("name")
-            .and_then(|value| value.as_str())
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty());
-        let item_id = object
-            .get("item_id")
-            .or_else(|| object.get("id"))
-            .and_then(|value| value.as_str())
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .or_else(|| {
-                name.as_ref()
-                    .map(|value| format!("item-{}", slugify_scene_id(value)))
-            });
-        let Some(name) = name else {
-            continue;
-        };
-        let quantity = object
-            .get("quantity")
-            .and_then(|value| value.as_i64())
-            .map(|value| value as i32)
-            .unwrap_or(1)
-            .max(0);
-        if quantity <= 0 {
-            continue;
-        }
-        parsed.push(InventoryItem {
-            item_id: item_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
-            name,
-            category: object
-                .get("category")
-                .and_then(|value| value.as_str())
-                .unwrap_or("misc")
-                .trim()
-                .to_string(),
-            quantity,
-            description: object
-                .get("description")
-                .and_then(|value| value.as_str())
-                .unwrap_or("")
-                .trim()
-                .to_string(),
-            tags: parse_string_array(object.get("tags"), &[]),
-            owner_type: object
-                .get("owner_type")
-                .and_then(|value| value.as_str())
-                .unwrap_or("player")
-                .trim()
-                .to_string(),
-            owner_id: object
-                .get("owner_id")
-                .and_then(|value| value.as_str())
-                .unwrap_or("player")
-                .trim()
-                .to_string(),
-            visibility: object
-                .get("visibility")
-                .and_then(|value| value.as_str())
-                .unwrap_or("private")
-                .trim()
-                .to_string(),
-            disclosed_to: parse_string_array(object.get("disclosed_to"), &[]),
-        });
-    }
-    if parsed.is_empty() {
-        Some(fallback.to_vec())
-    } else {
-        Some(parsed)
-    }
 }
 
 fn parse_tool_call_logs(value: Option<&serde_json::Value>) -> Vec<String> {
@@ -754,7 +361,9 @@ fn parse_pending_notifications(
     };
     items
         .iter()
-        .filter_map(|item| serde_json::from_value::<PendingScheduledNotification>(item.clone()).ok())
+        .filter_map(|item| {
+            serde_json::from_value::<PendingScheduledNotification>(item.clone()).ok()
+        })
         .collect()
 }
 
@@ -970,7 +579,8 @@ fn parse_fact_extractions(value: Option<&serde_json::Value>) -> Vec<FactUpdate> 
         .collect()
 }
 
-fn parse_memory_target_characters(    value: Option<&serde_json::Value>,
+fn parse_memory_target_characters(
+    value: Option<&serde_json::Value>,
     characters: &[CharacterDefinition],
     session: &SessionSnapshot,
 ) -> Vec<String> {
@@ -1111,28 +721,6 @@ fn unique_strings(values: Vec<String>) -> Vec<String> {
         result.push(trimmed);
     }
     result
-}
-
-fn slugify_scene_id(value: &str) -> String {
-    let mut normalized = value
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() {
-                character.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>();
-    while normalized.contains("--") {
-        normalized = normalized.replace("--", "-");
-    }
-    let normalized = normalized.trim_matches('-').to_string();
-    if normalized.is_empty() {
-        "scene-switch".to_string()
-    } else {
-        normalized
-    }
 }
 
 #[cfg(test)]

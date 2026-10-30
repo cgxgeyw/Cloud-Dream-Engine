@@ -1,35 +1,11 @@
-use crate::models::mcp_tool::{is_builtin_mcp_tool_id, McpToolDefinition, MCP_TOOL_SCHEDULE_NOTIFICATION_ID};
-use crate::models::session::{InventoryItem, SessionSnapshot};
+use crate::models::mcp_tool::{
+    is_builtin_mcp_tool_id, McpToolDefinition, MCP_TOOL_SCHEDULE_NOTIFICATION_ID,
+};
+use crate::models::session::SessionSnapshot;
 use crate::models::world::WorldDefinition;
 use crate::services::llm::client::{ChatRequest, ChatToolDefinition};
 use crate::services::notifications::notification_tool_definition;
 use std::collections::BTreeSet;
-
-pub(crate) fn build_director_inventory_records(items: &[InventoryItem]) -> Vec<serde_json::Value> {
-    // 对齐角色侧瘦身：删内部 UUID(item_id/owner_id)；保留主控决策需要的
-    // name/category/quantity/owner_type/visibility；description/tags/disclosed_to 空值不发。
-    items
-        .iter()
-        .map(|item| {
-            let mut record = serde_json::Map::new();
-            record.insert("name".to_string(), serde_json::json!(item.name));
-            record.insert("category".to_string(), serde_json::json!(item.category));
-            record.insert("quantity".to_string(), serde_json::json!(item.quantity));
-            record.insert("owner_type".to_string(), serde_json::json!(item.owner_type));
-            record.insert("visibility".to_string(), serde_json::json!(item.visibility));
-            if !item.description.trim().is_empty() {
-                record.insert("description".to_string(), serde_json::json!(item.description));
-            }
-            if !item.tags.is_empty() {
-                record.insert("tags".to_string(), serde_json::json!(item.tags));
-            }
-            if !item.disclosed_to.is_empty() {
-                record.insert("disclosed_to".to_string(), serde_json::json!(item.disclosed_to));
-            }
-            serde_json::Value::Object(record)
-        })
-        .collect()
-}
 
 pub(crate) fn extract_first_balanced_json_segment(raw: &str) -> Option<String> {
     let start_index = raw
@@ -150,24 +126,28 @@ pub(crate) fn build_director_json_repair_request(
         Err(error) => error.to_string(),
     };
     let mut request = previous_request.clone();
-    request.messages.push(crate::services::llm::client::ChatMessage {
-        role: "assistant".to_string(),
-        content: serde_json::Value::String(previous_output.to_string()),
-        reasoning_content: None,
-        speaker: None,
-        tool_call_id: None,
-        tool_calls: None,
-        metadata: Some(serde_json::json!({ "json_repair": true })),
-    });
-    request.messages.push(crate::services::llm::client::ChatMessage {
-        role: "user".to_string(),
-        content: serde_json::Value::String(build_director_json_repair_feedback(&parse_error)),
-        reasoning_content: None,
-        speaker: None,
-        tool_call_id: None,
-        tool_calls: None,
-        metadata: Some(serde_json::json!({ "json_repair": true })),
-    });
+    request
+        .messages
+        .push(crate::services::llm::client::ChatMessage {
+            role: "assistant".to_string(),
+            content: serde_json::Value::String(previous_output.to_string()),
+            reasoning_content: None,
+            speaker: None,
+            tool_call_id: None,
+            tool_calls: None,
+            metadata: Some(serde_json::json!({ "json_repair": true })),
+        });
+    request
+        .messages
+        .push(crate::services::llm::client::ChatMessage {
+            role: "user".to_string(),
+            content: serde_json::Value::String(build_director_json_repair_feedback(&parse_error)),
+            reasoning_content: None,
+            speaker: None,
+            tool_call_id: None,
+            tool_calls: None,
+            metadata: Some(serde_json::json!({ "json_repair": true })),
+        });
     request
 }
 
@@ -275,7 +255,10 @@ pub(crate) fn complete_truncated_json(raw: &str) -> String {
     completed
 }
 
-pub(crate) fn arg_string(arguments: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<String> {
+pub(crate) fn arg_string(
+    arguments: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Option<String> {
     arguments
         .get(key)
         .and_then(|value| value.as_str())
@@ -315,8 +298,19 @@ pub(crate) fn looks_like_director_authored_speech(line: &str) -> bool {
         return true;
     }
     [
-        "said", "says", "asked", "answered", "replied", "spoke", "opened", "blurted",
-        "鎺ヤ护", "鍑哄彞", "绛旀洶", "鍚熷嚭", "蹇靛嚭",
+        "said",
+        "says",
+        "asked",
+        "answered",
+        "replied",
+        "spoke",
+        "opened",
+        "blurted",
+        "鎺ヤ护",
+        "鍑哄彞",
+        "绛旀洶",
+        "鍚熷嚭",
+        "蹇靛嚭",
     ]
     .iter()
     .any(|marker| trimmed.contains(marker))
@@ -379,57 +373,9 @@ pub(crate) fn parse_next_scene_tags(
     Vec::new()
 }
 
-pub(crate) fn parse_next_time_label(
+pub(crate) fn parse_character_visual_directives(
     value: Option<&serde_json::Value>,
-    session: &SessionSnapshot,
-    world: &WorldDefinition,
-    fallback: &str,
-) -> String {
-    let Some(candidate) = normalize_llm_text(value) else {
-        return fallback.to_string();
-    };
-    let time_config = world.time_config.as_object();
-    let mode = time_config
-        .and_then(|config| config.get("mode"))
-        .and_then(|value| value.as_str())
-        .unwrap_or("labels");
-    if mode == "24h" {
-        if parse_clock_minutes(&candidate).is_some() {
-            return candidate;
-        }
-        return fallback.to_string();
-    }
-    let labels = time_config
-        .and_then(|config| config.get("labels"))
-        .and_then(|value| value.as_array())
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| normalize_llm_text(Some(item)))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    if labels.is_empty() {
-        return candidate;
-    }
-    if candidate == session.time_label || labels.iter().any(|item| item == &candidate) {
-        candidate
-    } else {
-        fallback.to_string()
-    }
-}
-
-pub(crate) fn parse_clock_minutes(value: &str) -> Option<i32> {
-    let (hour, minute) = value.split_once(':')?;
-    let hour = hour.parse::<i32>().ok()?;
-    let minute = minute.parse::<i32>().ok()?;
-    if !(0..=23).contains(&hour) || !(0..=59).contains(&minute) {
-        return None;
-    }
-    Some(hour * 60 + minute)
-}
-
-pub(crate) fn parse_character_visual_directives(value: Option<&serde_json::Value>) -> Vec<serde_json::Value> {
+) -> Vec<serde_json::Value> {
     let Some(items) = value.and_then(|value| value.as_array()) else {
         return Vec::new();
     };
@@ -507,7 +453,9 @@ pub(crate) fn parse_switch_character_proposal(
     }))
 }
 
-pub(crate) fn collect_generated_character_items(parsed: &serde_json::Value) -> Vec<serde_json::Value> {
+pub(crate) fn collect_generated_character_items(
+    parsed: &serde_json::Value,
+) -> Vec<serde_json::Value> {
     let mut items = Vec::new();
     if let Some(top) = parsed
         .get("generated_characters")
@@ -628,7 +576,9 @@ pub(crate) fn build_character_tool_capabilities(
         .into_iter()
         .collect::<BTreeSet<_>>();
     let mut tools = Vec::new();
-    if let Some(tool) = crate::commands::knowledge::tool_capability(world) { tools.push(tool); }
+    if let Some(tool) = crate::commands::knowledge::tool_capability(world) {
+        tools.push(tool);
+    }
     if allowed.contains(MCP_TOOL_SCHEDULE_NOTIFICATION_ID) {
         tools.push(notification_tool_definition());
     }
@@ -719,6 +669,7 @@ pub(crate) fn is_builtin_tool_name(tool_name: &str) -> bool {
             | "change_scene"
             | "switch_player_character"
             | "generate_image"
+            | "request_player_interaction"
             | "schedule_notification"
     )
 }

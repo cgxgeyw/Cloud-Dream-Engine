@@ -13,16 +13,30 @@ use serde_json::Value;
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorldEvent {
     SessionStarted,
-    PlayerMessage { content: String },
-    GameAction { handler: String, input: Value },
-    AgentAction { handler: String, input: Value },
-    EndTurn { handler: String, input: Value },
+    PlayerMessage {
+        content: String,
+    },
+    GameAction {
+        handler: String,
+        input: Value,
+    },
+    AgentAction {
+        handler: String,
+        input: Value,
+    },
+    EndTurn {
+        handler: String,
+        input: Value,
+    },
     InteractionAnswered {
         message_id: String,
         interaction_id: String,
         answer: Value,
     },
-    ToolResult { tool_call_id: String, result: Value },
+    ToolResult {
+        tool_call_id: String,
+        result: Value,
+    },
 }
 
 impl WorldEvent {
@@ -84,13 +98,23 @@ impl WorldEventResult {
     ) -> Self {
         let status = WorkflowStatus {
             phase: transition.phase.clone().unwrap_or_else(|| {
-                if transition.game_over { "over".to_string() } else { "active".to_string() }
+                if transition.game_over {
+                    "over".to_string()
+                } else {
+                    "active".to_string()
+                }
             }),
             active_actor: transition.next_actor.clone(),
             waiting_for: transition.next_actor.clone(),
             terminal: transition.game_over,
         };
-        Self { event, result, transition, status, snapshot: None }
+        Self {
+            event,
+            result,
+            transition,
+            status,
+            snapshot: None,
+        }
     }
 }
 
@@ -105,7 +129,10 @@ mod tests {
             input: serde_json::json!({}),
         };
         assert_eq!(event.actor(), "player");
-        assert_eq!(event.handler_input().map(|(name, _)| name), Some("game.endTurn"));
+        assert_eq!(
+            event.handler_input().map(|(name, _)| name),
+            Some("game.endTurn")
+        );
         assert_eq!(serde_json::to_value(event).unwrap()["type"], "end_turn");
     }
 }

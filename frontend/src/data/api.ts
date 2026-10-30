@@ -11,13 +11,12 @@ import type {
   // Shared types from types.ts
   WorldResponse, WorldOpeningMessage, WorldUpsertRequest,
   CharacterResponse, CharacterTemplateResponse, CharacterCreateFromTemplateRequest,
-  ChatMessage, ChatMessageResponse,
-  SessionSnapshot, SessionSnapshotResponse, SessionMapNode, SessionMapEdge,
-  InventoryItem, SceneRuntime, AssetSelection, CharacterVisualState, SessionState,
-  SessionCreateRequest, PlayerActionMode, PlayerActionRequest, RetryFailedLlmStepRequest,
-  SwitchCharacterProposalRequest, SwitchPlayerCharacterRequest,
+  SessionSnapshotResponse, SessionMapNode, SessionMapEdge,
+  SceneRuntime, AssetSelection, CharacterVisualState, SessionState,
+  SessionCreateRequest, PlayerActionRequest, RetryFailedLlmStepRequest,
+  SwitchPlayerCharacterRequest,
   SaveResponse, ModelConfigResponse,
-  ImageModelTestRequest, EmbeddingModelFileStatus, EmbeddingModelStatus,
+  ImageModelTestRequest, EmbeddingModelStatus,
   SettingsResponse, SettingsUpdateRequest, PluginResponse,
   McpToolResponse, McpToolUpsertRequest,
   McpServerConfig, McpServerUpsertRequest, McpServerProbeResult,
@@ -43,7 +42,7 @@ export type {
   CharacterResponse, CharacterTemplateResponse, CharacterCreateFromTemplateRequest,
   ChatMessage, ChatMessageResponse,
   SessionSnapshot, SessionSnapshotResponse, SessionMapNode, SessionMapEdge,
-  InventoryItem, SceneRuntime, AssetSelection, CharacterVisualState, SessionState,
+  SceneRuntime, AssetSelection, CharacterVisualState, SessionState,
   SessionCreateRequest, PlayerActionMode, PlayerActionRequest, RetryFailedLlmStepRequest,
   SwitchCharacterProposalRequest, SwitchPlayerCharacterRequest,
   SaveResponse, ModelConfigResponse,
@@ -69,7 +68,6 @@ export type SessionMapNodeResponse = SessionMapNode;
 export type SessionMapEdgeResponse = SessionMapEdge;
 export type CharacterVisualStateResponse = CharacterVisualState;
 export type AssetSelectionResponse = AssetSelection;
-export type InventoryItemResponse = InventoryItem;
 export type RuntimeAttributeItemResponse = RuntimeAttributeItem;
 export type RuntimeAttributeGroupResponse = RuntimeAttributeGroup;
 export type CharacterUpsertRequest = {
@@ -99,7 +97,7 @@ export type ModelEndpointDiscoveryResponse = { ok: boolean; detail: string; mode
 export type ModelTestResponse = { ok: boolean; detail: string; debug_lines: string[]; };
 export type PromptTracePreviewResponse = { speaker?: string | null; prompt_trace: Record<string, unknown>; };
 export type SpeakerSelectionPreviewResponse = { speaker: string; debug_lines: string[]; };
-export type WorldTemplateResponse = { name: string; genre: string; background_prompt: string; opening_scene: string; summary: string; time_system: string; map_nodes: import("./types").WorldMapTopology; triggers: string[]; custom_tabs: Record<string, string>; time_config: Record<string, unknown>; director_config: Record<string, unknown>; ui_theme_config: Record<string, unknown>; opening_messages: WorldOpeningMessage[]; opening_character_names: string[]; player_character_name?: string | null; characters: CharacterTemplateResponse[]; };
+export type WorldTemplateResponse = { name: string; genre: string; background_prompt: string; opening_scene: string; summary: string; time_system: string; map_nodes: import("./types").WorldMapTopology; custom_tabs: Record<string, string>; time_config: Record<string, unknown>; director_config: Record<string, unknown>; ui_theme_config: Record<string, unknown>; opening_messages: WorldOpeningMessage[]; opening_character_names: string[]; player_character_name?: string | null; characters: CharacterTemplateResponse[]; };
 const DEFAULT_API_BASE_URL =
   typeof window !== "undefined" && /^https?:$/i.test(window.location.protocol)
     ? window.location.origin
@@ -189,8 +187,11 @@ export function fetchWorlds() {
   return fetchJson<WorldResponse[]>("/api/worlds");
 }
 
-export function fetchAttributeSchemas(scope?: string) {
-  const suffix = scope ? `?scope=${encodeURIComponent(scope)}` : "";
+export function fetchAttributeSchemas(scope?: string, worldId?: string) {
+  const search = new URLSearchParams();
+  if (scope) search.set("scope", scope);
+  if (worldId) search.set("world_id", worldId);
+  const suffix = search.size ? `?${search}` : "";
   return fetchJson<AttributeSchemaResponse[]>(`/api/attributes/schemas${suffix}`);
 }
 
@@ -231,12 +232,17 @@ export function fetchWorldCharacters(worldId: string) {
   return fetchJson<CharacterResponse[]>(`/api/worlds/${worldId}/characters`);
 }
 
-export function fetchWorldOpeningPromptPreview(worldId: string, params?: { playerCharacterId?: string | null; playerInput?: string }) {
+export function fetchWorldOpeningPromptPreview(worldId: string, params?: { playerCharacterId?: string | null; playerInput?: string; directorConfig?: Record<string, unknown> }) {
   const search = new URLSearchParams();
   if (params?.playerCharacterId) search.set("player_character_id", params.playerCharacterId);
   if (params?.playerInput) search.set("player_input", params.playerInput);
+  if (params?.directorConfig) search.set("director_config", JSON.stringify(params.directorConfig));
   const suffix = search.size > 0 ? `?${search.toString()}` : "";
   return fetchJson<WorldOpeningPromptPreviewResponse>(`/api/worlds/${worldId}/opening-prompt-preview${suffix}`);
+}
+
+export function fetchDefaultDirectorResponseContract(): Promise<string> {
+  unsupportedInHttpMode("fetchDefaultDirectorResponseContract");
 }
 
 function unsupportedInHttpMode(name: string): never {

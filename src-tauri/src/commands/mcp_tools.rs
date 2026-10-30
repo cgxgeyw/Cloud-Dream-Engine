@@ -48,8 +48,7 @@ pub async fn export_mcp_tools(
     let db = state.db.lock().await;
     let repo = crate::db::repositories::mcp_tool_repo::McpToolRepository::new(db.conn());
     let all = repo.list()?;
-    let wanted: std::collections::BTreeSet<&str> =
-        ids.iter().map(|item| item.trim()).collect();
+    let wanted: std::collections::BTreeSet<&str> = ids.iter().map(|item| item.trim()).collect();
     let tools: Vec<McpToolDefinition> = all
         .into_iter()
         .filter(|tool| wanted.contains(tool.id.as_str()))

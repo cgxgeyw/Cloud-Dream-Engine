@@ -4,4 +4,4 @@ pub mod openai;
 
 pub mod param_support;
 
-pub use client::{LlmClient, normalize_provider};
+pub use client::{normalize_provider, LlmClient};

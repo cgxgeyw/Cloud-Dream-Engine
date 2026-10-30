@@ -1,46 +1,16 @@
 // Extracted from WorldEditorPage.tsx — types, defaults, pure helpers, FoldableEditorSection
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
-import { useNavigate, useParams } from "react-router-dom";
-import { useId } from "react";
-import { useLayoutEffect, useRef } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import {
   assetUrl,
-  compileWorldUiDocument,
-  createWorld,
-  deleteWorld,
-  downloadWorldPackage,
-  fetchModels,
-  fetchMcpTools,
-  fetchWorld,
-  fetchWorldCharacters,
-  isTauriEnvironment,
-  uploadFile,
-  updateWorld,
-  validateWorldUiBundle,
-  verifyWorldPackageUiCompatibility,
   type CharacterResponse,
-  type ModelConfigResponse,
-  type McpToolResponse,
   type WorldUiBundleValidationResult,
   type WorldUiCompileResult,
   type WorldUiCompatibilityReport,
-  type WorldCreateRequest,
   type WorldMapTopology,
   type WorldOpeningMessage,
   type WorldResponse,
 } from "../data/apiAdapter";
-import { AttributePanel } from "../components/AttributePanel";
-import { GenerationParamsEditor } from "../components/GenerationParamsEditor";
-import { ConfirmDialog } from "../components/ModalDialog";
 import type { GenerationParams } from "../data/types";
-import { useIsMobile } from "../components/ResponsiveLayout";
-import { useSectionParam } from "../hooks/useSectionParam";
-import { useWorldPromptPreview } from "../hooks/useWorldPromptPreview";
-import { GameUiSandboxPreview } from "../components/GameUiSandboxPreview";
-import { PromptSendPreviewCard } from "../components/PromptTraceView";
-import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
-import { showToast } from "../components/Toast";
-import { ArrowLeft, Save, X } from "lucide-react";
 import { defaultGameUiFile, normalizeAssetConfig, normalizeWorldUiEnvelope } from "../data/gameUi";
 
 
@@ -48,14 +18,14 @@ export const fixedTabs = [
   { id: "basic", label: "基础信息" },
   { id: "background", label: "世界背景" },
   { id: "opening", label: "开场配置" },
-  { id: "time", label: "时间系统" },
   { id: "map", label: "地图" },
-  { id: "customAttributes", label: "自定义属性" },
   { id: "runtimeContext", label: "运行时上下文" },
   { id: "director", label: "世界主控" },
   { id: "promptPreview", label: "Prompt 预览" },
   { id: "style", label: "界面风格" },
+  { id: "returnRules", label: "返回处理规则" },
   { id: "configPreview", label: "配置预览" },
+  { id: "customAttributes", label: "+ 自定义属性" },
 ] as const;
 
 export type FixedTabId = (typeof fixedTabs)[number]["id"];
@@ -102,8 +72,13 @@ export type DirectorConfig = {
   character_memory_candidate_limit: number;
   character_memory_semantic_weight: number;
   runtime_context_prompt: string;
+  /** 主控返回格式：非空时完全替代框架内置返回契约。 */
+  response_contract_prompt: string;
+  /** 插值管理：世界级自定义提示词变量（作者可在提示词输入框用 {{key}} 引用）。 */
+  prompt_variables: Record<string, string>;
   world_director_prompt: string;
-  prompt_presets: PromptPreset[];
+  director_prompt_order: string[];
+  character_prompt_order: string[];
   return_processing_rules: ReturnProcessingRule[];
   allowed_mcp_tool_ids: string[];
   /** 世界级生成参数（第 8 项）。留空的项交给应用默认，玩家还能在存档里再覆盖。 */
@@ -120,14 +95,20 @@ export const interactionKindOptions: Array<{ value: InteractionKind; label: stri
   { value: "slider", label: "滑条" },
 ];
 
-export type PromptPreset = {
-  id: string;
-  name: string;
-  content: string;
-  scope: "director" | "character" | "both";
-  enabled: boolean;
-  order: number;
-};
+export const directorPromptSections = [
+  ["world_background", "世界背景信息"], ["oag_context", "OAG 注入信息"],
+  ["director_rules", "世界主控预设/规则"], ["world_runtime_context", "世界运行时上下文"], ["scene_characters", "角色列表与场景状态"],
+  ["chat_history", "对话历史"], ["player_input", "当前玩家输入"],
+  ["response_contract", "返回格式与状态更新规则"], ["tool_loop_context", "工具调用结果"],
+] as const;
+
+export const characterPromptSections = [
+  ["world_background", "世界背景信息"], ["oag_context", "OAG/记忆检索注入信息"], ["character_background", "角色长期背景"],
+  ["character_rules", "角色设定与行为规则"], ["character_attributes", "角色标签与自定义属性"], ["world_runtime_context", "世界运行时上下文"],
+  ["character_runtime_context", "角色运行时上下文"], ["visible_characters", "角色列表与场景状态"],
+  ["chat_history", "对话历史"], ["narration_prompt", "旁白提示词"], ["player_input", "当前玩家输入"],
+  ["response_contract", "角色返回格式"], ["fact_memory_rules", "事实与记忆提取规则"],
+] as const;
 
 export type ReturnProcessingRule = {
   id: string;
@@ -150,6 +131,14 @@ export type TimeConfig = {
   start_label: string;
   start_time: string;
 };
+
+function normalizePromptOrder(value: unknown, defaults: readonly string[]): string[] {
+  const requested = Array.isArray(value)
+    ? value.filter((id): id is string => typeof id === "string" && id !== "tool_list")
+    : [];
+  const unique = Array.from(new Set(requested));
+  return [...unique, ...defaults.filter((id) => !unique.includes(id))];
+}
 
 export type UiThemeConfig = {
   runtime_version: 2 | 3;
@@ -190,8 +179,11 @@ export const defaultDirectorConfig: DirectorConfig = {
   character_memory_candidate_limit: 200,
   character_memory_semantic_weight: 0.65,
   runtime_context_prompt: "",
+  response_contract_prompt: "",
+  prompt_variables: {},
   world_director_prompt: defaultWorldDirectorPrompt,
-  prompt_presets: [],
+  director_prompt_order: directorPromptSections.map(([id]) => id),
+  character_prompt_order: characterPromptSections.map(([id]) => id),
   return_processing_rules: [],
   allowed_mcp_tool_ids: [],
   generation_params: {},
@@ -356,19 +348,6 @@ export function resolvePreviewBackgroundAsset(config: UiThemeConfig, sceneName: 
   return config.local_background_assets[0] ?? "";
 }
 
-export function countGroupedAssets(groups: Record<string, string[]>): number {
-  return Object.values(groups).reduce((total, items) => total + items.length, 0);
-}
-
-export function composeDirectorRuntimeSystemPrompt(basePrompt: string, extraPrompt: string): string {
-  const base = basePrompt.trim();
-  const extra = extraPrompt.trim();
-  if (!extra) {
-    return base;
-  }
-  return [base, "以下为世界包追加的运行时提示词：", extra].filter(Boolean).join("\n\n");
-}
-
 export function FoldableEditorSection({
   title,
   description,
@@ -477,19 +456,23 @@ export function normalizeDirectorConfig(raw: Record<string, unknown> | undefined
       typeof raw?.runtime_context_prompt === "string"
         ? raw.runtime_context_prompt
         : defaultDirectorConfig.runtime_context_prompt,
-    prompt_presets: Array.isArray(raw?.prompt_presets)
-      ? raw.prompt_presets.map((item, index) => {
-          const row = item as Record<string, unknown>;
-          return {
-            id: typeof row.id === "string" && row.id.trim() ? row.id : `preset-${index + 1}`,
-            name: typeof row.name === "string" && row.name.trim() ? row.name : "未命名预设",
-            content: typeof row.content === "string" ? row.content : "",
-            scope: normalizeScope(row.scope),
-            enabled: typeof row.enabled === "boolean" ? row.enabled : true,
-            order: typeof row.order === "number" ? row.order : index + 1,
-          };
-        })
-      : defaultDirectorConfig.prompt_presets,
+    response_contract_prompt:
+      typeof raw?.response_contract_prompt === "string"
+        ? raw.response_contract_prompt
+        : defaultDirectorConfig.response_contract_prompt,
+    prompt_variables:
+      raw?.prompt_variables && typeof raw.prompt_variables === "object" && !Array.isArray(raw.prompt_variables)
+        ? Object.fromEntries(
+            Object.entries(raw.prompt_variables as Record<string, unknown>)
+              .map(([key, value]) => [
+                key.trim(),
+                typeof value === "string" ? value : String(value),
+              ])
+              .filter(([key]) => Boolean(key)),
+          )
+        : defaultDirectorConfig.prompt_variables,
+    director_prompt_order: normalizePromptOrder(raw?.director_prompt_order, directorPromptSections.map(([id]) => id)),
+    character_prompt_order: normalizePromptOrder(raw?.character_prompt_order, characterPromptSections.map(([id]) => id)),
     return_processing_rules: Array.isArray(raw?.return_processing_rules)
       ? raw.return_processing_rules.map((item, index) => {
           const row = item as Record<string, unknown>;
@@ -700,7 +683,6 @@ export function createNewWorldDraft(): WorldResponse {
     summary: "",
     time_system: "",
     map_nodes: defaultMapTopology(),
-    triggers: [],
     time_config: { ...defaultTimeConfig },
     director_config: { ...defaultDirectorConfig },
     ui_theme_config: buildUiThemeEnvelope(defaultUiThemeConfig),
@@ -710,20 +692,6 @@ export function createNewWorldDraft(): WorldResponse {
     opening_character_ids: [],
     player_character_id: null,
   };
-}
-
-export function buildTimeSystemSummary(config: TimeConfig): string {
-  if (config.mode === "24h") {
-    return `24 小时制，从 ${config.start_time} 开始，由世界主控按剧情推进时间。`;
-  }
-
-  const slotSummary = config.slots
-    .filter((slot) => slot.label.trim() || slot.clock.trim())
-    .map((slot) => (slot.clock.trim() ? `${slot.label.trim()}（${slot.clock.trim()}）` : slot.label.trim()))
-    .filter(Boolean)
-    .join("、");
-  const startSummary = config.start_label.trim() ? `起始时段 ${config.start_label.trim()}` : `起始时间 ${config.start_time}`;
-  return `标签序列时间系统，${startSummary}，时段按列表顺序推进。可用时段：${slotSummary || "未配置"}`;
 }
 
 export function buildThemePreviewStyle(config: UiThemeConfig, openingScene: string): CSSProperties & Record<string, string> {

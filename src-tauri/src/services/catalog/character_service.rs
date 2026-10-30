@@ -74,9 +74,7 @@ impl CharacterService {
         let world_repo = WorldRepository::new(conn);
         let session_repo = SessionRepository::new(conn);
 
-        let character = repo
-            .get(id)?
-            .ok_or_else(|| "角色不存在".to_string())?;
+        let character = repo.get(id)?.ok_or_else(|| "角色不存在".to_string())?;
         let world = world_repo
             .get(&character.world_id)?
             .ok_or_else(|| "世界不存在".to_string())?;
@@ -115,7 +113,6 @@ impl CharacterService {
                 summary: None,
                 time_system: None,
                 map_nodes: None,
-                triggers: None,
                 time_config: None,
                 director_config: None,
                 ui_theme_config: None,

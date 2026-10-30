@@ -557,11 +557,12 @@ impl SessionOrchestrator {
             .get(session_id)?
             .ok_or_else(|| "会话不存在".to_string())?;
         let world = resolve_world_for_session(conn, &session)?;
-        let character_names = crate::db::repositories::character_repo::CharacterRepository::new(conn)
-            .list_by_world(&world.id)?
-            .into_iter()
-            .map(|character| (character.id, character.name))
-            .collect::<HashMap<_, _>>();
+        let character_names =
+            crate::db::repositories::character_repo::CharacterRepository::new(conn)
+                .list_by_world(&world.id)?
+                .into_iter()
+                .map(|character| (character.id, character.name))
+                .collect::<HashMap<_, _>>();
         let attribute_repo =
             crate::db::repositories::attribute_repo::AttributeRepository::new(conn);
         let declared_attribute_keys = world
@@ -584,13 +585,18 @@ impl SessionOrchestrator {
             .list_schemas(None)?
             .into_iter()
             .filter(|schema| {
-                declared_attribute_keys.contains(&(schema.scope.clone(), schema.key.clone()))
-                    || schema
-                        .display_policy
-                        .get("applicable_world_ids")
-                        .and_then(|value| value.as_array())
-                        .map(|ids| ids.iter().any(|id| id.as_str() == Some(world.id.as_str())))
-                        .unwrap_or(false)
+                schema.world_id.as_deref() == Some(world.id.as_str())
+                    || (schema.world_id.is_none()
+                        && (declared_attribute_keys
+                            .contains(&(schema.scope.clone(), schema.key.clone()))
+                            || schema
+                                .display_policy
+                                .get("applicable_world_ids")
+                                .and_then(|value| value.as_array())
+                                .map(|ids| {
+                                    ids.iter().any(|id| id.as_str() == Some(world.id.as_str()))
+                                })
+                                .unwrap_or(false)))
             })
             .map(|schema| (schema.id.clone(), schema))
             .collect::<HashMap<_, _>>();
@@ -601,10 +607,15 @@ impl SessionOrchestrator {
             .into_iter()
             .filter(|value| value.owner_id.starts_with(&(session.id.clone() + ":")))
             .collect::<Vec<_>>();
-        let runtime_session_attributes = session_attributes
+        let mut runtime_session_attributes = session_attributes
             .iter()
             .filter_map(|value| build_runtime_attribute_item(value, &schema_map))
             .collect::<Vec<_>>();
+        runtime_session_attributes.sort_by_key(|item| {
+            schema_map
+                .get(&item.schema_id)
+                .map(|schema| (schema.sort_order, schema.key.clone()))
+        });
         let mut grouped_values = HashMap::<String, Vec<AttributeValue>>::new();
         for value in character_attributes {
             grouped_values
@@ -619,10 +630,15 @@ impl SessionOrchestrator {
                 .get(character_id)
                 .cloned()
                 .unwrap_or_else(|| character_id.to_string());
-            let items = values
+            let mut items = values
                 .iter()
                 .filter_map(|value| build_runtime_attribute_item(value, &schema_map))
                 .collect::<Vec<_>>();
+            items.sort_by_key(|item| {
+                schema_map
+                    .get(&item.schema_id)
+                    .map(|schema| (schema.sort_order, schema.key.clone()))
+            });
             runtime_character_groups.push(RuntimeAttributeGroup {
                 owner_type: "session_character".to_string(),
                 owner_id,
@@ -630,6 +646,7 @@ impl SessionOrchestrator {
                 items,
             });
         }
+        runtime_character_groups.sort_by(|left, right| left.owner_id.cmp(&right.owner_id));
         Ok(SessionRuntimeAttributesResponse {
             session_attributes: vec![RuntimeAttributeGroup {
                 owner_type: "session".to_string(),

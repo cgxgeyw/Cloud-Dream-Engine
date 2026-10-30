@@ -1,54 +1,19 @@
 // Extracted from useGameSession.ts (bag / option types)
 import {
-  useCallback,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import { useNavigate, useParams } from "react-router-dom";
-import { showToast } from "../components/Toast";
-import {
-  assetUrl,
-  branchSave,
-  fetchCharacter,
-  fetchSessionRuntimeAttributes,
-  fetchSaves,
-  fetchSession,
-  fetchWorld,
-  fetchWorlds,
-  fetchWorldCharacters,
-  isAndroidRuntime,
-  isTauriEnvironment,
-  onSessionSnapshot,
-  requestWorldPermissions,
-  retryFailedLlmStep,
-  streamPlayerAction,
-  switchPlayerCharacter,
-  toSessionWebSocketUrl,
   type CharacterResponse,
   type ChatMessageResponse,
-  type PlayerActionMode,
   type RetryFailedLlmStepRequest,
-  type RuntimeAttributeGroup,
   type RuntimeAttributeItem,
   type SaveResponse,
   type SessionRuntimeAttributesResponse,
   type SessionMapEdge,
   type SessionMapNode,
   type SessionSnapshotResponse,
-  type SwitchPlayerCharacterRequest,
   type WorldResponse,
-  answerInteraction,
 } from "../data/apiAdapter";
-import type { ContentPart, MessageInteraction } from "../data/types";
+import type { MessageInteraction } from "../data/types";
 import {
-  normalizeWorldUiEnvelope,
   parseGameUiDocument,
-  resolveUiFile,
-  resolveUiStylesheet,
   type WorldUiEnvelope,
 } from "../data/gameUi";
 import {
@@ -58,19 +23,7 @@ import {
   type SideTab,
   type SubmitActionOptions,
   type SwitchProposalView,
-  MESSAGE_KIND_RANK,
-  buildWorldThemeStyle,
-  copyTextToClipboard,
-  formatActionErrorMessage,
-  parseCharacterCreationMessage,
-  persistSeenCharacterCreationKeys,
-  readSeenCharacterCreationKeys,
-  resolvePlayerMessageSpeaker,
-  resolveRuntimeBackgroundAsset,
-  resolveStatusTabs,
 } from "./utils";
-
-const SCHEDULE_NOTIFICATION_TOOL_ID = "mcp-tool-schedule-notification";
 
 export interface GameSessionStateBag {
   session: SessionSnapshotResponse | null;

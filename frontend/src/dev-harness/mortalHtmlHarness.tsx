@@ -28,6 +28,9 @@ const baseSnapshot = {
   messages: [
     { message_id: 'director', role: 'system', content: '安排入门试炼', metadata: { action_type: 'director_trace', reasoning: '根据当前场景安排角色。'.repeat(25), trace_text: '安排入门试炼' } },
     { message_id: 'player', role: 'user', content: '观察山门。', metadata: { turn_index: 1 } },
+    { message_id: 'interaction', role: 'system', content: '选择路线', metadata: { action_type: 'world_interaction', message_kind: 'world_interaction', interaction: { interaction_id: 'interaction-1', kind: 'choice', prompt: '你准备走哪条路线？', config: { options: [{ id: 'ridge', label: '沿山脊前进' }, { id: 'stream', label: '顺溪谷绕行' }] }, status: 'pending' } } },
+    { message_id: 'confirm-interaction', role: 'system', content: '确认入门试炼', metadata: { action_type: 'world_interaction', message_kind: 'world_interaction', interaction: { interaction_id: 'interaction-2', kind: 'confirm', prompt: '是否开始入门试炼？', config: { confirm_label: '开始试炼', cancel_label: '暂不开始' }, status: 'pending' } } },
+    { message_id: 'slider-interaction', role: 'system', content: '选择行进速度', metadata: { action_type: 'world_interaction', message_kind: 'world_interaction', interaction: { interaction_id: 'interaction-3', kind: 'slider', prompt: '选择行进速度', config: { min: 1, max: 10, step: 1, default: 4 }, status: 'pending' } } },
     { message_id: 'npc', role: 'agent', speaker: '王护法', content: '随我来，莫要掉队。', metadata: { reasoning: '仔细观察这些新来的少年。'.repeat(25), narration: '晨雾渐散。', turn_index: 1, streaming: true } },
   ],
   ui_state: { submitting: false }, errors: { action_error: null },
@@ -55,6 +58,15 @@ function Harness() {
       if (testWindow.failSubmit) throw new Error('测试：模型服务不可用，请重试');
       setSnapshot(s => ({ ...s, messages: [...s.messages, { message_id: 'sent', role: 'user', content: action.options.content || '', metadata: { turn_index: 2 } } as never], draft_input: { ...s.draft_input, value: '' } }));
       return { accepted: true };
+    }
+    if (action.type === 'answer-interaction') {
+      setSnapshot(s => ({ ...s, messages: s.messages.map(message => {
+        if (message.message_id !== action.messageId) return message;
+        const metadata = { ...(message.metadata ?? {}) } as Record<string, unknown>;
+        const interaction = metadata.interaction as Record<string, unknown>;
+        metadata.interaction = { ...interaction, status: 'answered', answer: action.answer };
+        return { ...message, metadata } as never;
+      }) }));
     }
   };
   const payload = { platform, document: parseGameUiDocument(platform === 'mobile' ? mobile : desktop, platform).document, stylesheet: '', snapshot } as unknown as WorldFrameRuntimePayload;

@@ -5,17 +5,18 @@ use crate::models::interaction::{
     declared_director_interaction_kinds, validate_interaction_candidate, MessageInteraction,
     INTERACTION_STATUS_PENDING,
 };
-use crate::models::mcp_tool::{McpToolDefinition, MCP_TOOL_SCHEDULE_NOTIFICATION_ID, is_builtin_mcp_tool_id};
+use crate::models::mcp_tool::{
+    is_builtin_mcp_tool_id, McpToolDefinition, MCP_TOOL_SCHEDULE_NOTIFICATION_ID,
+};
 use crate::models::model_config::ModelConfig;
 use crate::models::session::{ChatMessage, MessageContent, SessionSnapshot};
 use crate::models::world::WorldDefinition;
 use crate::services::game_engine::prompting::{
-    assemble_prompt_values, build_prompt_call, llm_chat_messages_to_values, recent_messages_text, resolve_prompt_modules,
-    render_prompt_variables, resolve_runtime_context_prompt,
+    build_prompt_call, llm_chat_messages_to_values, render_prompt_variables_with_context,
+    resolve_prompt_section_order, resolve_runtime_context_prompt, DIRECTOR_PROMPT_SECTION_IDS,
 };
-use crate::services::llm::client::{
-    ChatRequest, ChatToolCall, ChatToolChoice, LlmClient,
-};
+use crate::services::game_engine::return_format;
+use crate::services::llm::client::{ChatRequest, ChatToolCall, ChatToolChoice, LlmClient};
 use crate::services::map_topology::extract_scene_names;
 use crate::services::notifications::{
     notification_tool_definition, pending_notification_from_tool_call, NotificationScheduler,
@@ -26,6 +27,49 @@ use std::collections::BTreeSet;
 mod speaker_selection;
 
 use self::speaker_selection::parse_planned_speakers;
+
+/// response_contract 区块的展示标签；内置契约文本与 section 组装共用。
+pub const DIRECTOR_RESPONSE_CONTRACT_LABEL: &str = "返回格式与状态更新规则";
+
+/// 框架内置的导演返回契约对象（从 return_format 单一事实源生成）。
+/// 自定义契约为空时发送此默认值；编辑器"填入内置契约"按钮也从这里取文本。
+pub fn default_director_response_contract() -> serde_json::Value {
+    let core_fields = return_format::director_core_field_ids();
+    let optional_fields = return_format::director_optional_changed_field_ids();
+    let field_guide = return_format::director_field_guide();
+    serde_json::json!({
+        "required_style": "仅返回 JSON 对象",
+        "return_policy": "仅返回本回合发生变化的字段",
+        "core_fields": core_fields,
+        "optional_fields_when_changed": optional_fields,
+        "how_to_fill": "只返回一个 JSON 对象。每回合都必须包含 planned_speakers（即使为空）。只有字段在本回合确实适用或发生变化时才返回；未变化的字段必须省略，不要把当前状态原样回传。不要重复返回 basic_setting、current_state 或 chat_history。场景切换、在场角色名单、新建角色、切换玩家视角和背景图生成不要写成 JSON 字段，请通过 change_scene / switch_player_character / generate_image 工具调用完成；向玩家发起选择、确认等交互时使用 request_player_interaction 工具。各字段的含义和填写时机见 field_guide。",
+        "field_guide": field_guide,
+        "runtime_update_format": return_format::director_runtime_update_format(),
+        "forbidden_fields": return_format::DIRECTOR_FORBIDDEN_FIELDS,
+        "notes": [
+            "省略未变化字段。",
+            "不要重建完整会话状态。",
+            "只有确实需要非对话场景更新时才返回 current_line。",
+            "使用 session_attribute_updates 按属性键更新会话/世界自定义属性；时间等状态也按此方式处理。",
+            "使用 character_attribute_updates 按角色名和准确属性键更新角色自定义属性。",
+            "动作产生明确代价或后果时，在同一回合更新所有受影响的属性，不要只用文字描述。",
+            "场景切换、在场名单和新建角色用 change_scene 工具；切换玩家视角用 switch_player_character 工具；背景图用 generate_image 工具，不要在 JSON 里返回对应字段。",
+            "需要玩家亲自选择或确认时调用 request_player_interaction 工具；调用后本回合立即结束，不要再安排角色发言。",
+            "planned_speakers 不要包含玩家角色；玩家默认在场。"
+        ]
+    })
+}
+
+/// 内置契约按实际发送形态输出的文本（含区块标签行）：
+/// 编辑器"填入内置契约"用它填入输入框，作者从真实默认值起步改写。
+pub fn default_director_response_contract_text() -> String {
+    format!(
+        "【{}】\n{}",
+        DIRECTOR_RESPONSE_CONTRACT_LABEL,
+        serde_json::to_string_pretty(&default_director_response_contract())
+            .unwrap_or_else(|_| "{}".to_string())
+    )
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct WorldDirectorService;
@@ -57,7 +101,9 @@ fn append_runtime_attributes(
                         serde_json::json!({
                             "key": item.key,
                             "label": item.label,
+                            "description": item.description,
                             "value_type": item.value_type,
+                            "enum_options": item.enum_options,
                             "value": item.value,
                         })
                     }).collect::<Vec<_>>()
@@ -74,14 +120,20 @@ fn append_runtime_attributes(
         .iter()
         .find(|group| group.owner_id == player_owner_id)
         .map(|group| {
-            group.items.iter().map(|item| {
-                serde_json::json!({
-                    "key": item.key,
-                    "label": item.label,
-                    "value_type": item.value_type,
-                    "value": item.value,
+            group
+                .items
+                .iter()
+                .map(|item| {
+                    serde_json::json!({
+                        "key": item.key,
+                        "label": item.label,
+                        "description": item.description,
+                        "value_type": item.value_type,
+                        "enum_options": item.enum_options,
+                        "value": item.value,
+                    })
                 })
-            }).collect::<Vec<_>>()
+                .collect::<Vec<_>>()
         })
         .unwrap_or_default();
     let Some(current_state) = payload
@@ -153,30 +205,6 @@ impl WorldDirectorService {
         Self
     }
 
-    #[allow(unreachable_code)]
-    pub fn build_runtime_prompt_call(
-        &self,
-        world: &WorldDefinition,
-        session: &SessionSnapshot,
-        characters: &[CharacterDefinition],
-        player_input: &str,
-        stage: &str,
-        tool_loop_messages: Option<Vec<serde_json::Value>>,
-    ) -> serde_json::Value {
-        self.build_runtime_prompt_call_with_mcp_tools(
-            world,
-            session,
-            characters,
-            player_input,
-            stage,
-            tool_loop_messages,
-            &[],
-            &std::collections::HashMap::new(),
-            None,
-            &[],
-        )
-    }
-
     pub fn build_runtime_prompt_call_with_mcp_tools(
         &self,
         world: &WorldDefinition,
@@ -190,6 +218,14 @@ impl WorldDirectorService {
         runtime_attributes: Option<&crate::models::session::SessionRuntimeAttributesResponse>,
         player_media: &[crate::models::session::ContentPart],
     ) -> serde_json::Value {
+        // 作者输入框的变量插值（内置 + 插值管理自定义 + 会话 KV）统一在此展开。
+        let custom_vars = crate::services::game_engine::prompting::load_prompt_custom_vars(world);
+        let prompt_ctx = crate::services::game_engine::prompting::PromptVariableContext {
+            world: Some(world),
+            session: Some(session),
+            kv_vars: Some(kv_vars),
+            custom_vars: Some(&custom_vars),
+        };
         let history_rounds = self.resolve_director_history_rounds(world);
         let chat_history = self.build_history_dialogue(
             &session.messages,
@@ -203,23 +239,57 @@ impl WorldDirectorService {
             player_input,
             chat_history.clone(),
             mcp_tools,
+            kv_vars,
         );
         if let Some(attributes) = runtime_attributes {
             append_runtime_attributes(&mut payload, session, attributes);
         }
-        let system_prompt = self.resolve_director_system_prompt(world);
-        let runtime_context_prompt = resolve_runtime_context_prompt(world);
-        let module_resolution = resolve_prompt_modules(
-            world,
-            "director",
-            &self.template_variables(world, session, ""),
-            kv_vars,
-            &recent_messages_text(&session.messages, 10),
-        );
+        let system_prompt = self.resolve_director_system_prompt(world, &prompt_ctx);
+        let runtime_context_prompt = resolve_runtime_context_prompt(world, Some(&prompt_ctx));
         let payload_text =
             serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string());
         let tool_loop_messages = tool_loop_messages.unwrap_or_default();
-        let mut prompt_call = build_prompt_call(
+        let ordered_messages = self.build_runtime_prompt_messages(
+            world,
+            &system_prompt,
+            &runtime_context_prompt,
+            &payload,
+            &tool_loop_messages,
+            player_media,
+        );
+        let mut modules = ordered_messages
+            .iter()
+            .filter_map(|message| {
+                let id = message.get("section_id")?.as_str()?;
+                Some(serde_json::json!({
+                    "id": id,
+                    "name": message.get("section_label").and_then(serde_json::Value::as_str).unwrap_or(id),
+                    "source": message.get("source").and_then(serde_json::Value::as_str).unwrap_or("runtime"),
+                    "content": message.get("content").cloned().unwrap_or(serde_json::Value::Null),
+                    "editable": message.get("editable").and_then(serde_json::Value::as_bool).unwrap_or(false),
+                    "locked": false,
+                    "sent": true
+                }))
+            })
+            .collect::<Vec<_>>();
+        if !tool_loop_messages.is_empty() {
+            modules.push(serde_json::json!({
+                "id": "tool_loop_context",
+                "name": "工具调用结果",
+                "source": "runtime.tool_loop",
+                "content": tool_loop_messages,
+                "editable": false,
+                "locked": false,
+                "sent": true
+            }));
+        }
+        let native_tools = tool_capabilities_to_chat_definitions(
+            payload["tool_data"]["available_tools"]
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+        );
+        let prompt_call = build_prompt_call(
             "prompt_call_v2",
             "director",
             "world_director",
@@ -227,44 +297,18 @@ impl WorldDirectorService {
             "Decide world state, tool calls and speaker order",
             &system_prompt,
             &payload_text,
-            self.build_runtime_prompt_messages(
-                &system_prompt,
-                &runtime_context_prompt,
-                &module_resolution.prefix,
-                &module_resolution.suffix,
-                &payload_text,
-                tool_loop_messages.clone(),
-                player_media,
-                &module_resolution.depth_insertions,
-            ),
-            self.build_director_prompt_modules(
-                &module_resolution.traces,
-                world,
-                session,
-                characters,
-                &payload,
-                &system_prompt,
-                &runtime_context_prompt,
-            ),
+            ordered_messages,
+            modules,
             payload
                 .get("response_contract")
                 .cloned()
                 .unwrap_or(serde_json::Value::Null),
             serde_json::json!({
                 "payload": payload,
+                "tools": native_tools,
                 "tool_loop_messages": tool_loop_messages,
             }),
         );
-        // 保留插入元数据用于 prompt trace；messages 本身已经是最终发送顺序。
-        if !module_resolution.depth_insertions.is_empty() {
-            prompt_call["depth_insertions"] = serde_json::json!(
-                module_resolution
-                    .depth_insertions
-                    .iter()
-                    .map(|(depth, content)| serde_json::json!({ "depth": depth, "content": content }))
-                    .collect::<Vec<_>>()
-            );
-        }
         prompt_call
     }
 
@@ -290,120 +334,346 @@ impl WorldDirectorService {
         prompt_call
     }
 
-    #[allow(unreachable_code)]
-    fn resolve_director_system_prompt(&self, world: &WorldDefinition) -> String {
-        render_prompt_variables(&world.director_runtime_system_prompt)
+    fn resolve_director_system_prompt(
+        &self,
+        world: &WorldDefinition,
+        prompt_ctx: &crate::services::game_engine::prompting::PromptVariableContext,
+    ) -> String {
+        render_prompt_variables_with_context(&world.director_runtime_system_prompt, prompt_ctx)
             .trim()
             .to_string()
     }
 
     fn build_runtime_prompt_messages(
         &self,
+        world: &WorldDefinition,
         system_prompt: &str,
         runtime_context_prompt: &str,
-        prefix_contents: &[String],
-        suffix_contents: &[String],
-        user_prompt: &str,
-        tool_loop_messages: Vec<serde_json::Value>,
+        payload: &serde_json::Value,
+        tool_loop_messages: &[serde_json::Value],
         player_media: &[crate::models::session::ContentPart],
-        depth_insertions: &[(usize, String)],
     ) -> Vec<serde_json::Value> {
-        // system_prefix 模块在核心系统提示之前，system_suffix 在其后。
-        let mut messages: Vec<serde_json::Value> = prefix_contents
-            .iter()
-            .map(|content| serde_json::json!({ "role": "system", "content": content }))
-            .collect();
-        messages.push(serde_json::json!({
-            "role": "system",
-            "content": system_prompt,
-        }));
-        for content in suffix_contents {
-            messages.push(serde_json::json!({
-                "role": "system",
-                "content": content,
-            }));
+        let basic = &payload["basic_setting"];
+        let state = &payload["current_state"];
+        let mut scene_characters = serde_json::Map::new();
+        if let Some(value) = basic.get("world_character_roster") {
+            scene_characters.insert("world_roster".to_string(), value.clone());
         }
-        if !runtime_context_prompt.trim().is_empty() {
-            messages.push(serde_json::json!({
-                "role": "system",
-                "content": runtime_context_prompt,
-            }));
+        if let Some(value) = state.get("current_scene_character_roster") {
+            scene_characters.insert("current_scene_roster".to_string(), value.clone());
         }
-        messages.push(
-            serde_json::json!({
-                "role": "user",
-                // 第 10 项：当前回合玩家附件以 multipart 随本条消息下发（仅当前回合）；
-                // 无附件时 content 保持字符串，行为与纯文本时代一致。
-                "content": crate::models::session::build_wire_content(user_prompt, player_media),
-            }),
+        if let Some(value) = state.get("location") {
+            scene_characters.insert("current_scene_location".to_string(), value.clone());
+        }
+        if let Some(value) = state.get("scene_tags") {
+            scene_characters.insert("scene_state_tags".to_string(), value.clone());
+        }
+        let mut background = serde_json::Map::new();
+        for key in ["world_name", "background_prompt"] {
+            if let Some(value) = basic.get(key) {
+                background.insert(key.to_string(), value.clone());
+            }
+        }
+        let mut sections =
+            std::collections::HashMap::<String, (String, String, serde_json::Value, bool)>::new();
+        sections.insert(
+            "world_background".into(),
+            (
+                "世界背景信息".into(),
+                "world".into(),
+                serde_json::Value::Object(background),
+                false,
+            ),
         );
-        messages.extend(tool_loop_messages);
-        assemble_prompt_values(messages, depth_insertions)
+        // OAG 占位：恒为 Null，发送时被跳过（见下方 order 循环）。OAG/记忆检索
+        // 注入计划重做，届时与角色路统一（见 orchestrator/character_prompt.rs
+        // 的 oag_context 注释）。
+        sections.insert(
+            "oag_context".into(),
+            (
+                "OAG 注入信息".into(),
+                "oag".into(),
+                serde_json::Value::Null,
+                false,
+            ),
+        );
+        sections.insert(
+            "director_rules".into(),
+            (
+                "世界主控预设/规则".into(),
+                "world.director_runtime_system_prompt".into(),
+                serde_json::json!(system_prompt),
+                true,
+            ),
+        );
+        sections.insert(
+            "world_runtime_context".into(),
+            (
+                "世界运行时上下文".into(),
+                "world.director_config.runtime_context_prompt".into(),
+                serde_json::json!(runtime_context_prompt),
+                true,
+            ),
+        );
+        sections.insert(
+            "scene_characters".into(),
+            (
+                "角色列表与场景状态".into(),
+                "runtime".into(),
+                serde_json::Value::Object(scene_characters),
+                false,
+            ),
+        );
+        sections.insert(
+            "chat_history".into(),
+            (
+                "对话历史".into(),
+                "runtime.chat_history".into(),
+                payload
+                    .get("chat_history")
+                    .cloned()
+                    .unwrap_or(serde_json::json!([])),
+                false,
+            ),
+        );
+        sections.insert(
+            "player_input".into(),
+            (
+                "当前玩家输入".into(),
+                "runtime.player_input".into(),
+                state
+                    .get("player_input")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+                false,
+            ),
+        );
+        sections.insert(
+            "response_contract".into(),
+            (
+                DIRECTOR_RESPONSE_CONTRACT_LABEL.to_string(),
+                "runtime.response_contract".into(),
+                payload
+                    .get("response_contract")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+                false,
+            ),
+        );
+        sections.insert(
+            "tool_loop_context".into(),
+            (
+                "工具调用结果".into(),
+                "runtime.tool_loop".into(),
+                serde_json::Value::Null,
+                false,
+            ),
+        );
+        let mut dynamic_ids = Vec::<String>::new();
+        if let Some(runtime_attributes) = state.get("runtime_attributes") {
+            if let Some(owner_group) = runtime_attributes.get("session") {
+                let groups = owner_group
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_else(|| vec![owner_group.clone()]);
+                for group in groups {
+                    if let Some(items) = group
+                        .get("attributes")
+                        .and_then(serde_json::Value::as_array)
+                    {
+                        for item in items {
+                            let Some(key) = item.get("key").and_then(serde_json::Value::as_str)
+                            else {
+                                continue;
+                            };
+                            let id = format!("world_attribute:{key}");
+                            let entry = sections.entry(id.clone()).or_insert_with(|| {
+                                (
+                                    "自定义属性".to_string(),
+                                    "runtime.world_attribute".into(),
+                                    serde_json::json!([]),
+                                    false,
+                                )
+                            });
+                            let values = entry
+                                .2
+                                .as_array_mut()
+                                .expect("attribute section stores values as an array");
+                            // key 必须随内容发给模型：返回契约要求按准确属性键写
+                            // session_attribute_updates，而解析端对未知 key 静默丢弃。
+                            values.push(serde_json::json!({
+                                "key": key,
+                                "description": item.get("description").cloned().unwrap_or_default(),
+                                "enum_options": item.get("enum_options").cloned().unwrap_or_else(|| serde_json::json!([])),
+                                "current_value": item.get("value").cloned().unwrap_or(serde_json::Value::Null),
+                            }));
+                            if !dynamic_ids.contains(&id) {
+                                dynamic_ids.push(id);
+                            }
+                        }
+                    }
+                }
+            }
+            for owner_group in [
+                runtime_attributes.get("player"),
+                runtime_attributes.get("characters"),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                let groups = owner_group
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_else(|| vec![owner_group.clone()]);
+                for group in groups {
+                    if let Some(items) = group
+                        .get("attributes")
+                        .and_then(serde_json::Value::as_array)
+                    {
+                        for item in items {
+                            let Some(key) = item.get("key").and_then(serde_json::Value::as_str)
+                            else {
+                                continue;
+                            };
+                            let id = format!("character_attribute:{key}");
+                            let entry = sections.entry(id.clone()).or_insert_with(|| {
+                                (
+                                    "自定义属性".to_string(),
+                                    "runtime.character_attribute".into(),
+                                    serde_json::json!([]),
+                                    false,
+                                )
+                            });
+                            entry.2.as_array_mut().expect("attribute section stores values as an array").push(serde_json::json!({
+                                "key": key,
+                                "description": item.get("description").cloned().unwrap_or_default(),
+                                "enum_options": item.get("enum_options").cloned().unwrap_or_else(|| serde_json::json!([])),
+                                "current_value": item.get("value").cloned().unwrap_or(serde_json::Value::Null),
+                            }));
+                            if !dynamic_ids.contains(&id) {
+                                dynamic_ids.push(id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let mut defaults = DIRECTOR_PROMPT_SECTION_IDS
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>();
+        defaults.extend(dynamic_ids);
+        let default_refs = defaults.iter().map(String::as_str).collect::<Vec<_>>();
+        let order = resolve_prompt_section_order(
+            &world.director_config,
+            "director_prompt_order",
+            &default_refs,
+        );
+        let mut messages = Vec::new();
+        for id in order {
+            let Some((label, source, value, _is_system)) = sections.get(&id) else {
+                continue;
+            };
+            if id == "tool_loop_context" {
+                messages.extend(tool_loop_messages.iter().cloned());
+                continue;
+            }
+            if id == "oag_context" {
+                continue;
+            }
+            let is_dynamic_attribute =
+                id.starts_with("world_attribute:") || id.starts_with("character_attribute:");
+            let content = if is_dynamic_attribute {
+                serde_json::to_string_pretty(value).unwrap_or_else(|_| "null".to_string())
+            } else if id == "director_rules"
+                || id == "world_runtime_context"
+                // 自定义返回契约是纯文本，直接发，不再包【标签】+JSON 壳。
+                || (id == "response_contract" && value.is_string())
+            {
+                let text = value.as_str().unwrap_or_default();
+                if text.trim().is_empty() {
+                    continue;
+                }
+                text.to_string()
+            } else {
+                format!(
+                    "【{label}】\n{}",
+                    serde_json::to_string_pretty(value).unwrap_or_else(|_| "null".to_string())
+                )
+            };
+            messages.push(serde_json::json!({
+                "role": if id == "player_input" { "user" } else { "system" },
+                "section_id": id,
+                "section_label": label,
+                "source": source,
+                "content": content,
+                "editable": id == "director_rules" || id == "world_runtime_context",
+            }));
+        }
+        if let Some(last) = messages.iter_mut().find(|item| {
+            item.get("section_id").and_then(serde_json::Value::as_str) == Some("player_input")
+        }) {
+            last["content"] = crate::models::session::build_wire_content(
+                state
+                    .get("player_input")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default(),
+                player_media,
+            );
+        }
+        // Unannotated tool exchange messages remain intact and in provider order.
+        let mut normalized = Vec::new();
+        for message in messages {
+            let mut value = message;
+            if value.get("section_id").is_some() {
+                value.as_object_mut().unwrap().remove("section_label");
+                value.as_object_mut().unwrap().remove("source");
+                value.as_object_mut().unwrap().remove("editable");
+            }
+            normalized.push(value);
+        }
+        normalized
     }
 
-    fn build_director_prompt_modules(
+    fn director_prompt_modules_from_messages(
         &self,
-        module_traces: &[serde_json::Value],
-        _world: &WorldDefinition,
-        _session: &SessionSnapshot,
-        _characters: &[CharacterDefinition],
-        payload: &serde_json::Value,
-        system_prompt: &str,
-        runtime_context_prompt: &str,
+        messages: &[crate::services::llm::client::ChatMessage],
     ) -> Vec<serde_json::Value> {
-        let mut modules = module_traces.to_vec();
-        modules.push(serde_json::json!({
-            "name": "world_director_prompt",
-            "source": "world.director_runtime_system_prompt",
-            "content": system_prompt,
-            "editable": true,
-            "sent": true
-        }));
-        if !runtime_context_prompt.trim().is_empty() {
-            modules.push(serde_json::json!({
-                "name": "runtime_context",
-                "source": "world.director_config.runtime_context_prompt",
-                "content": runtime_context_prompt,
-                "editable": true,
-                "sent": true
-            }));
-        }
-        modules.push(serde_json::json!({
-            "name": "basic_setting",
-            "source": "runtime_payload.basic_setting",
-            "content": serde_json::to_string_pretty(payload.get("basic_setting").unwrap_or(&serde_json::Value::Null)).unwrap_or_else(|_| "{}".to_string()),
-            "editable": false,
-            "sent": true
-        }));
-        modules.push(serde_json::json!({
-            "name": "current_state",
-            "source": "runtime_payload.current_state",
-            "content": serde_json::to_string_pretty(payload.get("current_state").unwrap_or(&serde_json::Value::Null)).unwrap_or_else(|_| "{}".to_string()),
-            "editable": false,
-            "sent": true
-        }));
-        modules.push(serde_json::json!({
-            "name": "chat_history",
-            "source": "runtime_payload.chat_history",
-            "content": serde_json::to_string_pretty(payload.get("chat_history").unwrap_or(&serde_json::Value::Null)).unwrap_or_else(|_| "[]".to_string()),
-            "editable": false,
-            "sent": true
-        }));
-        modules.push(serde_json::json!({
-            "name": "tool_data",
-            "source": "runtime_payload.tool_data",
-            "content": serde_json::to_string_pretty(payload.get("tool_data").unwrap_or(&serde_json::Value::Null)).unwrap_or_else(|_| "{}".to_string()),
-            "editable": false,
-            "sent": true
-        }));
-        modules.push(serde_json::json!({
-            "name": "response_contract",
-            "source": "runtime_payload.response_contract",
-            "content": serde_json::to_string_pretty(payload.get("response_contract").unwrap_or(&serde_json::Value::Null)).unwrap_or_else(|_| "{}".to_string()),
-            "editable": false,
-            "sent": true
-        }));
-        modules
+        messages
+            .iter()
+            .filter_map(|message| {
+                let id = message
+                    .metadata
+                    .as_ref()?
+                    .get("prompt_section_id")?
+                    .as_str()?;
+                let label = match id {
+                    "world_background" => "世界背景信息",
+                    "oag_context" => "OAG 注入信息",
+                    "director_rules" => "世界主控预设/规则",
+                    "scene_characters" => "角色列表与场景状态",
+                    "chat_history" => "对话历史",
+                    "player_input" => "当前玩家输入",
+                    "response_contract" => "返回格式与状态更新规则",
+                    "world_runtime_context" => "世界运行时上下文",
+                    _ if id.starts_with("world_attribute:")
+                        || id.starts_with("character_attribute:") =>
+                    {
+                        "自定义属性"
+                    }
+                    _ => return None,
+                };
+                Some(serde_json::json!({
+                    "id": id,
+                    "name": label,
+                    "source": "assembled_prompt_section",
+                    "content": message.content,
+                    "editable": id == "director_rules",
+                    "locked": false,
+                    "sent": true
+                }))
+            })
+            .collect()
     }
 
     pub fn build_runtime_turn_payload(
@@ -421,6 +691,7 @@ impl WorldDirectorService {
             player_input,
             chat_history,
             &[],
+            &std::collections::HashMap::new(),
         )
     }
 
@@ -432,6 +703,7 @@ impl WorldDirectorService {
         player_input: &str,
         chat_history: Vec<serde_json::Value>,
         mcp_tools: &[McpToolDefinition],
+        kv_vars: &std::collections::HashMap<String, String>,
     ) -> serde_json::Value {
         let world_character_roster = characters
             .iter()
@@ -441,7 +713,10 @@ impl WorldDirectorService {
 
         // basic_setting：空值字段不发(对齐角色侧瘦身标准)。
         let mut basic_setting = serde_json::Map::new();
-        basic_setting.insert("world_name".to_string(), serde_json::json!(session.world_name));
+        basic_setting.insert(
+            "world_name".to_string(),
+            serde_json::json!(session.world_name),
+        );
         if !world.background_prompt.trim().is_empty() {
             basic_setting.insert(
                 "background_prompt".to_string(),
@@ -454,11 +729,8 @@ impl WorldDirectorService {
                 serde_json::json!(world_character_roster),
             );
         }
-        if !world.time_system.trim().is_empty() {
-            basic_setting.insert("time_system".to_string(), serde_json::json!(world.time_system));
-        }
 
-        // current_state：空值字段不发；inventory 删内部 UUID。
+        // current_state：空值字段不发。
         let mut current_state = serde_json::Map::new();
         current_state.insert("player_input".to_string(), serde_json::json!(player_input));
         current_state.insert(
@@ -467,9 +739,6 @@ impl WorldDirectorService {
         );
         if !session.location.trim().is_empty() {
             current_state.insert("location".to_string(), serde_json::json!(session.location));
-        }
-        if !session.time_label.trim().is_empty() {
-            current_state.insert("time_label".to_string(), serde_json::json!(session.time_label));
         }
         if !session.visible_characters.is_empty() {
             current_state.insert(
@@ -483,16 +752,6 @@ impl WorldDirectorService {
                 serde_json::json!(session.scene.temporary_tags),
             );
         }
-        if !session.state.metrics.is_empty() {
-            current_state.insert(
-                "state_metrics".to_string(),
-                serde_json::json!(session.state.metrics),
-            );
-        }
-        let inventory_items = build_director_inventory_records(&session.inventory_items);
-        if !inventory_items.is_empty() {
-            current_state.insert("inventory_items".to_string(), serde_json::json!(inventory_items));
-        }
 
         // tool_data：visual_capabilities 为空时不发。
         let mut tool_data = serde_json::Map::new();
@@ -500,255 +759,43 @@ impl WorldDirectorService {
             "available_tools".to_string(),
             serde_json::json!(self.build_director_tool_capabilities(world, mcp_tools)),
         );
-        tool_data.insert("tool_protocol".to_string(), self.build_tool_protocol());
         if !visual_capabilities.is_null() {
             tool_data.insert("visual_capabilities".to_string(), visual_capabilities);
         }
 
-        let allow_player_character_switch = allow_player_character_switch(world);
-        let mut payload = serde_json::json!({
+        // 返回契约：默认值由 return_format 单一事实源生成；作者完全替代见下。
+        let custom_vars = crate::services::game_engine::prompting::load_prompt_custom_vars(world);
+        let prompt_ctx = crate::services::game_engine::prompting::PromptVariableContext {
+            world: Some(world),
+            session: Some(session),
+            kv_vars: Some(kv_vars),
+            custom_vars: Some(&custom_vars),
+        };
+        let custom_response_contract = world
+            .director_config
+            .get("response_contract_prompt")
+            .and_then(|value| value.as_str())
+            .map(|text| render_prompt_variables_with_context(text, &prompt_ctx))
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let response_contract_value = if custom_response_contract.is_empty() {
+            default_director_response_contract()
+        } else {
+            serde_json::Value::String(custom_response_contract)
+        };
+        let payload = serde_json::json!({
             "basic_setting": basic_setting,
             "current_state": current_state,
             "chat_history": chat_history,
             "tool_data": tool_data,
-            "response_contract": {
-                "required_style": "json_only",
-                "return_policy": "return_changed_fields_only",
-                "core_fields": [
-                    "planned_speakers",
-                    "switch_character_proposal",
-                ],
-                "optional_fields_when_changed": [
-                    "world_phase",
-                    "next_scene_name",
-                    "next_location",
-                    "next_time_label",
-                    "scene_visible_characters",
-                    "generated_characters",
-                    "current_line",
-                    "next_scene_background_hint",
-                    "next_scene_tags",
-                    "character_visual_directives",
-                    "inventory_items",
-                    "session_attribute_updates",
-                    "character_attribute_updates"
-                ],
-                "how_to_fill": "Return a single JSON object. Always include planned_speakers (even if empty). Include switch_character_proposal and every optional field ONLY when it applies / changes this turn; omit unchanged fields entirely rather than echoing the current state back. Never resend basic_setting, current_state, or chat_history. See field_guide for what each field means and when to send it.",
-                "field_guide": {
-                    "planned_speakers": "CORE, return every turn. Ordered list of character names who should speak this turn, in speaking order. Never include the player character (they are implicitly present). Use only names already in current_scene_character_roster, or names you create via generated_characters in this same response. Return an empty array if no character should speak.",
-                    "switch_character_proposal": "CORE field, but return it ONLY when the player clearly asks to take control of / play as a different character. Object: { target_character_name, reason, and optionally location, scene_name, scene_background_hint, scene_tags, visible_characters if the switch also moves the scene }. Omit entirely on normal turns.",
-                    "world_phase": "Narrative tension stage. Must be exactly one of: \"opening\", \"escalation\", \"crisis\". Return only when the phase advances; any other value is ignored.",
-                    "next_scene_name": "Optional short label for the new scene. Return only on a scene transition; it may be freely generated.",
-                    "next_location": "Optional rough location label for the new scene. Keep it short and practical; return only when the place changes.",
-                    "next_time_label": "New in-world time label (e.g. a clock time or time-of-day). Return only when time advances.",
-                    "scene_visible_characters": "The COMPLETE list of characters present in the scene AFTER this turn (this replaces the current roster, it is not appended). Exclude the player character. Return only when the on-stage cast changes.",
-                    "generated_characters": "Create brand-new characters here BEFORE naming them in scene_visible_characters or planned_speakers. Each item requires name, role, background_prompt (a usable portrayal brief for the later character model, not a one-word label). Return only when introducing someone not already in current_scene_character_roster or world_character_roster.",
-                    "current_line": "A single non-dialogue narration/stage line (scene description, ambience, transition). Do NOT put character speech here — character dialogue is produced separately. Return only when a non-dialogue scene update is genuinely needed.",
-                    "next_scene_background_hint": "Short description of the new scene's visual background. Return only on a scene change.",
-                    "next_scene_tags": "Atmosphere/state tags for the new scene. Return only when the tags change.",
-                    "character_visual_directives": "Per-character visual/portrait directives. Return only when a character's visual state should change.",
-                    "inventory_items": "The COMPLETE player inventory after this turn. Array items use { item_id, name, category, quantity, description, tags, owner_type, owner_id, visibility, disclosed_to }. Return only when an item is gained, lost, consumed, transferred, or its quantity changes.",
-                    "session_attribute_updates": "Updates to session/world runtime custom attributes. Array of { key, value } where key matches an existing attribute schema key. Return only when a value changes.",
-                    "character_attribute_updates": "Updates to the current player or a scene character's runtime custom attributes. Array of { character_name, key, value } where key exactly matches a key listed in current_state.runtime_attributes. Return changes caused by this turn, including health, stamina, resources, equipment, techniques, progression, or other declared state."
-                },
-                "runtime_update_format": {
-                    "session_attribute_updates": [
-                        { "key": "attribute_key", "value": "new_value" }
-                    ],
-                    "character_attribute_updates": [
-                        { "character_name": "target_character_name", "key": "attribute_key", "value": "new_value" }
-                    ]
-                },
-                "forbidden_fields": [
-                    "state_tags",
-                    "system_messages",
-                    "system_log"
-                ],
-                "notes": [
-                    "Omit unchanged fields.",
-                    "Do not rebuild the full session state.",
-                    "Only include current_line when a non-dialogue scene update is necessary.",
-                    "Use session_attribute_updates to modify session/world runtime custom attributes by schema key.",
-                    "Use character_attribute_updates to modify the current player or a scene character by character_name and an exact schema key from current_state.runtime_attributes.",
-                    "When an action has a concrete cost or consequence, update every affected runtime attribute in the same turn instead of describing the change only in prose.",
-                    "Do not include the player character name in scene_visible_characters or planned_speakers; the player is implicitly present."
-                ]
-            }
+            "response_contract": response_contract_value,
         });
-        if !allow_player_character_switch {
-            if let Some(response_contract) = payload
-                .get_mut("response_contract")
-                .and_then(|value| value.as_object_mut())
-            {
-                if let Some(core_fields) = response_contract
-                    .get_mut("core_fields")
-                    .and_then(|value| value.as_array_mut())
-                {
-                    core_fields.retain(|field| field.as_str() != Some("switch_character_proposal"));
-                }
-                if let Some(field_guide) = response_contract
-                    .get_mut("field_guide")
-                    .and_then(|value| value.as_object_mut())
-                {
-                    field_guide.remove("switch_character_proposal");
-                }
-                response_contract.insert(
-                    "how_to_fill".to_string(),
-                    serde_json::json!("Return a single JSON object. Always include planned_speakers (even if empty). Include optional fields ONLY when they apply / change this turn; omit unchanged fields entirely rather than echoing the current state back. Never resend basic_setting, current_state, or chat_history. See field_guide for what each field means and when to send it."),
-                );
-            }
-        }
         payload
     }
 
-    fn build_director_response_schema(&self, world: &WorldDefinition) -> serde_json::Value {
-        let mut schema = serde_json::json!({
-            "type": "object",
-            "additionalProperties": true,
-            "required": ["planned_speakers"],
-            "properties": {
-                "world_phase": { "type": "string" },
-                "next_scene_name": { "type": "string" },
-                "next_location": { "type": "string" },
-                "next_time_label": { "type": "string" },
-                "current_line": { "type": "string" },
-                "next_scene_background_hint": { "type": "string" },
-                "next_scene_tags": {
-                    "type": "array",
-                    "items": { "type": "string" }
-                },
-                "scene_visible_characters": {
-                    "type": "array",
-                    "items": { "type": "string" }
-                },
-                "planned_speakers": {
-                    "type": "array",
-                    "items": { "type": "string" }
-                },
-                "generated_characters": {
-                    "type": "array",
-                    "description": "Create new characters before referencing them in scene_visible_characters or planned_speakers.",
-                    "items": {
-                        "type": "object",
-                        "required": ["name", "role", "background_prompt"],
-                        "additionalProperties": true,
-                        "properties": {
-                            "name": {
-                                "type": "string",
-                                "description": "New character name. Must exactly match the later visible/planned name."
-                            },
-                            "role": {
-                                "type": "string",
-                                "description": "Identity and dramatic function in this world."
-                            },
-                            "background_prompt": {
-                                "type": "string",
-                                "description": "Usable portrayal brief for the future character model. Include identity, relation to the current scene/player, speaking style, and current stance or goal."
-                            },
-                            "memory_strategy": { "type": "string" },
-                            "recent_dialogue_rounds": { "type": "integer" },
-                            "attributes": {
-                                "type": "array",
-                                "items": { "type": "string" }
-                            },
-                            "model": { "type": "string" }
-                        }
-                    }
-                },
-                "switch_character_proposal": {
-                    "type": "object",
-                    "properties": {
-                        "target_character_name": { "type": "string" },
-                        "reason": { "type": "string" },
-                        "location": { "type": "string" },
-                        "scene_name": { "type": "string" },
-                        "scene_background_hint": { "type": "string" },
-                        "scene_tags": {
-                            "type": "array",
-                            "items": { "type": "string" }
-                        },
-                        "visible_characters": {
-                            "type": "array",
-                            "items": { "type": "string" }
-                        }
-                    }
-                },
-                "character_visual_directives": {
-                    "type": "array"
-                },
-                "inventory_items": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "required": ["name", "quantity"],
-                        "additionalProperties": true,
-                        "properties": {
-                            "item_id": { "type": "string" },
-                            "name": { "type": "string" },
-                            "category": { "type": "string" },
-                            "quantity": { "type": "integer" },
-                            "description": { "type": "string" },
-                            "tags": { "type": "array", "items": { "type": "string" } },
-                            "owner_type": { "type": "string" },
-                            "owner_id": { "type": "string" },
-                            "visibility": { "type": "string" },
-                            "disclosed_to": { "type": "array", "items": { "type": "string" } }
-                        }
-                    }
-                },
-                "session_attribute_updates": {
-                    "type": "array",
-                    "description": "Runtime custom attribute updates for the current session. key must match an attribute schema key.",
-                    "items": {
-                        "type": "object",
-                        "required": ["key", "value"],
-                        "additionalProperties": true,
-                        "properties": {
-                            "key": { "type": "string" },
-                            "value": {}
-                        }
-                    }
-                },
-                "character_attribute_updates": {
-                    "type": "array",
-                    "description": "Runtime custom attribute updates for session characters. key must match an attribute schema key.",
-                    "items": {
-                        "type": "object",
-                        "required": ["character_name", "key", "value"],
-                        "additionalProperties": true,
-                        "properties": {
-                            "character_name": { "type": "string" },
-                            "key": { "type": "string" },
-                            "value": {}
-                        }
-                    }
-                }
-            }
-        });
-        let kinds = declared_director_interaction_kinds(&world.director_config);
-        if !kinds.is_empty() {
-            schema["properties"]["interaction"] = serde_json::json!({
-                "type": "object",
-                "description": "A pending player action issued by the world director, not by a character. Use only for a meaningful decision that must be resolved before any character speaks. When present, planned_speakers must be an empty array.",
-                "required": ["kind", "prompt", "config"],
-                "additionalProperties": false,
-                "properties": {
-                    "kind": { "type": "string", "enum": kinds },
-                    "prompt": { "type": "string" },
-                    "config": { "type": "object", "additionalProperties": true }
-                }
-            });
-        }
-        let allow_player_character_switch = allow_player_character_switch(world);
-        if !allow_player_character_switch {
-            if let Some(properties) = schema
-                .get_mut("properties")
-                .and_then(|value| value.as_object_mut())
-            {
-                properties.remove("switch_character_proposal");
-            }
-        }
-        schema
+    fn build_director_response_schema(&self, _world: &WorldDefinition) -> serde_json::Value {
+        return_format::director_response_schema()
     }
 
     pub fn build_chat_request_from_prompt_call(
@@ -777,7 +824,10 @@ impl WorldDirectorService {
                     speaker: None,
                     tool_call_id: None,
                     tool_calls: None,
-                    metadata: None,
+                    metadata: message
+                        .get("section_id")
+                        .and_then(serde_json::Value::as_str)
+                        .map(|id| serde_json::json!({"prompt_section_id": id})),
                 })
             })
             .collect::<Vec<_>>();
@@ -834,17 +884,29 @@ impl WorldDirectorService {
             .find(|message| message.role == "user")
             .map(|message| message.content_text())
             .unwrap_or_default();
-        let payload = serde_json::from_str::<serde_json::Value>(&user_prompt).unwrap_or_else(|_| {
-            let history_rounds = self.resolve_director_history_rounds(world);
-            let chat_history = self.build_history_dialogue(
-                &session.messages,
-                history_rounds,
-                Some(session.player_character_name.as_str()),
-            );
-            self.build_runtime_turn_payload(world, session, characters, player_input, chat_history)
-        });
+        let payload =
+            serde_json::from_str::<serde_json::Value>(&user_prompt).unwrap_or_else(|_| {
+                let history_rounds = self.resolve_director_history_rounds(world);
+                let chat_history = self.build_history_dialogue(
+                    &session.messages,
+                    history_rounds,
+                    Some(session.player_character_name.as_str()),
+                );
+                self.build_runtime_turn_payload(
+                    world,
+                    session,
+                    characters,
+                    player_input,
+                    chat_history,
+                )
+            });
         let raw_model_return = self.extract_raw_model_return_text(response_value);
-        let return_processing = self.apply_return_processing(world, &raw_model_return);
+        let return_processing =
+            crate::services::game_engine::return_processing::apply_return_processing(
+                &world.director_config,
+                &raw_model_return,
+                "director",
+            );
         let processed_model_return = return_processing
             .get("after")
             .and_then(|value| value.as_str())
@@ -882,22 +944,7 @@ impl WorldDirectorService {
             &system_prompt,
             &user_prompt,
             llm_chat_messages_to_values(request_messages),
-            self.build_director_prompt_modules(
-                &resolve_prompt_modules(
-                    world,
-                    "director",
-                    &self.template_variables(world, session, ""),
-                    &std::collections::HashMap::new(),
-                    &recent_messages_text(&session.messages, 10),
-                )
-                .traces,
-                world,
-                session,
-                characters,
-                &payload,
-                &self.resolve_director_system_prompt(world),
-                &resolve_runtime_context_prompt(world),
-            ),
+            self.director_prompt_modules_from_messages(request_messages),
             payload
                 .get("response_contract")
                 .cloned()
@@ -943,92 +990,6 @@ impl WorldDirectorService {
             .and_then(|value| value.as_str())
             .map(|value| value.to_string())
             .unwrap_or_default()
-    }
-
-    fn apply_return_processing(
-        &self,
-        world: &WorldDefinition,
-        raw_text: &str,
-    ) -> serde_json::Value {
-        let mut text = raw_text.to_string();
-        let mut applied_rules = Vec::new();
-        let mut rules = world
-            .director_config
-            .get("return_processing_rules")
-            .and_then(|value| value.as_array())
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|item| {
-                let object = item.as_object()?;
-                let enabled = object
-                    .get("enabled")
-                    .and_then(|value| value.as_bool())
-                    .unwrap_or(true);
-                let scope = object
-                    .get("scope")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("both")
-                    .trim()
-                    .to_string();
-                let pattern = object
-                    .get("pattern")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let replacement = object
-                    .get("replacement")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let order = object
-                    .get("order")
-                    .and_then(|value| value.as_i64())
-                    .unwrap_or(0);
-                let name = object
-                    .get("name")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("unnamed_rule")
-                    .to_string();
-                if !enabled
-                    || !(scope == "both" || scope == "director")
-                    || pattern.trim().is_empty()
-                {
-                    return None;
-                }
-                Some((order, name, pattern, replacement))
-            })
-            .collect::<Vec<_>>();
-        rules.sort_by_key(|(order, _, _, _)| *order);
-        for (_, name, pattern, replacement) in rules {
-            match regex::Regex::new(&pattern) {
-                Ok(re) => {
-                    let count = re.find_iter(&text).count();
-                    if count > 0 {
-                        text = re.replace_all(&text, replacement.as_str()).to_string();
-                        applied_rules.push(serde_json::json!({
-                            "name": name,
-                            "pattern": pattern,
-                            "replacement": replacement,
-                            "count": count,
-                        }));
-                    }
-                }
-                Err(err) => {
-                    applied_rules.push(serde_json::json!({
-                        "name": name,
-                        "pattern": pattern,
-                        "error": err.to_string(),
-                        "count": 0,
-                    }));
-                }
-            }
-        }
-        serde_json::json!({
-            "before": raw_text,
-            "after": text,
-            "applied_rules": applied_rules,
-        })
     }
 
     pub async fn run_director_tool_loop(
@@ -1143,12 +1104,13 @@ impl WorldDirectorService {
                 Some(state) => Some(state.db.lock().await),
                 None => None,
             };
-            let runtime_for_iter = notification_runtime.as_ref().map(|runtime| {
-                NotificationToolRuntime {
-                    app: runtime.app,
-                    data_dir: runtime.data_dir,
-                }
-            });
+            let runtime_for_iter =
+                notification_runtime
+                    .as_ref()
+                    .map(|runtime| NotificationToolRuntime {
+                        app: runtime.app,
+                        data_dir: runtime.data_dir,
+                    });
             // 第 7 项：自定义 MCP 工具需要 await，先在此异步层执行，再把结果交给同步效果函数。
             let mcp_results = self
                 .execute_pending_mcp_tool_calls(&parsed, world, mcp_tools, mcp_servers)
@@ -1173,6 +1135,16 @@ impl WorldDirectorService {
                 parsed: parsed.clone(),
                 tool_enriched: tool_enriched.clone(),
             });
+            // 交互是终局动作：interaction 已创建（request_player_interaction 工具或
+            // 旧 JSON 字段）时立即收尾，不再追问模型；parse_runtime_payload 会清空
+            // planned_speakers，回合停下等待玩家作答。
+            if tool_enriched.get("interaction").is_some() {
+                return Ok(DirectorLoopRunResult {
+                    parsed: tool_enriched,
+                    traces,
+                    truncated_by_token_limit: response.is_truncated_by_token_limit(),
+                });
+            }
             if !self.should_continue_tool_loop(world, &parsed, iteration) {
                 // 输出被 max_tokens 截断(推理模型把预算烧在思考上,content 为空)时,
                 // 必须先放大预算原样重试。此分支必须排在 JSON 修复之前:修复是往同一
@@ -1292,8 +1264,7 @@ impl WorldDirectorService {
             };
             // 本地工具（builtin_http）由核心直接执行，不需要 MCP server。
             if crate::models::mcp_tool::is_local_tool(tool) {
-                let outcome =
-                    crate::services::mcp::execute_local_http_tool(tool, arguments).await;
+                let outcome = crate::services::mcp::execute_local_http_tool(tool, arguments).await;
                 results.insert(
                     index,
                     serde_json::json!({
@@ -1388,8 +1359,18 @@ impl WorldDirectorService {
                 .unwrap_or_default();
             match tool_name.as_str() {
                 "search_knowledge" => {
-                    let result = if world.director_config["knowledge_access"] != true { Err("Knowledge access is disabled".into()) } else {
-                        notification_conn.ok_or("Knowledge database is unavailable".to_string()).and_then(|conn| crate::commands::knowledge::search(conn, &world.id, &serde_json::Value::Object(arguments.clone())))
+                    let result = if world.director_config["knowledge_access"] != true {
+                        Err("Knowledge access is disabled".into())
+                    } else {
+                        notification_conn
+                            .ok_or("Knowledge database is unavailable".to_string())
+                            .and_then(|conn| {
+                                crate::commands::knowledge::search(
+                                    conn,
+                                    &world.id,
+                                    &serde_json::Value::Object(arguments.clone()),
+                                )
+                            })
                     };
                     tool_results.push(match result { Ok(value) => serde_json::json!({"id":call_id,"tool_name":tool_name,"ok":true,"result":value}), Err(error) => serde_json::json!({"id":call_id,"tool_name":tool_name,"ok":false,"error":error}) });
                 }
@@ -1442,6 +1423,15 @@ impl WorldDirectorService {
                 }
                 "generate_image" => {
                     self.apply_generate_image_tool(
+                        &call_id,
+                        &arguments,
+                        &mut merged,
+                        &mut tool_results,
+                    );
+                }
+                "request_player_interaction" => {
+                    self.apply_request_interaction_tool(
+                        world,
                         &call_id,
                         &arguments,
                         &mut merged,
@@ -1533,6 +1523,10 @@ impl WorldDirectorService {
                 "scene_visible_characters".to_string(),
                 serde_json::Value::Array(scene_character_roster.clone()),
             );
+        }
+        let scene_tags = arg_string_list(arguments.get("scene_tags"));
+        if !scene_tags.is_empty() {
+            merged.insert("next_scene_tags".to_string(), serde_json::json!(scene_tags));
         }
         tool_results.push(serde_json::json!({
             "id": call_id,
@@ -1630,6 +1624,74 @@ impl WorldDirectorService {
                 "arguments": arguments,
             }
         }));
+    }
+
+    /// request_player_interaction 工具效果：校验参数并写入 interaction，回执。
+    /// interaction 是终局动作：注入后本回合不再安排角色发言，由 run_director_tool_loop
+    /// 直接收尾，玩家作答后开启下一回合。
+    fn apply_request_interaction_tool(
+        &self,
+        world: &WorldDefinition,
+        call_id: &str,
+        arguments: &serde_json::Map<String, serde_json::Value>,
+        merged: &mut serde_json::Map<String, serde_json::Value>,
+        tool_results: &mut Vec<serde_json::Value>,
+    ) {
+        if declared_director_interaction_kinds(&world.director_config).is_empty() {
+            tool_results.push(serde_json::json!({
+                "id": call_id,
+                "tool_name": "request_player_interaction",
+                "ok": false,
+                "error": "本世界未声明允许的主控交互类型（director_interaction_kinds）",
+            }));
+            return;
+        }
+        // 把扁平的工具参数还原成 validate_interaction_candidate 期望的候选结构，
+        // 校验与归一化和旧 JSON 字段通道共用同一份实现。
+        let mut candidate = serde_json::Map::new();
+        for key in ["kind", "prompt"] {
+            if let Some(value) = arguments.get(key) {
+                candidate.insert(key.to_string(), value.clone());
+            }
+        }
+        let mut config = serde_json::Map::new();
+        for key in [
+            "options",
+            "min",
+            "max",
+            "step",
+            "default",
+            "fields",
+            "confirm_label",
+            "cancel_label",
+        ] {
+            if let Some(value) = arguments.get(key) {
+                config.insert(key.to_string(), value.clone());
+            }
+        }
+        candidate.insert("config".to_string(), serde_json::Value::Object(config));
+        match validate_interaction_candidate(&serde_json::Value::Object(candidate)) {
+            Ok((kind, prompt, normalized)) => {
+                merged.insert(
+                    "interaction".to_string(),
+                    serde_json::json!({ "kind": kind, "prompt": prompt, "config": normalized }),
+                );
+                tool_results.push(serde_json::json!({
+                    "id": call_id,
+                    "tool_name": "request_player_interaction",
+                    "ok": true,
+                    "result": { "status": "interaction_created" },
+                }));
+            }
+            Err(error) => {
+                tool_results.push(serde_json::json!({
+                    "id": call_id,
+                    "tool_name": "request_player_interaction",
+                    "ok": false,
+                    "error": error,
+                }));
+            }
+        }
     }
 
     /// schedule_notification 工具效果:落库或写入 pending_notifications 并回执。
@@ -1898,7 +1960,9 @@ impl WorldDirectorService {
                     .unwrap_or_default();
                 messages.push(crate::services::llm::client::ChatMessage {
                     role: "tool".to_string(),
-                    content: serde_json::Value::String(serde_json::to_string(&result).map_err(|e| e.to_string())?),
+                    content: serde_json::Value::String(
+                        serde_json::to_string(&result).map_err(|e| e.to_string())?,
+                    ),
                     reasoning_content: None,
                     speaker: None,
                     tool_call_id: Some(call_id),
@@ -2060,12 +2124,9 @@ impl WorldDirectorService {
             &next_scene_name,
             &session.scene.name,
         );
-        let next_time_label = parse_next_time_label(
-            parsed.get("next_time_label"),
-            session,
-            world,
-            &session.time_label,
-        );
+        // 时间属于世界自定义属性，由 session_attribute_updates 统一更新。
+        // 保留内部快照字段以维持回合物化结构，但不再从固定提示词字段读取。
+        let next_time_label = session.time_label.clone();
         // scene_visible_characters 是导演输出的"每轮更新指令"（wire 字段，勿改名）：
         // 显式给出即对在场名册做完整替换；缺省(None)则沿用 session.visible_characters
         // （持久状态），新生成角色的并入发生在 run.rs 的名册解析阶段。
@@ -2107,41 +2168,47 @@ impl WorldDirectorService {
             next_scene_tags,
             next_time_label,
             scene_visible_characters,
-            planned_speakers: if interaction.is_some() { Vec::new() } else { planned_speakers },
+            planned_speakers: if interaction.is_some() {
+                Vec::new()
+            } else {
+                planned_speakers
+            },
             generated_character_payloads,
             character_visual_directives,
-            switch_character_proposal: allow_player_character_switch.then(|| {
-                parse_switch_character_proposal(
-                    parsed.get("switch_character_proposal"),
-                    &session.player_character_name,
-                )
-            }).flatten(),
+            switch_character_proposal: allow_player_character_switch
+                .then(|| {
+                    parse_switch_character_proposal(
+                        parsed.get("switch_character_proposal"),
+                        &session.player_character_name,
+                    )
+                })
+                .flatten(),
             interaction,
         }
     }
 
     fn parse_director_interaction(
-    raw: Option<&serde_json::Value>,
-    world: &WorldDefinition,
-) -> Option<MessageInteraction> {
-    let raw = raw?;
-    let (kind, prompt, config) = validate_interaction_candidate(raw).ok()?;
-    if !declared_director_interaction_kinds(&world.director_config)
-        .iter()
-        .any(|allowed| allowed == &kind)
-    {
-        return None;
+        raw: Option<&serde_json::Value>,
+        world: &WorldDefinition,
+    ) -> Option<MessageInteraction> {
+        let raw = raw?;
+        let (kind, prompt, config) = validate_interaction_candidate(raw).ok()?;
+        if !declared_director_interaction_kinds(&world.director_config)
+            .iter()
+            .any(|allowed| allowed == &kind)
+        {
+            return None;
+        }
+        Some(MessageInteraction {
+            interaction_id: ChatMessage::generate_id(),
+            kind,
+            prompt,
+            config,
+            status: INTERACTION_STATUS_PENDING.to_string(),
+            answer: None,
+            answered_at: None,
+        })
     }
-    Some(MessageInteraction {
-        interaction_id: ChatMessage::generate_id(),
-        kind,
-        prompt,
-        config,
-        status: INTERACTION_STATUS_PENDING.to_string(),
-        answer: None,
-        answered_at: None,
-    })
-}
 
     fn extract_tool_calls(
         &self,
@@ -2411,48 +2478,6 @@ impl WorldDirectorService {
         Ok(Some((creation_messages, message)))
     }
 
-    fn build_tool_protocol(&self) -> serde_json::Value {
-        serde_json::json!({
-            "format": {
-                "description": "When a tool is needed, use the provider-native tool_calls channel. Each native tool call must carry exactly three logical fields after normalization: id (unique identifier string), tool_name (must match exactly one of the available_tools names above), and arguments (a JSON object of parameters, or {} if the tool takes no parameters). Do not place tool calls, tool names, or tool arguments inside the JSON response body.",
-                "examples": [
-                    {
-                        "id": "call-1",
-                        "tool_name": "list_scenes",
-                        "arguments": {}
-                    },
-                    {
-                        "id": "call-2",
-                        "tool_name": "change_scene",
-                        "arguments": {
-                            "scene_name": "Throne Room",
-                            "scene_character_roster": ["King", "Guard"]
-                        }
-                    },
-                    {
-                        "id": "call-3",
-                        "tool_name": "switch_player_character",
-                        "arguments": {
-                            "target_character_name": "Captain",
-                            "reason": "Player wants to follow the captain"
-                        }
-                    }
-                ]
-            },
-            "rules": [
-                "tool_name must be exactly one of the tool_name values listed in available_tools; do not invent tool names.",
-                "Use provider-native tool_calls for every tool invocation.",
-                "Do not encode tool calls, tool names, or tool arguments inside the JSON response body.",
-                "JSON-body tool_calls are invalid and will be ignored by the runtime.",
-                "Call tools only when you genuinely need information from a tool; do not fabricate tool calls for decoration.",
-                "If the player asks to add a new participant who is not already in the current scene or world roster, return generated_characters first, then place that character into scene_visible_characters and planned_speakers in the same response.",
-                "Each generated_characters item must include at least name, role and background_prompt, where background_prompt is a usable portrayal brief for the later character model, not just a label or one-word tag.",
-                "Do not place a new name directly into scene_visible_characters or planned_speakers without generated_characters.",
-                "After tool_results are provided, return final world-state JSON."
-            ]
-        })
-    }
-
     fn build_visual_capabilities(
         &self,
         world: &WorldDefinition,
@@ -2548,31 +2573,6 @@ impl WorldDirectorService {
         serde_json::Value::Object(capabilities)
     }
 
-    fn template_variables(
-        &self,
-        world: &WorldDefinition,
-        session: &SessionSnapshot,
-        char_name: &str,
-    ) -> std::collections::HashMap<String, String> {
-        let mut vars = std::collections::HashMap::new();
-        vars.insert(
-            "user".to_string(),
-            session.player_character_name.trim().to_string(),
-        );
-        vars.insert("char".to_string(), char_name.to_string());
-        vars.insert("world".to_string(), world.name.clone());
-        vars.insert(
-            "scene".to_string(),
-            if session.scene.name.trim().is_empty() {
-                session.location.clone()
-            } else {
-                session.scene.name.clone()
-            },
-        );
-        vars.insert("time".to_string(), session.time_label.clone());
-        vars
-    }
-
     fn build_history_dialogue(
         &self,
         messages: &[ChatMessage],
@@ -2650,13 +2650,14 @@ impl WorldDirectorService {
             }),
             serde_json::json!({
                 "tool_name": "change_scene",
-                "description": "Switch to a target scene or create a new scene. scene_character_roster sets visible characters. new_characters may create new characters and should include name, role, and background_prompt.",
+                "description": "Switch to a target scene or create a new scene. scene_character_roster replaces the visible character roster. scene_tags sets scene atmosphere tags. new_characters may create new characters and should include name, role, and background_prompt.",
                 "arguments_schema": {
                     "type": "object",
                     "required": ["scene_name"],
                     "properties": {
                         "scene_name": { "type": "string" },
                         "scene_description": { "type": "string" },
+                        "scene_tags": { "type": "array", "items": { "type": "string" } },
                         "scene_character_roster": { "type": "array", "items": { "type": "string" } },
                         "new_characters": { "type": "array", "items": { "type": "object" } }
                     }
@@ -2696,16 +2697,38 @@ impl WorldDirectorService {
                 }
             }));
         }
+        let interaction_kinds = declared_director_interaction_kinds(&world.director_config);
+        if !interaction_kinds.is_empty() {
+            tools.push(serde_json::json!({
+                "tool_name": "request_player_interaction",
+                "description": "Ask the player to resolve an interaction (choice / multi_choice / form / confirm / slider, limited to the kinds this world declares). The turn ends immediately and waits for the player's answer; do not schedule character speeches in the same turn. Use only for decisions the player must personally make before the story continues.",
+                "arguments_schema": {
+                    "type": "object",
+                    "required": ["kind", "prompt"],
+                    "properties": {
+                        "kind": { "type": "string", "enum": interaction_kinds },
+                        "prompt": { "type": "string", "description": "The question shown to the player, at most 500 characters." },
+                        "options": { "type": "array", "description": "Required for choice/multi_choice: option labels." },
+                        "min": { "type": "number", "description": "multi_choice minimum selections / slider minimum value." },
+                        "max": { "type": "number", "description": "multi_choice maximum selections / slider maximum value." },
+                        "step": { "type": "number", "description": "slider step, default 1." },
+                        "default": { "type": "number", "description": "slider initial value." },
+                        "fields": { "type": "array", "description": "Required for form: field objects with label/input/required." },
+                        "confirm_label": { "type": "string" },
+                        "cancel_label": { "type": "string" }
+                    }
+                }
+            }));
+        }
         if allowed.contains(MCP_TOOL_SCHEDULE_NOTIFICATION_ID) {
             tools.push(notification_tool_definition());
         }
         tools.extend(custom_mcp_tool_capabilities(&allowed, mcp_tools));
-        if let Some(tool) = crate::commands::knowledge::tool_capability(world) { tools.push(tool); }
+        if let Some(tool) = crate::commands::knowledge::tool_capability(world) {
+            tools.push(tool);
+        }
         tools
     }
-
-
-
 
     fn resolve_world_allowed_tool_ids(&self, world: &WorldDefinition) -> Vec<String> {
         world_allowed_tool_ids(world)
@@ -2807,7 +2830,6 @@ impl WorldDirectorService {
         }
     }
 }
-
 
 mod helpers;
 pub(crate) use helpers::*;

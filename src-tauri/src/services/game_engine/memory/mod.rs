@@ -1,4 +1,4 @@
-﻿use std::cmp::Ordering;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
@@ -229,7 +229,10 @@ impl MemoryService {
             .filter(|item| !item.is_empty())
             .collect::<Vec<_>>();
         let location_term = normalize_memory_text(location);
-        let newest_created_at = candidates.iter().map(|entry| entry.created_at.clone()).max();
+        let newest_created_at = candidates
+            .iter()
+            .map(|entry| entry.created_at.clone())
+            .max();
         let lexical_scores = candidates
             .iter()
             .map(|entry| {
@@ -294,8 +297,7 @@ impl MemoryService {
             .map(|entry| (entry.id.clone(), build_memory_embedding_input(entry)))
             .collect::<Vec<_>>();
 
-        plan.query_input =
-            build_memory_query_text(query_text, location, scene_id, participants);
+        plan.query_input = build_memory_query_text(query_text, location, scene_id, participants);
         plan.model = Some(model);
         plan.model_key = model_key;
         plan.stored_vectors = stored_vectors;
@@ -584,8 +586,7 @@ impl MemoryService {
                     let object_matches = match &object_entity {
                         Some(object) => {
                             relation.object_entity_id.as_deref() == Some(object.id.as_str())
-                                || normalize_memory_text(&relation.object_text)
-                                    == object_normalized
+                                || normalize_memory_text(&relation.object_text) == object_normalized
                         }
                         None => true,
                     };
@@ -1825,7 +1826,6 @@ fn extract_memory_keywords(content: &str) -> Vec<String> {
     }
     keywords
 }
-
 
 #[cfg(test)]
 mod tests;

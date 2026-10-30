@@ -102,12 +102,6 @@ impl SessionOrchestrator {
             player_stats: vec![],
             map_graph_nodes: map_topology.nodes,
             map_graph_edges: map_topology.edges,
-            inventory_items: world
-                .ui_theme_config
-                .get("initial_inventory_items")
-                .cloned()
-                .and_then(|value| serde_json::from_value(value).ok())
-                .unwrap_or_default(),
             system_log: vec![],
             scene: SceneRuntime {
                 scene_id: "opening".to_string(),
@@ -125,14 +119,21 @@ impl SessionOrchestrator {
         let session_repo = crate::db::repositories::session_repo::SessionRepository::new(conn);
         session_repo.upsert(&session)?;
 
-        let package_attribute_schemas = world
-            .ui_theme_config
-            .get("attribute_schemas")
-            .cloned()
-            .and_then(|value| serde_json::from_value::<Vec<crate::models::attribute::AttributeSchemaCreateRequest>>(value).ok())
-            .unwrap_or_default();
+        let package_attribute_schemas =
+            world
+                .ui_theme_config
+                .get("attribute_schemas")
+                .cloned()
+                .and_then(|value| {
+                    serde_json::from_value::<
+                        Vec<crate::models::attribute::AttributeSchemaCreateRequest>,
+                    >(value)
+                    .ok()
+                })
+                .unwrap_or_default();
         if !package_attribute_schemas.is_empty() {
-            let attribute_repo = crate::db::repositories::attribute_repo::AttributeRepository::new(conn);
+            let attribute_repo =
+                crate::db::repositories::attribute_repo::AttributeRepository::new(conn);
             let registered = attribute_repo.list_schemas(None)?;
             for declared in package_attribute_schemas {
                 if declared.default_value.is_null() {
@@ -141,6 +142,7 @@ impl SessionOrchestrator {
                 let Some(schema) = registered.iter().find(|schema| {
                     schema.scope.trim() == declared.scope.trim()
                         && schema.key.trim() == declared.key.trim()
+                        && schema.world_id.as_deref().is_none_or(|id| id == world.id)
                 }) else {
                     return Err(format!("世界属性模板未注册：{}", declared.key));
                 };
@@ -152,13 +154,58 @@ impl SessionOrchestrator {
                     ),
                     _ => continue,
                 };
-                attribute_repo.upsert_value(&crate::models::attribute::AttributeValueUpsertRequest {
+                attribute_repo.upsert_value(
+                    &crate::models::attribute::AttributeValueUpsertRequest {
+                        schema_id: schema.id.clone(),
+                        owner_type: owner_type.to_string(),
+                        owner_id,
+                        value: schema.default_value.clone(),
+                        source: "world_package_default".to_string(),
+                    },
+                )?;
+            }
+        }
+
+        let attribute_repo =
+            crate::db::repositories::attribute_repo::AttributeRepository::new(conn);
+        let scoped_world_schemas = attribute_repo.list_schemas_for_world("world", &world.id)?;
+        let world_values = attribute_repo.list_values(Some("world"), Some(&world.id), None)?;
+        for schema in &scoped_world_schemas {
+            let value = world_values
+                .iter()
+                .find(|value| value.schema_id == schema.id)
+                .map(|value| value.value.clone())
+                .unwrap_or_else(|| schema.default_value.clone());
+            attribute_repo.upsert_value(
+                &crate::models::attribute::AttributeValueUpsertRequest {
                     schema_id: schema.id.clone(),
-                    owner_type: owner_type.to_string(),
-                    owner_id,
-                    value: schema.default_value.clone(),
-                    source: "world_package_default".to_string(),
-                })?;
+                    owner_type: "session".to_string(),
+                    owner_id: session.id.clone(),
+                    value,
+                    source: "world_default".to_string(),
+                },
+            )?;
+        }
+        let scoped_character_schemas =
+            attribute_repo.list_schemas_for_world("character", &world.id)?;
+        for character in &characters {
+            let template_values =
+                attribute_repo.list_values(Some("character"), Some(&character.id), None)?;
+            for schema in &scoped_character_schemas {
+                let value = template_values
+                    .iter()
+                    .find(|value| value.schema_id == schema.id)
+                    .map(|value| value.value.clone())
+                    .unwrap_or_else(|| schema.default_value.clone());
+                attribute_repo.upsert_value(
+                    &crate::models::attribute::AttributeValueUpsertRequest {
+                        schema_id: schema.id.clone(),
+                        owner_type: "session_character".to_string(),
+                        owner_id: format!("{}:{}", session.id, character.id),
+                        value,
+                        source: "character_template".to_string(),
+                    },
+                )?;
             }
         }
 
@@ -221,21 +268,22 @@ impl SessionOrchestrator {
                 .iter()
                 .filter(|node| node.current)
                 .count()
-                != map_topology.nodes.iter().filter(|node| node.current).count()
-            || session
-                .map_graph_nodes
-                .iter()
-                .any(|node| {
-                    node.current
-                        && !map_topology.nodes.iter().any(|candidate| {
-                            candidate.node_id == node.node_id && candidate.current
-                        })
-                });
+                != map_topology
+                    .nodes
+                    .iter()
+                    .filter(|node| node.current)
+                    .count()
+            || session.map_graph_nodes.iter().any(|node| {
+                node.current
+                    && !map_topology
+                        .nodes
+                        .iter()
+                        .any(|candidate| candidate.node_id == node.node_id && candidate.current)
+            });
         if needs_map_repair {
             session.location = canonical_location.clone();
             if session.scene.name.trim().is_empty()
-                || resolve_map_label(&world.map_nodes, &session.scene.name)
-                    .as_deref()
+                || resolve_map_label(&world.map_nodes, &session.scene.name).as_deref()
                     == Some(canonical_location.as_str())
             {
                 session.scene.name = canonical_location;
@@ -357,7 +405,6 @@ mod tests {
                 summary: "".to_string(),
                 time_system: "".to_string(),
                 map_nodes: serde_json::json!({ "version": 1, "nodes": [] }),
-                triggers: vec![],
                 time_config: serde_json::json!({}),
                 director_config: serde_json::json!({
                     "service_mode": "agent_chat",
@@ -400,7 +447,6 @@ mod tests {
                     summary: None,
                     time_system: None,
                     map_nodes: None,
-                    triggers: None,
                     time_config: None,
                     director_config: Some(serde_json::json!({
                         "service_mode": "agent_chat",

@@ -1,5 +1,4 @@
 pub mod cleanup;
-pub mod migrations;
 pub mod repositories;
 pub mod schema;
 pub mod seeds;
@@ -20,11 +19,11 @@ impl Database {
             .map_err(|e| e.to_string())?;
 
         let db = Database { conn };
-        db.run_migrations()?;
+        db.initialize_schema()?;
         Ok(db)
     }
 
-    fn run_migrations(&self) -> Result<(), String> {
+    fn initialize_schema(&self) -> Result<(), String> {
         schema::create_tables(&self.conn).map_err(|e| e.to_string())
     }
 

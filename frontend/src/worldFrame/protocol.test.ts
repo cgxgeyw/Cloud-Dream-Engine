@@ -64,6 +64,34 @@ describe("world frame protocol", () => {
     })).toBe(true);
   });
 
+  it("accepts native interaction answers and requires their identifiers", () => {
+    const message = (action: unknown) => ({
+      type: "world-frame/action",
+      protocolVersion: WORLD_FRAME_PROTOCOL_VERSION,
+      channelId: "frame-1",
+      requestId: "request-1",
+      action,
+    });
+
+    expect(isWorldFrameClientMessage(message({
+      type: "answer-interaction",
+      messageId: "message-1",
+      interactionId: "interaction-1",
+      answer: "ridge",
+    }))).toBe(true);
+    expect(isWorldFrameClientMessage(message({
+      type: "answer-interaction",
+      messageId: "message-1",
+      interactionId: "",
+      answer: false,
+    }))).toBe(false);
+    expect(isWorldFrameClientMessage(message({
+      type: "answer-interaction",
+      messageId: "message-1",
+      interactionId: "interaction-1",
+    }))).toBe(false);
+  });
+
   it("accepts only scoped and structured world record actions", () => {
     const message = (action: unknown) => ({
       type: "world-frame/action",

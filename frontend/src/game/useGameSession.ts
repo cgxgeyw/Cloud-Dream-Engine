@@ -37,8 +37,6 @@ import {
   type ChatMessageResponse,
   type PlayerActionMode,
   type RetryFailedLlmStepRequest,
-  type RuntimeAttributeGroup,
-  type RuntimeAttributeItem,
   type SaveResponse,
   type SessionRuntimeAttributesResponse,
   type SessionMapEdge,
@@ -55,7 +53,6 @@ import {
   parseGameUiDocument,
   resolveUiFile,
   resolveUiStylesheet,
-  type WorldUiEnvelope,
 } from "../data/gameUi";
 import {
   type EditingTurnState,
@@ -76,8 +73,7 @@ import {
   resolveStatusTabs,
 } from "./utils";
 
-const SCHEDULE_NOTIFICATION_TOOL_ID = "mcp-tool-schedule-notification";
-import { buildAttributeSideTabsFromRuntimeAttributes, filterRuntimeAttributesForWorld, findAttributeItemsForTab, getMessageText, mayCreateNotificationFromInput, normalizeSessionMapGraph, stringifyRuntimeAttributeValue, worldAllowsScheduleNotification } from "./sessionHelpers";
+import { buildAttributeSideTabsFromRuntimeAttributes, filterRuntimeAttributesForWorld, findAttributeItemsForTab, getMessageText, mayCreateNotificationFromInput, normalizeSessionMapGraph, worldAllowsScheduleNotification } from "./sessionHelpers";
 import type { GameSessionStateBag, UseGameSessionOptions } from "./sessionTypes";
 
 export type { GameSessionStateBag, UseGameSessionOptions };
@@ -657,11 +653,10 @@ export function useGameSession(
   const attributeSideTabs = useMemo<Array<[string, string]>>(
     () => buildAttributeSideTabsFromRuntimeAttributes(
       visibleRuntimeAttributes,
-      session?.inventory_items ?? [],
       session?.id ?? sessionId,
       session?.player_character_id ?? "",
     ),
-    [session?.id, session?.inventory_items, session?.player_character_id, sessionId, visibleRuntimeAttributes],
+    [session?.id, session?.player_character_id, sessionId, visibleRuntimeAttributes],
   );
   const worldCharacterNameSet = useMemo(
     () =>

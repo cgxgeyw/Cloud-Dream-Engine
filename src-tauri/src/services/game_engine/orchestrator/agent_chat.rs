@@ -157,7 +157,6 @@ impl SessionOrchestrator {
             player_stats: input.session.player_stats.clone(),
             map_graph_nodes: input.session.map_graph_nodes.clone(),
             map_graph_edges: input.session.map_graph_edges.clone(),
-            inventory_items: input.session.inventory_items.clone(),
             system_log,
             scene: SceneRuntime {
                 scene_id: if input.session.scene.scene_id.trim().is_empty() {

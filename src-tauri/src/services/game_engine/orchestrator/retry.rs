@@ -16,37 +16,24 @@ impl SessionOrchestrator {
         if latest_turn_index <= 0 {
             return Ok(None);
         }
-        // 从最新回合向前找第一个"未完成且有 created 载荷"的回合。
-        // 旧版本曾把重试写进错位的新回合(只有 structured_output_failed、没有 created),
-        // 对这类存档只检查最新回合会永远报 Missing created payload;向前扫描可自愈。
-        let mut turn_index = latest_turn_index;
-        while turn_index > 0 {
-            let recovery_journal = load_turn_journal(conn, session_id, turn_index)?;
-            if recovery_journal.is_empty() {
-                break;
-            }
-            if journal_has_completed_step(&recovery_journal, "finished") {
-                // 最新回合已完成:更早的回合视为历史,与旧行为一致返回 None。
-                return Ok(None);
-            }
-            if let Some(created_payload) = journal_payload(&recovery_journal, "created") {
-                let content = created_payload
-                    .get("player_input")
-                    .and_then(|value| value.as_str())
-                    .map(|value| value.trim().to_string())
-                    .filter(|value| !value.is_empty())
-                    .ok_or_else(|| "未完成回合缺少玩家输入".to_string())?;
-                return Ok(Some(PlayerActionRequest {
-                    content: MessageContent::Text(content),
-                    action_mode: PlayerActionMode::Resend,
-                    resend_from_turn_index: Some(turn_index),
-                    event_type: "player_message".to_string(),
-                }));
-            }
-            // 未完成但缺 created 的错位回合:跳过,继续向前找。
-            turn_index -= 1;
+        let recovery_journal = load_turn_journal(conn, session_id, latest_turn_index)?;
+        if journal_has_completed_step(&recovery_journal, "finished") {
+            return Ok(None);
         }
-        Err("未完成回合缺少创建载荷".to_string())
+        let created_payload = journal_payload(&recovery_journal, "created")
+            .ok_or_else(|| "未完成回合缺少创建载荷".to_string())?;
+        let content = created_payload
+            .get("player_input")
+            .and_then(|value| value.as_str())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "未完成回合缺少玩家输入".to_string())?;
+        Ok(Some(PlayerActionRequest {
+            content: MessageContent::Text(content),
+            action_mode: PlayerActionMode::Resend,
+            resend_from_turn_index: Some(latest_turn_index),
+            event_type: "player_message".to_string(),
+        }))
     }
 
     pub fn record_structured_output_failure(
@@ -271,7 +258,6 @@ mod tests {
             player_stats: vec![],
             map_graph_nodes: vec![],
             map_graph_edges: vec![],
-            inventory_items: vec![],
             system_log: vec![],
             scene: SceneRuntime {
                 scene_id: "dock-scene".to_string(),
@@ -560,7 +546,7 @@ mod tests {
     }
 
     #[test]
-    fn load_resume_player_request_scans_back_past_misaligned_turn() {
+    fn load_resume_player_request_rejects_missing_latest_turn_payload() {
         let conn = Connection::open_in_memory().expect("open sqlite");
         schema::create_tables(&conn).expect("create schema");
         let orchestrator = SessionOrchestrator;
@@ -588,7 +574,7 @@ mod tests {
             serde_json::json!({}),
         )
         .expect("append failure turn 1");
-        // 旧 bug 的错位存档:回合 2 只有 structured_output_failed,没有 created。
+        // The latest turn must have its own creation payload.
         append_turn_journal(
             &conn,
             session_id,
@@ -599,16 +585,11 @@ mod tests {
         )
         .expect("append failure turn 2");
 
-        let request = orchestrator
+        let error = orchestrator
             .load_resume_player_request(&conn, session_id)
-            .expect("错位存档应自愈,不再报 Missing created payload")
-            .expect("应找到可恢复的回合 1");
-        assert_eq!(request.resend_from_turn_index, Some(1));
-        assert!(matches!(
-            request.action_mode,
-            PlayerActionMode::Resend
-        ));
-        assert_eq!(request.content.as_str(), "推开密室的门");
+            .err()
+            .expect("missing creation payload must fail");
+        assert!(error.contains("创建载荷"));
     }
 
     #[test]
@@ -659,7 +640,6 @@ mod tests {
                 summary: "".to_string(),
                 time_system: "".to_string(),
                 map_nodes: serde_json::json!({ "version": 1, "nodes": [] }),
-                triggers: vec![],
                 time_config: serde_json::json!({}),
                 director_config: serde_json::json!({}),
                 ui_theme_config: serde_json::json!({}),
@@ -716,7 +696,13 @@ mod tests {
         assert_eq!(first.turn_index, 1);
         assert!(!first.resume_incomplete_turn);
         orchestrator
-            .record_structured_output_failure(&conn, &session.id, first.turn_index, &submit, &failure)
+            .record_structured_output_failure(
+                &conn,
+                &session.id,
+                first.turn_index,
+                &submit,
+                &failure,
+            )
             .expect("record failure 1");
 
         // 第一次重发:resume 必须复用回合号 1,而不是另开回合 2。
@@ -734,7 +720,13 @@ mod tests {
         // 第二次失败仍记到回合 1;第三次重发仍能拿到 resume 请求
         // (修复前此处因回合错位报 Missing created payload,表现为"无法二次重发")。
         orchestrator
-            .record_structured_output_failure(&conn, &session.id, resumed.turn_index, &resume, &failure)
+            .record_structured_output_failure(
+                &conn,
+                &session.id,
+                resumed.turn_index,
+                &resume,
+                &failure,
+            )
             .expect("record failure 2");
         let resume_again = orchestrator
             .load_resume_player_request(&conn, &session.id)

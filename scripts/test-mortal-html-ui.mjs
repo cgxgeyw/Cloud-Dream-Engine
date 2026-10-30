@@ -55,6 +55,25 @@ try {
     assert.ok((await cot.locator('.game-cot-content').textContent()).length > 200);
     await page.evaluate(() => window.pushSnapshot({ visible_characters: ['韩立'] }));
     assert.ok((await cot.locator('.game-cot-content').textContent()).length > 200, 'snapshot must retain expanded reasoning');
+    const interaction = frame.locator('.message--interaction');
+    await interaction.getByRole('button', { name: '沿山脊前进' }).click();
+    await page.waitForFunction(() => window.received.some(a => a.type === 'answer-interaction'));
+    const answered = await page.evaluate(() => window.received.find(a => a.type === 'answer-interaction'));
+    assert.equal(answered.answer, 'ridge');
+    await interaction.getByText('已选择：沿山脊前进').waitFor();
+    const confirm = frame.locator('.message--interaction').filter({ hasText: '是否开始入门试炼？' });
+    await confirm.getByRole('button', { name: '开始试炼' }).click();
+    await page.waitForFunction(() => window.received.some(a => a.type === 'answer-interaction' && a.messageId === 'confirm-interaction'));
+    const confirmed = await page.evaluate(() => window.received.find(a => a.type === 'answer-interaction' && a.messageId === 'confirm-interaction'));
+    assert.equal(confirmed.answer, true);
+    await confirm.getByText('已选择：开始试炼').waitFor();
+    const slider = frame.locator('.message--interaction').filter({ hasText: '选择行进速度' });
+    await slider.locator('input[type=range]').evaluate(element => { element.value = '7'; element.dispatchEvent(new Event('input', { bubbles: true })); });
+    await slider.getByRole('button', { name: '确认' }).click();
+    await page.waitForFunction(() => window.received.some(a => a.type === 'answer-interaction' && a.messageId === 'slider-interaction'));
+    const slid = await page.evaluate(() => window.received.find(a => a.type === 'answer-interaction' && a.messageId === 'slider-interaction'));
+    assert.equal(slid.answer, 7);
+    await slider.getByText('已选择：7').waitFor();
     // Clicking a button blurs input; an unrelated snapshot must not erase the local draft.
     await frame.locator('#input').fill('走上石阶。');
     await frame.locator('#world-name').click();
@@ -80,7 +99,7 @@ try {
     assert.equal(await frame.locator('#world-sdk-error').count(), 0);
     await page.screenshot({ path: path.join(root, `output/mortal-ui-shots/${platform}-chat.png`) });
     assert.deepEqual(errors, [], 'No console or sandbox errors');
-    console.log(`${platform}: topology, zoom, tabs, attributes, inventory, CoT, draft, send, failure, retry passed`);
+    console.log(`${platform}: topology, zoom, tabs, attributes, inventory, CoT, interaction, draft, send, failure, retry passed`);
     await page.close();
   }
 } finally {

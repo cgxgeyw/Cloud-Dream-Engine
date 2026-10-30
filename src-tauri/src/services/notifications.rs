@@ -89,7 +89,12 @@ impl NotificationScheduler {
             scheduled_at: scheduled_at.to_rfc3339(),
             metadata,
         })?;
-        Self::schedule_delivery(conn, app.clone(), data_dir.to_path_buf(), notification.clone())?;
+        Self::schedule_delivery(
+            conn,
+            app.clone(),
+            data_dir.to_path_buf(),
+            notification.clone(),
+        )?;
         Ok(notification)
     }
 
@@ -290,9 +295,12 @@ impl NotificationScheduler {
                 }
                 continue;
             }
-            if let Err(error) =
-                Self::schedule_delivery(conn, app.clone(), data_dir.to_path_buf(), notification.clone())
-            {
+            if let Err(error) = Self::schedule_delivery(
+                conn,
+                app.clone(),
+                data_dir.to_path_buf(),
+                notification.clone(),
+            ) {
                 if let Err(err) = repo.mark_failed(&notification.id, &error) {
                     log_notification_db_error("mark_failed", &notification.id, &err);
                 }
@@ -319,12 +327,7 @@ impl NotificationScheduler {
         {
             #[cfg(windows)]
             {
-                return Self::schedule_windows_notification(
-                    conn,
-                    &app,
-                    &data_dir,
-                    &notification,
-                );
+                return Self::schedule_windows_notification(conn, &app, &data_dir, &notification);
             }
             #[cfg(not(windows))]
             {
@@ -359,10 +362,11 @@ impl NotificationScheduler {
             .encode(serde_json::to_vec(&payload).map_err(|error| error.to_string())?);
         let action = format!(
             "\"{}\" --scheduled-notification {}",
-            executable.display(), encoded
+            executable.display(),
+            encoded
         );
-        let start_at = parse_stored_notification_time(&notification.scheduled_at)?
-            .with_timezone(&Local);
+        let start_at =
+            parse_stored_notification_time(&notification.scheduled_at)?.with_timezone(&Local);
         let now = Local::now();
         let start_minute = start_at
             .with_second(0)
@@ -393,8 +397,7 @@ impl NotificationScheduler {
         if !status.success() {
             return Err(format!("Windows 任务计划程序退出码：{status}"));
         }
-        ScheduledNotificationRepository::new(conn)
-            .mark_native_scheduled(&notification.id, None)?;
+        ScheduledNotificationRepository::new(conn).mark_native_scheduled(&notification.id, None)?;
         Self::spawn_notification_task(
             app.clone(),
             data_dir.to_path_buf(),
@@ -417,13 +420,14 @@ impl NotificationScheduler {
         use tauri::Manager;
         let scheduled_at = parse_stored_notification_time(&notification.scheduled_at)?;
         let bridge = app.state::<tauri_plugin_native_bridge::NativeBridge<tauri::Wry>>();
-        let result = bridge.schedule_reminder(tauri_plugin_native_bridge::ScheduleReminderArgs {
-            notification_id: notification.id.clone(),
-            title: notification.title.clone(),
-            body: notification.body.clone(),
-            channel_id: ANDROID_REMINDER_CHANNEL_ID.to_string(),
-            trigger_at_ms: scheduled_at.timestamp_millis(),
-        })?;
+        let result =
+            bridge.schedule_reminder(tauri_plugin_native_bridge::ScheduleReminderArgs {
+                notification_id: notification.id.clone(),
+                title: notification.title.clone(),
+                body: notification.body.clone(),
+                channel_id: ANDROID_REMINDER_CHANNEL_ID.to_string(),
+                trigger_at_ms: scheduled_at.timestamp_millis(),
+            })?;
         // H7/M9: 复用调用方已持有的主连接,不再 Database::new() 另开连接。
         // 保存日历 event id 到 metadata,供取消/调试使用。
         ScheduledNotificationRepository::new(conn)
@@ -578,8 +582,14 @@ pub fn run_scheduled_notification_cli() -> bool {
     let Some(payload) = decoded else {
         return true;
     };
-    let title = payload.get("title").and_then(|value| value.as_str()).unwrap_or(APP_DISPLAY_NAME);
-    let body = payload.get("body").and_then(|value| value.as_str()).unwrap_or("");
+    let title = payload
+        .get("title")
+        .and_then(|value| value.as_str())
+        .unwrap_or(APP_DISPLAY_NAME);
+    let body = payload
+        .get("body")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
     if let Some(scheduled_at) = payload.get("scheduled_at").and_then(|value| value.as_str()) {
         if let Ok(target) = parse_stored_notification_time(scheduled_at) {
             let delay = target - Utc::now();
@@ -1249,9 +1259,7 @@ fn resolve_notification(
     arguments: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<ScheduledNotification, String> {
     if let Some(id) = arg_text(arguments, "notification_id").or_else(|| arg_text(arguments, "id")) {
-        let notification = repo
-            .get(&id)?
-            .ok_or_else(|| format!("通知不存在：{id}"))?;
+        let notification = repo.get(&id)?.ok_or_else(|| format!("通知不存在：{id}"))?;
         if notification.session_id != session_id {
             return Err("通知属于其他会话".to_string());
         }

@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSnapshot {
@@ -21,7 +20,6 @@ pub struct SessionSnapshot {
     pub player_stats: Vec<String>,
     pub map_graph_nodes: Vec<SessionMapNode>,
     pub map_graph_edges: Vec<SessionMapEdge>,
-    pub inventory_items: Vec<InventoryItem>,
     pub system_log: Vec<String>,
     pub scene: SceneRuntime,
     pub assets: AssetSelection,
@@ -243,20 +241,15 @@ fn strip_data_url_prefix(value: &str) -> &str {
     }
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
-    /// 稳定消息 ID。写入时生成；旧数据反序列化缺省时补发（开发期允许清库重建，
-    /// 新协议数据从写入起就必须携带）。消息寻址用 session_id + message_id。
-    #[serde(default = "new_message_id")]
+    /// 稳定消息 ID。写入时生成，消息寻址用 session_id + message_id。
     pub message_id: String,
     pub role: String,
-    #[serde(default)]
     pub content: MessageContent,
     pub speaker: Option<String>,
     pub metadata: Option<serde_json::Value>,
-    /// RFC3339 写入时间；旧数据可能为空串。
-    #[serde(default)]
+    /// RFC3339 写入时间。
     pub created_at: String,
     /// 分支/重生成场景下来源消息的 ID；普通消息为 None。
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -271,11 +264,7 @@ impl ChatMessage {
 
     // new/with_metadata 目前由测试和第 2 项（重新生成）使用。
     #[allow(dead_code)]
-    pub fn new(
-        role: impl Into<String>,
-        content: MessageContent,
-        speaker: Option<String>,
-    ) -> Self {
+    pub fn new(role: impl Into<String>, content: MessageContent, speaker: Option<String>) -> Self {
         Self {
             message_id: new_message_id(),
             role: role.into(),
@@ -304,11 +293,7 @@ impl SessionSnapshot {
     }
 
     /// 按稳定 ID 编辑消息内容；消息不存在时返回 false。
-    pub fn edit_message_content(
-        &mut self,
-        message_id: &str,
-        new_content: MessageContent,
-    ) -> bool {
+    pub fn edit_message_content(&mut self, message_id: &str, new_content: MessageContent) -> bool {
         let Some(message) = self
             .messages
             .iter_mut()
@@ -334,20 +319,6 @@ pub struct SessionMapEdge {
     pub edge_id: String,
     pub source_node_id: String,
     pub target_node_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InventoryItem {
-    pub item_id: String,
-    pub name: String,
-    pub category: String,
-    pub quantity: i32,
-    pub description: String,
-    pub tags: Vec<String>,
-    pub owner_type: String,
-    pub owner_id: String,
-    pub visibility: String,
-    pub disclosed_to: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -383,10 +354,9 @@ pub struct CharacterVisualState {
     pub generation_prompt: String,
 }
 
+/// 叙事阶段标签（opening/escalation/crisis 等），由导演的 world_phase 决定。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SessionState {
-    pub metrics: HashMap<String, f64>,
-    pub tags: Vec<String>,
     pub phase: String,
 }
 
@@ -473,7 +443,9 @@ pub struct RuntimeAttributeItem {
     pub schema_id: String,
     pub key: String,
     pub label: String,
+    pub description: String,
     pub value_type: String,
+    pub enum_options: Vec<String>,
     pub value: serde_json::Value,
     pub source: String,
     pub display_policy: serde_json::Value,
@@ -559,7 +531,10 @@ mod tests {
         let value = build_wire_content(" payload ", &[image_part(), audio_part(Some(3.0))]);
         let parts = value.as_array().expect("multipart content");
         assert_eq!(parts.len(), 3);
-        assert_eq!(parts[0], serde_json::json!({ "type": "text", "text": " payload " }));
+        assert_eq!(
+            parts[0],
+            serde_json::json!({ "type": "text", "text": " payload " })
+        );
         assert_eq!(
             parts[1].pointer("/image_url/url").and_then(|v| v.as_str()),
             Some("data:image/png;base64,QUJD")

@@ -42,9 +42,7 @@ pub async fn create_world_with_ai(
             .find(|model| model.is_default)
             .cloned()
             .or_else(|| models.first().cloned())
-            .ok_or_else(|| {
-                "尚未配置文本模型，请先在设置里添加文本模型。".to_string()
-            })?;
+            .ok_or_else(|| "尚未配置文本模型，请先在设置里添加文本模型。".to_string())?;
         // 世界生成器是宿主辅助调用，只吃应用级生成参数（还没有世界可覆盖）。
         let app_generation =
             crate::commands::settings::load_app_settings(db.conn())?.generation_params;
@@ -124,6 +122,12 @@ pub async fn preview_opening_prompt(
 ) -> Result<WorldOpeningPromptPreviewResponse, String> {
     let db = state.db.lock().await;
     WorldService::new().preview_opening_prompt(db.conn(), &world_id, params)
+}
+
+/// 内置导演返回契约文本（按实际发送形态），供编辑器"填入内置契约"按钮使用。
+#[tauri::command]
+pub fn get_default_director_response_contract() -> Result<String, String> {
+    Ok(crate::services::game_engine::director::default_director_response_contract_text())
 }
 
 #[tauri::command]

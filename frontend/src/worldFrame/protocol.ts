@@ -174,6 +174,13 @@ function isWorldFrameAction(value: unknown): value is WorldFrameAction {
   if (!isRecord(value) || typeof value.type !== "string") {
     return false;
   }
+  if (value.type === "answer-interaction") {
+    return typeof value.messageId === "string"
+      && value.messageId.length > 0
+      && typeof value.interactionId === "string"
+      && value.interactionId.length > 0
+      && Object.prototype.hasOwnProperty.call(value, "answer");
+  }
   const known = [
     "clear-action-error",
     "set-draft-value",

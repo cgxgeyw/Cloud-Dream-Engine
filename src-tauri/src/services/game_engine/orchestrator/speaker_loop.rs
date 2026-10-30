@@ -114,7 +114,6 @@ impl SessionOrchestrator {
             let (
                 speaker_model,
                 visible_attribute_lines,
-                visible_inventory_items,
                 public_scene_state_lines,
                 memory_pool,
                 recent_messages,
@@ -133,15 +132,14 @@ impl SessionOrchestrator {
                 // 不支持即明确报错（中文文案），不静默丢弃。
                 crate::models::model_config::ensure_media_supported(&speaker_model, player_media)?;
                 let speaker_character_id = speaker_char.map(|character| character.id.as_str());
-                let visible_attribute_lines =
-                    load_character_visible_attribute_lines(conn, session, speaker_character_id)?;
-                let visible_inventory_items =
-                    filter_inventory_for_character(session, speaker_character_id, speaker_name);
-                let public_scene_state_lines = build_public_scene_state_lines(
+                let visible_attribute_lines = load_character_visible_attribute_lines(
+                    conn,
                     session,
-                    &visible_attribute_lines,
-                    &visible_inventory_items,
-                );
+                    &world.id,
+                    speaker_character_id,
+                )?;
+                let public_scene_state_lines =
+                    build_public_scene_state_lines(session, &visible_attribute_lines);
                 let memory_pool =
                     load_character_memory_pool(conn, &world.id, &session.id, speaker_character_id)?;
                 let recall_limit = std::cmp::max(
@@ -171,7 +169,6 @@ impl SessionOrchestrator {
                 (
                     speaker_model,
                     visible_attribute_lines,
-                    visible_inventory_items,
                     public_scene_state_lines,
                     memory_pool,
                     recent_messages,
@@ -189,8 +186,7 @@ impl SessionOrchestrator {
             let (recalled_memories, speaker_request, speaker_provider, speaker_request_value) = {
                 let db_guard = db.lock().await;
                 let conn = db_guard.conn();
-                let recalled_memories =
-                    memory_service.finalize_character_recall(conn, recall_plan);
+                let recalled_memories = memory_service.finalize_character_recall(conn, recall_plan);
                 let mut speaker_request = build_character_chat_request(
                     dialogue_pipeline,
                     world,
@@ -206,7 +202,6 @@ impl SessionOrchestrator {
                     &recalled_memories,
                     &memory_pool,
                     &visible_attribute_lines,
-                    &visible_inventory_items,
                     &public_scene_state_lines,
                     &kv_vars,
                     &resolve_generation_params_with_model(
@@ -224,7 +219,11 @@ impl SessionOrchestrator {
                         && !speaker_request.native_tool_calling.unwrap_or(false),
                 );
                 crate::services::world_logic::apply_agent_turn_tool_choice(
-                    conn, world, session_id, speaker_name, &mut speaker_request,
+                    conn,
+                    world,
+                    session_id,
+                    speaker_name,
+                    &mut speaker_request,
                 )?;
                 let speaker_provider = normalize_provider_name(&speaker_model.provider);
                 let speaker_request_value = serde_json::json!({
@@ -270,7 +269,10 @@ impl SessionOrchestrator {
             let mut streamed_partial: Option<
                 crate::services::game_engine::dialogue::ParsedCharacterResponse,
             > = None;
-            let llm_result = if speaker_request.stream.unwrap_or(speaker_model.streaming_enabled) {
+            let llm_result = if speaker_request
+                .stream
+                .unwrap_or(speaker_model.streaming_enabled)
+            {
                 let streamed_result = llm_client
                     .chat_completion_stream(
                         &speaker_provider,
@@ -319,9 +321,9 @@ impl SessionOrchestrator {
                 Ok(response) => {
                     // 工具循环：与主控路同键同钳制（director_tool_loop_limit，默认 4、
                     // 范围 1-12）。此前角色路只做一轮 follow-up，模型无法「查完再追问」。
-                    let mut tool_loop_limit = crate::services::game_engine::director::
-                        WorldDirectorService::new()
-                        .resolve_tool_loop_limit(world);
+                    let mut tool_loop_limit =
+                        crate::services::game_engine::director::WorldDirectorService::new()
+                            .resolve_tool_loop_limit(world);
                     if !crate::services::world_logic::tool_definitions(world).is_empty() {
                         tool_loop_limit = tool_loop_limit.max(32);
                     }
@@ -333,7 +335,9 @@ impl SessionOrchestrator {
                     for _ in 0..tool_loop_limit {
                         // Recover before dispatch: a retry may return a tool call rather than dialogue.
                         // Keeping recovery inside the loop ensures that call is actually executed.
-                        if let Some(retry_request) = build_speaker_budget_retry_request(&active_request, &response) {
+                        if let Some(retry_request) =
+                            build_speaker_budget_retry_request(&active_request, &response)
+                        {
                             if let Ok(retry_response) = llm_client
                                 .chat_completion(
                                     &speaker_provider,
@@ -388,12 +392,28 @@ impl SessionOrchestrator {
                         }
                         let mut round_results = Vec::new();
                         for call in response.tool_calls.as_deref().unwrap_or(&[]) {
-                            if call.tool_name == "search_knowledge" && world.director_config["knowledge_access"] == true {
+                            if call.tool_name == "search_knowledge"
+                                && world.director_config["knowledge_access"] == true
+                            {
                                 let guard = db.lock().await;
-                                let result = crate::commands::knowledge::search(guard.conn(), &world.id, &call.arguments);
-                                round_results.push(SpeakerNotificationToolResult { call: call.clone(), result: match result { Ok(value) => serde_json::json!({"ok":true,"result":value}), Err(error) => serde_json::json!({"ok":false,"error":error}) } });
+                                let result = crate::commands::knowledge::search(
+                                    guard.conn(),
+                                    &world.id,
+                                    &call.arguments,
+                                );
+                                round_results.push(SpeakerNotificationToolResult {
+                                    call: call.clone(),
+                                    result: match result {
+                                        Ok(value) => serde_json::json!({"ok":true,"result":value}),
+                                        Err(error) => serde_json::json!({"ok":false,"error":error}),
+                                    },
+                                });
                             }
-                            if let Some(handler) = crate::services::world_logic::tool_handler(world, &call.tool_name, speaker_name) {
+                            if let Some(handler) = crate::services::world_logic::tool_handler(
+                                world,
+                                &call.tool_name,
+                                speaker_name,
+                            ) {
                                 let guard = db.lock().await;
                                 let result = crate::services::world_logic::resolve_action(
                                     guard.conn(),
@@ -412,7 +432,9 @@ impl SessionOrchestrator {
                                             "result": value.result,
                                             "transition": value.transition,
                                         }),
-                                        Err(error) => serde_json::json!({"ok": false, "error": error}),
+                                        Err(error) => {
+                                            serde_json::json!({"ok": false, "error": error})
+                                        }
                                     },
                                 });
                             }
@@ -453,7 +475,11 @@ impl SessionOrchestrator {
                         {
                             let guard = db.lock().await;
                             crate::services::world_logic::apply_agent_turn_tool_choice(
-                                guard.conn(), world, session_id, speaker_name, &mut followup_request,
+                                guard.conn(),
+                                world,
+                                session_id,
+                                speaker_name,
+                                &mut followup_request,
                             )?;
                         }
                         all_tool_results.extend(round_results);
@@ -546,26 +572,43 @@ impl SessionOrchestrator {
                         "response": serde_json::to_value(&response).unwrap_or_default(),
                         "notification_tool_results": notification_tool_results.iter().map(|item| item.result.clone()).collect::<Vec<_>>(),
                     });
+                    let raw_response = if response.content.trim().is_empty() {
+                        streamed_raw_response.clone()
+                    } else {
+                        response.content.clone()
+                    };
+                    let return_processing =
+                        crate::services::game_engine::return_processing::apply_return_processing(
+                            &world.director_config,
+                            &raw_response,
+                            "character",
+                        );
+                    let processed_raw_response = return_processing
+                        .get("after")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or(raw_response.as_str())
+                        .to_string();
                     let parsed_response = if let Some(partial) = streamed_partial
                         .as_ref()
                         .filter(|_| !response.content.trim().is_empty())
                     {
                         let final_parsed = dialogue_pipeline
-                            .parse_character_response(&response.content, speaker_name);
+                            .parse_character_response(&processed_raw_response, speaker_name);
                         if final_parsed.content.trim().is_empty() {
                             partial.clone()
                         } else {
                             final_parsed
                         }
-                    } else if !response.content.trim().is_empty() {
-                        dialogue_pipeline.parse_character_response(&response.content, speaker_name)
+                    } else if !processed_raw_response.trim().is_empty() {
+                        dialogue_pipeline
+                            .parse_character_response(&processed_raw_response, speaker_name)
                     } else if let Some(partial) = streamed_partial.clone() {
                         partial
                     } else {
                         dialogue_pipeline
-                            .parse_character_response(&streamed_raw_response, speaker_name)
+                            .parse_character_response(&processed_raw_response, speaker_name)
                     };
-                    let prompt_trace = build_character_prompt_trace(
+                    let mut prompt_trace = build_character_prompt_trace(
                         dialogue_pipeline,
                         world,
                         speaker_name,
@@ -579,7 +622,6 @@ impl SessionOrchestrator {
                         &recalled_memories,
                         &memory_pool,
                         &visible_attribute_lines,
-                        &visible_inventory_items,
                         &public_scene_state_lines,
                         next_scene_name,
                         next_location,
@@ -588,11 +630,7 @@ impl SessionOrchestrator {
                         &speaker_model,
                         speaker_request_value.clone(),
                         speaker_response_value.clone(),
-                        if response.content.trim().is_empty() {
-                            streamed_raw_response.clone()
-                        } else {
-                            response.content.clone()
-                        },
+                        raw_response.clone(),
                         serde_json::json!({
                             "speaker": parsed_response.speaker.clone(),
                             "content": parsed_response.content.clone(),
@@ -607,11 +645,17 @@ impl SessionOrchestrator {
                         &speaker_request.generation,
                         player_media,
                     );
-                    let raw_response = if response.content.trim().is_empty() {
-                        streamed_raw_response.clone()
-                    } else {
-                        response.content.clone()
-                    };
+                    if let Some(object) = prompt_trace.as_object_mut() {
+                        object.insert("return_processing".to_string(), return_processing.clone());
+                        object.insert(
+                            "processed_model_return".to_string(),
+                            serde_json::json!({
+                                "speaker": parsed_response.speaker.clone(),
+                                "content": parsed_response.content.clone(),
+                                "narration": parsed_response.narration.clone(),
+                            }),
+                        );
+                    }
                     if let Err(failure) = validate_character_payload(
                         &parsed_response,
                         speaker_name,
@@ -778,7 +822,6 @@ impl SessionOrchestrator {
                         &recalled_memories,
                         &memory_pool,
                         &visible_attribute_lines,
-                        &visible_inventory_items,
                         &public_scene_state_lines,
                         next_scene_name,
                         next_location,
@@ -971,9 +1014,13 @@ async fn execute_speaker_custom_tool_calls(
     let custom_calls = tool_calls
         .unwrap_or(&[])
         .iter()
-        .filter(|call| call.tool_name.trim() != "schedule_notification"
-            && call.tool_name.trim() != "search_knowledge"
-            && !crate::services::world_logic::tool_definitions(world).iter().any(|tool| tool.name == call.tool_name))
+        .filter(|call| {
+            call.tool_name.trim() != "schedule_notification"
+                && call.tool_name.trim() != "search_knowledge"
+                && !crate::services::world_logic::tool_definitions(world)
+                    .iter()
+                    .any(|tool| tool.name == call.tool_name)
+        })
         .cloned()
         .collect::<Vec<_>>();
     if custom_calls.is_empty() {
@@ -1050,8 +1097,8 @@ fn handle_speaker_stream_chunk(
     }
     if !chunk.delta.is_empty() {
         streamed_raw_response.push_str(&chunk.delta);
-        if let Some(parsed_partial) =
-            dialogue_pipeline.extract_partial_character_response(streamed_raw_response, speaker_name)
+        if let Some(parsed_partial) = dialogue_pipeline
+            .extract_partial_character_response(streamed_raw_response, speaker_name)
         {
             *streamed_partial = Some(parsed_partial);
         }
@@ -1129,10 +1176,10 @@ fn build_tool_activity_value(
         let mut entry = serde_json::json!({ "id": call_name, "name": display_name });
         if status == "calling" {
             if let Some(preview) = summarize_tool_call_arguments(&call.arguments) {
-                entry
-                    .as_object_mut()
-                    .unwrap()
-                    .insert("args_preview".to_string(), serde_json::Value::String(preview));
+                entry.as_object_mut().unwrap().insert(
+                    "args_preview".to_string(),
+                    serde_json::Value::String(preview),
+                );
             }
         }
         tools.push(entry);
@@ -1186,7 +1233,10 @@ fn build_speaker_budget_retry_request(
     response: &crate::services::llm::client::ChatResponse,
 ) -> Option<crate::services::llm::client::ChatRequest> {
     if !response.content.trim().is_empty()
-        || response.tool_calls.as_ref().is_some_and(|calls| !calls.is_empty())
+        || response
+            .tool_calls
+            .as_ref()
+            .is_some_and(|calls| !calls.is_empty())
         || !response.is_truncated_by_token_limit()
     {
         return None;
@@ -1252,4 +1302,3 @@ fn fallback_notification_tool_response(speaker_name: &str) -> String {
 #[cfg(test)]
 #[path = "speaker_loop_tests.rs"]
 mod tests;
-

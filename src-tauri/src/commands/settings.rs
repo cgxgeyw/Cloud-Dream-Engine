@@ -27,10 +27,11 @@ pub fn load_app_settings(conn: &rusqlite::Connection) -> Result<AppSettings, Str
                 default_embedding_model: row.get(5)?,
                 home_background_strategy: row.get(6)?,
                 export_directory: row.get(7)?,
-                generation_params: crate::models::generation_params::GenerationParams::from_json_text(
-                    &row.get::<_, String>(8)?,
-                )
-                .unwrap_or_default(),
+                generation_params:
+                    crate::models::generation_params::GenerationParams::from_json_text(
+                        &row.get::<_, String>(8)?,
+                    )
+                    .unwrap_or_default(),
             })
         })
         .map_err(|e| e.to_string())?;

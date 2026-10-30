@@ -1,14 +1,178 @@
+use crate::models::session::SessionSnapshot;
+use crate::models::world::WorldDefinition;
 use chrono::Local;
 use std::collections::HashMap;
 
-use crate::models::world::WorldDefinition;
-use crate::services::llm::client::ChatMessage;
+fn current_time_text() -> String {
+    Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
+fn current_date_text() -> String {
+    Local::now().format("%Y-%m-%d").to_string()
+}
+
+/// 提示词变量上下文：内置变量 + 插值管理的自定义变量 + 会话 KV 变量。
+/// 供所有作者可编辑的提示词输入框（运行时上下文、返回格式、系统提示、
+/// 背景、旁白等）在发送前展开 `{{变量}}` 占位符。
+pub struct PromptVariableContext<'a> {
+    pub world: Option<&'a WorldDefinition>,
+    pub session: Option<&'a SessionSnapshot>,
+    /// 会话级 variables 命名空间的 KV（{{var:key}} 的数据源）。
+    pub kv_vars: Option<&'a HashMap<String, String>>,
+    /// 插值管理（director_config.prompt_variables）定义的世界级自定义变量。
+    pub custom_vars: Option<&'a HashMap<String, String>>,
+}
+
+impl PromptVariableContext<'_> {
+    pub fn empty() -> Self {
+        Self {
+            world: None,
+            session: None,
+            kv_vars: None,
+            custom_vars: None,
+        }
+    }
+
+    /// 解析一个变量名。无法识别时返回 None（占位符按原文保留，方便在预览里发现拼写错误）。
+    pub fn resolve(&self, raw_name: &str) -> Option<String> {
+        let name = raw_name.trim();
+        if name.is_empty() {
+            return None;
+        }
+        // 1) 插值管理里的自定义变量优先：作者可覆盖任何内置名字。
+        if let Some(value) = self.custom_vars.and_then(|map| map.get(name)) {
+            return Some(value.clone());
+        }
+        // 2) 内置扁平变量。
+        let builtin = match name {
+            "time" | "current_time" | "当前时间" => Some(current_time_text()),
+            "date" | "current_date" | "当前日期" => Some(current_date_text()),
+            "user" | "player" | "玩家" => self
+                .session
+                .map(|session| session.player_character_name.clone()),
+            "world_name" | "世界名" => self.world.map(|world| world.name.clone()),
+            "location" | "地点" => self.session.map(|session| session.location.clone()),
+            "scene" | "scene_name" | "场景" => {
+                self.session.map(|session| session.scene.name.clone())
+            }
+            _ => None,
+        };
+        if builtin.is_some() {
+            return builtin;
+        }
+        // 3) 命名空间变量（恢复 v1 插值系统的老写法，世界包文档仍在使用）。
+        if let Some(key) = name.strip_prefix("var:") {
+            // 会话 KV 是运行时动态值：缺失时替换为空串，避免占位符原文泄漏进提示词。
+            return Some(
+                self.kv_vars
+                    .and_then(|map| map.get(key.trim()))
+                    .cloned()
+                    .unwrap_or_default(),
+            );
+        }
+        if let Some(field) = name.strip_prefix("world:").map(str::trim) {
+            return match (field, self.world) {
+                ("name", Some(world)) => Some(world.name.clone()),
+                ("genre", Some(world)) => Some(world.genre.clone()),
+                ("summary", Some(world)) => Some(world.summary.clone()),
+                ("opening_scene", Some(world)) => Some(world.opening_scene.clone()),
+                _ => None,
+            };
+        }
+        if let Some(field) = name.strip_prefix("session:").map(str::trim) {
+            return match (field, self.session) {
+                ("location", Some(session)) => Some(session.location.clone()),
+                ("time", Some(session)) => Some(session.time_label.clone()),
+                ("scene", Some(session)) => Some(session.scene.name.clone()),
+                ("player", Some(session)) => Some(session.player_character_name.clone()),
+                _ => None,
+            };
+        }
+        if let Some(options) = name.strip_prefix("random:") {
+            let items: Vec<&str> = options
+                .split(',')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .collect();
+            if items.is_empty() {
+                return None;
+            }
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.subsec_nanos() as usize)
+                .unwrap_or(0);
+            return Some(items[nanos % items.len()].to_string());
+        }
+        None
+    }
+}
+
+/// 自定义变量可以引用内置变量（值里再写 {{user}} 等），因此做多轮展开；
+/// 上限防止自定义变量互相引用成环导致死循环。
+const MAX_MACRO_PASSES: usize = 3;
 
 pub fn render_prompt_variables(template: &str) -> String {
-    let current_time = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    template
-        .replace("{{current_time}}", &current_time)
-        .replace("{{当前时间}}", &current_time)
+    render_prompt_variables_with_context(template, &PromptVariableContext::empty())
+}
+
+pub fn render_prompt_variables_with_context(template: &str, ctx: &PromptVariableContext) -> String {
+    let mut output = template.to_string();
+    for _ in 0..MAX_MACRO_PASSES {
+        let next = render_single_pass(&output, ctx);
+        if next == output {
+            break;
+        }
+        output = next;
+    }
+    output
+}
+
+fn render_single_pass(template: &str, ctx: &PromptVariableContext) -> String {
+    let mut output = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(start) = rest.find("{{") {
+        output.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        let Some(end_offset) = after.find("}}") else {
+            output.push_str(&rest[start..]);
+            return output;
+        };
+        let token_end = start + 2 + end_offset + 2;
+        match ctx.resolve(&after[..end_offset]) {
+            Some(value) => output.push_str(&value),
+            // 未识别的占位符按原文保留：预览里看得见，比静默清空好排查。
+            None => output.push_str(&rest[start..token_end]),
+        }
+        rest = &rest[token_end..];
+    }
+    output.push_str(rest);
+    output
+}
+
+/// 插值管理（世界级自定义提示词变量）：`director_config.prompt_variables`。
+/// 值统一转字符串；空键跳过。随世界包导入导出。
+pub fn load_prompt_custom_vars(world: &WorldDefinition) -> HashMap<String, String> {
+    world
+        .director_config
+        .get("prompt_variables")
+        .and_then(|value| value.as_object())
+        .map(|map| {
+            map.iter()
+                .filter_map(|(key, value)| {
+                    let key = key.trim();
+                    if key.is_empty() {
+                        return None;
+                    }
+                    let text = match value {
+                        serde_json::Value::String(text) => text.clone(),
+                        serde_json::Value::Null => return None,
+                        other => other.to_string(),
+                    };
+                    Some((key.to_string(), text))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// 读取会话级 variables 命名空间的 KV，供提示词 {{var:key}} 占位符使用。
@@ -17,8 +181,11 @@ pub fn load_prompt_kv_vars(
     conn: &rusqlite::Connection,
     session_id: &str,
 ) -> Result<std::collections::HashMap<String, String>, String> {
-    let entries = crate::db::repositories::world_kv_repo::WorldKvRepository::new(conn)
-        .list("session", session_id, "variables")?;
+    let entries = crate::db::repositories::world_kv_repo::WorldKvRepository::new(conn).list(
+        "session",
+        session_id,
+        "variables",
+    )?;
     Ok(entries
         .into_iter()
         .map(|entry| {
@@ -31,384 +198,74 @@ pub fn load_prompt_kv_vars(
         .collect())
 }
 
-/// 关键词触发用的近期消息文本（最近 depth 条，拼接内容）。
-pub fn recent_messages_text(
-    messages: &[crate::models::session::ChatMessage],
-    depth: usize,
-) -> String {
-    messages
-        .iter()
-        .rev()
-        .take(depth)
-        .rev()
-        .map(|message| message.content.as_str().to_string())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
+pub const DIRECTOR_PROMPT_SECTION_IDS: &[&str] = &[
+    "world_background",
+    "oag_context",
+    "director_rules",
+    "world_runtime_context",
+    "scene_characters",
+    "chat_history",
+    "player_input",
+    "response_contract",
+    "tool_loop_context",
+];
 
-// ---- 提示词模块（第 6 项）----
-// 模块在 prompt_presets 中声明，向后兼容旧字段（enabled/scope/order/content），新增：
-//   name      展示名（调试留痕用）
-//   position  system_prefix（系统前缀）| system_suffix（系统追加，默认）| depth:N（历史第 N 层）
-//   keywords  可选关键词列表：命中近期消息才注入（无则总是注入）
-//   keyword_scan_depth  关键词扫描的近期消息条数（默认 10）
-// 核心响应契约不受模块影响：模块只能追加消息，不能修改已有内容。
+pub const CHARACTER_PROMPT_SECTION_IDS: &[&str] = &[
+    "world_background",
+    "oag_context",
+    "character_background",
+    "character_rules",
+    "character_attributes",
+    "world_runtime_context",
+    "character_runtime_context",
+    "visible_characters",
+    "chat_history",
+    "narration_prompt",
+    "player_input",
+    "response_contract",
+    "fact_memory_rules",
+];
 
-/// 单个模块渲染后内容上限（字符）。
-pub const PROMPT_MODULE_MAX_CONTENT: usize = 4000;
-const MAX_MACRO_PASSES: usize = 3;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PromptPosition {
-    SystemPrefix,
-    SystemSuffix,
-    Depth(usize),
-}
-
-/// 一个模块的解析结果：注入位置 + 渲染后内容 + 留痕原因。
-#[derive(Debug, Clone)]
-pub struct ResolvedPromptModule {
-    pub name: String,
-    pub position: PromptPosition,
-    pub order: i64,
-    pub content: String,
-    pub injected: bool,
-    pub reason: String,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct PromptModuleResolution {
-    pub prefix: Vec<String>,
-    pub suffix: Vec<String>,
-    pub depth_insertions: Vec<(usize, String)>,
-    pub traces: Vec<serde_json::Value>,
-}
-
-/// Shared prompt assembly primitive used by director and character calls.
-/// Sections are collected in their already-visible order; depth insertions are
-/// applied against the final history list in one place so traces and requests
-/// cannot drift apart.
-pub fn assemble_prompt_messages(
-    mut messages: Vec<ChatMessage>,
-    depth_insertions: &[(usize, String)],
-) -> Vec<ChatMessage> {
-    for (depth, content) in depth_insertions {
-        let content = content.trim();
-        if content.is_empty() {
-            continue;
-        }
-        let index = messages.len().saturating_sub(*depth);
-        messages.insert(
-            index,
-            ChatMessage {
-                role: "system".to_string(),
-                content: serde_json::Value::String(content.to_string()),
-                reasoning_content: None,
-                speaker: None,
-                tool_call_id: None,
-                tool_calls: None,
-                metadata: None,
-            },
-        );
-    }
-    messages
-}
-
-/// Same assembly operation for prompt trace JSON values. Keeping this beside
-/// the typed variant ensures the trace and the provider request have identical
-/// depth semantics without converting tool metadata through an lossy path.
-pub fn assemble_prompt_values(
-    mut messages: Vec<serde_json::Value>,
-    depth_insertions: &[(usize, String)],
-) -> Vec<serde_json::Value> {
-    for (depth, content) in depth_insertions {
-        let content = content.trim();
-        if content.is_empty() {
-            continue;
-        }
-        let index = messages.len().saturating_sub(*depth);
-        messages.insert(index, serde_json::json!({
-            "role": "system",
-            "content": content,
-        }));
-    }
-    messages
-}
-
-fn parse_prompt_position(raw: Option<&serde_json::Value>) -> PromptPosition {
-    let Some(value) = raw.and_then(|value| value.as_str()) else {
-        return PromptPosition::SystemSuffix;
-    };
-    let value = value.trim();
-    match value {
-        "system_prefix" => PromptPosition::SystemPrefix,
-        "system_suffix" | "" => PromptPosition::SystemSuffix,
-        _ => {
-            if let Some(depth) = value.strip_prefix("depth:") {
-                if let Ok(depth) = depth.trim().parse::<usize>() {
-                    return PromptPosition::Depth(depth.min(20));
-                }
+/// Apply a world-configured order to message sections.
+/// Unknown and duplicate IDs are ignored; omitted sections follow in default order.
+pub fn resolve_prompt_section_order(
+    config: &serde_json::Value,
+    key: &str,
+    defaults: &[&str],
+) -> Vec<String> {
+    let requested = config
+        .get(key)
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .filter(|id| defaults.contains(id))
+        .fold(Vec::<&str>::new(), |mut ordered, id| {
+            if !ordered.contains(&id) {
+                ordered.push(id);
             }
-            PromptPosition::SystemSuffix
-        }
-    }
-}
-
-fn module_keywords(object: &serde_json::Map<String, serde_json::Value>) -> Vec<String> {
-    object
-        .get("keywords")
-        .and_then(|value| value.as_array())
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| item.as_str().map(str::trim))
-                .filter(|item| !item.is_empty())
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// 解析世界包的提示词模块：过滤、关键词判定、渲染、按位置分流，并产生留痕。
-/// `kv_vars` 为会话级 variables 命名空间的 KV（{{var:key}} 的数据源）；
-/// `recent_text` 为近期消息拼接文本（关键词命中判定用）。
-pub fn resolve_prompt_modules(
-    world: &WorldDefinition,
-    target: &str,
-    variables: &HashMap<String, String>,
-    kv_vars: &HashMap<String, String>,
-    recent_text: &str,
-) -> PromptModuleResolution {
-    let presets = world
-        .director_config
-        .get("prompt_presets")
-        .and_then(|value| value.as_array())
-        .cloned()
-        .unwrap_or_default();
-    let mut resolved: Vec<ResolvedPromptModule> = Vec::new();
-    for item in &presets {
-        let Some(object) = item.as_object() else {
-            continue;
-        };
-        let name = object
-            .get("name")
-            .and_then(|value| value.as_str())
-            .unwrap_or("unnamed")
-            .trim()
-            .to_string();
-        let enabled = object
-            .get("enabled")
-            .and_then(|value| value.as_bool())
-            .unwrap_or(true);
-        let scope = object
-            .get("scope")
-            .and_then(|value| value.as_str())
-            .unwrap_or("both")
-            .trim()
-            .to_string();
-        if !enabled || !(scope == "both" || scope == target) {
-            continue;
-        }
-        let order = object
-            .get("order")
-            .and_then(|value| value.as_i64())
-            .unwrap_or(0);
-        let position = parse_prompt_position(object.get("position"));
-
-        // 关键词触发：声明了 keywords 时，仅当近期消息命中才注入。
-        let keywords = module_keywords(object);
-        let (keyword_hit, reason) = if keywords.is_empty() {
-            (true, "总是注入".to_string())
-        } else {
-            let hit = keywords
-                .iter()
-                .find(|keyword| recent_text.contains(keyword.as_str()));
-            match hit {
-                Some(keyword) => (true, format!("命中关键词: {keyword}")),
-                None => (false, format!("关键词未命中（{} 个关键词）", keywords.len())),
-            }
-        };
-
-        let raw = object
-            .get("content")
-            .and_then(|value| value.as_str())
-            .unwrap_or("");
-        let content = if keyword_hit {
-            render_prompt_macros(raw, world, None, variables, kv_vars)
-        } else {
-            String::new()
-        };
-        let injected = keyword_hit && !content.trim().is_empty();
-        let reason = if !keyword_hit {
-            reason
-        } else if content.trim().is_empty() {
-            format!("{reason}，但渲染后为空")
-        } else {
-            reason
-        };
-        resolved.push(ResolvedPromptModule {
-            name,
-            position,
-            order,
-            content: content.trim().to_string(),
-            injected,
-            reason,
+            ordered
         });
-    }
-    resolved.sort_by_key(|module| module.order);
-
-    let mut resolution = PromptModuleResolution::default();
-    for module in resolved {
-        resolution.traces.push(serde_json::json!({
-            "name": format!("Prompt preset {}", module.name),
-            "source": "World design / prompt preset",
-            "position": match &module.position {
-                PromptPosition::SystemPrefix => "system_prefix".to_string(),
-                PromptPosition::SystemSuffix => "system_suffix".to_string(),
-                PromptPosition::Depth(depth) => format!("depth:{depth}"),
-            },
-            "content": module.content,
-            "editable": true,
-            "sent": module.injected,
-            "reason": module.reason,
-        }));
-        if !module.injected {
-            continue;
-        }
-        match module.position {
-            PromptPosition::SystemPrefix => resolution.prefix.push(module.content),
-            PromptPosition::SystemSuffix => resolution.suffix.push(module.content),
-            PromptPosition::Depth(depth) => {
-                resolution.depth_insertions.push((depth, module.content))
-            }
+    let mut movable = requested;
+    for id in defaults.iter().copied() {
+        if !movable.contains(&id) {
+            movable.push(id);
         }
     }
-    resolution
+    movable.into_iter().map(str::to_string).collect()
 }
 
-// ---- 占位符（宏）----
-// 纯文本替换，不执行代码。白名单：
-//   {{var:key}}            会话级 variables KV（第 3 项）
-//   {{world:name|genre|summary|opening_scene}}
-//   {{session:location|time}}
-//   {{date}} / {{current_time}} / {{当前时间}}
-//   {{random:a,b,c}}
-//   {{key}}                调用方变量（既有行为）
-// 未知占位符原样保留（作者能直接看到笔误），最多展开 3 轮，单模块 4000 字符上限。
-
-pub fn render_prompt_macros(
-    template: &str,
+pub fn resolve_runtime_context_prompt(
     world: &WorldDefinition,
-    session: Option<&crate::models::session::SessionSnapshot>,
-    variables: &HashMap<String, String>,
-    kv_vars: &HashMap<String, String>,
+    ctx: Option<&PromptVariableContext>,
 ) -> String {
-    let mut content = template.to_string();
-    for _ in 0..MAX_MACRO_PASSES {
-        let before = content.clone();
-        content = render_macro_pass(&content, world, session, variables, kv_vars);
-        if content == before {
-            break;
-        }
-    }
-    if content.len() > PROMPT_MODULE_MAX_CONTENT {
-        content.truncate(PROMPT_MODULE_MAX_CONTENT);
-    }
-    content
-}
-
-fn render_macro_pass(
-    input: &str,
-    world: &WorldDefinition,
-    session: Option<&crate::models::session::SessionSnapshot>,
-    variables: &HashMap<String, String>,
-    kv_vars: &HashMap<String, String>,
-) -> String {
-    let mut output = String::with_capacity(input.len());
-    let mut rest = input;
-    while let Some(start) = rest.find("{{") {
-        let Some(end_offset) = rest[start + 2..].find("}}") else {
-            break;
-        };
-        let end = start + 2 + end_offset + 2;
-        output.push_str(&rest[..start]);
-        let token = &rest[start..end];
-        let replacement = token
-            .strip_prefix("{{")
-            .and_then(|inner| inner.strip_suffix("}}"))
-            .map(str::trim)
-            .and_then(|name| resolve_macro(name, world, session, variables, kv_vars));
-        match replacement {
-            Some(value) => output.push_str(&value),
-            None => output.push_str(token),
-        }
-        rest = &rest[end..];
-    }
-    output.push_str(rest);
-    output
-}
-
-fn resolve_macro(
-    name: &str,
-    world: &WorldDefinition,
-    session: Option<&crate::models::session::SessionSnapshot>,
-    variables: &HashMap<String, String>,
-    kv_vars: &HashMap<String, String>,
-) -> Option<String> {
-    if let Some(key) = name.strip_prefix("var:") {
-        return kv_vars.get(key.trim()).cloned().or(Some(String::new()));
-    }
-    if let Some(field) = name.strip_prefix("world:") {
-        return match field.trim() {
-            "name" => Some(world.name.clone()),
-            "genre" => Some(world.genre.clone()),
-            "summary" => Some(world.summary.clone()),
-            "opening_scene" => Some(world.opening_scene.clone()),
-            _ => None,
-        };
-    }
-    if let Some(field) = name.strip_prefix("session:") {
-        return match (field.trim(), session) {
-            ("location", Some(session)) => Some(session.location.clone()),
-            ("time", Some(session)) => Some(session.time_label.clone()),
-            _ => None,
-        };
-    }
-    if let Some(options) = name.strip_prefix("random:") {
-        let options: Vec<&str> = options
-            .split(',')
-            .map(str::trim)
-            .filter(|item| !item.is_empty())
-            .collect();
-        if options.is_empty() {
-            return None;
-        }
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.subsec_nanos() as usize)
-            .unwrap_or(0);
-        return Some(options[nanos % options.len()].to_string());
-    }
-    if name == "date" {
-        return Some(chrono::Local::now().format("%Y-%m-%d").to_string());
-    }
-    if name == "current_time" || name == "当前时间" {
-        return Some(
-            chrono::Local::now()
-                .format("%Y-%m-%d %H:%M:%S")
-                .to_string(),
-        );
-    }
-    // 既有 {{key}} 变量
-    variables.get(name).cloned()
-}
-
-pub fn resolve_runtime_context_prompt(world: &WorldDefinition) -> String {
+    let empty = PromptVariableContext::empty();
+    let ctx = ctx.unwrap_or(&empty);
     world
         .director_config
         .get("runtime_context_prompt")
         .and_then(|value| value.as_str())
-        .map(render_prompt_variables)
+        .map(|text| render_prompt_variables_with_context(text, ctx))
         .unwrap_or_default()
         .trim()
         .to_string()
@@ -519,8 +376,18 @@ pub fn build_prompt_call(
                 .unwrap_or("user");
             let content = item
                 .get("content")
-                .and_then(|value| value.as_str())
-                .unwrap_or("");
+                .map(redact_media_for_trace)
+                .map(|value| match value {
+                    serde_json::Value::String(text) => text,
+                    serde_json::Value::Array(parts) => parts
+                        .iter()
+                        .filter_map(|part| part.get("text").and_then(serde_json::Value::as_str))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    serde_json::Value::Null => String::new(),
+                    other => other.to_string(),
+                })
+                .unwrap_or_default();
             format!("[{role}] {content}")
         })
         .collect::<Vec<_>>()
@@ -550,99 +417,181 @@ pub fn build_prompt_call(
 mod tests {
     use super::*;
 
-    fn world_with_presets(presets: serde_json::Value) -> WorldDefinition {
+    #[test]
+    fn prompt_plan_ignores_legacy_tool_list_and_preserves_context_order() {
+        let plan = serde_json::json!({
+            "director_prompt_order": ["tool_list", "world_runtime_context", "chat_history", "unknown", "chat_history", "world_background"]
+        });
+        let ordered = resolve_prompt_section_order(
+            &plan,
+            "director_prompt_order",
+            &[
+                "world_background",
+                "director_rules",
+                "world_runtime_context",
+                "chat_history",
+                "player_input",
+            ],
+        );
+        assert_eq!(
+            ordered,
+            vec![
+                "world_runtime_context",
+                "chat_history",
+                "world_background",
+                "director_rules",
+                "player_input"
+            ]
+        );
+    }
+}
+
+#[cfg(test)]
+mod variable_tests {
+    use super::*;
+
+    fn test_world(director_config: serde_json::Value) -> WorldDefinition {
         WorldDefinition {
-            id: "w".to_string(),
-            name: "诗会".to_string(),
-            genre: String::new(),
+            id: "world-vars".to_string(),
+            name: "云梦泽".to_string(),
+            genre: "仙侠".to_string(),
             background_prompt: String::new(),
-            opening_scene: String::new(),
-            summary: String::new(),
+            opening_scene: "山门".to_string(),
+            summary: "一场大梦".to_string(),
             time_system: String::new(),
-            map_nodes: serde_json::json!({}),
-            triggers: vec![],
+            map_nodes: serde_json::json!({ "version": 1, "nodes": [] }),
             time_config: serde_json::json!({}),
-            director_config: serde_json::json!({ "prompt_presets": presets }),
+            director_config,
             ui_theme_config: serde_json::json!({}),
             director_system_prompt_base: String::new(),
             director_runtime_system_prompt: String::new(),
-            opening_messages: vec![],
-            opening_character_ids: vec![],
+            opening_messages: Vec::new(),
+            opening_character_ids: Vec::new(),
             player_character_id: None,
         }
     }
 
-    #[test]
-    fn collects_scope_enabled_ordered_and_rendered_presets() {
-        let world = world_with_presets(serde_json::json!([
-            { "content": "B second", "scope": "director", "enabled": true, "order": 2 },
-            { "content": "A first for {{char}}", "scope": "both", "enabled": true, "order": 1 },
-            { "content": "char only", "scope": "character", "enabled": true, "order": 0 },
-            { "content": "disabled", "scope": "director", "enabled": false, "order": 0 },
-            { "content": "   ", "scope": "director", "enabled": true, "order": 5 },
-        ]));
-        let mut vars = HashMap::new();
-        vars.insert("char".to_string(), "李白".to_string());
-        let kv = HashMap::new();
-
-        let director = resolve_prompt_modules(&world, "director", &vars, &kv, "");
-        assert_eq!(
-            director.suffix,
-            vec!["A first for 李白".to_string(), "B second".to_string()]
-        );
-
-        let character = resolve_prompt_modules(&world, "character", &vars, &kv, "");
-        assert_eq!(
-            character.suffix,
-            vec!["char only".to_string(), "A first for 李白".to_string()]
-        );
-    }
-
-    #[test]
-    fn empty_when_no_presets() {
-        let world = world_with_presets(serde_json::json!([]));
-        let resolution = resolve_prompt_modules(&world, "director", &HashMap::new(), &HashMap::new(), "");
-        assert!(resolution.suffix.is_empty());
-        assert!(resolution.prefix.is_empty());
-        assert!(resolution.traces.is_empty());
-    }
-
-    #[test]
-    fn shared_assembly_applies_depth_to_typed_and_trace_messages() {
-        let insertions = vec![(1usize, "near latest".to_string()), (3, "older".to_string())];
-        let typed = vec![
-            ChatMessage {
-                role: "system".to_string(),
-                content: serde_json::json!("rules"),
-                reasoning_content: None,
-                speaker: None,
-                tool_call_id: None,
-                tool_calls: None,
-                metadata: None,
+    fn test_session() -> SessionSnapshot {
+        SessionSnapshot {
+            id: "sess-vars".to_string(),
+            world_name: "云梦泽".to_string(),
+            location: "七玄门".to_string(),
+            time_label: "清晨".to_string(),
+            current_speaker: String::new(),
+            current_line: String::new(),
+            player_character_id: "char-1".to_string(),
+            player_character_name: "陆谨".to_string(),
+            visible_characters: Vec::new(),
+            messages: Vec::new(),
+            player_stats: Vec::new(),
+            map_graph_nodes: Vec::new(),
+            map_graph_edges: Vec::new(),
+            system_log: Vec::new(),
+            scene: crate::models::session::SceneRuntime {
+                name: "山门问路".to_string(),
+                ..Default::default()
             },
-            ChatMessage {
-                role: "user".to_string(),
-                content: serde_json::json!("event"),
-                reasoning_content: None,
-                speaker: None,
-                tool_call_id: None,
-                tool_calls: None,
-                metadata: None,
-            },
-        ];
-        let typed = assemble_prompt_messages(typed, &insertions);
-        let trace = assemble_prompt_values(
-            vec![
-                serde_json::json!({"role":"system","content":"rules"}),
-                serde_json::json!({"role":"user","content":"event"}),
-            ],
-            &insertions,
-        );
-        assert_eq!(typed.len(), trace.len());
-        for (typed_message, trace_message) in typed.iter().zip(trace.iter()) {
-            assert_eq!(typed_message.role, trace_message["role"].as_str().unwrap());
-            assert_eq!(typed_message.content, trace_message["content"]);
+            assets: Default::default(),
+            state: Default::default(),
+            generation_params: Default::default(),
         }
+    }
+
+    #[test]
+    fn resolves_builtins_custom_and_session_vars() {
+        let world = test_world(serde_json::json!({
+            "prompt_variables": { "师弟": "陆师弟" }
+        }));
+        let session = test_session();
+        let kv = HashMap::from([("favor".to_string(), "救过韩立".to_string())]);
+        let custom = load_prompt_custom_vars(&world);
+        let ctx = PromptVariableContext {
+            world: Some(&world),
+            session: Some(&session),
+            kv_vars: Some(&kv),
+            custom_vars: Some(&custom),
+        };
+
+        let rendered = render_prompt_variables_with_context(
+            "{{user}}在{{location}}（{{scene}}），世界：{{world_name}}；{{师弟}}欠人情：{{var:favor}}",
+            &ctx,
+        );
+        assert!(
+            rendered.contains("陆谨在七玄门（山门问路）"),
+            "实际: {rendered}"
+        );
+        assert!(rendered.contains("世界：云梦泽"));
+        assert!(rendered.contains("陆师弟欠人情：救过韩立"));
+    }
+
+    #[test]
+    fn unknown_stays_literal_and_missing_var_empties() {
+        let ctx = PromptVariableContext::empty();
+        assert_eq!(
+            render_prompt_variables_with_context("未知 {{nope}} 保留", &ctx),
+            "未知 {{nope}} 保留"
+        );
+        // var: 是运行时动态值，缺失替换为空串而不是留下占位符。
+        assert_eq!(
+            render_prompt_variables_with_context("前{{var:missing}}后", &ctx),
+            "前后"
+        );
+    }
+
+    #[test]
+    fn custom_vars_can_reference_builtins() {
+        let world = test_world(serde_json::json!({
+            "prompt_variables": { "intro": "{{user}}行至{{location}}" }
+        }));
+        let session = test_session();
+        let custom = load_prompt_custom_vars(&world);
+        let ctx = PromptVariableContext {
+            world: Some(&world),
+            session: Some(&session),
+            kv_vars: None,
+            custom_vars: Some(&custom),
+        };
+        assert_eq!(
+            render_prompt_variables_with_context("话说{{intro}}。", &ctx),
+            "话说陆谨行至七玄门。"
+        );
+    }
+
+    #[test]
+    fn custom_var_reference_cycles_terminate() {
+        let custom = HashMap::from([
+            ("a".to_string(), "{{b}}".to_string()),
+            ("b".to_string(), "{{a}}".to_string()),
+        ]);
+        let ctx = PromptVariableContext {
+            custom_vars: Some(&custom),
+            ..PromptVariableContext::empty()
+        };
+        // 成环时多轮展开必须终止，不允许死循环。
+        let _rendered = render_prompt_variables_with_context("{{a}}", &ctx);
+    }
+
+    #[test]
+    fn random_picks_one_of_the_options() {
+        let ctx = PromptVariableContext::empty();
+        let rendered = render_prompt_variables_with_context("{{random:甲,乙,丙}}", &ctx);
+        assert!(
+            rendered == "甲" || rendered == "乙" || rendered == "丙",
+            "实际: {rendered}"
+        );
+    }
+
+    #[test]
+    fn load_prompt_custom_vars_normalizes_values() {
+        let world = test_world(serde_json::json!({
+            "prompt_variables": { "num": 3, "flag": true, "text": "文本", "": "空键", "null": null }
+        }));
+        let vars = load_prompt_custom_vars(&world);
+        assert_eq!(vars.get("num").map(String::as_str), Some("3"));
+        assert_eq!(vars.get("flag").map(String::as_str), Some("true"));
+        assert_eq!(vars.get("text").map(String::as_str), Some("文本"));
+        assert!(!vars.contains_key(""));
+        assert!(!vars.contains_key("null"));
     }
 }
 
@@ -667,10 +616,48 @@ mod media_trace_tests {
         };
         let value = llm_chat_message_to_value(&message);
         let serialized = value.to_string();
-        assert!(!serialized.contains("QUJDREVGRw"), "trace 里不应再出现 base64: {serialized}");
+        assert!(
+            !serialized.contains("QUJDREVGRw"),
+            "trace 里不应再出现 base64: {serialized}"
+        );
         assert!(serialized.contains("payload"));
         assert!(serialized.contains("图片 base64 已省略"));
         assert!(serialized.contains("音频 wav base64 已省略"));
+
+        let call = build_prompt_call(
+            "test",
+            "character",
+            "Alice",
+            "character_response",
+            "test",
+            "",
+            "",
+            vec![value.clone()],
+            vec![],
+            serde_json::Value::Null,
+            serde_json::Value::Null,
+        );
+        let summary = call["final_sent_content"].as_str().expect("trace summary");
+        assert!(summary.starts_with("[user] payload\n"));
+        assert!(summary.contains("图片 base64 已省略"));
+        assert!(summary.contains("音频 wav base64 已省略"));
+        assert!(!summary.contains("QUJDREVGRw"));
+        assert_eq!(call["messages"][0], value);
+        // The summary also redacts media if a caller supplies raw multipart content.
+        let raw_call = build_prompt_call(
+            "test",
+            "character",
+            "Alice",
+            "character_response",
+            "test",
+            "",
+            "",
+            vec![serde_json::json!({"role": "user", "content": message.content})],
+            vec![],
+            serde_json::Value::Null,
+            serde_json::Value::Null,
+        );
+        assert_eq!(raw_call["final_sent_content"], call["final_sent_content"]);
 
         // 纯文本消息不受影响
         let plain = crate::services::llm::client::ChatMessage {
@@ -678,7 +665,9 @@ mod media_trace_tests {
             ..message
         };
         assert_eq!(
-            llm_chat_message_to_value(&plain).get("content").and_then(|v| v.as_str()),
+            llm_chat_message_to_value(&plain)
+                .get("content")
+                .and_then(|v| v.as_str()),
             Some("纯文本")
         );
     }

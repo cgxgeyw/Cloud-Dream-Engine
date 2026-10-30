@@ -141,9 +141,7 @@ impl<'a> SaveRepository<'a> {
         save_id: &str,
         source_session: &SessionSnapshot,
     ) -> Result<SaveSummary, String> {
-        let source_save = self
-            .get(save_id)?
-            .ok_or_else(|| "存档不存在".to_string())?;
+        let source_save = self.get(save_id)?.ok_or_else(|| "存档不存在".to_string())?;
         let branched_session_id = format!("session-{}", uuid::Uuid::new_v4().simple());
         let branched_save_id = format!("save-{}", uuid::Uuid::new_v4().simple());
         let branch_label = "新分支".to_string();
@@ -163,7 +161,6 @@ impl<'a> SaveRepository<'a> {
             player_stats: source_session.player_stats.clone(),
             map_graph_nodes: source_session.map_graph_nodes.clone(),
             map_graph_edges: source_session.map_graph_edges.clone(),
-            inventory_items: source_session.inventory_items.clone(),
             system_log: source_session.system_log.clone(),
             scene: source_session.scene.clone(),
             assets: source_session.assets.clone(),
@@ -174,10 +171,13 @@ impl<'a> SaveRepository<'a> {
 
         // M2: 分支涉及 sessions + memories + memory_embeddings + attribute_values + saves
         // 多表写入,用事务包裹:中途任何一步失败都整体回滚,不留孤儿 session/半套记忆。
-        let tx = self.conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| e.to_string())?;
 
         self.conn.execute(
-            "INSERT INTO sessions (id, world_name, location, time_label, current_speaker, current_line, player_character_id, player_character_name, visible_characters_json, messages_json, player_stats_json, map_graph_nodes_json, map_graph_edges_json, inventory_items_json, system_log_json, scene_json, assets_json, state_json, generation_params_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+            "INSERT INTO sessions (id, world_name, location, time_label, current_speaker, current_line, player_character_id, player_character_name, visible_characters_json, messages_json, player_stats_json, map_graph_nodes_json, map_graph_edges_json, system_log_json, scene_json, assets_json, state_json, generation_params_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 branched_session.id,
                 branched_session.world_name,
@@ -192,7 +192,6 @@ impl<'a> SaveRepository<'a> {
                 serde_json::to_string(&branched_session.player_stats).unwrap_or_default(),
                 serde_json::to_string(&branched_session.map_graph_nodes).unwrap_or_default(),
                 serde_json::to_string(&branched_session.map_graph_edges).unwrap_or_default(),
-                serde_json::to_string(&branched_session.inventory_items).unwrap_or_default(),
                 serde_json::to_string(&branched_session.system_log).unwrap_or_default(),
                 serde_json::to_string(&branched_session.scene).unwrap_or_default(),
                 serde_json::to_string(&branched_session.assets).unwrap_or_default(),

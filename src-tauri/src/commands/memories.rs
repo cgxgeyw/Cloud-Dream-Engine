@@ -28,8 +28,7 @@ pub async fn list_memory_entities(
     session_id: String,
 ) -> Result<Vec<MemoryEntity>, String> {
     let db = state.db.lock().await;
-    let repo =
-        crate::db::repositories::memory_entity_repo::MemoryEntityRepository::new(db.conn());
+    let repo = crate::db::repositories::memory_entity_repo::MemoryEntityRepository::new(db.conn());
     repo.list_by_session(&session_id)
 }
 

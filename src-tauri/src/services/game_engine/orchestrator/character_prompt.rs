@@ -1,13 +1,19 @@
-use crate::models::character::{resolve_character_narration_prompt, CharacterDefinition};
+use crate::models::character::{
+    resolve_character_narration_prompt, resolve_character_response_contract_prompt,
+    CharacterDefinition,
+};
 use crate::models::generation_params::GenerationParams;
 use crate::models::memory::MemoryEntry;
 use crate::models::model_config::ModelConfig;
 use crate::models::session::*;
 use crate::models::world::WorldDefinition;
-use crate::services::game_engine::dialogue::DialoguePipeline;
+use crate::services::game_engine::dialogue::{
+    build_character_system_prompt, DialoguePipeline, BUILTIN_MEMORY_CONTRACT,
+    BUILTIN_RESPONSE_CONTRACT,
+};
 use crate::services::game_engine::prompting::{
-    assemble_prompt_messages, build_prompt_call, llm_chat_messages_to_values, recent_messages_text,
-    render_prompt_variables, resolve_prompt_modules, resolve_runtime_context_prompt,
+    build_prompt_call, llm_chat_messages_to_values, resolve_prompt_section_order,
+    resolve_runtime_context_prompt, CHARACTER_PROMPT_SECTION_IDS,
 };
 
 use super::turn_context::{
@@ -28,7 +34,7 @@ pub(crate) struct CharacterPromptArtifacts {
 }
 
 pub(crate) fn build_character_prompt_artifacts(
-    dialogue_pipeline: &DialoguePipeline,
+    _dialogue_pipeline: &DialoguePipeline,
     world: &WorldDefinition,
     speaker_name: &str,
     speaker_profile: Option<&CharacterDefinition>,
@@ -41,7 +47,6 @@ pub(crate) fn build_character_prompt_artifacts(
     recalled_memories: &[MemoryEntry],
     memory_pool: &[MemoryEntry],
     visible_attribute_lines: &[String],
-    visible_inventory_items: &[InventoryItem],
     public_scene_state_lines: &[String],
     next_scene_name: &str,
     next_location: &str,
@@ -49,58 +54,63 @@ pub(crate) fn build_character_prompt_artifacts(
     kv_vars: &std::collections::HashMap<String, String>,
     player_media: &[ContentPart],
 ) -> CharacterPromptArtifacts {
-    let speaker_character_id = speaker_profile.map(|profile| profile.id.as_str());
+    // 作者输入框的变量插值（内置 + 插值管理自定义 + 会话 KV）统一在此展开。
+    let custom_vars = crate::services::game_engine::prompting::load_prompt_custom_vars(world);
+    let prompt_ctx = crate::services::game_engine::prompting::PromptVariableContext {
+        world: Some(world),
+        session: Some(session),
+        kv_vars: Some(kv_vars),
+        custom_vars: Some(&custom_vars),
+    };
     let visibility_context = build_character_visibility_context_payload(
         visible_attribute_lines,
-        visible_inventory_items,
         public_scene_state_lines,
-        speaker_character_id,
-        speaker_name,
     );
-    let narration_prompt = render_prompt_variables(&resolve_character_narration_prompt(
-        speaker_profile.map(|profile| profile.narration_prompt.as_str()),
-    ));
-    let system_prompt = dialogue_pipeline.build_character_system_prompt_with_contract(
-        speaker_name,
-        speaker_profile,
-        None,
-        None,
-        crate::services::game_engine::memory::resolve_fact_extraction_enabled(world),
+    let narration_prompt =
+        crate::services::game_engine::prompting::render_prompt_variables_with_context(
+            &resolve_character_narration_prompt(
+                speaker_profile.map(|profile| profile.narration_prompt.as_str()),
+            ),
+            &prompt_ctx,
+        );
+    // 模板内部已做过时间类渲染，这里再按完整上下文补一遍其余变量。
+    let system_prompt =
+        crate::services::game_engine::prompting::render_prompt_variables_with_context(
+            &build_character_system_prompt(speaker_name, speaker_profile, None),
+            &prompt_ctx,
+        );
+    let fact_extraction_enabled =
+        crate::services::game_engine::memory::resolve_fact_extraction_enabled(world);
+    let custom_response_contract = resolve_character_response_contract_prompt(
+        speaker_profile.map(|profile| profile.response_contract_prompt.as_str()),
     );
-    let runtime_context_prompt = resolve_runtime_context_prompt(world);
+    // 自定义契约完全替代内置契约（不再追加 BUILTIN_RESPONSE_CONTRACT）：
+    // 引擎必需字段（speaker/content/narration/pass）的格式说明由作者契约自行
+    // 负责；留空时才发送内置契约。变量占位符照常展开。
+    let response_contract_prompt = if custom_response_contract.trim().is_empty() {
+        BUILTIN_RESPONSE_CONTRACT.to_string()
+    } else {
+        crate::services::game_engine::prompting::render_prompt_variables_with_context(
+            custom_response_contract.trim(),
+            &prompt_ctx,
+        )
+    };
+    let runtime_context_prompt = resolve_runtime_context_prompt(world, Some(&prompt_ctx));
     let character_runtime_context_prompt = speaker_profile
-        .map(|profile| render_prompt_variables(&profile.runtime_system_prompt))
+        .map(|profile| {
+            crate::services::game_engine::prompting::render_prompt_variables_with_context(
+                &profile.runtime_system_prompt,
+                &prompt_ctx,
+            )
+        })
         .unwrap_or_default()
         .trim()
         .to_string();
-    let preset_variables = {
-        let mut vars = std::collections::HashMap::new();
-        vars.insert("user".to_string(), player_character_name.trim().to_string());
-        vars.insert("char".to_string(), speaker_name.to_string());
-        vars.insert("world".to_string(), world.name.clone());
-        vars.insert(
-            "scene".to_string(),
-            if scene_name.trim().is_empty() {
-                location.to_string()
-            } else {
-                scene_name.to_string()
-            },
-        );
-        vars.insert("time".to_string(), session.time_label.clone());
-        vars
-    };
-    let module_resolution = resolve_prompt_modules(
-        world,
-        "character",
-        &preset_variables,
-        kv_vars,
-        &recent_messages_text(&session.messages, 10),
-    );
-    let init_payload = build_character_init_payload(world, speaker_name, speaker_profile, session);
+    let init_payload =
+        build_character_init_payload(world, speaker_name, speaker_profile, session, &prompt_ctx);
     let turn_payload = build_character_turn_payload(
         world,
         speaker_name,
-        speaker_profile,
         session,
         player_character_name,
         location,
@@ -110,37 +120,18 @@ pub(crate) fn build_character_prompt_artifacts(
         recalled_memories,
         memory_pool,
         visible_attribute_lines,
-        visible_inventory_items,
         public_scene_state_lines,
     );
-    let response_fields = vec![
-        "speaker",
-        "content",
-        "narration",
-        "pass",
-        "session_attribute_updates",
-        "character_attribute_updates",
-        "memory_entries",
-        "fact_extractions",
-    ];
+    // 返回契约的字段清单/说明/更新格式从 return_format 单一事实源生成，
+    // response_schema 请求参数也来自同一张表；这份 JSON 只进 trace，不随
+    // messages 发给模型（模型看到的是 dialogue.rs 的 BUILTIN 契约文本）。
     let response_contract = serde_json::json!({
         "format": "json_object",
-        "fields": response_fields,
-        "runtime_update_format": {
-            "session_attribute_updates": [
-                { "key": "attribute_key", "value": "new_value" }
-            ],
-            "character_attribute_updates": [
-                { "character_name": "target_character_name", "key": "attribute_key", "value": "new_value" }
-            ],
-            "memory_entries": [
-                { "content": "memory text", "character_names": ["target_character_name"] }
-            ],
-            "fact_extractions": [
-                { "subject": "entity", "predicate": "relation", "object": "entity or value", "action": "upsert | invalidate" }
-            ]
-        },
-        "tool_policy": "Use provider-native tool_calls for every allowed tool; never include tool_calls, tool names, or tool arguments in the JSON body."
+        "instructions": "只返回一个 JSON 对象。仅返回本回合发生变化的状态字段；未变化字段省略。会话/世界状态使用 session_attribute_updates，角色状态使用 character_attribute_updates。",
+        "fields": crate::services::game_engine::return_format::character_contract_field_ids(),
+        "runtime_update_format": crate::services::game_engine::return_format::character_runtime_update_format(),
+        "field_descriptions": crate::services::game_engine::return_format::character_field_descriptions(),
+        "tool_policy": crate::services::game_engine::return_format::CHARACTER_TOOL_POLICY,
     });
     let scene_state = serde_json::json!({
         "scene_name": next_scene_name,
@@ -148,173 +139,253 @@ pub(crate) fn build_character_prompt_artifacts(
         "visible_characters": visible_characters,
         "player_character_name": player_character_name
     });
-    let mut modules = vec![
-        serde_json::json!({
-            "name": "character_system_prompt",
-            "source": "dialogue_pipeline.build_character_system_prompt_with_contract",
-            "content": system_prompt.clone(),
-            "editable": false,
-            "sent": true
-        }),
-        serde_json::json!({
-            "name": "character_narration_prompt",
-            "source": "character.narration_prompt",
-            "content": narration_prompt.clone(),
-            "editable": true,
-            "sent": !narration_prompt.trim().is_empty()
-        }),
-        serde_json::json!({
-            "name": "init_payload",
-            "source": "build_character_init_payload",
-            "content": init_payload.clone(),
-            "editable": false,
-            "sent": true
-        }),
-        serde_json::json!({
-            "name": "turn_payload",
-            "source": "build_character_turn_payload",
-            "content": turn_payload.clone(),
-            "editable": false,
-            "sent": true
-        }),
-        serde_json::json!({
-            "name": "visibility_context",
-            "source": "build_character_visibility_context_payload",
-            "content": serde_json::to_string_pretty(&visibility_context).unwrap_or_else(|_| "{}".to_string()),
-            "editable": false,
-            "sent": true
-        }),
-        serde_json::json!({
-            "name": "scene_state",
-            "source": "character_runtime.scene_state",
-            "content": serde_json::to_string_pretty(&scene_state).unwrap_or_else(|_| "{}".to_string()),
-            "editable": false,
-            "sent": true
-        }),
-        serde_json::json!({
-            "name": "response_contract",
-            "source": "character_runtime.response_contract",
-            "content": serde_json::to_string_pretty(&response_contract).unwrap_or_else(|_| "{}".to_string()),
-            "editable": false,
-            "sent": true
-        }),
-    ];
-    if !runtime_context_prompt.trim().is_empty() {
-        modules.insert(
-            1,
+    let mut modules = Vec::new();
+    let init_value: serde_json::Value = serde_json::from_str(&init_payload).unwrap_or_default();
+    let turn_value: serde_json::Value = serde_json::from_str(&turn_payload).unwrap_or_default();
+    let character = init_value
+        .pointer("/basic_setting/character")
+        .cloned()
+        .unwrap_or_default();
+    let world_background = init_value
+        .pointer("/basic_setting/world")
+        .cloned()
+        .unwrap_or_default();
+    let current_state = turn_value.get("current_state").cloned().unwrap_or_default();
+    let mut prompt_visibility_context = visibility_context.clone();
+    if let Some(context) = prompt_visibility_context.as_object_mut() {
+        context.remove("visible_attribute_records");
+    }
+    let mut sections = std::collections::HashMap::<
+        String,
+        (String, String, serde_json::Value, String, bool),
+    >::new();
+    sections.insert(
+        "world_background".into(),
+        (
+            "世界背景信息".into(),
+            "world.background_prompt".into(),
+            world_background,
+            "system".into(),
+            false,
+        ),
+    );
+    // OAG/记忆检索注入这块计划重做，重做前维持过渡态，不要按小修处理：
+    // memory_context 在这里（oag_context，可独立排序）和下方 chat_history
+    // （整个 dialogue_history）各下发一份，同一请求重复发送是已知问题。
+    // 重做方向：oag_context 单独承载记忆注入，chat_history 只发 recent_dialogue。
+    sections.insert(
+        "oag_context".into(),
+        (
+            "OAG/记忆检索注入信息".into(),
+            "character_memory.retrieval".into(),
+            turn_value
+                .pointer("/dialogue_history/memory_context")
+                .cloned()
+                .unwrap_or_default(),
+            "system".into(),
+            false,
+        ),
+    );
+    sections.insert(
+        "character_background".into(),
+        (
+            "角色长期背景".into(),
+            "character.background_prompt".into(),
+            character
+                .get("background_prompt")
+                .cloned()
+                .unwrap_or_default(),
+            "system".into(),
+            true,
+        ),
+    );
+    sections.insert(
+        "character_rules".into(),
+        (
+            "角色设定与行为规则".into(),
+            "character.system_prompt_template".into(),
+            serde_json::Value::String(system_prompt.clone()),
+            "system".into(),
+            true,
+        ),
+    );
+    sections.insert("character_attributes".into(), ("角色基础属性".into(), "character.attributes".into(), serde_json::json!({"role": character.get("role"), "attributes": character.get("attributes")}), "system".into(), false));
+    sections.insert(
+        "world_runtime_context".into(),
+        (
+            "世界运行时上下文".into(),
+            "world.director_config.runtime_context_prompt".into(),
+            serde_json::Value::String(runtime_context_prompt.clone()),
+            "system".into(),
+            true,
+        ),
+    );
+    sections.insert(
+        "character_runtime_context".into(),
+        (
+            "角色运行时上下文".into(),
+            "character.runtime_system_prompt".into(),
+            serde_json::Value::String(character_runtime_context_prompt.clone()),
+            "system".into(),
+            true,
+        ),
+    );
+    sections.insert(
+        "visible_characters".into(),
+        (
+            "角色列表与场景状态".into(),
+            "runtime.scene".into(),
             serde_json::json!({
-                "name": "runtime_context",
-                "source": "world.director_config.runtime_context_prompt",
-                "content": runtime_context_prompt.clone(),
-                "editable": true,
-                "sent": true
+                "scene_state": current_state.get("scene_state").cloned().unwrap_or_default(),
+                "visible_characters": visible_characters,
+                "visibility_context": prompt_visibility_context,
             }),
-        );
+            "system".into(),
+            false,
+        ),
+    );
+    sections.insert(
+        "chat_history".into(),
+        (
+            "对话历史与记忆".into(),
+            "runtime.dialogue_history".into(),
+            turn_value
+                .get("dialogue_history")
+                .cloned()
+                .unwrap_or_default(),
+            "user".into(),
+            false,
+        ),
+    );
+    sections.insert(
+        "narration_prompt".into(),
+        (
+            "旁白提示词".into(),
+            "character.narration_prompt".into(),
+            serde_json::Value::String(narration_prompt.clone()),
+            "system".into(),
+            true,
+        ),
+    );
+    sections.insert("player_input".into(), ("当前玩家输入".into(), "runtime.current_state".into(), serde_json::json!({"player_character_name": player_character_name, "player_input": current_state.get("player_input")}), "user".into(), false));
+    sections.insert(
+        "response_contract".into(),
+        (
+            "角色返回格式".into(),
+            "character.response_contract".into(),
+            serde_json::Value::String(response_contract_prompt),
+            "system".into(),
+            true,
+        ),
+    );
+    sections.insert(
+        "fact_memory_rules".into(),
+        (
+            "事实与记忆提取规则".into(),
+            "framework.fact_memory_rules".into(),
+            if fact_extraction_enabled {
+                serde_json::json!(BUILTIN_MEMORY_CONTRACT)
+            } else {
+                serde_json::Value::Null
+            },
+            "system".into(),
+            false,
+        ),
+    );
+    let mut dynamic_ids = Vec::new();
+    if let Some(records) = visibility_context
+        .get("visible_attribute_records")
+        .and_then(serde_json::Value::as_array)
+    {
+        for record in records {
+            let Some(key) = record.get("key").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            let prefix = if record
+                .get("attribute_scope")
+                .and_then(serde_json::Value::as_str)
+                == Some("world")
+            {
+                "world_attribute"
+            } else {
+                "character_attribute"
+            };
+            let id = format!("{prefix}:{key}");
+            let entry = sections.entry(id.clone()).or_insert_with(|| {
+                (
+                    "自定义属性".to_string(),
+                    "runtime.visible_attribute".to_string(),
+                    serde_json::json!([]),
+                    "system".to_string(),
+                    false,
+                )
+            });
+            entry.2.as_array_mut().expect("attribute section stores values as an array").push(serde_json::json!({
+                // key 必须随内容发给模型：角色按准确属性键写 character_attribute_updates，
+                // 解析端对未知 key 静默丢弃；label/所属角色由作者在描述里补充。
+                "key": key,
+                "description": record.get("description").cloned().unwrap_or_default(),
+                "enum_options": record.get("enum_options").cloned().unwrap_or_else(|| serde_json::json!([])),
+                "current_value": record.get("current_value").cloned().unwrap_or(serde_json::Value::Null),
+            }));
+            if !dynamic_ids.contains(&id) {
+                dynamic_ids.push(id);
+            }
+        }
     }
-    if !character_runtime_context_prompt.trim().is_empty() {
-        modules.insert(
-            1,
-            serde_json::json!({
-                "name": "character_runtime_context",
-                "source": "character.runtime_system_prompt",
-                "content": character_runtime_context_prompt.clone(),
-                "editable": true,
-                "sent": true
-            }),
-        );
-    }
-    for (offset, trace) in module_resolution.traces.iter().enumerate() {
-        modules.insert(1 + offset, trace.clone());
-    }
-    let mut messages: Vec<crate::services::llm::client::ChatMessage> = module_resolution
-        .prefix
+    let mut defaults = CHARACTER_PROMPT_SECTION_IDS
         .iter()
-        .map(|content| crate::services::llm::client::ChatMessage {
-            role: "system".to_string(),
-            content: serde_json::Value::String(content.clone()),
-            reasoning_content: None,
-            speaker: None,
-            tool_call_id: None,
-            tool_calls: None,
-            metadata: None,
-        })
-        .collect();
-    messages.push(crate::services::llm::client::ChatMessage {
-        role: "system".to_string(),
-        content: serde_json::Value::String(system_prompt.clone()),
-        reasoning_content: None,
-        speaker: None,
-        tool_call_id: None,
-        tool_calls: None,
-        metadata: None,
-    });
-    for content in &module_resolution.suffix {
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>();
+    defaults.extend(dynamic_ids);
+    let default_refs = defaults.iter().map(String::as_str).collect::<Vec<_>>();
+    let order = resolve_prompt_section_order(
+        &world.director_config,
+        "character_prompt_order",
+        &default_refs,
+    );
+    let mut messages = Vec::new();
+    for id in order {
+        let Some((label, source, value, _role, editable)) = sections.get(&id) else {
+            continue;
+        };
+        let section_content = if value.is_string() {
+            value.as_str().unwrap_or_default().to_string()
+        } else {
+            serde_json::to_string_pretty(value).unwrap_or_else(|_| "null".to_string())
+        };
+        let is_dynamic_attribute =
+            id.starts_with("world_attribute:") || id.starts_with("character_attribute:");
+        let content = if is_dynamic_attribute {
+            section_content
+        } else {
+            format!("【{label}】\n{section_content}")
+        };
+        let sent = !(id == "oag_context" && value.as_object().is_some_and(|map| map.is_empty()))
+            && !content.trim().is_empty();
+        modules.push(serde_json::json!({"id": id, "name": label, "source": source, "content": content, "editable": editable, "locked": false, "sent": sent}));
+        if !sent {
+            continue;
+        }
         messages.push(crate::services::llm::client::ChatMessage {
-            role: "system".to_string(),
-            content: serde_json::Value::String(content.clone()),
+            role: if id == "player_input" {
+                "user".to_string()
+            } else {
+                "system".to_string()
+            },
+            content: if id == "player_input" {
+                crate::models::session::build_wire_content(&content, player_media)
+            } else {
+                serde_json::Value::String(content)
+            },
             reasoning_content: None,
-            speaker: None,
+            speaker: (id == "player_input").then(|| player_character_name.to_string()),
             tool_call_id: None,
             tool_calls: None,
-            metadata: None,
+            metadata: Some(serde_json::json!({"prompt_section_id": id})),
         });
     }
-    if !character_runtime_context_prompt.trim().is_empty() {
-        messages.push(crate::services::llm::client::ChatMessage {
-            role: "system".to_string(),
-            content: serde_json::Value::String(character_runtime_context_prompt.clone()),
-            reasoning_content: None,
-            speaker: None,
-            tool_call_id: None,
-            tool_calls: None,
-            metadata: None,
-        });
-    }
-    if !runtime_context_prompt.trim().is_empty() {
-        messages.push(crate::services::llm::client::ChatMessage {
-            role: "system".to_string(),
-            content: serde_json::Value::String(runtime_context_prompt.clone()),
-            reasoning_content: None,
-            speaker: None,
-            tool_call_id: None,
-            tool_calls: None,
-            metadata: None,
-        });
-    }
-    if !narration_prompt.trim().is_empty() {
-        messages.push(crate::services::llm::client::ChatMessage {
-            role: "system".to_string(),
-            content: serde_json::Value::String(narration_prompt.clone()),
-            reasoning_content: None,
-            speaker: None,
-            tool_call_id: None,
-            tool_calls: None,
-            metadata: None,
-        });
-    }
-    messages.extend([
-        crate::services::llm::client::ChatMessage {
-            role: "system".to_string(),
-            content: serde_json::Value::String(init_payload.clone()),
-            reasoning_content: None,
-            speaker: None,
-            tool_call_id: None,
-            tool_calls: None,
-            metadata: None,
-        },
-        crate::services::llm::client::ChatMessage {
-            role: "user".to_string(),
-            // 第 10 项：当前回合玩家附件以 multipart 随本条消息下发（仅当前回合）。
-            content: crate::models::session::build_wire_content(&turn_payload, player_media),
-            reasoning_content: None,
-            speaker: Some(player_character_name.to_string()),
-            tool_call_id: None,
-            tool_calls: None,
-            metadata: None,
-        },
-    ]);
 
-    messages = assemble_prompt_messages(messages, &module_resolution.depth_insertions);
     CharacterPromptArtifacts {
         system_prompt,
         narration_prompt,
@@ -343,7 +414,6 @@ pub(crate) fn build_character_prompt_trace(
     recalled_memories: &[MemoryEntry],
     memory_pool: &[MemoryEntry],
     visible_attribute_lines: &[String],
-    visible_inventory_items: &[InventoryItem],
     public_scene_state_lines: &[String],
     next_scene_name: &str,
     next_location: &str,
@@ -373,7 +443,6 @@ pub(crate) fn build_character_prompt_trace(
         recalled_memories,
         memory_pool,
         visible_attribute_lines,
-        visible_inventory_items,
         public_scene_state_lines,
         next_scene_name,
         next_location,
@@ -381,6 +450,7 @@ pub(crate) fn build_character_prompt_trace(
         kv_vars,
         player_media,
     );
+    let modules = artifacts.modules;
     let prompt_call = build_prompt_call(
         "prompt_call_v2",
         "character",
@@ -390,7 +460,7 @@ pub(crate) fn build_character_prompt_trace(
         &artifacts.system_prompt,
         &artifacts.user_prompt,
         llm_chat_messages_to_values(&artifacts.messages),
-        artifacts.modules,
+        modules,
         artifacts.response_contract,
         serde_json::json!({
             "provider": speaker_provider,
@@ -432,9 +502,15 @@ pub(crate) fn build_character_init_payload(
     speaker_name: &str,
     speaker_profile: Option<&CharacterDefinition>,
     session: &SessionSnapshot,
+    prompt_ctx: &crate::services::game_engine::prompting::PromptVariableContext,
 ) -> String {
     let character_background_prompt = speaker_profile
-        .map(|profile| render_prompt_variables(&profile.background_prompt))
+        .map(|profile| {
+            crate::services::game_engine::prompting::render_prompt_variables_with_context(
+                &profile.background_prompt,
+                prompt_ctx,
+            )
+        })
         .unwrap_or_default();
 
     // 角色字段空值不发(对齐 scene_state 标准)。
@@ -469,4 +545,112 @@ pub(crate) fn build_character_init_payload(
         }
     }))
     .unwrap_or_else(|_| "{}".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_world() -> WorldDefinition {
+        WorldDefinition {
+            id: "world-1".to_string(),
+            name: "World".to_string(),
+            genre: String::new(),
+            background_prompt: String::new(),
+            opening_scene: "开场".to_string(),
+            summary: String::new(),
+            time_system: String::new(),
+            map_nodes: serde_json::json!({ "version": 1, "nodes": [] }),
+            time_config: serde_json::json!({}),
+            director_config: serde_json::json!({}),
+            ui_theme_config: serde_json::json!({}),
+            director_system_prompt_base: String::new(),
+            director_runtime_system_prompt: String::new(),
+            opening_messages: Vec::new(),
+            opening_character_ids: Vec::new(),
+            player_character_id: None,
+        }
+    }
+
+    fn test_session() -> SessionSnapshot {
+        SessionSnapshot {
+            id: "sess-1".to_string(),
+            world_name: "World".to_string(),
+            location: "开场".to_string(),
+            time_label: String::new(),
+            current_speaker: String::new(),
+            current_line: String::new(),
+            player_character_id: "char-player".to_string(),
+            player_character_name: "玩家".to_string(),
+            visible_characters: Vec::new(),
+            messages: Vec::new(),
+            player_stats: Vec::new(),
+            map_graph_nodes: Vec::new(),
+            map_graph_edges: Vec::new(),
+            system_log: Vec::new(),
+            scene: SceneRuntime::default(),
+            assets: AssetSelection::default(),
+            state: SessionState::default(),
+            generation_params: Default::default(),
+        }
+    }
+
+    #[test]
+    fn dynamic_attribute_sections_carry_the_attribute_key() {
+        // 返回契约要求角色按准确属性键写 character_attribute_updates，而解析端
+        // 对未知 key 静默丢弃：动态属性 section 的内容必须自带 key。
+        let pipeline = DialoguePipeline::new();
+        let world = test_world();
+        let session = test_session();
+        let lines = vec![serde_json::json!({
+            "attribute_scope": "world",
+            "key": "mortal_time",
+            "description": "世界时间",
+            "enum_options": [],
+            "current_value": "卯时",
+        })
+        .to_string()];
+        let artifacts = build_character_prompt_artifacts(
+            &pipeline,
+            &world,
+            "韩立",
+            None,
+            &session,
+            "玩家",
+            "开场",
+            "开场",
+            "继续",
+            &[],
+            &[],
+            &[],
+            &lines,
+            &[],
+            "开场",
+            "开场",
+            &[],
+            &std::collections::HashMap::new(),
+            &[],
+        );
+        let section = artifacts
+            .messages
+            .iter()
+            .find(|message| {
+                message
+                    .metadata
+                    .as_ref()
+                    .and_then(|meta| meta.get("prompt_section_id"))
+                    .and_then(serde_json::Value::as_str)
+                    == Some("world_attribute:mortal_time")
+            })
+            .expect("world_attribute section 应当被发送");
+        let content = section.content.as_str().unwrap_or_default();
+        assert!(
+            content.contains("\"key\""),
+            "动态属性 section 内容缺少 key 字段: {content}"
+        );
+        assert!(
+            content.contains("mortal_time"),
+            "动态属性 section 内容缺少属性键原文: {content}"
+        );
+    }
 }

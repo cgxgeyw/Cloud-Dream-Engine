@@ -36,6 +36,37 @@ summary,
 .card-action-btn,
 .btn {
   -webkit-tap-highlight-color: transparent !important;
+}
+
+/* 普通界面文本应可选择和复制；只有操作控件关闭长按菜单。 */
+html,
+body,
+#root {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+button,
+a,
+label,
+summary,
+[role="button"],
+[role="tab"],
+[role="option"],
+[role="menuitem"],
+[role="checkbox"],
+[role="switch"],
+.card,
+.list-item,
+.newgame-world-card,
+.mobile-nav-item,
+.mobile-fab,
+.mobile-back-btn,
+.mobile-theme-btn,
+.settings-nav-item,
+.action-btn,
+.card-action-btn,
+.btn {
   -webkit-touch-callout: none;
 }
 
@@ -5824,4 +5855,36 @@ select:focus,
 button {
   -webkit-user-select: none !important;
   user-select: none !important;
+}
+
+/* Prompt 预览既是可读内容，也是可复制的调试输出。拖动仅从抓手开始，
+   标题和正文不参与拖拽，避免浏览器把选中文字当成拖动操作。 */
+.prompt-preview-surface,
+.prompt-preview-surface button,
+.prompt-preview-surface summary,
+.prompt-preview-surface strong,
+.prompt-preview-surface span,
+.prompt-preview-surface pre,
+.prompt-preview-surface .prompt-preview-title,
+.prompt-preview-surface .prompt-preview-content,
+.prompt-preview-surface .prompt-preview-text {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+  -webkit-touch-callout: default !important;
+}
+
+.prompt-preview-surface .prompt-preview-grip {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  color: var(--color-muted);
+  cursor: grab;
+  touch-action: none;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+  -webkit-touch-callout: none !important;
+}
+
+.prompt-preview-surface .prompt-preview-grip:active {
+  cursor: grabbing;
 }

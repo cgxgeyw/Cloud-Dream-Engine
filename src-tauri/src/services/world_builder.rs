@@ -301,7 +301,8 @@ fn persist_world_draft(
     let characters = normalize_characters(mode, draft.characters, concept);
     let attribute_schema_drafts = draft.world.attribute_schemas;
     let player_character_name = clean(&draft.world.player_character);
-    let interaction_kinds = normalize_interaction_kinds(mode, &draft.world.director_interaction_kinds);
+    let interaction_kinds =
+        normalize_interaction_kinds(mode, &draft.world.director_interaction_kinds);
     let default_agent_id_placeholder = "__DEFAULT_AGENT__";
     let director_config = if mode == "single_agent" {
         serde_json::json!({
@@ -313,7 +314,6 @@ fn persist_world_draft(
             "director_tool_loop_limit": 4,
             "runtime_context_prompt": clean(&draft.world.runtime_context_prompt),
             "world_director_prompt": clean(&draft.world.world_director_prompt),
-            "prompt_presets": [],
             "return_processing_rules": [],
             "director_interaction_kinds": interaction_kinds,
             "runtime_policy": { "memory_write_mode": "session" },
@@ -328,7 +328,6 @@ fn persist_world_draft(
             "director_tool_loop_limit": 4,
             "runtime_context_prompt": clean(&draft.world.runtime_context_prompt),
             "world_director_prompt": clean(&draft.world.world_director_prompt),
-            "prompt_presets": [],
             "return_processing_rules": [],
             "director_interaction_kinds": interaction_kinds,
             "runtime_policy": { "memory_write_mode": "session" },
@@ -362,7 +361,6 @@ fn persist_world_draft(
             ),
             map_nodes: normalize_map_nodes(&draft.world.map_nodes, &draft.world.opening_scene),
             // triggers 运行时从不执行（自动逻辑走 logic.events），不再让模型产出无用的关键词。
-            triggers: Vec::new(),
             time_config: serde_json::json!({ "mode": "realtime", "label": "\u{5b9e}\u{65f6}" }),
             director_config,
             // 空对象会被 normalize_world_ui_theme_config 判成 runtime_version 2。
@@ -436,7 +434,6 @@ fn persist_world_draft(
             summary: None,
             time_system: None,
             map_nodes: None,
-            triggers: None,
             time_config: None,
             director_config: Some(director_config),
             ui_theme_config: None,
@@ -477,7 +474,7 @@ fn persist_attribute_schemas(
     }
     let repo = AttributeRepository::new(conn);
     let mut existing_keys: Vec<String> = repo
-        .list_schemas(Some(ATTRIBUTE_SCOPE_WORLD))
+        .list_schemas_for_world(ATTRIBUTE_SCOPE_WORLD, world_id)
         .unwrap_or_default()
         .into_iter()
         .map(|schema| schema.key)
@@ -491,7 +488,10 @@ fn persist_attribute_schemas(
             continue;
         }
         let Some(value_type) = normalize_attribute_value_type(&draft.value_type) else {
-            skipped.push(format!("{key}（类型 {} 不受支持）", draft.value_type.trim()));
+            skipped.push(format!(
+                "{key}（类型 {} 不受支持）",
+                draft.value_type.trim()
+            ));
             continue;
         };
         if existing_keys.iter().any(|item| item == &key) {
@@ -513,6 +513,8 @@ fn persist_attribute_schemas(
         };
         let request = AttributeSchemaCreateRequest {
             scope: ATTRIBUTE_SCOPE_WORLD.to_string(),
+            world_id: Some(world_id.to_string()),
+            sort_order: created as i32,
             key: key.clone(),
             label,
             value_type: value_type.clone(),
@@ -533,7 +535,10 @@ fn persist_attribute_schemas(
                 ("allowed_ops", serde_json::json!(["set"])),
             ]),
             influence_policy: policy(&[
-                ("prompt.director", serde_json::json!({ "enabled": true, "mode": "raw" })),
+                (
+                    "prompt.director",
+                    serde_json::json!({ "enabled": true, "mode": "raw" }),
+                ),
                 (
                     "ui.status_panel",
                     serde_json::json!({ "enabled": true, "mode": "text" }),

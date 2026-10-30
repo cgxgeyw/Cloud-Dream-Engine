@@ -146,7 +146,9 @@ fn convert_content_part_to_anthropic(part: &serde_json::Value) -> Option<serde_j
             let format = audio.get("format")?.as_str().unwrap_or("wav");
             // data_url 可能是 "data:audio/wav;base64,..." 或纯 base64
             let base64_data = if data_url.starts_with("data:") {
-                parse_data_url(data_url).map(|(_, d)| d).unwrap_or_else(|| data_url.to_string())
+                parse_data_url(data_url)
+                    .map(|(_, d)| d)
+                    .unwrap_or_else(|| data_url.to_string())
             } else {
                 data_url.to_string()
             };
@@ -419,7 +421,8 @@ where
             Ok(bytes) => bytes,
             Err(error) => {
                 // 与 openai 路径一致:已推送过内容则按部分完成返回,避免 UI 与落库不一致。
-                if content.trim().is_empty() && reasoning.trim().is_empty() && tool_uses.is_empty() {
+                if content.trim().is_empty() && reasoning.trim().is_empty() && tool_uses.is_empty()
+                {
                     return Err(format!("读取响应流失败：{}", error));
                 }
                 break;
@@ -499,7 +502,6 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn apply_anthropic_stream_event<F>(
     data: &str,
     content: &mut String,
@@ -515,7 +517,10 @@ fn apply_anthropic_stream_event<F>(
     let Ok(event) = serde_json::from_str::<serde_json::Value>(data) else {
         return;
     };
-    let event_type = event.get("type").and_then(|value| value.as_str()).unwrap_or("");
+    let event_type = event
+        .get("type")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
     match event_type {
         "message_start" => {
             if let Some(input) = event
@@ -571,7 +576,11 @@ fn apply_anthropic_stream_event<F>(
                 }
                 Some("input_json_delta") => {
                     if let Some(partial) = delta.get("partial_json").and_then(|v| v.as_str()) {
-                        tool_uses.entry(index).or_default().input_json.push_str(partial);
+                        tool_uses
+                            .entry(index)
+                            .or_default()
+                            .input_json
+                            .push_str(partial);
                     }
                 }
                 _ => {}

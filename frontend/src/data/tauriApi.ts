@@ -8,7 +8,6 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AppSettings,
-  AssetSelection,
   AiWorldCreateRequest,
   AiWorldCreateResponse,
   AttributeSchemaResponse,
@@ -19,52 +18,33 @@ import type {
   CharacterCreateRequest,
   CharacterResponse,
   CharacterTemplateResponse,
-  CharacterUpsertRequest,
-  CharacterVisualState,
-  ChatMessage,
-  ChatMessageResponse,
   ConnectionTestResult,
-  EmbeddingModelFileStatus,
   EmbeddingModelStatus,
   GenerationParams,
   ImageModelTestRequest,
   ImageModelTestResult,
-  InventoryItem,
   McpToolCreateRequest,
-  McpToolExposurePolicy,
   McpToolImportSummary,
   McpToolResponse,
-  McpToolUpsertRequest,
   MemoryEntry,
   MemoryEntity,
   MemoryRelation,
   ModelConfig,
-  ModelConfigResponse,
   ModelDiscoverResponse,
-  PlayerActionMode,
   PlayerActionRequest,
   PluginResponse,
   RetryFailedLlmStepRequest,
   RuntimeAttributeGroup,
   RuntimeAttributeItem,
   SaveResponse,
-  SceneRuntime,
   SessionCreateRequest,
   SessionGenerationParamsResponse,
-  SessionMapEdge,
-  SessionMapNode,
   SessionRuntimeAttributesResponse,
   SessionSnapshot,
-  SessionSnapshotResponse,
-  SessionState,
-  SettingsResponse,
-  SettingsUpdateRequest,
-  SwitchCharacterProposalRequest,
   SwitchPlayerCharacterRequest,
   UploadResponse,
   VerifyWorldPackageUiCompatibilityRequest,
   WorldCreateRequest,
-  WorldOpeningMessage,
   WorldOpeningPromptPreviewResponse,
   WorldResponse,
   WorldRecord,
@@ -79,7 +59,6 @@ import type {
   WorldUiDocumentValidationResult,
   WorldPackageInspectionResult,
   WorldEventResponse,
-  WorldUpsertRequest,
   WorldPermissionStatus,
   WorldFeatureGrantStatus,
   KvScope,
@@ -92,7 +71,7 @@ export type {
   WorldResponse, WorldOpeningMessage, WorldCreateRequest, WorldUpsertRequest, AiWorldCreateRequest, AiWorldCreateResponse,
   CharacterResponse, CharacterCreateRequest, CharacterUpsertRequest, CharacterTemplateResponse, CharacterCreateFromTemplateRequest,
   ChatMessage, ChatMessageResponse, SessionSnapshot, SessionSnapshotResponse,
-  SessionMapNode, SessionMapEdge, InventoryItem, SceneRuntime, AssetSelection, CharacterVisualState, SessionState,
+  SessionMapNode, SessionMapEdge, SceneRuntime, AssetSelection, CharacterVisualState, SessionState,
   SessionCreateRequest, PlayerActionMode, PlayerActionRequest, RetryFailedLlmStepRequest,
   SwitchCharacterProposalRequest, SwitchPlayerCharacterRequest, SaveResponse,
   ModelConfig, ModelConfigResponse, ConnectionTestResult, ImageModelTestRequest, ImageModelTestResult, ModelDiscoverResponse,
@@ -212,23 +191,6 @@ export type SessionDebugResponse = {
   available_modules: string[];
 };
 
-export type RuleDefinition = {
-  id: string;
-  scope: string;
-  name: string;
-  enabled: boolean;
-  priority: number;
-  description: string;
-  condition: Record<string, unknown>;
-  effects: Record<string, unknown>[];
-};
-
-export type RuleCreateRequest = Omit<RuleDefinition, "id">;
-
-type BinaryFilePayload = {
-  filename: string;
-  bytes: number[];
-};
 
 type SavedFilePayload = {
   filename: string;
@@ -427,8 +389,12 @@ export function createCharacterInWorldFromCharacter(worldId: string, characterId
   return tauriCommand("create_character_in_world", { worldId, characterId, request: payload });
 }
 
-export function fetchWorldOpeningPromptPreview(worldId: string, params?: { playerCharacterId?: string | null; playerInput?: string }): Promise<WorldOpeningPromptPreviewResponse> {
+export function fetchWorldOpeningPromptPreview(worldId: string, params?: { playerCharacterId?: string | null; playerInput?: string; directorConfig?: Record<string, unknown> }): Promise<WorldOpeningPromptPreviewResponse> {
   return tauriCommand("preview_opening_prompt", { worldId, params });
+}
+
+export function fetchDefaultDirectorResponseContract(): Promise<string> {
+  return tauriCommand("get_default_director_response_contract");
 }
 
 export function validateWorldUiDocument(
@@ -649,8 +615,8 @@ export function importMcpTools(json: string): Promise<McpToolImportSummary> {
   return tauriCommand("import_mcp_tools", { json });
 }
 
-export function fetchAttributeSchemas(scope?: string): Promise<AttributeSchemaResponse[]> {
-  return tauriCommand("list_attribute_schemas", { scope });
+export function fetchAttributeSchemas(scope?: string, worldId?: string): Promise<AttributeSchemaResponse[]> {
+  return tauriCommand("list_attribute_schemas", { scope, worldId });
 }
 
 export function createAttributeSchema(payload: AttributeSchemaUpsertRequest): Promise<AttributeSchemaResponse> {
@@ -711,25 +677,6 @@ export function deleteAsset(filename: string): Promise<void> {
   return tauriCommand("delete_asset", { filename });
 }
 
-export function fetchRules(scope?: string): Promise<RuleDefinition[]> {
-  return tauriCommand("list_rules", { scope });
-}
-
-export function fetchRule(ruleId: string): Promise<RuleDefinition> {
-  return tauriCommand("get_rule", { id: ruleId });
-}
-
-export function createRule(payload: RuleCreateRequest): Promise<RuleDefinition> {
-  return tauriCommand("create_rule", { request: payload });
-}
-
-export function updateRule(ruleId: string, payload: RuleCreateRequest): Promise<RuleDefinition> {
-  return tauriCommand("update_rule", { id: ruleId, request: payload });
-}
-
-export function deleteRule(ruleId: string): Promise<void> {
-  return tauriCommand("delete_rule", { id: ruleId });
-}
 
 export function onSessionSnapshot(sessionId: string, callback: (snapshot: SessionSnapshot) => void): () => void {
   const unlistenPromise = listen<SessionSnapshot>(`session:${sessionId}:snapshot`, (event) => {
@@ -760,7 +707,7 @@ async function waitForSessionSnapshotListener(
   });
 }
 
-export function toSessionWebSocketUrl(sessionId: string): string {
+export function toSessionWebSocketUrl(_sessionId: string): string {
   throw new Error("Tauri 模式下无法使用 WebSocket URL，请改用 Tauri 事件。");
 }
 

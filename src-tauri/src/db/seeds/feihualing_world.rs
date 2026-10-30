@@ -70,10 +70,6 @@ pub(crate) fn poetry_world_map_nodes_json() -> String {
     .to_string()
 }
 
-pub(crate) fn poetry_world_triggers_json() -> String {
-    serde_json::json!(["飞花令", "诗会", "赏月", "酒令"]).to_string()
-}
-
 pub(crate) fn poetry_world_time_config_json() -> String {
     serde_json::json!({
         "mode": "labels",

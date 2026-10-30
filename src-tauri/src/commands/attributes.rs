@@ -6,10 +6,14 @@ use tauri::State;
 pub async fn list_attribute_schemas(
     state: State<'_, AppState>,
     scope: Option<String>,
+    world_id: Option<String>,
 ) -> Result<Vec<AttributeSchema>, String> {
     let db = state.db.lock().await;
     let repo = crate::db::repositories::attribute_repo::AttributeRepository::new(db.conn());
-    repo.list_schemas(scope.as_deref())
+    match (scope.as_deref(), world_id.as_deref()) {
+        (Some(scope), Some(world_id)) => repo.list_schemas_for_world(scope, world_id),
+        _ => repo.list_schemas(scope.as_deref()),
+    }
 }
 
 #[tauri::command]
@@ -34,10 +38,7 @@ pub async fn update_attribute_schema(
 }
 
 #[tauri::command]
-pub async fn delete_attribute_schema(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<(), String> {
+pub async fn delete_attribute_schema(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let db = state.db.lock().await;
     let repo = crate::db::repositories::attribute_repo::AttributeRepository::new(db.conn());
     repo.delete_schema(&id)

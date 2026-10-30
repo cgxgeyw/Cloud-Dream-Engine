@@ -18,6 +18,7 @@ import {
 import { ConfirmDialog, ModalDialog } from "../components/ModalDialog";
 import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
 import { X, Users } from "lucide-react";
+import { AttributePanel } from "../components/AttributePanel";
 
 type CreateMode = "same_world" | "other_world";
 
@@ -105,18 +106,6 @@ export function WorldCharactersPage() {
       ),
     [textModels],
   );
-
-  function resolveCharacterModelLabel(character: CharacterResponse): string {
-    const modelRef = character.model.trim();
-    if (!modelRef) {
-      return "模型：跟随默认文本模型";
-    }
-    const matched = textModelMap.get(modelRef);
-    if (matched) {
-      return `模型：${matched.name || matched.model_id}`;
-    }
-    return `模型：${modelRef}`;
-  }
 
   const fallbackTextModel = useMemo(
     () => textModels.find((model) => model.is_default) ?? textModels[0] ?? null,
@@ -305,6 +294,15 @@ export function WorldCharactersPage() {
 
       {loading ? <SurfacePanel className="surface-panel--pad-lg">正在加载角色池...</SurfacePanel> : null}
       {error ? <SurfacePanel className="surface-panel--pad-lg text-error">错误：{error}</SurfacePanel> : null}
+
+      {!loading && !error && world ? (
+        <SurfacePanel className="surface-panel--pad-lg">
+          <div className="editor-content">
+            <div className="editor-field-label">角色共享属性</div>
+            <AttributePanel scope="character" ownerType="character" worldId={world.id} />
+          </div>
+        </SurfacePanel>
+      ) : null}
 
       {!loading && !error && world && sortedCharacters.length === 0 ? (
         <SurfacePanel className="surface-panel--pad-lg">

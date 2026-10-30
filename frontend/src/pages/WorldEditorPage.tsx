@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useLayoutEffect, useRef } from "react";
 import {
   assetUrl,
   compileWorldUiDocument,
   createWorld,
   deleteWorld,
   downloadWorldPackage,
+  fetchDefaultDirectorResponseContract,
   fetchModels,
   fetchMcpTools,
   fetchWorld,
@@ -19,30 +19,25 @@ import {
   type CharacterResponse,
   type ModelConfigResponse,
   type McpToolResponse,
-  type WorldUiBundleValidationResult,
-  type WorldUiCompileResult,
-  type WorldUiCompatibilityReport,
   type WorldCreateRequest,
-  type WorldMapTopology,
   type WorldOpeningMessage,
   type WorldResponse,
 } from "../data/apiAdapter";
 import { AttributePanel } from "../components/AttributePanel";
 import { GenerationParamsEditor } from "../components/GenerationParamsEditor";
 import { ConfirmDialog } from "../components/ModalDialog";
-import type { GenerationParams } from "../data/types";
 import { useIsMobile } from "../components/ResponsiveLayout";
 import { useSectionParam } from "../hooks/useSectionParam";
 import { useWorldPromptPreview } from "../hooks/useWorldPromptPreview";
 import { GameUiSandboxPreview } from "../components/GameUiSandboxPreview";
 import { PromptSendPreviewCard } from "../components/PromptTraceView";
+import { PromptSectionList } from "../components/PromptSectionList";
+import { buildDirectorAttributePreview } from "../components/promptAttributePreview";
 import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
 import { showToast } from "../components/Toast";
-import { ArrowLeft, Save, X } from "lucide-react";
+import { ArrowLeft, Save } from "lucide-react";
 import {
   defaultGameUiFile,
-  normalizeAssetConfig,
-  normalizeWorldUiEnvelope,
   parseGameUiDocument,
   type GameUiPlatform,
   type ParsedGameUiDocument,
@@ -51,39 +46,25 @@ import {
   DirectorConfig,
   FixedTabId,
   FoldableEditorSection,
-  FoldableEditorSectionProps,
   InteractionKind,
   OpeningComposerRole,
   OpeningSpeakerOption,
-  PromptPreset,
   ReturnProcessingRule,
-  StatusTabOption,
-  TimeConfig,
-  TimeSlot,
+  characterPromptSections,
+  directorPromptSections,
   UiGovernanceSnapshot,
   UiThemeConfig,
   appendUniqueAsset,
   buildStatusTabOptions,
   buildThemePreviewStyle,
-  buildTimeSystemSummary,
   buildUiThemeEnvelope,
-  composeDirectorRuntimeSystemPrompt,
-  countGroupedAssets,
   createNewWorldDraft,
-  defaultDirectorConfig,
-  defaultMapTopology,
-  defaultTimeConfig,
-  defaultUiThemeConfig,
-  defaultWorldDirectorPrompt,
-  extractMapSceneNames,
   fixedTabs,
   formatMapTopologyJson,
   getAssetDisplayName,
   interactionKindOptions,
   moveAssetToFront,
-  normalizeAssetGroupMap,
   normalizeDirectorConfig,
-  normalizeGenerationParams,
   normalizeOpeningCharacterIds,
   normalizeOpeningMessages,
   normalizeTimeConfig,
@@ -130,14 +111,17 @@ export function WorldEditorPage() {
   const [mcpToolSearch, setMcpToolSearch] = useState("");
   const {
     preview: promptPreview,
+    attributeSchemas: promptAttributeSchemas,
     loading: promptPreviewLoading,
     error: promptPreviewError,
+    attributeSchemaError: promptAttributeSchemaError,
     reload: reloadPromptPreview,
   } = useWorldPromptPreview({
     active: (isMobile ? activeSection : activeTab) === "promptPreview",
     isNew,
     worldId: world?.id,
     playerCharacterId: world?.player_character_id,
+    directorConfig: (world?.director_config ?? {}) as Record<string, unknown>,
   });
   const [mapTopologySource, setMapTopologySource] = useState(formatMapTopologyJson(createNewWorldDraft().map_nodes));
   const [uiGovernance, setUiGovernance] = useState<UiGovernanceSnapshot>({
@@ -148,8 +132,6 @@ export function WorldEditorPage() {
     mobileCompile: null,
     compatibility: null,
   });
-  const pendingTimeSlotFocusRef = useRef(false);
-  const timeSlotsContainerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -216,16 +198,6 @@ export function WorldEditorPage() {
     () => normalizeDirectorConfig((world?.director_config ?? {}) as Record<string, unknown>),
     [world?.director_config],
   );
-  useLayoutEffect(() => {
-    if (!pendingTimeSlotFocusRef.current) {
-      return;
-    }
-    pendingTimeSlotFocusRef.current = false;
-    const container = timeSlotsContainerRef.current;
-    const focusTarget = container?.querySelector<HTMLInputElement>('[data-time-slot-label="true"]:last-of-type');
-    focusTarget?.scrollIntoView({ block: "center", behavior: "smooth" });
-    focusTarget?.focus();
-  }, [timeConfig.slots.length]);
   const uiThemeConfig = useMemo(
     () => normalizeUiThemeConfig((world?.ui_theme_config ?? {}) as Record<string, unknown>),
     [world?.ui_theme_config],
@@ -245,11 +217,6 @@ export function WorldEditorPage() {
   const sceneNames = useMemo(() => resolveSceneNames(world), [world]);
   const mapNodesText = mapTopologySource;
   const selectedPlayerCharacter = characters.find((character) => character.id === world?.player_character_id) ?? null;
-  const timeSystemSummary = useMemo(() => buildTimeSystemSummary(timeConfig), [timeConfig]);
-  const directorSystemPromptPreview = useMemo(
-    () => directorConfig.world_director_prompt,
-    [directorConfig.world_director_prompt],
-  );
   const availableStatusTabs = useMemo(() => buildStatusTabOptions(), []);
   const stylePreview = useMemo(
     () => buildThemePreviewStyle(uiThemeConfig, world?.opening_scene?.trim() || sceneNames[0] || "未命名场景"),
@@ -270,10 +237,6 @@ export function WorldEditorPage() {
   const mobilePreviewStylesheet = useMemo(
     () => uiThemeConfig.mobile_stylesheet,
     [uiThemeConfig.mobile_stylesheet],
-  );
-  const totalSceneBackgroundCount = useMemo(
-    () => countGroupedAssets(uiThemeConfig.local_scene_backgrounds),
-    [uiThemeConfig.local_scene_backgrounds],
   );
   const openingSpeakerOptions = useMemo<OpeningSpeakerOption[]>(
     () => characters.map((character) => ({ value: character.name, label: character.name })),
@@ -386,15 +349,13 @@ export function WorldEditorPage() {
       JSON.stringify(
         {
           ...(world ?? {}),
-          time_system: timeSystemSummary,
-          time_config: timeConfig,
           director_config: directorConfig,
           ui_theme_config: buildUiThemeEnvelope(uiThemeConfig),
         },
         null,
         2,
       ),
-    [world, timeConfig, directorConfig, uiThemeConfig, timeSystemSummary],
+    [world, directorConfig, uiThemeConfig],
   );
   const tauriUiGovernanceEnabled = isTauriEnvironment();
 
@@ -832,32 +793,24 @@ export function WorldEditorPage() {
     );
   }
 
-  function updateTimePatch(patch: Partial<TimeConfig>) {
-    updateDraft({ time_config: { ...timeConfig, ...patch } });
-  }
-
-  function updateTimeSlot(index: number, patch: Partial<TimeSlot>) {
-    updateTimePatch({
-      slots: timeConfig.slots.map((slot, slotIndex) => (slotIndex === index ? { ...slot, ...patch } : slot)),
-    });
-  }
-
-  function addTimeSlot() {
-    pendingTimeSlotFocusRef.current = true;
-    updateTimePatch({
-      slots: [...timeConfig.slots, { label: `时段 ${timeConfig.slots.length + 1}`, clock: "" }],
-    });
-  }
-
-  function removeTimeSlot(index: number) {
-    const nextSlots = timeConfig.slots.filter((_, slotIndex) => slotIndex !== index);
-    updateTimePatch({
-      slots: nextSlots.length > 0 ? nextSlots : [{ label: "", clock: "" }],
-    });
-  }
-
   function updateDirectorPatch(patch: Partial<DirectorConfig>) {
     updateDraft({ director_config: { ...directorConfig, ...patch } });
+  }
+
+  // "填入内置契约"：取后端单一事实源生成的默认契约文本，作者从真实默认值起步改写。
+  async function fillDefaultDirectorResponseContract() {
+    try {
+      const text = await fetchDefaultDirectorResponseContract();
+      if (
+        directorConfig.response_contract_prompt.trim() &&
+        !window.confirm("输入框已有内容，填入内置契约会覆盖现有文本，确定继续？")
+      ) {
+        return;
+      }
+      updateDirectorPatch({ response_contract_prompt: text });
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "读取内置契约失败");
+    }
   }
 
   function updateServiceMode(nextMode: DirectorConfig["service_mode"]) {
@@ -906,45 +859,12 @@ export function WorldEditorPage() {
     });
   }
 
-  function updatePromptPreset(index: number, patch: Partial<PromptPreset>) {
-    updateDirectorPatch({
-      prompt_presets: directorConfig.prompt_presets.map((item, itemIndex) =>
-        itemIndex === index ? { ...item, ...patch } : item,
-      ),
-    });
-  }
-
-  function addPromptPreset() {
-    updateDirectorPatch({
-      prompt_presets: [
-        ...directorConfig.prompt_presets,
-        {
-          id: `preset-${Date.now()}`,
-          name: "新提示词预设",
-          content: "",
-          scope: "both",
-          enabled: true,
-          order: directorConfig.prompt_presets.length + 1,
-        },
-      ],
-    });
-  }
-
-  function removePromptPreset(index: number) {
-    updateDirectorPatch({
-      prompt_presets: directorConfig.prompt_presets.filter((_, itemIndex) => itemIndex !== index),
-    });
-  }
-
-  function duplicatePromptPreset(index: number) {
-    const source = directorConfig.prompt_presets[index];
-    if (!source) return;
-    updateDirectorPatch({
-      prompt_presets: [
-        ...directorConfig.prompt_presets,
-        { ...source, id: `preset-${Date.now()}`, name: `${source.name} 副本`, order: directorConfig.prompt_presets.length + 1 },
-      ],
-    });
+  function reorderPromptSections(scope: "director" | "character", visibleIds: string[]) {
+    const configKey = scope === "director" ? "director_prompt_order" : "character_prompt_order";
+    const ordered = Array.from(new Set([...directorConfig[configKey], ...visibleIds]));
+    const visible = new Set(visibleIds);
+    let next = 0;
+    updateDirectorPatch({ [configKey]: ordered.map((sectionId) => visible.has(sectionId) ? visibleIds[next++] : sectionId) });
   }
 
   function updateReturnRule(index: number, patch: Partial<ReturnProcessingRule>) {
@@ -1076,10 +996,9 @@ export function WorldEditorPage() {
         background_prompt: world.background_prompt.trim(),
         opening_scene: world.opening_scene.trim(),
         summary: world.summary.trim(),
-        time_system: timeSystemSummary,
+        time_system: "",
         map_nodes: mapTopology,
-        triggers: world.triggers,
-        time_config: timeConfig,
+        time_config: {},
         director_config: directorConfig,
         ui_theme_config: buildUiThemeEnvelope(uiThemeConfig),
         opening_messages: openingMessages,
@@ -1429,65 +1348,6 @@ export function WorldEditorPage() {
           </SurfacePanel>
         ) : null}
 
-        {sectionId === "time" ? (
-          <SurfacePanel className="surface-panel--pad-lg">
-            <div className="editor-content">
-              <label className="editor-field"><span className="editor-field-label">时间推进模式</span><select value={timeConfig.mode} onChange={(e) => updateTimePatch({ mode: e.target.value === "24h" ? "24h" : "labels" })} className="editor-field-input editor-field-select"><option value="labels">标签序列</option><option value="24h">24 小时制</option></select></label>
-              <label className="editor-field"><span className="editor-field-label">起始时间</span><input value={timeConfig.start_time} onChange={(e) => updateTimePatch({ start_time: e.target.value })} className="editor-field-input" /></label>
-              {timeConfig.mode === "labels" ? (
-                <>
-                  <label className="editor-field">
-                    <span className="editor-field-label">起始时段</span>
-                    <select value={timeConfig.start_label} onChange={(e) => updateTimePatch({ start_label: e.target.value })} className="editor-field-input editor-field-select">
-                      {timeConfig.slots.map((slot, index) => {
-                        const fallbackLabel = `时段 ${index + 1}`;
-                        const optionLabel = slot.label.trim() || fallbackLabel;
-                        return <option key={`${index}-${optionLabel}`} value={optionLabel}>{optionLabel}</option>;
-                      })}
-                    </select>
-                  </label>
-                  <div className="editor-content" ref={timeSlotsContainerRef}>
-                    <div className="flex flex--items-center flex--justify-between world-editor-section-head" style={{ gap: 12 }}>
-                      <div>
-                        <div className="editor-field-label">时段列表</div>
-                      </div>
-                      <div className="world-editor-section-head-action">
-                        <button type="button" className="action-btn" onClick={() => addTimeSlot()}>新增时段</button>
-                      </div>
-                    </div>
-                    {timeConfig.slots.map((slot, index) => (
-                      <div key={`time-slot-${index}`} className="settings-form-grid">
-                        <label className="editor-field">
-                          <span className="editor-field-label">时段名称</span>
-                          <input
-                            value={slot.label}
-                            onChange={(e) => updateTimeSlot(index, { label: e.target.value })}
-                            className="editor-field-input"
-                            data-time-slot-label="true"
-                            placeholder={`时段 ${index + 1}`}
-                          />
-                        </label>
-                        <label className="editor-field">
-                          <span className="editor-field-label">对应时刻</span>
-                          <input
-                            value={slot.clock}
-                            onChange={(e) => updateTimeSlot(index, { clock: e.target.value })}
-                            className="editor-field-input"
-                            placeholder="06:00"
-                          />
-                        </label>
-                        <div className="editor-field" style={{ alignSelf: "end" }}>
-                          <button type="button" className="action-btn" onClick={() => removeTimeSlot(index)}>删除时段</button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              ) : null}
-            </div>
-          </SurfacePanel>
-        ) : null}
-
         {sectionId === "map" ? (
           <SurfacePanel className="surface-panel--pad-lg">
             <div className="editor-content">
@@ -1511,16 +1371,8 @@ export function WorldEditorPage() {
                   scope="world"
                   ownerType="world"
                   ownerId={isNew ? undefined : world.id}
-                />
-              </FoldableEditorSection>
-              <FoldableEditorSection
-                title="角色共享属性"
-                defaultOpen
-              >
-                <AttributePanel
-                  scope="character"
-                  ownerType="character"
-                  ownerId={undefined}
+                  worldId={isNew ? undefined : world.id}
+                  onSchemaChange={() => void reloadPromptPreview()}
                 />
               </FoldableEditorSection>
             </div>
@@ -1533,7 +1385,7 @@ export function WorldEditorPage() {
               <label className="editor-field">
                 <span className="editor-field-label">运行时上下文</span>
                 <div className="text-muted" style={{ fontSize: 12 }}>
-                  当前支持的变量：{"{{current_time}}"}、{"{{当前时间}}"}
+                  支持 {"{{变量}}"} 插值：内置变量与下方插值管理中的自定义变量。
                 </div>
                 <textarea
                   value={directorConfig.runtime_context_prompt}
@@ -1542,6 +1394,100 @@ export function WorldEditorPage() {
                   style={{ minHeight: 300 }}
                 />
               </label>
+              <label className="editor-field">
+                <span className="editor-field-label" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  主控返回格式
+                  <button
+                    type="button"
+                    className="action-btn"
+                    onClick={() => void fillDefaultDirectorResponseContract()}
+                  >
+                    填入内置契约
+                  </button>
+                </span>
+                <div className="text-muted" style={{ fontSize: 12 }}>
+                  留空使用框架内置返回格式；填写后<b>完全替代</b>内置契约，作者自行控制发给模型的全部格式说明。
+                  点"填入内置契约"可把当前默认契约原文填进来再改。需自行包含 planned_speakers 等引擎必需字段的格式，否则对应功能会退化。
+                </div>
+                <textarea
+                  value={directorConfig.response_contract_prompt}
+                  onChange={(e) => updateDirectorPatch({ response_contract_prompt: e.target.value })}
+                  className="editor-field-input editor-field-textarea"
+                  style={{ minHeight: 200 }}
+                />
+              </label>
+              <div className="editor-field">
+                <div className="editor-field-label">插值管理（自定义提示词变量）</div>
+                <div className="text-muted" style={{ fontSize: 12, marginBottom: 8 }}>
+                  在运行时上下文、返回格式、主控预设、系统提示词、背景、旁白等输入框里用 {"{{变量名}}"} 引用。自定义变量优先于内置变量，变量值里还可以再引用内置变量。内置变量：
+                  {"{{time}}"}（当前时间）、{"{{date}}"}、{"{{user}}"} / {"{{player}}"}（玩家角色名）、
+                  {"{{world_name}}"}、{"{{location}}"}、{"{{scene}}"}、{"{{random:选项1,选项2}}"}（随机选一）、
+                  {"{{var:key}}"}（会话运行时变量）。
+                </div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {Object.entries(directorConfig.prompt_variables)
+                    .sort(([a], [b]) => a.localeCompare(b))
+                    .map(([key, value]) => (
+                      <div key={key} style={{ display: "grid", gridTemplateColumns: "220px 1fr auto", gap: 8, alignItems: "center" }}>
+                        <input
+                          type="text"
+                          className="editor-field-input"
+                          value={key}
+                          placeholder="变量名，如 nickname"
+                          onChange={(event) => {
+                            const newKey = event.target.value.trim();
+                            const next: Record<string, string> = {};
+                            for (const [existingKey, existingValue] of Object.entries(directorConfig.prompt_variables)) {
+                              next[existingKey === key ? (newKey || existingKey) : existingKey] = existingValue;
+                            }
+                            updateDirectorPatch({ prompt_variables: next });
+                          }}
+                        />
+                        <input
+                          type="text"
+                          className="editor-field-input"
+                          value={value}
+                          placeholder='替换成的文本，可再引用 {{user}} 等内置变量'
+                          onChange={(event) =>
+                            updateDirectorPatch({
+                              prompt_variables: { ...directorConfig.prompt_variables, [key]: event.target.value },
+                            })
+                          }
+                        />
+                        <button
+                          type="button"
+                          className="action-btn"
+                          onClick={() => {
+                            const next = { ...directorConfig.prompt_variables };
+                            delete next[key];
+                            updateDirectorPatch({ prompt_variables: next });
+                          }}
+                        >
+                          删除
+                        </button>
+                      </div>
+                    ))}
+                  <div>
+                    <button
+                      type="button"
+                      className="action-btn"
+                      onClick={() => {
+                        let key = "var1";
+                        let index = 1;
+                        while (directorConfig.prompt_variables[key] !== undefined) {
+                          index += 1;
+                          key = `var${index}`;
+                        }
+                        updateDirectorPatch({
+                          prompt_variables: { ...directorConfig.prompt_variables, [key]: "" },
+                        });
+                      }}
+                    >
+                      添加变量
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           </SurfacePanel>
         ) : null}
@@ -1771,9 +1717,46 @@ export function WorldEditorPage() {
 
         {sectionId === "promptPreview" ? (
           <SurfacePanel className="surface-panel--pad-lg">
-            <div className="editor-content">
+            <div className="editor-content prompt-preview-surface">
+              {promptPreview ? ([
+                { scope: "director" as const, title: "世界主控 Prompt 编排", sections: directorPromptSections, order: directorConfig.director_prompt_order, trace: promptPreview.world_director_prompt_trace },
+                { scope: "character" as const, title: "NPC Prompt 编排", sections: characterPromptSections, order: directorConfig.character_prompt_order, trace: promptPreview.character_prompt_traces[0]?.prompt_trace },
+              ]).map(({ scope, title, sections, order, trace }) => {
+                const modules = Array.isArray(trace?.modules) ? trace.modules as Array<Record<string, unknown>> : [];
+                const { modulesById, labels: attributeLabels } = scope === "director"
+                  ? buildDirectorAttributePreview(modules, promptAttributeSchemas)
+                  : { modulesById: new Map(modules.map((module) => [String(module.id ?? ""), module])), labels: new Map<string, string>() };
+                const rawDebug = trace?.raw_debug && typeof trace.raw_debug === "object"
+                  ? trace.raw_debug as Record<string, unknown>
+                  : null;
+                const requestTools = (rawDebug?.request && typeof rawDebug.request === "object"
+                  ? (rawDebug.request as Record<string, unknown>).tools
+                  : undefined)
+                  ?? rawDebug?.tools;
+                const dynamicSections = Array.from(modulesById.values())
+                  .filter((module) => String(module.id ?? "").startsWith("world_attribute:") || String(module.id ?? "").startsWith("character_attribute:"))
+                  .map((module) => {
+                    const id = String(module.id);
+                    const scopeLabel = id.startsWith("world_attribute:") ? "世界属性" : "角色属性";
+                    const schemaLabel = attributeLabels.get(id);
+                    return [id, schemaLabel ? `${scopeLabel}：${schemaLabel}` : "自定义属性"] as [string, string];
+                  });
+                const allSections = [...sections, ...dynamicSections];
+                const ordered = order
+                  .map((id) => allSections.find(([sectionId]) => sectionId === id))
+                  .filter((item): item is [string, string] => Boolean(item));
+                for (const item of dynamicSections) if (!ordered.some(([id]) => id === item[0])) ordered.push(item);
+                return (
+                  <FoldableEditorSection key={scope} title={title} defaultOpen={scope === "director"}>
+                    <PromptSectionList sections={ordered} modules={modulesById}
+                      requestTools={requestTools}
+                      onReorder={(ids) => reorderPromptSections(scope, ids)} />
+                  </FoldableEditorSection>
+                );
+              }) : null}
               {promptPreviewLoading ? <div className="empty-text">正在加载 prompt 预览...</div> : null}
               {promptPreviewError ? <div className="text-error">{promptPreviewError}</div> : null}
+              {promptAttributeSchemaError ? <div className="text-error">{promptAttributeSchemaError}</div> : null}
               {promptPreview ? (
                 <div style={{ display: "grid", gap: 12 }}>
                   <PromptSendPreviewCard
@@ -1861,6 +1844,86 @@ export function WorldEditorPage() {
 
               {renderGameUiPreviewSection()}
               {renderGameUiGovernanceSection()}
+            </div>
+          </SurfacePanel>
+        ) : null}
+
+        {sectionId === "returnRules" ? (
+          <SurfacePanel className="surface-panel--pad-lg">
+            <div className="editor-content">
+              <div className="text-muted" style={{ marginBottom: 12 }}>
+                按顺序对模型返回内容执行文本替换。规则作用范围选“世界主控”“角色/NPC”或“两者”时，分别应用到对应回复流程。
+              </div>
+              {directorConfig.return_processing_rules.map((rule, index) => (
+                <div
+                  key={rule.id}
+                  className="settings-form-grid"
+                  style={{ padding: 12, marginBottom: 12, border: "1px solid var(--color-border)", borderRadius: 12 }}
+                >
+                  <label className="editor-field">
+                    <span className="editor-field-label">规则名称</span>
+                    <input
+                      type="text"
+                      value={rule.name}
+                      onChange={(event) => updateReturnRule(index, { name: event.target.value })}
+                      className="editor-field-input"
+                    />
+                  </label>
+                  <label className="editor-field">
+                    <span className="editor-field-label">作用范围</span>
+                    <select
+                      value={rule.scope}
+                      onChange={(event) => updateReturnRule(index, { scope: event.target.value as ReturnProcessingRule["scope"] })}
+                      className="editor-field-input editor-field-select"
+                    >
+                      <option value="director">世界主控</option>
+                      <option value="character">角色/NPC</option>
+                      <option value="both">两者</option>
+                    </select>
+                  </label>
+                  <label className="editor-field">
+                    <span className="editor-field-label">执行顺序</span>
+                    <input
+                      type="number"
+                      value={rule.order}
+                      onChange={(event) => updateReturnRule(index, { order: Number(event.target.value) })}
+                      className="editor-field-input"
+                    />
+                  </label>
+                  <label className="editor-field">
+                    <span className="editor-field-label">启用规则</span>
+                    <div className="settings-inline-toggle">
+                      <input
+                        type="checkbox"
+                        checked={rule.enabled}
+                        onChange={(event) => updateReturnRule(index, { enabled: event.target.checked })}
+                      />
+                    </div>
+                  </label>
+                  <label className="editor-field">
+                    <span className="editor-field-label">匹配内容（正则表达式）</span>
+                    <textarea
+                      value={rule.pattern}
+                      onChange={(event) => updateReturnRule(index, { pattern: event.target.value })}
+                      className="editor-field-input editor-field-textarea"
+                      rows={3}
+                    />
+                  </label>
+                  <label className="editor-field">
+                    <span className="editor-field-label">替换为</span>
+                    <textarea
+                      value={rule.replacement}
+                      onChange={(event) => updateReturnRule(index, { replacement: event.target.value })}
+                      className="editor-field-input editor-field-textarea"
+                      rows={3}
+                    />
+                  </label>
+                  <div className="editor-field">
+                    <button type="button" className="action-btn" onClick={() => removeReturnRule(index)}>删除规则</button>
+                  </div>
+                </div>
+              ))}
+              <button type="button" className="action-btn" onClick={addReturnRule}>添加返回处理规则</button>
             </div>
           </SurfacePanel>
         ) : null}

@@ -560,15 +560,12 @@ pub(crate) fn query_rows_json(
             Ok(serde_json::Value::Object(object))
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 /// 把 JSON 行数组按原列名插回表。调用方负责先清空目标行。
-fn insert_rows(
-    conn: &Connection,
-    table: &str,
-    rows: &[serde_json::Value],
-) -> Result<(), String> {
+fn insert_rows(conn: &Connection, table: &str, rows: &[serde_json::Value]) -> Result<(), String> {
     for row in rows {
         let object = row
             .as_object()
@@ -729,7 +726,9 @@ pub(crate) fn build_runtime_attribute_item(
         schema_id: schema.id.clone(),
         key: schema.key.clone(),
         label: schema.label.clone(),
+        description: schema.description.clone(),
         value_type: schema.value_type.clone(),
+        enum_options: schema.enum_options.clone(),
         value: value.value.clone(),
         source: value.source.clone(),
         display_policy: serde_json::to_value(&schema.display_policy).unwrap_or_default(),
@@ -955,7 +954,6 @@ impl SessionOrchestrator {
             input.session_id,
             input.turn_index,
             input.runtime_application,
-            input.updated,
         )?;
         append_post_update_journals(
             input.conn,
@@ -1046,7 +1044,6 @@ mod rollback_tests {
             player_stats: vec![],
             map_graph_nodes: vec![],
             map_graph_edges: vec![],
-            inventory_items: vec![],
             system_log: vec![],
             scene: SceneRuntime::default(),
             assets: AssetSelection::default(),
@@ -1233,9 +1230,7 @@ mod rollback_tests {
         let journal = load_turn_journal(&conn, "sess-1", 5).expect("journal");
         let archived_step = journal
             .iter()
-            .find(|entry| {
-                entry.get("step").and_then(|v| v.as_str()) == Some("turn_regenerated")
-            })
+            .find(|entry| entry.get("step").and_then(|v| v.as_str()) == Some("turn_regenerated"))
             .expect("archived step");
         let archived_messages = archived_step
             .get("payload")
@@ -1291,9 +1286,6 @@ mod rollback_tests {
     fn rollback_without_snapshot_is_a_clear_error() {
         let (conn, session) = setup();
         let error = rollback_session_to_turn(&conn, &session, 9).expect_err("should fail");
-        assert!(
-            error.contains("回滚快照"),
-            "unexpected: {error}"
-        );
+        assert!(error.contains("回滚快照"), "unexpected: {error}");
     }
 }

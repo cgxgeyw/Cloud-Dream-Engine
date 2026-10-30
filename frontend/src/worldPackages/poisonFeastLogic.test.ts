@@ -214,7 +214,7 @@ describe("毒酒宴 · 两个药水动画的数据源", () => {
     while (view.round === startRound && view.phase === "playing" && guard++ < 60) {
       view = view.turn_code === 1
         ? await logic.call("game.playerAct", { action: "drink_self" })
-        : await advanceDevil(logic, guard);
+        : await advanceDevil(logic);
     }
 
     expect(view.round).toBe(startRound + 1);
@@ -257,7 +257,7 @@ describe("毒酒宴 · 两个药水动画的数据源", () => {
     while (view.phase === "playing" && guard++ < 40) {
       view = view.turn_code === 1
         ? await logic.call("game.playerAct", { action: "drink_self" })
-        : await advanceDevil(logic, guard);
+        : await advanceDevil(logic);
       seqs.push(view.serve_seq);
     }
 
@@ -268,7 +268,7 @@ describe("毒酒宴 · 两个药水动画的数据源", () => {
   });
 });
 
-async function advanceDevil(h: Awaited<ReturnType<typeof createPoisonFeastHarness>>, step: number): Promise<LogicView> {
+async function advanceDevil(h: Awaited<ReturnType<typeof createPoisonFeastHarness>>): Promise<LogicView> {
   await h.callRaw("game.devilAct", {action:"drink_opponent"});
   return h.call("game.getView");
 }

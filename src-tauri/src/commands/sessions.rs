@@ -148,12 +148,13 @@ pub(crate) async fn submit_player_action_inner(
         crate::models::model_config::ensure_media_payload_valid(&player_media)?;
         let db = state.db.lock().await;
         let mut checked_model_ids = std::collections::HashSet::new();
-        let mut check_model = |model: &crate::models::model_config::ModelConfig| -> Result<(), String> {
-            if checked_model_ids.insert(model.id.clone()) {
-                crate::models::model_config::ensure_media_supported(model, &player_media)?;
-            }
-            Ok(())
-        };
+        let mut check_model =
+            |model: &crate::models::model_config::ModelConfig| -> Result<(), String> {
+                if checked_model_ids.insert(model.id.clone()) {
+                    crate::models::model_config::ensure_media_supported(model, &player_media)?;
+                }
+                Ok(())
+            };
         check_model(&director_model)?;
         for character in &characters {
             let model = crate::services::game_engine::orchestrator::resolve_text_model(
@@ -417,11 +418,7 @@ pub(crate) async fn submit_player_action_inner(
         let db = state.db.lock().await;
         crate::services::game_engine::runtime_effects::apply_director_runtime_effects_with_preface(
             db.conn(),
-            &state.services.runtime.inventory,
-            &state.services.runtime.trigger_engine,
-            &state.services.runtime.rule_engine,
             &state.services.runtime.scene_manager,
-            &state.services.runtime.state_engine,
             &world,
             &session,
             &characters,
@@ -800,11 +797,7 @@ async fn run_agent_chat_player_action(
         } else {
             crate::services::game_engine::runtime_effects::apply_director_runtime_effects(
                 db.conn(),
-                &state.services.runtime.inventory,
-                &state.services.runtime.trigger_engine,
-                &state.services.runtime.rule_engine,
                 &state.services.runtime.scene_manager,
-                &state.services.runtime.state_engine,
                 &world,
                 &session,
                 &characters,
@@ -869,16 +862,7 @@ fn merge_agent_chat_runtime_payloads(payloads: &[serde_json::Value]) -> serde_js
         "fact_extractions",
         "tool_calls",
     ];
-    const VALUE_KEYS: &[&str] = &[
-        "inventory_items",
-        "inventory",
-        "state_metrics",
-        "session_metrics",
-        "metrics",
-        "state_phase",
-        "world_phase",
-        "player_stats",
-    ];
+    const VALUE_KEYS: &[&str] = &["state_phase", "world_phase", "player_stats"];
 
     let mut merged = serde_json::Map::new();
     for payload in payloads {
@@ -906,7 +890,11 @@ fn merge_agent_chat_runtime_payloads(payloads: &[serde_json::Value]) -> serde_js
     }
     // NPC 回复契约用的字段名是 memory_entries，但 runtime 解析读的是 memory_events。
     // 把 memory_entries 的条目并入 memory_events，确保 NPC 写入的记忆能落库。
-    if let Some(entries) = merged.get("memory_entries").and_then(|value| value.as_array()).cloned() {
+    if let Some(entries) = merged
+        .get("memory_entries")
+        .and_then(|value| value.as_array())
+        .cloned()
+    {
         if !entries.is_empty() {
             let events = merged
                 .entry("memory_events".to_string())
@@ -992,7 +980,8 @@ pub async fn get_session_generation_params(
     let session = crate::db::repositories::session_repo::SessionRepository::new(conn)
         .get(&session_id)?
         .ok_or_else(|| "会话不存在".to_string())?;
-    let world = crate::services::game_engine::orchestrator::resolve_world_for_session(conn, &session)?;
+    let world =
+        crate::services::game_engine::orchestrator::resolve_world_for_session(conn, &session)?;
     let settings = crate::commands::settings::load_app_settings(conn)?;
     Ok(build_session_generation_params_response(
         &settings, &world, &session,
@@ -1016,7 +1005,8 @@ pub async fn update_session_generation_params(
     // 入库前夹到合法区间，与应用/世界两层一致。
     session.generation_params = params.sanitized().0;
     repo.upsert(&session)?;
-    let world = crate::services::game_engine::orchestrator::resolve_world_for_session(conn, &session)?;
+    let world =
+        crate::services::game_engine::orchestrator::resolve_world_for_session(conn, &session)?;
     let settings = crate::commands::settings::load_app_settings(conn)?;
     Ok(build_session_generation_params_response(
         &settings, &world, &session,
@@ -1028,9 +1018,7 @@ fn build_session_generation_params_response(
     world: &crate::models::world::WorldDefinition,
     session: &SessionSnapshot,
 ) -> SessionGenerationParamsResponse {
-    use crate::models::generation_params::{
-        GENERATION_ROLE_CHARACTER, GENERATION_ROLE_DIRECTOR,
-    };
+    use crate::models::generation_params::{GENERATION_ROLE_CHARACTER, GENERATION_ROLE_DIRECTOR};
     use crate::services::game_engine::orchestrator::world_generation_params;
     let resolve = |role: &str| {
         // 这里不带模型连接配置，max_tokens 未配就留空（真实回合会用所选模型的上限兜底）。
@@ -1160,8 +1148,11 @@ pub async fn regenerate_last_turn(
         let db = state.db.lock().await;
         let conn = db.conn();
         let turn_index =
-            crate::services::game_engine::orchestrator::writeback::latest_finished_turn(conn, &session_id)?
-                .ok_or_else(|| "没有已完成的回合可以重新生成".to_string())?;
+            crate::services::game_engine::orchestrator::writeback::latest_finished_turn(
+                conn,
+                &session_id,
+            )?
+            .ok_or_else(|| "没有已完成的回合可以重新生成".to_string())?;
         let player_input =
             crate::services::game_engine::orchestrator::writeback::turn_player_input(
                 conn,
@@ -1405,7 +1396,6 @@ fn build_progress_snapshot(
         player_stats: session.player_stats.clone(),
         map_graph_nodes: session.map_graph_nodes.clone(),
         map_graph_edges: session.map_graph_edges.clone(),
-        inventory_items: session.inventory_items.clone(),
         system_log: session.system_log.clone(),
         scene: crate::models::session::SceneRuntime {
             scene_id: slugify_progress_scene_id(&runtime_preparation.next_scene_name),
@@ -1452,7 +1442,6 @@ fn build_director_progress_snapshot(
         player_stats: session.player_stats.clone(),
         map_graph_nodes: session.map_graph_nodes.clone(),
         map_graph_edges: session.map_graph_edges.clone(),
-        inventory_items: session.inventory_items.clone(),
         system_log: session.system_log.clone(),
         scene: session.scene.clone(),
         assets: session.assets.clone(),
@@ -1513,7 +1502,6 @@ fn build_agent_chat_progress_snapshot(
         player_stats: session.player_stats.clone(),
         map_graph_nodes: session.map_graph_nodes.clone(),
         map_graph_edges: session.map_graph_edges.clone(),
-        inventory_items: session.inventory_items.clone(),
         system_log: session.system_log.clone(),
         scene: crate::models::session::SceneRuntime {
             scene_id: if session.scene.scene_id.trim().is_empty() {
@@ -1608,4 +1596,3 @@ fn slugify_progress_scene_id(value: &str) -> String {
 #[cfg(test)]
 #[path = "sessions_tests.rs"]
 mod tests;
-

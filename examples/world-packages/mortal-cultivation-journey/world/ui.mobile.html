@@ -11,6 +11,7 @@
 .ledger{display:flex;flex-direction:column;overflow:hidden;grid-row:2/4;grid-column:3}.ledger .ledger-content{height:auto;flex:1;min-height:0}.tabs{flex-shrink:0}.attribute-text{white-space:pre-wrap;font-size:13px;line-height:1.85;color:#e1e7de}
 .topology{height:460px;min-height:260px;overflow:hidden;border:1px solid #53645a;border-radius:5px;background:#1b2420;touch-action:none}.topology svg{width:100%;height:100%;cursor:grab;touch-action:none}.topology svg:active{cursor:grabbing}.topology-edge{stroke:#718b7c;fill:none;stroke-width:2;vector-effect:non-scaling-stroke}.topology-edge.current{stroke:#c5a46c;stroke-dasharray:6 4;animation:map-path-flow 2s linear infinite}.topology-node rect{fill:#2b3731;stroke:#7c9486;stroke-width:1}.topology-node text{fill:#e2e9e0;font:13px system-ui}.topology-node.current rect{fill:#453f2e;stroke:#c5a46c;stroke-width:2}.topology-node.undiscovered rect{stroke-dasharray:4 3;fill:#222c27}.topology-node.undiscovered text{fill:#a1aea5}.map-controls{display:flex;gap:6px;margin-top:9px}.map-controls button{font:12px system-ui}.map-summary{font-size:13px;color:#e1c58b}.map-hint{font-size:11px;color:#b1bdb3}
 .game-cot{padding:9px 10px;margin:0 auto 12px;max-width:760px;background:#eae6dc;border:1px solid #b6ae9e55;color:#666f66;font-size:11px;line-height:1.65}.game-cot-content{white-space:pre-wrap;overflow-wrap:anywhere}.game-cot-label{font-weight:600;margin-bottom:5px}.game-cot[data-streaming=true] .game-cot-label:after,.thinking-indicator:before,.tool.streaming:before{content:"";display:inline-block;width:6px;height:6px;margin:0 7px;border-radius:50%;background:#5c876d;animation:thinking-pulse 1.2s ease-in-out infinite}.cot-toggle{padding:3px 6px;margin-top:5px;border:1px solid #aab6a5;border-radius:3px;background:transparent;color:#496450;font-size:11px;cursor:pointer}.thinking-indicator{color:#677768;font-size:12px;padding:10px}.has-error{color:#883e32!important;background:#f2dfd6;padding:7px 10px;border:1px solid #b86755;border-radius:3px;white-space:pre-wrap}.status:empty{display:none}.bottom,.composer{height:auto;min-height:0;grid-template-rows:auto auto}.bottom{grid-row:3;grid-column:2;padding:12px 18px;gap:7px;display:flex;flex-direction:column}.bottom textarea{min-height:54px;flex:1}.composer-tools{display:flex;gap:7px;align-items:center}.composer-tools .send{margin-left:auto;min-height:32px}.icon-button{width:34px;height:32px;padding:6px;border:1px solid #8a9a87;border-radius:4px;display:grid;place-items:center;background:transparent;color:inherit;cursor:pointer}.icon-button svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7}.icon-button.recording{background:#a9493f;color:#f5eee3}.attachments{display:flex;gap:5px;overflow:auto}.attachment{font-size:11px;padding:4px 8px;white-space:nowrap;color:inherit;background:transparent;border:1px solid #8a9a87;border-radius:3px}.message-actions button:disabled{opacity:.45}.message--system{box-shadow:none}.message{white-space:normal}.message-content{white-space:pre-wrap}.top{min-width:0}.top>div:first-child{min-width:0}.scene .focus{flex-shrink:1}.scene{overflow:auto}
+.message--interaction{border:1px solid #a98a56;background:#f1eadb;color:#28352c}.interaction-prompt{font-weight:600;line-height:1.6;white-space:pre-wrap}.interaction-controls{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin-top:12px}.interaction-option{min-height:34px;padding:6px 12px;border:1px solid #758574;border-radius:4px;background:#fffdf7;color:#334438;cursor:pointer}.interaction-option:disabled{opacity:.55;cursor:default}.interaction-slider{flex:1;min-width:140px;accent-color:#66866b}.interaction-slider-value{min-width:3em;text-align:right;font-variant-numeric:tabular-nums}.interaction-answer{margin-top:9px;color:#53675a;font-size:12px}
 body[data-platform=desktop]{grid-template-rows:72px minmax(0,1fr) auto;grid-template-columns:230px minmax(320px,1fr) minmax(280px,380px)}
 body[data-platform=mobile]{height:100%;max-height:100%;grid-template-rows:auto auto minmax(0,1fr) auto}body[data-platform=mobile] .story{padding-left:30px;padding-right:30px}body[data-platform=mobile] .scene{margin:10px 0;padding:10px}body[data-platform=mobile] .narration{max-height:58px;overflow:auto}body[data-platform=mobile] .messages{height:auto}body[data-platform=mobile] .composer{display:flex;flex-direction:column}body[data-platform=mobile] .composer textarea{min-height:54px;max-height:120px}body[data-platform=mobile] .composer-tools .send{min-height:34px}body[data-platform=mobile] .game-cot{font-size:11px}body[data-platform=mobile] .drawer-panel{height:calc(100% - 24px);bottom:auto;max-height:100%;display:flex;flex-direction:column}body[data-platform=mobile] .drawer-panel .ledger-content{flex:1;min-height:0;overflow:auto}body[data-platform=mobile] .topology{height:420px}body[data-platform=mobile] .status{font-size:12px}body[data-platform=mobile] .handle{touch-action:none}
 @keyframes thinking-pulse{0%,100%{opacity:.35;transform:translateY(0)}50%{opacity:1;transform:translateY(-2px)}}@keyframes map-path-flow{to{stroke-dashoffset:-20}}
@@ -35,6 +36,7 @@ const send = $('send');
 let state = {}, sending = false, localError = '', draftDirty = false, forceFollow = false;
 let ledgerKey = '', messagesKey = '', tabsKey = '', editingTurn;
 const expanded = new Set();
+const answeringInteractions = new Set();
 const valueText = (value) => typeof value === 'string' ? value : value == null ? '' : JSON.stringify(value);
 const messageText = (m) => typeof m.content === 'string' ? m.content : m.content.filter(p => p.type === 'text').map(p => p.text).join('\n');
 const el = (tag, className = '', text = '') => {
@@ -304,6 +306,100 @@ function cot(text, title, key, streaming) {
     }
     return root;
 }
+function interactionFrom(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+        return null;
+    const item = value;
+    if (typeof item.interaction_id !== 'string' || typeof item.kind !== 'string')
+        return null;
+    return {
+        interaction_id: item.interaction_id,
+        kind: item.kind,
+        prompt: typeof item.prompt === 'string' ? item.prompt : '',
+        config: item.config && typeof item.config === 'object' && !Array.isArray(item.config) ? item.config : {},
+        status: typeof item.status === 'string' ? item.status : 'pending',
+        answer: item.answer,
+    };
+}
+function renderInteraction(messageId, interaction, submitting) {
+    const root = el('article', 'message message--interaction');
+    root.append(el('div', 'speaker', '待你决定'), el('div', 'interaction-prompt', interaction.prompt));
+    const answerKey = `${messageId}:${interaction.interaction_id}`;
+    const answered = interaction.status !== 'pending';
+    const disabled = answered || submitting || answeringInteractions.has(answerKey) || !messageId;
+    const answer = (value) => {
+        if (disabled || answeringInteractions.has(answerKey))
+            return;
+        answeringInteractions.add(answerKey);
+        messagesKey = '';
+        renderMessages(state);
+        void world.actions.answerInteraction(messageId, interaction.interaction_id, value)
+            .catch(showError)
+            .finally(() => { answeringInteractions.delete(answerKey); messagesKey = ''; renderMessages(state); });
+    };
+    if (answered) {
+        const value = interaction.answer;
+        let label = valueText(value);
+        if (interaction.kind === 'choice' && Array.isArray(interaction.config.options)) {
+            const option = interaction.config.options.find(item => item && typeof item === 'object' && item.id === value);
+            if (typeof option?.label === 'string')
+                label = option.label;
+        }
+        else if (interaction.kind === 'confirm') {
+            label = value === true ? valueText(interaction.config.confirm_label || '确认') : valueText(interaction.config.cancel_label || '取消');
+        }
+        root.append(el('div', 'interaction-answer', `已选择：${label}`));
+        return root;
+    }
+    const controls = el('div', 'interaction-controls');
+    if (interaction.kind === 'choice' && Array.isArray(interaction.config.options)) {
+        for (const option of interaction.config.options) {
+            if (!option || typeof option !== 'object')
+                continue;
+            const item = option;
+            if (typeof item.id !== 'string' || typeof item.label !== 'string')
+                continue;
+            const button = el('button', 'interaction-option', item.label);
+            button.type = 'button';
+            button.disabled = disabled;
+            button.onclick = () => answer(item.id);
+            controls.append(button);
+        }
+    }
+    else if (interaction.kind === 'confirm') {
+        for (const [value, label] of [[true, interaction.config.confirm_label || '确认'], [false, interaction.config.cancel_label || '取消']]) {
+            const button = el('button', 'interaction-option', valueText(label));
+            button.type = 'button';
+            button.disabled = disabled;
+            button.onclick = () => answer(value);
+            controls.append(button);
+        }
+    }
+    else if (interaction.kind === 'slider') {
+        const min = Number(interaction.config.min), max = Number(interaction.config.max);
+        if (Number.isFinite(min) && Number.isFinite(max) && min < max) {
+            const step = Number(interaction.config.step) > 0 ? Number(interaction.config.step) : 1;
+            const initial = Math.max(min, Math.min(max, Number(interaction.config.default ?? min)));
+            const range = el('input', 'interaction-slider');
+            range.type = 'range';
+            range.min = String(min);
+            range.max = String(max);
+            range.step = String(step);
+            range.value = String(initial);
+            range.disabled = disabled;
+            const value = el('output', 'interaction-slider-value', range.value);
+            range.oninput = () => { value.value = range.value; value.textContent = range.value; };
+            const submit = el('button', 'interaction-option', '确认');
+            submit.type = 'button';
+            submit.disabled = disabled;
+            submit.onclick = () => answer(Number(range.value));
+            controls.append(range, value, submit);
+        }
+    }
+    if (controls.childElementCount)
+        root.append(controls);
+    return root;
+}
 function renderMessages(s) {
     const signature = JSON.stringify([s.messages, s.ui_state?.submitting, s.editing]);
     if (signature === messagesKey)
@@ -314,7 +410,13 @@ function renderMessages(s) {
     messages.replaceChildren();
     for (const [index, m] of (s.messages || []).entries()) {
         const meta = m.metadata || {}, key = m.message_id || `${m.role}:${index}`;
-        if (['world_interaction', 'character_creation', 'switch_proposal'].includes(String(meta.message_kind)))
+        if (meta.message_kind === 'world_interaction') {
+            const interaction = interactionFrom(meta.interaction);
+            if (interaction)
+                messages.append(renderInteraction(m.message_id || '', interaction, !!s.ui_state?.submitting));
+            continue;
+        }
+        if (['character_creation', 'switch_proposal'].includes(String(meta.message_kind)))
             continue;
         const isDirector = meta.action_type === 'director_trace';
         const streaming = meta.streaming === true;
@@ -347,8 +449,8 @@ function renderMessages(s) {
                 actions.append(b);
             };
             if (isPlayer) {
-                const turn = Number(meta.turn_index ?? m.turn_index ?? index + 1);
-                if (Number.isInteger(turn) && turn >= 0) {
+                const turn = Number(meta.turn_index);
+                if (Number.isInteger(turn) && turn > 0) {
                     button('编辑', async () => { await world.actions.editTurn(text, turn); input.value = text; draftDirty = true; input.focus(); });
                     button('重发', () => submit({ content: text, mode: 'resend', turnIndex: turn }));
                 }
@@ -373,11 +475,12 @@ function renderMessages(s) {
 function render(s) {
     state = s;
     setText('world-name', s.world?.name || '凡人修仙');
-    setText('location', [s.session?.location, s.session?.time_label].filter(Boolean).join(' · '));
+    const timeLabel = valueText(s.attributes?.mortal_time) || s.session?.time_label || '';
+    setText('location', [s.session?.location, timeLabel].filter(Boolean).join(' · '));
     setText('scene-name', s.session?.location || '当前场景');
     setText('ledger-location', s.session?.location || '未定');
     setText('player-name', s.player?.name || s.session?.player_character_name || '陆谨');
-    setText('time', s.session?.time_label || '');
+    setText('time', timeLabel);
     setText('narration-text', s.latest_narration || '山风未定，前路尚待落笔。');
     const roster = $('characters');
     roster.replaceChildren();

@@ -73,8 +73,12 @@ async fn execute_generic(config: &Value, arguments: &Value) -> Result<Value, Str
     let params = arguments.get("params").cloned().unwrap_or(Value::Null);
     let body = arguments.get("body").cloned();
     let response = send_request(config, method, url, &headers, &params, body).await?;
-    decode_response(response, config.get("charset").and_then(Value::as_str), &Value::Null)
-        .await
+    decode_response(
+        response,
+        config.get("charset").and_then(Value::as_str),
+        &Value::Null,
+    )
+    .await
 }
 
 // ---- template：配置写死请求，入参只做占位替换 ----
@@ -103,7 +107,8 @@ async fn execute_template(config: &Value, arguments: &Value) -> Result<Value, St
             query.insert(key.clone(), rendered);
         }
     }
-    let response = send_request(config, method, &url, &headers, &Value::Object(query), None).await?;
+    let response =
+        send_request(config, method, &url, &headers, &Value::Object(query), None).await?;
     let extractor = config.get("extractor").cloned().unwrap_or(Value::Null);
     let extractor = substitute_extractor_placeholders(&extractor, arguments);
     decode_response(
@@ -249,8 +254,8 @@ fn apply_split_map(text: &str, extractor: &Value) -> Result<Value, String> {
         .get("pattern")
         .and_then(Value::as_str)
         .ok_or_else(|| "split_map 缺少 pattern".to_string())?;
-    let regex = regex::Regex::new(pattern)
-        .map_err(|error| format!("split_map pattern 无效：{error}"))?;
+    let regex =
+        regex::Regex::new(pattern).map_err(|error| format!("split_map pattern 无效：{error}"))?;
     let segment = regex
         .captures(text)
         .and_then(|captures| captures.get(1).or_else(|| captures.get(0)))
@@ -520,10 +525,7 @@ mod tests {
             substitute_placeholders("https://example.test/q={{code}}&k={{keyword}}", &args),
             "https://example.test/q=sh600519&k=%E8%B4%B5%E5%B7%9E%20%E8%8C%85%E5%8F%B0"
         );
-        assert_eq!(
-            substitute_placeholders("q={{missing}}", &args),
-            "q="
-        );
+        assert_eq!(substitute_placeholders("q={{missing}}", &args), "q=");
     }
 
     #[test]
@@ -631,10 +633,11 @@ mod tests {
         assert!(check_url_safety(&json!({}), "https://127.0.0.1/admin").is_err());
         assert!(check_url_safety(&json!({}), "http://169.254.169.254/latest/meta-data/").is_err());
         assert!(check_url_safety(&json!({}), "https://qt.gtimg.cn/q=sh600519").is_ok());
-        assert!(
-            check_url_safety(&json!({"allow_private_network": true}), "http://127.0.0.1:8080/")
-                .is_ok()
-        );
+        assert!(check_url_safety(
+            &json!({"allow_private_network": true}),
+            "http://127.0.0.1:8080/"
+        )
+        .is_ok());
     }
 
     #[test]

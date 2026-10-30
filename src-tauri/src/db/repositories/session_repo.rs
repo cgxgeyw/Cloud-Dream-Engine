@@ -14,7 +14,9 @@ impl<'a> SessionRepository<'a> {
     pub fn get(&self, id: &str) -> Result<Option<SessionSnapshot>, String> {
         let mut stmt = self
             .conn
-            .prepare("SELECT * FROM sessions WHERE id = ?1")
+            .prepare(
+                "SELECT id, world_name, location, time_label, current_speaker, current_line,                  player_character_id, player_character_name, visible_characters_json, messages_json,                  player_stats_json, map_graph_nodes_json, map_graph_edges_json, system_log_json,                  scene_json, assets_json, state_json, generation_params_json                  FROM sessions WHERE id = ?1",
+            )
             .map_err(|e| e.to_string())?;
 
         let mut sessions = stmt
@@ -30,24 +32,29 @@ impl<'a> SessionRepository<'a> {
                     player_character_name: row.get(7)?,
                     visible_characters: serde_json::from_str(&row.get::<_, String>(8)?)
                         .unwrap_or_default(),
-                    messages: serde_json::from_str(&row.get::<_, String>(9)?).unwrap_or_default(),
+                    messages: serde_json::from_str(&row.get::<_, String>(9)?).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            9,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?,
                     player_stats: serde_json::from_str(&row.get::<_, String>(10)?)
                         .unwrap_or_default(),
                     map_graph_nodes: serde_json::from_str(&row.get::<_, String>(11)?)
                         .unwrap_or_default(),
                     map_graph_edges: serde_json::from_str(&row.get::<_, String>(12)?)
                         .unwrap_or_default(),
-                    inventory_items: serde_json::from_str(&row.get::<_, String>(13)?)
+                    system_log: serde_json::from_str(&row.get::<_, String>(13)?)
                         .unwrap_or_default(),
-                    system_log: serde_json::from_str(&row.get::<_, String>(14)?)
+                    scene: serde_json::from_str(&row.get::<_, String>(14)?).unwrap_or_default(),
+                    assets: serde_json::from_str(&row.get::<_, String>(15)?).unwrap_or_default(),
+                    state: serde_json::from_str(&row.get::<_, String>(16)?).unwrap_or_default(),
+                    generation_params:
+                        crate::models::generation_params::GenerationParams::from_json_text(
+                            &row.get::<_, String>(17)?,
+                        )
                         .unwrap_or_default(),
-                    scene: serde_json::from_str(&row.get::<_, String>(15)?).unwrap_or_default(),
-                    assets: serde_json::from_str(&row.get::<_, String>(16)?).unwrap_or_default(),
-                    state: serde_json::from_str(&row.get::<_, String>(17)?).unwrap_or_default(),
-                    generation_params: crate::models::generation_params::GenerationParams::from_json_text(
-                        &row.get::<_, String>(18)?,
-                    )
-                    .unwrap_or_default(),
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -67,7 +74,7 @@ impl<'a> SessionRepository<'a> {
         let player_stats = normalize_list(&session.player_stats);
         let system_log = normalize_list(&session.system_log);
         self.conn.execute(
-            "INSERT OR REPLACE INTO sessions (id, world_name, location, time_label, current_speaker, current_line, player_character_id, player_character_name, visible_characters_json, messages_json, player_stats_json, map_graph_nodes_json, map_graph_edges_json, inventory_items_json, system_log_json, scene_json, assets_json, state_json, generation_params_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+            "INSERT OR REPLACE INTO sessions (id, world_name, location, time_label, current_speaker, current_line, player_character_id, player_character_name, visible_characters_json, messages_json, player_stats_json, map_graph_nodes_json, map_graph_edges_json, system_log_json, scene_json, assets_json, state_json, generation_params_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 session.id,
                 world_name,
@@ -82,7 +89,6 @@ impl<'a> SessionRepository<'a> {
                 serde_json::to_string(&player_stats).unwrap_or_default(),
                 serde_json::to_string(&session.map_graph_nodes).unwrap_or_default(),
                 serde_json::to_string(&session.map_graph_edges).unwrap_or_default(),
-                serde_json::to_string(&session.inventory_items).unwrap_or_default(),
                 serde_json::to_string(&system_log).unwrap_or_default(),
                 serde_json::to_string(&session.scene).unwrap_or_default(),
                 serde_json::to_string(&session.assets).unwrap_or_default(),

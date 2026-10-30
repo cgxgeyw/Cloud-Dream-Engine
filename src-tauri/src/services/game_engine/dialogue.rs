@@ -1,10 +1,12 @@
-use crate::models::character::{resolve_character_response_contract_prompt, CharacterDefinition};
+#[cfg(test)]
+use crate::models::character::resolve_character_response_contract_prompt;
+use crate::models::character::CharacterDefinition;
 use crate::services::game_engine::prompting::render_prompt_variables;
 
 /// 内置回复契约。turn_context 里那份 response_contract JSON 只用于 prompt trace,
 /// 并不随 messages 发给模型;response_schema 也只是请求参数,模型未必看得到。
 /// 所以回复的 JSON 结构必须在这里讲清楚 —— 这是模型唯一能看到的格式说明。
-/// fact_extraction_enabled 关闭时只保留必填字段部分。
+/// 事实提取开关只控制额外的记忆契约，不影响回复格式和属性更新。
 pub const BUILTIN_RESPONSE_CONTRACT: &str = "【回复格式】你的回复必须是且只是一个 JSON 对象,包含三个必填字段:\n\
 - \"speaker\": 你的名字(必须与被要求扮演的角色名一致)\n\
 - \"content\": 你说的话或做的事(玩家看到的主要内容,纯文本)\n\
@@ -17,6 +19,13 @@ pub const BUILTIN_RESPONSE_CONTRACT: &str = "【回复格式】你的回复必�
 并把 content 与 narration 写成空字符串。示例:\n\
 {\"speaker\":\"韩立\",\"content\":\"\",\"narration\":\"\",\"pass\":true}\n\
 不要为了显得礼貌而硬编一句空话;确实该开口时不要 pass。\n\
+\n\
+需要修改自定义属性时,在同一个回复对象中加入以下可选字段:\n\
+- \"session_attribute_updates\": [{\"key\":\"世界属性键\",\"value\":\"新值\"}],用于会话/世界属性。\n\
+- \"character_attribute_updates\": [{\"character_name\":\"角色名称\",\"key\":\"角色属性键\",\"value\":\"新值\"}],用于指定角色的属性。\n\
+key 必须使用上下文给出的准确属性键,character_name 必须使用准确角色名;value 按属性类型填写字符串、数字、布尔值、数组或对象,不要把数组/对象转成字符串。只返回本回合发生变化且允许你更新的属性,未变化时省略整个字段。\n\
+属性更新完整示例(属性键仅作示范,实际使用上下文中的键):\n\
+{\"speaker\":\"韩立\",\"content\":\"我已接过钥匙。\",\"narration\":\"\",\"session_attribute_updates\":[{\"key\":\"key_holder\",\"value\":\"韩立\"}],\"character_attribute_updates\":[{\"character_name\":\"韩立\",\"key\":\"has_key\",\"value\":true}]}\n\
 \n\
 写 JSON 的规则:\n\
 - 字符串值里的换行必须写成 \\n 两个字符,值内部的英文双引号必须写成 \\\",不要直接换行或直接写引号\n\
@@ -62,6 +71,7 @@ impl DialoguePipeline {
         Self
     }
 
+    #[cfg(test)]
     pub fn build_character_system_prompt_with_contract(
         &self,
         speaker_name: &str,
@@ -72,21 +82,17 @@ impl DialoguePipeline {
     ) -> String {
         let base =
             build_character_system_prompt(speaker_name, speaker_profile, system_prompt_template);
-        let contract =
+        let custom =
             resolve_character_response_contract_prompt(response_contract_prompt.or_else(|| {
                 speaker_profile.map(|profile| profile.response_contract_prompt.as_str())
             }));
-        let mut combined = if base.trim().is_empty() {
-            contract
-        } else {
-            format!("{base}\n\n{contract}")
-        };
-        // 回复格式契约必须始终送达:种子角色的模板/契约都可能为空,
-        // 不告诉模型 JSON 结构它就会自己发明字段名(如 "utterance")。
-        combined = if combined.trim().is_empty() {
-            BUILTIN_RESPONSE_CONTRACT.to_string()
-        } else {
-            format!("{combined}\n\n{BUILTIN_RESPONSE_CONTRACT}")
+        // 与生产路径（character_prompt.rs）一致：非空自定义契约完全替代内置契约，
+        // 两者都为空时才回落内置契约，保证模型至少见过一次 JSON 结构说明。
+        let mut combined = match (base.trim().is_empty(), custom.trim().is_empty()) {
+            (true, false) => custom,
+            (false, true) => base,
+            (false, false) => format!("{base}\n\n{custom}"),
+            (true, true) => BUILTIN_RESPONSE_CONTRACT.to_string(),
         };
         if fact_extraction_enabled {
             combined = format!("{combined}\n\n{BUILTIN_MEMORY_CONTRACT}");
@@ -232,9 +238,7 @@ fn render_character_system_prompt_template(
         .replace("{{role}}", role)
         .replace("{{background_prompt}}", background_prompt);
 
-    render_prompt_variables(&rendered)
-        .trim()
-        .to_string()
+    render_prompt_variables(&rendered).trim().to_string()
 }
 
 fn parse_embedded_json(raw: &str) -> Option<serde_json::Value> {
@@ -301,9 +305,10 @@ fn sanitize_dialogue_content_or_placeholder(candidate: &str) -> String {
 /// 因此锁定字段名后，抓取其后的字符串，直到遇到下一个已知字段名为止。
 /// 这比"猜哪段最像台词"更稳，也避免把结构碎片当正文。
 fn salvage_dialogue_content(raw: &str) -> Option<String> {
-    const CONTENT_FIELDS: &[&str] = &[
-        "content", "response", "message", "text", "say", "dialogue", "line", "reply",
-    ];
+    // 正文字段的容错别名与返回格式表同源（return_format），避免打捞认知与
+    // 格式定义两处漂移。
+    const CONTENT_FIELDS: &[&str] =
+        crate::services::game_engine::return_format::CHARACTER_CONTENT_FIELD_ALIASES;
     // 所有可能出现在正文之后、用于界定正文结尾的字段名。
     const BOUNDARY_FIELDS: &[&str] = &[
         "content",
@@ -373,14 +378,18 @@ fn salvage_longest_string_value(raw: &str) -> Option<String> {
     let mut best: Option<&str> = None;
     for (key, item) in object {
         let mangled = key.trim().is_empty()
-            || !key.chars().any(|character| character.is_ascii_alphanumeric());
+            || !key
+                .chars()
+                .any(|character| character.is_ascii_alphanumeric());
         if !mangled {
             continue;
         }
         let Some(text) = item.as_str() else {
             continue;
         };
-        if best.map_or(true, |current| text.chars().count() > current.chars().count()) {
+        if best.map_or(true, |current| {
+            text.chars().count() > current.chars().count()
+        }) {
             best = Some(text);
         }
     }
@@ -751,10 +760,7 @@ mod tests {
     fn does_not_leak_unparseable_json_like_text() {
         let pipeline = DialoguePipeline::new();
         // 损坏 / 不可解析但明显是结构化负载的输出。
-        let parsed = pipeline.parse_character_response(
-            "{\"content\": \"未闭合的台词",
-            "袭人",
-        );
+        let parsed = pipeline.parse_character_response("{\"content\": \"未闭合的台词", "袭人");
         // 流式未闭合时 partial 分支会返回 content；这里确保最终不泄露花括号结构。
         assert!(!parsed.content.trim_start().starts_with('{'));
     }
@@ -763,10 +769,8 @@ mod tests {
     fn salvages_content_when_only_nonstandard_fields_present() {
         let pipeline = DialoguePipeline::new();
         // 模型用了非标准正文字段名 say，且额外字段排在后面。
-        let parsed = pipeline.parse_character_response(
-            "{\"say\":\"你来得正好。\",\"mood\":\"平静\"}",
-            "林黛玉",
-        );
+        let parsed = pipeline
+            .parse_character_response("{\"say\":\"你来得正好。\",\"mood\":\"平静\"}", "林黛玉");
         assert_eq!(parsed.content, "你来得正好。");
     }
 
@@ -807,7 +811,8 @@ mod tests {
     fn pass_string_tokens_are_recognized() {
         let pipeline = DialoguePipeline::new();
         for token in ["pass", "PASS", "skip", "(pass)", "pass。"] {
-            let raw = format!(r#"{{"speaker":"韩立","content":"","narration":"","pass":"{token}"}}"#);
+            let raw =
+                format!(r#"{{"speaker":"韩立","content":"","narration":"","pass":"{token}"}}"#);
             let parsed = pipeline.parse_character_response(&raw, "韩立");
             assert!(parsed.pass, "token {token} should request pass");
         }
@@ -815,8 +820,12 @@ mod tests {
 
     #[test]
     fn payload_requests_pass_rejects_false_and_unknown() {
-        assert!(!super::payload_requests_pass(&serde_json::json!({ "pass": false })));
-        assert!(!super::payload_requests_pass(&serde_json::json!({ "pass": "speak" })));
+        assert!(!super::payload_requests_pass(
+            &serde_json::json!({ "pass": false })
+        ));
+        assert!(!super::payload_requests_pass(
+            &serde_json::json!({ "pass": "speak" })
+        ));
         assert!(!super::payload_requests_pass(&serde_json::json!({})));
     }
 
@@ -836,18 +845,45 @@ mod tests {
                 .expect("example must be valid JSON");
         for field in ["speaker", "content", "narration"] {
             assert!(
-                example.get(field).and_then(|value| value.as_str()).is_some(),
+                example
+                    .get(field)
+                    .and_then(|value| value.as_str())
+                    .is_some(),
                 "example missing required field: {field}"
             );
         }
+        let update_example: serde_json::Value = super::BUILTIN_RESPONSE_CONTRACT
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .find(|value| value.get("session_attribute_updates").is_some())
+            .expect("model-visible attribute update example must be valid JSON");
+        let canonical =
+            crate::services::game_engine::return_format::character_runtime_update_format();
+        for field in ["session_attribute_updates", "character_attribute_updates"] {
+            let actual = update_example[field][0]
+                .as_object()
+                .expect("attribute update");
+            let expected = canonical[field][0].as_object().expect("canonical update");
+            assert_eq!(
+                actual.keys().collect::<Vec<_>>(),
+                expected.keys().collect::<Vec<_>>()
+            );
+        }
+        let parsed =
+            DialoguePipeline::new().parse_character_response(&update_example.to_string(), "韩立");
+        assert!(!parsed.pass);
+        assert!(!parsed.content.is_empty());
+        assert_eq!(
+            parsed.raw_payload.unwrap()["character_attribute_updates"][0]["value"],
+            true
+        );
     }
 
     #[test]
     fn builtin_memory_contract_is_injected_when_fact_extraction_enabled() {
         let pipeline = DialoguePipeline::new();
-        let prompt = pipeline.build_character_system_prompt_with_contract(
-            "林黛玉", None, None, None, true,
-        );
+        let prompt =
+            pipeline.build_character_system_prompt_with_contract("林黛玉", None, None, None, true);
         // 必填回复格式契约必须始终送达(种子角色模板/契约都可能为空)
         assert!(prompt.contains("回复格式"));
         assert!(prompt.contains("\"speaker\""));
@@ -863,12 +899,29 @@ mod tests {
     #[test]
     fn builtin_memory_contract_is_omitted_when_fact_extraction_disabled() {
         let pipeline = DialoguePipeline::new();
-        let prompt = pipeline.build_character_system_prompt_with_contract(
-            "林黛玉", None, None, None, false,
-        );
+        let prompt =
+            pipeline.build_character_system_prompt_with_contract("林黛玉", None, None, None, false);
         assert!(!prompt.contains("fact_extractions"));
         // 关闭提取时,必填格式契约仍然在
         assert!(prompt.contains("回复格式"));
         assert!(prompt.contains("\"speaker\""));
+    }
+
+    /// 自定义契约完全替代内置契约：不再重复发送两份格式说明。
+    #[test]
+    fn custom_contract_replaces_builtin_in_helper() {
+        let pipeline = DialoguePipeline::new();
+        let prompt = pipeline.build_character_system_prompt_with_contract(
+            "健康小助手",
+            None,
+            None,
+            Some("只返回：{\"speaker\":\"健康小助手\",\"content\":\"正文\"}"),
+            false,
+        );
+        assert!(prompt.contains("只返回"));
+        assert!(
+            !prompt.contains("【回复格式】"),
+            "内置契约不应再追加: {prompt}"
+        );
     }
 }

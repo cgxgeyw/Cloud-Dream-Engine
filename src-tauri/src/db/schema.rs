@@ -1,6 +1,5 @@
 use rusqlite::Connection;
 
-use crate::db::migrations;
 use crate::db::seeds;
 
 pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -15,7 +14,6 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             summary TEXT NOT NULL DEFAULT '',
             time_system TEXT NOT NULL DEFAULT '',
             map_nodes_json TEXT NOT NULL DEFAULT '[]',
-            triggers_json TEXT NOT NULL DEFAULT '[]',
             time_config_json TEXT NOT NULL DEFAULT '{}',
             director_config_json TEXT NOT NULL DEFAULT '{}',
             ui_theme_config_json TEXT NOT NULL DEFAULT '{}',
@@ -115,7 +113,6 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             player_stats_json TEXT NOT NULL DEFAULT '[]',
             map_graph_nodes_json TEXT NOT NULL DEFAULT '[]',
             map_graph_edges_json TEXT NOT NULL DEFAULT '[]',
-            inventory_items_json TEXT NOT NULL DEFAULT '[]',
             system_log_json TEXT NOT NULL DEFAULT '[]',
             scene_json TEXT NOT NULL DEFAULT '{}',
             assets_json TEXT NOT NULL DEFAULT '{}',
@@ -213,6 +210,8 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE TABLE IF NOT EXISTS attribute_schemas (
             id TEXT PRIMARY KEY,
             scope TEXT NOT NULL,
+            world_id TEXT,
+            sort_order INTEGER NOT NULL DEFAULT 0,
             key TEXT NOT NULL,
             label TEXT NOT NULL,
             value_type TEXT NOT NULL DEFAULT 'text',
@@ -224,7 +223,7 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             mutation_policy_json TEXT NOT NULL DEFAULT '{}',
             influence_policy_json TEXT NOT NULL DEFAULT '{}',
             projection_policy_json TEXT NOT NULL DEFAULT '{}',
-            UNIQUE(scope, key)
+            UNIQUE(scope, key, world_id)
         );
 
         CREATE TABLE IF NOT EXISTS attribute_values (
@@ -291,17 +290,6 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             enabled INTEGER NOT NULL DEFAULT 1,
             timeout_ms INTEGER NOT NULL DEFAULT 15000,
             max_result_bytes INTEGER NOT NULL DEFAULT 32768
-        );
-
-        CREATE TABLE IF NOT EXISTS rules (
-            id TEXT PRIMARY KEY,
-            scope TEXT NOT NULL DEFAULT '',
-            name TEXT NOT NULL,
-            enabled INTEGER NOT NULL DEFAULT 1,
-            priority INTEGER NOT NULL DEFAULT 0,
-            description TEXT NOT NULL DEFAULT '',
-            condition_json TEXT NOT NULL DEFAULT '{}',
-            effects_json TEXT NOT NULL DEFAULT '[]'
         );
 
         CREATE TABLE IF NOT EXISTS settings (
@@ -478,7 +466,7 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     ",
     )?;
 
-    migrations::run(conn)?;
+    conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_attribute_schemas_world ON attribute_schemas(scope, world_id, sort_order, key);")?;
     seeds::ensure_all(conn)?;
 
     Ok(())

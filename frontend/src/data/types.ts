@@ -28,7 +28,6 @@ export type WorldResponse = {
   summary: string;
   time_system: string;
   map_nodes: WorldMapTopology;
-  triggers: string[];
   time_config: Record<string, unknown>;
   director_config: Record<string, unknown>;
   ui_theme_config: Record<string, unknown>;
@@ -53,7 +52,6 @@ export type WorldUpsertRequest = {
   summary: string;
   time_system: string;
   map_nodes: WorldMapTopology;
-  triggers: string[];
   time_config: Record<string, unknown>;
   director_config: Record<string, unknown>;
   ui_theme_config: Record<string, unknown>;
@@ -363,13 +361,13 @@ export type TextContentPart = {
 export type ContentPart = TextContentPart | ImageContentPart | AudioContentPart;
 
 export type ChatMessage = {
-  /** 稳定消息 ID（后端写入时生成；旧数据反序列化时补发） */
+  /** 稳定消息 ID（后端写入时生成；前端临时消息可省略） */
   message_id?: string;
   role: string;
   content: string | ContentPart[];
   speaker?: string | null;
   metadata?: Record<string, unknown> | null;
-  /** RFC3339 写入时间；旧数据可能为空串 */
+  /** RFC3339 写入时间（前端临时消息可省略） */
   created_at?: string;
   /** 分支/重生成场景下来源消息的 ID */
   parent_message_id?: string | null;
@@ -390,18 +388,6 @@ export type SessionMapEdge = {
   target_node_id: string;
 };
 
-export type InventoryItem = {
-  item_id: string;
-  name: string;
-  category: string;
-  quantity: number;
-  description: string;
-  tags: string[];
-  owner_type: string;
-  owner_id: string;
-  visibility: string;
-  disclosed_to: string[];
-};
 
 export type SceneRuntime = {
   scene_id: string;
@@ -429,8 +415,6 @@ export type AssetSelection = {
 };
 
 export type SessionState = {
-  metrics: Record<string, number>;
-  tags: string[];
   phase: string;
 };
 
@@ -448,7 +432,6 @@ export type SessionSnapshot = {
   player_stats: string[];
   map_graph_nodes: SessionMapNode[];
   map_graph_edges: SessionMapEdge[];
-  inventory_items: InventoryItem[];
   system_log: string[];
   scene: SceneRuntime;
   assets: AssetSelection;
@@ -750,6 +733,8 @@ export type AttributeValueType =
 export type AttributeSchemaResponse = {
   id: string;
   scope: AttributeScope;
+  world_id: string | null;
+  sort_order: number;
   key: string;
   label: string;
   value_type: AttributeValueType;
@@ -765,6 +750,8 @@ export type AttributeSchemaResponse = {
 
 export type AttributeSchemaUpsertRequest = {
   scope: AttributeScope;
+  world_id?: string | null;
+  sort_order?: number;
   key: string;
   label: string;
   value_type: AttributeValueType;

@@ -64,7 +64,11 @@ impl GenerationParams {
         if trimmed.is_empty() {
             return None;
         }
-        Self::from_json(serde_json::from_str::<serde_json::Value>(trimmed).ok().as_ref())
+        Self::from_json(
+            serde_json::from_str::<serde_json::Value>(trimmed)
+                .ok()
+                .as_ref(),
+        )
     }
 
     /// 所有字段都没配（该层不产生任何覆盖）。
@@ -112,7 +116,9 @@ impl GenerationParams {
             if let Some(current) = *value {
                 let fixed = current.clamp(lo, hi);
                 if (fixed - current).abs() > f64::EPSILON {
-                    notes.push(format!("{name} {current} 超出 [{lo}, {hi}]，已夹紧为 {fixed}"));
+                    notes.push(format!(
+                        "{name} {current} 超出 [{lo}, {hi}]，已夹紧为 {fixed}"
+                    ));
                     *value = Some(fixed);
                 }
             }
@@ -120,7 +126,12 @@ impl GenerationParams {
         clamp_f64(&mut out.temperature, 0.0, 2.0, PARAM_TEMPERATURE);
         clamp_f64(&mut out.top_p, 0.0, 1.0, PARAM_TOP_P);
         clamp_f64(&mut out.presence_penalty, -2.0, 2.0, PARAM_PRESENCE_PENALTY);
-        clamp_f64(&mut out.frequency_penalty, -2.0, 2.0, PARAM_FREQUENCY_PENALTY);
+        clamp_f64(
+            &mut out.frequency_penalty,
+            -2.0,
+            2.0,
+            PARAM_FREQUENCY_PENALTY,
+        );
         if let Some(top_k) = out.top_k {
             if top_k < 1 {
                 notes.push(format!("{PARAM_TOP_K} {top_k} 无效，已忽略"));
@@ -229,7 +240,10 @@ mod tests {
     #[test]
     fn empty_and_broken_json_layers_are_treated_as_no_override() {
         assert!(GenerationParams::from_json_text("").is_none());
-        assert!(GenerationParams::from_json_text("{}").is_none(), "空对象即不覆盖");
+        assert!(
+            GenerationParams::from_json_text("{}").is_none(),
+            "空对象即不覆盖"
+        );
         assert!(GenerationParams::from_json_text("not json").is_none());
         assert!(
             GenerationParams::from_json(Some(&serde_json::json!({ "temperature": "热一点" })))

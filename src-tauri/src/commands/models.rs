@@ -64,9 +64,7 @@ pub async fn delete_model(state: State<'_, AppState>, id: String) -> Result<(), 
 pub async fn set_default_model(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let db = state.db.lock().await;
     let repo = crate::db::repositories::model_repo::ModelRepository::new(db.conn());
-    let model = repo
-        .get(&id)?
-        .ok_or_else(|| "模型不存在".to_string())?;
+    let model = repo.get(&id)?.ok_or_else(|| "模型不存在".to_string())?;
     repo.set_default(&id)?;
     if model.model_type == "text" || model.model_type == "image" {
         let settings = crate::commands::settings::load_app_settings(db.conn())?;
@@ -114,8 +112,7 @@ pub async fn test_model(
     let model = {
         let db = state.db.lock().await;
         let repo = crate::db::repositories::model_repo::ModelRepository::new(db.conn());
-        repo.get(&id)?
-            .ok_or_else(|| "模型不存在".to_string())?
+        repo.get(&id)?.ok_or_else(|| "模型不存在".to_string())?
     };
 
     let test_request = ChatRequest {
@@ -185,8 +182,7 @@ pub async fn test_image_model(
     let model = {
         let db = state.db.lock().await;
         let repo = crate::db::repositories::model_repo::ModelRepository::new(db.conn());
-        repo.get(&id)?
-            .ok_or_else(|| "模型不存在".to_string())?
+        repo.get(&id)?.ok_or_else(|| "模型不存在".to_string())?
     };
 
     if model.model_type != "image" {

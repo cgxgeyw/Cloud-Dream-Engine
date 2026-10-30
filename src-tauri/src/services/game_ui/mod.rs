@@ -271,8 +271,7 @@ impl GameUiService {
             diagnostics.push(WorldUiDiagnostic {
                 severity: "warning".to_string(),
                 code: "mixed_schema_versions".to_string(),
-                message: "桌面端与移动端 UI 文档目前使用了不同的 schema 版本。"
-                    .to_string(),
+                message: "桌面端与移动端 UI 文档目前使用了不同的 schema 版本。".to_string(),
                 path: Some("bundle".to_string()),
             });
         }
@@ -385,10 +384,7 @@ impl GameUiService {
                 diagnostics.push(WorldUiDiagnostic {
                     severity: "error".to_string(),
                     code: "unsupported_component".to_string(),
-                    message: format!(
-                        "目标 `{}` 不支持组件 `{component}`。",
-                        target.name
-                    ),
+                    message: format!("目标 `{}` 不支持组件 `{component}`。", target.name),
                     path: Some(format!("{platform}.component:{component}")),
                 });
             }
@@ -405,10 +401,7 @@ impl GameUiService {
                 diagnostics.push(WorldUiDiagnostic {
                     severity: "error".to_string(),
                     code: "unsupported_action".to_string(),
-                    message: format!(
-                        "目标 `{}` 不支持动作 `{action}`。",
-                        target.name
-                    ),
+                    message: format!("目标 `{}` 不支持动作 `{action}`。", target.name),
                     path: Some(format!("{platform}.action:{action}")),
                 });
             }
@@ -425,10 +418,7 @@ impl GameUiService {
                 diagnostics.push(WorldUiDiagnostic {
                     severity: "error".to_string(),
                     code: "unsupported_capability".to_string(),
-                    message: format!(
-                        "目标 `{}` 未声明能力 `{capability}`。",
-                        target.name
-                    ),
+                    message: format!("目标 `{}` 未声明能力 `{capability}`。", target.name),
                     path: Some(format!("{platform}.capability:{capability}")),
                 });
             }
@@ -473,9 +463,7 @@ impl GameUiService {
             capabilities: Vec::new(),
         }
     }
-
 }
-
 
 const MAX_WORLD_HTML_BYTES: usize = 2 * 1024 * 1024;
 
@@ -496,7 +484,10 @@ fn validate_html_document(source: &str, diagnostics: &mut Vec<WorldUiDiagnostic>
             diagnostics,
             "error",
             "html_too_large",
-            format!("世界 UI HTML 不能超过 {} MiB。", MAX_WORLD_HTML_BYTES / 1024 / 1024),
+            format!(
+                "世界 UI HTML 不能超过 {} MiB。",
+                MAX_WORLD_HTML_BYTES / 1024 / 1024
+            ),
             source,
             0,
         );
@@ -518,8 +509,8 @@ fn validate_html_document(source: &str, diagnostics: &mut Vec<WorldUiDiagnostic>
     let mut cursor = 0usize;
     let mut stack: Vec<(String, usize)> = Vec::new();
     let void_tags = [
-        "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
-        "param", "source", "track", "wbr",
+        "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
+        "source", "track", "wbr",
     ];
     let forbidden_tags = ["iframe", "object", "embed", "base"];
     let mut has_html = false;
@@ -560,10 +551,7 @@ fn validate_html_document(source: &str, diagnostics: &mut Vec<WorldUiDiagnostic>
             continue;
         }
 
-        let inner = raw
-            .trim_start_matches('<')
-            .trim_end_matches('>')
-            .trim();
+        let inner = raw.trim_start_matches('<').trim_end_matches('>').trim();
         let closing = inner.starts_with('/');
         let inner = inner.trim_start_matches('/').trim_start();
         let name_end = inner
@@ -745,7 +733,15 @@ fn push_html_diagnostic(
     source: &str,
     offset: usize,
 ) {
-    push_source_diagnostic(diagnostics, severity, code, message, source, offset, "document");
+    push_source_diagnostic(
+        diagnostics,
+        severity,
+        code,
+        message,
+        source,
+        offset,
+        "document",
+    );
 }
 
 fn push_source_diagnostic(
@@ -771,11 +767,7 @@ fn push_source_diagnostic(
     });
 }
 
-fn validate_stylesheet(
-    source: &str,
-    platform: &str,
-    diagnostics: &mut Vec<WorldUiDiagnostic>,
-) {
+fn validate_stylesheet(source: &str, platform: &str, diagnostics: &mut Vec<WorldUiDiagnostic>) {
     let mut braces = 0i32;
     let mut quote = None;
     let mut index = 0usize;
@@ -846,8 +838,8 @@ fn validate_stylesheet(
             &format!("bundle.{platform}_stylesheet"),
         );
     }
-    let external_url = Regex::new(r#"(?i)url\(\s*['\"]?\s*(?:https?:|//)"#)
-        .expect("external CSS URL regex");
+    let external_url =
+        Regex::new(r#"(?i)url\(\s*['\"]?\s*(?:https?:|//)"#).expect("external CSS URL regex");
     if let Some(matched) = external_url.find(source) {
         push_source_diagnostic(
             diagnostics,
@@ -1122,7 +1114,6 @@ fn is_known_game_class(name: &str) -> bool {
     ];
     FAMILIES.iter().any(|prefix| name.starts_with(prefix))
 }
-
 
 #[cfg(test)]
 mod tests;

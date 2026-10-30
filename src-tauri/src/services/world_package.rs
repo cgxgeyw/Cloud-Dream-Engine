@@ -10,15 +10,13 @@ use crate::models::character::{CharacterDefinition, CharacterPackageData};
 use crate::models::world::{
     BinaryFileResponse, SavedFileResponse, WorldDefinition, WorldPackageAssetEntry,
     WorldPackageCharacterFileEntry, WorldPackageInspectionResult, WorldPackageManifest,
-    WorldPackageWorldData, WorldUiDiagnostic,
-    WorldUiBundleValidationRequest,
+    WorldPackageWorldData, WorldUiBundleValidationRequest, WorldUiDiagnostic,
 };
 use crate::services::game_ui::GameUiService;
 use crate::state::AppState;
 
 const WORLD_PACKAGE_FORMAT: &str = "dream-world-package";
 const WORLD_PACKAGE_VERSION: u32 = 10;
-const LEGACY_WORLD_PACKAGE_VERSIONS: [u32; 0] = [];
 const WORLD_PACKAGE_FILE: &str = "world/world.json";
 const WORLD_PACKAGE_DESKTOP_UI_FILE: &str = "world/ui.desktop.html";
 const WORLD_PACKAGE_MOBILE_UI_FILE: &str = "world/ui.mobile.html";
@@ -67,25 +65,29 @@ impl WorldPackageService {
             }
         };
         if let Err(error) = validate_archive_limits(&mut archive) {
-            diagnostics.push(package_diagnostic("archive_limits_exceeded", error, "archive"));
+            diagnostics.push(package_diagnostic(
+                "archive_limits_exceeded",
+                error,
+                "archive",
+            ));
         }
-        let manifest = match read_json_from_zip::<WorldPackageManifest>(&mut archive, "manifest.json")
-        {
-            Ok(manifest) => manifest,
-            Err(error) => {
-                diagnostics.push(package_diagnostic(
-                    "invalid_manifest",
-                    format!("manifest.json 无效：{error}"),
-                    "manifest.json",
-                ));
-                return WorldPackageInspectionResult {
-                    ok: false,
-                    format: None,
-                    version: None,
-                    diagnostics,
-                };
-            }
-        };
+        let manifest =
+            match read_json_from_zip::<WorldPackageManifest>(&mut archive, "manifest.json") {
+                Ok(manifest) => manifest,
+                Err(error) => {
+                    diagnostics.push(package_diagnostic(
+                        "invalid_manifest",
+                        format!("manifest.json 无效：{error}"),
+                        "manifest.json",
+                    ));
+                    return WorldPackageInspectionResult {
+                        ok: false,
+                        format: None,
+                        version: None,
+                        diagnostics,
+                    };
+                }
+            };
         if manifest.format != WORLD_PACKAGE_FORMAT {
             diagnostics.push(package_diagnostic(
                 "unsupported_package_format",
@@ -96,18 +98,36 @@ impl WorldPackageService {
         if manifest.version != WORLD_PACKAGE_VERSION {
             diagnostics.push(package_diagnostic(
                 "unsupported_package_version",
-                format!("不支持的世界包版本：{}，当前版本为 {}。", manifest.version, WORLD_PACKAGE_VERSION),
+                format!(
+                    "不支持的世界包版本：{}，当前版本为 {}。",
+                    manifest.version, WORLD_PACKAGE_VERSION
+                ),
                 "manifest.version",
             ));
         }
         for (path, field) in [
             (manifest.world_file.as_deref(), "manifest.world_file"),
-            (manifest.desktop_ui_file.as_deref(), "manifest.desktop_ui_file"),
-            (manifest.mobile_ui_file.as_deref(), "manifest.mobile_ui_file"),
+            (
+                manifest.desktop_ui_file.as_deref(),
+                "manifest.desktop_ui_file",
+            ),
+            (
+                manifest.mobile_ui_file.as_deref(),
+                "manifest.mobile_ui_file",
+            ),
             (manifest.logic_file.as_deref(), "manifest.logic_file"),
-            (manifest.desktop_ui_stylesheet_file.as_deref(), "manifest.desktop_ui_stylesheet_file"),
-            (manifest.mobile_ui_stylesheet_file.as_deref(), "manifest.mobile_ui_stylesheet_file"),
-            (manifest.mcp_tools_file.as_deref(), "manifest.mcp_tools_file"),
+            (
+                manifest.desktop_ui_stylesheet_file.as_deref(),
+                "manifest.desktop_ui_stylesheet_file",
+            ),
+            (
+                manifest.mobile_ui_stylesheet_file.as_deref(),
+                "manifest.mobile_ui_stylesheet_file",
+            ),
+            (
+                manifest.mcp_tools_file.as_deref(),
+                "manifest.mcp_tools_file",
+            ),
         ] {
             if let Some(path) = path {
                 if let Err(error) = validate_manifest_path(path, field) {
@@ -116,13 +136,25 @@ impl WorldPackageService {
             }
         }
         for entry in &manifest.character_files {
-            if let Err(error) = validate_manifest_path(&entry.file_path, "manifest.character_files.file_path") {
-                diagnostics.push(package_diagnostic("invalid_manifest_path", error, "manifest.character_files"));
+            if let Err(error) =
+                validate_manifest_path(&entry.file_path, "manifest.character_files.file_path")
+            {
+                diagnostics.push(package_diagnostic(
+                    "invalid_manifest_path",
+                    error,
+                    "manifest.character_files",
+                ));
             }
         }
         for asset in &manifest.assets {
-            if let Err(error) = validate_manifest_path(&asset.archive_path, "manifest.assets.archive_path") {
-                diagnostics.push(package_diagnostic("invalid_manifest_path", error, "manifest.assets"));
+            if let Err(error) =
+                validate_manifest_path(&asset.archive_path, "manifest.assets.archive_path")
+            {
+                diagnostics.push(package_diagnostic(
+                    "invalid_manifest_path",
+                    error,
+                    "manifest.assets",
+                ));
             }
         }
         let desktop_path = manifest
@@ -147,10 +179,12 @@ impl WorldPackageService {
         for (platform, source) in [("desktop", desktop), ("mobile", mobile)] {
             match source {
                 Ok(source) => {
-                    let result = service.validate_world_ui_document(crate::models::world::WorldUiDocumentRequest {
-                        source,
-                        platform: Some(platform.to_string()),
-                    });
+                    let result = service.validate_world_ui_document(
+                        crate::models::world::WorldUiDocumentRequest {
+                            source,
+                            platform: Some(platform.to_string()),
+                        },
+                    );
                     diagnostics.extend(result.errors.into_iter().map(|diagnostic| {
                         WorldUiDiagnostic {
                             path: diagnostic.path.map(|path| format!("{platform}/{path}")),
@@ -161,13 +195,25 @@ impl WorldPackageService {
                 Err(error) => diagnostics.push(package_diagnostic(
                     "missing_ui_file",
                     format!("{platform} UI 文件无法读取：{error}"),
-                    if platform == "desktop" { desktop_path } else { mobile_path },
+                    if platform == "desktop" {
+                        desktop_path
+                    } else {
+                        mobile_path
+                    },
                 )),
             }
         }
         for (platform, path, stylesheet) in [
-            ("desktop", manifest.desktop_ui_stylesheet_file.as_deref(), desktop_stylesheet),
-            ("mobile", manifest.mobile_ui_stylesheet_file.as_deref(), mobile_stylesheet),
+            (
+                "desktop",
+                manifest.desktop_ui_stylesheet_file.as_deref(),
+                desktop_stylesheet,
+            ),
+            (
+                "mobile",
+                manifest.mobile_ui_stylesheet_file.as_deref(),
+                mobile_stylesheet,
+            ),
         ] {
             if let Some(result) = stylesheet {
                 if let Err(error) = result {
@@ -180,27 +226,59 @@ impl WorldPackageService {
             }
         }
         let world_path = manifest.world_file.as_deref().unwrap_or(WORLD_PACKAGE_FILE);
-        if let Ok(package_world) = read_json_from_zip::<WorldPackageWorldData>(&mut archive, world_path) {
-            if let Err(error) = crate::services::world_storage::validate_storage_config(&package_world.ui_storage_config) {
-                diagnostics.push(package_diagnostic("invalid_world_storage_config", error, "world.storage"));
+        if let Ok(package_world) =
+            read_json_from_zip::<WorldPackageWorldData>(&mut archive, world_path)
+        {
+            if let Err(error) = crate::services::world_storage::validate_storage_config(
+                &package_world.ui_storage_config,
+            ) {
+                diagnostics.push(package_diagnostic(
+                    "invalid_world_storage_config",
+                    error,
+                    "world.storage",
+                ));
             }
-            if let Err(error) = crate::services::world_storage::validate_logic_config(&package_world.ui_logic_config) {
-                diagnostics.push(package_diagnostic("invalid_world_logic_config", error, "world.logic"));
+            if let Err(error) = crate::services::world_storage::validate_logic_config(
+                &package_world.ui_logic_config,
+            ) {
+                diagnostics.push(package_diagnostic(
+                    "invalid_world_logic_config",
+                    error,
+                    "world.logic",
+                ));
             }
-            if let Some(source) = package_world.ui_logic_config.get("source").and_then(Value::as_str) {
-                diagnostics.extend(crate::services::game_ui::validate_world_logic_source(source));
+            if let Some(source) = package_world
+                .ui_logic_config
+                .get("source")
+                .and_then(Value::as_str)
+            {
+                diagnostics.extend(crate::services::game_ui::validate_world_logic_source(
+                    source,
+                ));
             }
         } else {
-            diagnostics.push(package_diagnostic("missing_world_file", "无法读取 world/world.json。", world_path));
+            diagnostics.push(package_diagnostic(
+                "missing_world_file",
+                "无法读取 world/world.json。",
+                world_path,
+            ));
         }
         if let Some(logic_path) = manifest.logic_file.as_deref() {
             match read_text_from_zip(&mut archive, logic_path) {
-                Ok(source) => diagnostics.extend(crate::services::game_ui::validate_world_logic_source(&source)),
-                Err(error) => diagnostics.push(package_diagnostic("missing_logic_file", format!("logic.js 无法读取：{error}"), logic_path)),
+                Ok(source) => diagnostics.extend(
+                    crate::services::game_ui::validate_world_logic_source(&source),
+                ),
+                Err(error) => diagnostics.push(package_diagnostic(
+                    "missing_logic_file",
+                    format!("logic.js 无法读取：{error}"),
+                    logic_path,
+                )),
             }
         }
         WorldPackageInspectionResult {
-            ok: diagnostics.iter().all(|diagnostic| diagnostic.severity != "error"),
+            ok: diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.severity != "error"),
             format: Some(manifest.format),
             version: Some(manifest.version),
             diagnostics,
@@ -441,8 +519,7 @@ impl WorldPackageService {
         let manifest: WorldPackageManifest = read_json_from_zip(&mut archive, "manifest.json")
             .map_err(|e| format!("Invalid manifest: {e}"))?;
         if manifest.format != WORLD_PACKAGE_FORMAT
-            || !(manifest.version == WORLD_PACKAGE_VERSION
-                || LEGACY_WORLD_PACKAGE_VERSIONS.contains(&manifest.version))
+            || manifest.version != WORLD_PACKAGE_VERSION
         {
             return Err("不支持的世界包格式".to_string());
         }
@@ -467,7 +544,10 @@ impl WorldPackageService {
         )?;
         for (path, field) in [
             (manifest.logic_file.as_deref(), "manifest.logic_file"),
-            (manifest.mcp_tools_file.as_deref(), "manifest.mcp_tools_file"),
+            (
+                manifest.mcp_tools_file.as_deref(),
+                "manifest.mcp_tools_file",
+            ),
             (
                 manifest.desktop_ui_stylesheet_file.as_deref(),
                 "manifest.desktop_ui_stylesheet_file",
@@ -634,9 +714,7 @@ impl WorldPackageService {
 
         let ui_capabilities = package_world.ui_capabilities.clone();
         let package_mcp_tools = match manifest.mcp_tools_file.as_deref() {
-            Some(tools_file) => {
-                read_package_mcp_tools(&mut archive, tools_file)?
-            }
+            Some(tools_file) => read_package_mcp_tools(&mut archive, tools_file)?,
             None => Vec::new(),
         };
         Ok(ImportedWorldPackage {
@@ -679,14 +757,17 @@ fn validate_world_package_director_config(config: &serde_json::Value) -> Result<
     }
 
     if let Some(kinds) = object.get("director_interaction_kinds") {
-        let kinds = kinds
-            .as_array()
-            .ok_or_else(|| "director_config.director_interaction_kinds must be an array".to_string())?;
+        let kinds = kinds.as_array().ok_or_else(|| {
+            "director_config.director_interaction_kinds must be an array".to_string()
+        })?;
         for (index, kind) in kinds.iter().enumerate() {
             let kind = kind.as_str().ok_or_else(|| {
                 format!("director_config.director_interaction_kinds[{index}] must be a string")
             })?;
-            if !matches!(kind, "choice" | "multi_choice" | "form" | "confirm" | "slider") {
+            if !matches!(
+                kind,
+                "choice" | "multi_choice" | "form" | "confirm" | "slider"
+            ) {
                 return Err(format!(
                     "Unsupported director interaction kind `{kind}` at director_config.director_interaction_kinds[{index}]"
                 ));
@@ -694,51 +775,6 @@ fn validate_world_package_director_config(config: &serde_json::Value) -> Result<
         }
     }
 
-    let Some(presets) = object.get("prompt_presets") else {
-        return Ok(());
-    };
-    let presets = presets
-        .as_array()
-        .ok_or_else(|| "director_config.prompt_presets must be an array".to_string())?;
-    for (index, preset) in presets.iter().enumerate() {
-        let preset = preset
-            .as_object()
-            .ok_or_else(|| format!("director_config.prompt_presets[{index}] must be an object"))?;
-        if let Some(scope) = preset.get("scope") {
-            let scope = scope.as_str().ok_or_else(|| {
-                format!("director_config.prompt_presets[{index}].scope must be a string")
-            })?;
-            if !matches!(scope, "director" | "character" | "both") {
-                return Err(format!(
-                    "Invalid prompt scope `{scope}` at director_config.prompt_presets[{index}].scope; use director, character, or both. Always-on modules should omit keywords."
-                ));
-            }
-        }
-        if let Some(keywords) = preset.get("keywords") {
-            let keywords = keywords.as_array().ok_or_else(|| {
-                format!("director_config.prompt_presets[{index}].keywords must be an array")
-            })?;
-            if keywords.iter().any(|keyword| !keyword.is_string()) {
-                return Err(format!(
-                    "director_config.prompt_presets[{index}].keywords must contain only strings"
-                ));
-            }
-        }
-        if let Some(position) = preset.get("position") {
-            let position = position.as_str().ok_or_else(|| {
-                format!("director_config.prompt_presets[{index}].position must be a string")
-            })?;
-            let valid_depth = position
-                .strip_prefix("depth:")
-                .and_then(|value| value.parse::<usize>().ok())
-                .is_some();
-            if !matches!(position, "system_prefix" | "system_suffix") && !valid_depth {
-                return Err(format!(
-                    "Invalid prompt position `{position}` at director_config.prompt_presets[{index}].position"
-                ));
-            }
-        }
-    }
     Ok(())
 }
 
@@ -1088,7 +1124,16 @@ fn to_world_package_data(
         .map(|character| (character.id.clone(), character.name.clone()))
         .collect::<HashMap<_, _>>();
     WorldPackageWorldData {
-        knowledge_bases: Some(serde_json::from_value(world.ui_theme_config.get("knowledge_bases").cloned().unwrap_or_else(|| serde_json::json!([]))).unwrap_or_default()),
+        knowledge_bases: Some(
+            serde_json::from_value(
+                world
+                    .ui_theme_config
+                    .get("knowledge_bases")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!([])),
+            )
+            .unwrap_or_default(),
+        ),
         name: world.name.clone(),
         genre: world.genre.clone(),
         background_prompt: world.background_prompt.clone(),
@@ -1096,7 +1141,6 @@ fn to_world_package_data(
         summary: world.summary.clone(),
         time_system: world.time_system.clone(),
         map_nodes: world.map_nodes.clone(),
-        triggers: world.triggers.clone(),
         time_config: world.time_config.clone(),
         director_config: world.director_config.clone(),
         ui_assets_config: world
@@ -1110,9 +1154,9 @@ fn to_world_package_data(
             .cloned()
             .and_then(|value| serde_json::from_value(value).ok())
             .unwrap_or_default(),
-        initial_inventory_items: world
+        character_attribute_values: world
             .ui_theme_config
-            .get("initial_inventory_items")
+            .get("character_attribute_values")
             .cloned()
             .and_then(|value| serde_json::from_value(value).ok())
             .unwrap_or_default(),
@@ -1256,9 +1300,7 @@ fn persist_asset_file(
     Ok(format!("/assets/{relative_saved}"))
 }
 
-fn validate_archive_limits(
-    archive: &mut zip::ZipArchive<Cursor<Vec<u8>>>,
-) -> Result<(), String> {
+fn validate_archive_limits(archive: &mut zip::ZipArchive<Cursor<Vec<u8>>>) -> Result<(), String> {
     if archive.len() > MAX_WORLD_PACKAGE_ENTRIES {
         return Err(format!(
             "世界包文件数量超过上限 {}",
@@ -1299,7 +1341,9 @@ fn validate_manifest_path(path: &str, field: &str) -> Result<(), String> {
     if normalized.is_empty()
         || normalized.starts_with('/')
         || normalized.contains(':')
-        || normalized.split('/').any(|part| part.is_empty() || part == "." || part == "..")
+        || normalized
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
     {
         return Err(format!("{field} 路径无效：{path}"));
     }
@@ -1333,9 +1377,8 @@ fn read_package_mcp_tools(
         .ok_or_else(|| "内嵌工具文件缺少 tools 数组".to_string())?;
     let mut parsed = Vec::new();
     for (index, item) in tools.iter().enumerate() {
-        let tool: crate::models::mcp_tool::McpToolDefinition =
-            serde_json::from_value(item.clone())
-                .map_err(|e| format!("内嵌工具第 {} 项解析失败：{e}", index + 1))?;
+        let tool: crate::models::mcp_tool::McpToolDefinition = serde_json::from_value(item.clone())
+            .map_err(|e| format!("内嵌工具第 {} 项解析失败：{e}", index + 1))?;
         if tool.id.trim().is_empty() || tool.name.trim().is_empty() {
             return Err(format!("内嵌工具第 {} 项缺少 id 或 name", index + 1));
         }

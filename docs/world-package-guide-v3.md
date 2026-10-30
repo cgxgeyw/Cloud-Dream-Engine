@@ -353,7 +353,6 @@ manifest 中与 UI 有关的字段：
 | `summary` | string | 简介，可空串 |
 | `time_system` | string | 时间制度说明，可空串 |
 | `map_nodes` | object | 地图拓扑，格式见下方「map_nodes 拓扑格式」 |
-| `triggers` | string[] | 预留元数据，可空数组。**当前运行时不会执行它，也不能用它驱动剧情**；自动逻辑必须使用 `logic.events` |
 | `time_config` | object | 时间配置，可空对象 |
 | `director_config` | object | 世界主控配置（见第 13 节），可空对象 |
 | `ui_assets_config` | object | 资源配置（见第 14 节），可空对象。**注意键名是 `ui_assets_config`，不是 `assets`** |
@@ -363,7 +362,7 @@ manifest 中与 UI 有关的字段：
 | `opening_character_source_ids` | string[] | 开场角色的 `source_character_id` 列表，可空数组 |
 | `player_character_source_id` | string \| null | 玩家角色的 `source_character_id` |
 
-以下字段有默认值，缺省即可：`attribute_schemas`（[]）、`initial_inventory_items`（[]）、`ui_runtime_version`（2）、`ui_capabilities`（[]）、`platform_features`（[]）、`storage`（{}）、`logic`（{}）。
+以下字段有默认值，缺省即可：`attribute_schemas`（[]）、`ui_runtime_version`（2）、`ui_capabilities`（[]）、`platform_features`（[]）、`storage`（{}）、`logic`（{}）。
 
 ### attribute_schemas 持久化属性
 
@@ -412,9 +411,7 @@ manifest 中与 UI 有关的字段：
 - `mutation_policy`：谁可写、允许哪些操作。主控写回依赖 `allowed_ops` 含 `"set"`；按需打开 `creator_write` / `player_action_write` / `rule_write` / `trigger_write`。
 - `influence_policy` / `projection_policy`：可选，宿主内部投影用（是否进主控 prompt、如何继承到 session）。世界包一般省略即可；字段会入库，但并非每一项都完整执行，不要当完整策略引擎用。
 
-世界主控请求的 `current_state.runtime_attributes` 会列出当前值和可写 key。行动真实造成消耗、恢复、受伤、身份、装备、功法或进度变化时，主控必须在同一回合返回属性更新，不能只在叙事中声称“体力下降”。地图位置、时间和在场人物分别继续使用 `next_location`、`next_time_label` 与 `scene_visible_characters`；背包使用主控的完整 `inventory_items` 写回。
-
-`initial_inventory_items` 使用会话 `InventoryItem` 结构声明新存档的开局物品：`item_id`、`name`、`category`、`quantity`、`description`、`tags`、`owner_type`、`owner_id`、`visibility`、`disclosed_to`。它只负责初值，后续变化仍由主控返回完整 `inventory_items`；不要在属性或 KV 中再复制一份背包。
+行动真实造成消耗、恢复、受伤、身份、装备、功法或进度变化时，主控必须在同一回合返回属性更新，不能只在叙事中声称“体力下降”。地图位置与在场人物由主控调用 `change_scene` 工具完成；时间等世界状态通过 `session_attribute_updates` 按属性键更新。背包也是自定义属性：用 `attribute_schemas` 声明一个世界级列表属性（如凡人修仙的 `mortal_inventory`，字符串数组，每项“名称 x数量：简述”），开局物品写进 `default_value`，主控拿到/消耗/丢失物品时通过 `session_attribute_updates` 用整个列表覆盖更新。引擎不再提供独立的 `inventory_items` JSON 字段。
 
 ### map_nodes 拓扑格式
 
@@ -481,12 +478,12 @@ manifest 中与 UI 有关的字段：
 
 ### 角色提示词怎么写（避免 NPC 回复 JSON 解析失败）
 
-NPC 发言时，宿主按以下顺序拼接系统提示：
+NPC 发言时，返回格式说明按以下规则发送：
 
 1. `system_prompt_template` 的渲染结果（支持 `{{speaker}}`、`{{role}}`、`{{background_prompt}}` 占位符）；
-2. 该角色的 `response_contract_prompt`（可空）；
-3. **内置回复格式契约**（永远追加，创作者无法关闭）：说明 `speaker`/`content`/`narration` 三个必填字段，并附一个完整 JSON 示例和字符串转义规则；
-4. 内置记忆提取契约（仅当世界开启事实提取时）。
+2. 该角色的 `response_contract_prompt`——**非空时完全替代**内置契约，作者全权控制发给模型的格式说明（支持[提示词变量](#提示词变量与插值管理)）；
+3. `response_contract_prompt` 留空时，发送**内置回复格式契约**：说明 `speaker`/`content`/`narration` 三个必填字段，并附一个完整 JSON 示例和字符串转义规则；
+4. 内置记忆提取契约（仅当世界开启事实提取时；与返回格式契约独立，不受替代影响）。
 
 各字段该写什么：
 
@@ -494,7 +491,7 @@ NPC 发言时，宿主按以下顺序拼接系统提示：
 |---|---|---|
 | `background_prompt` | 角色背景、经历、人物关系，纯散文 | 输出格式要求 |
 | `system_prompt_template` | 人设、语气、行为禁忌、扮演要点 | 输出格式、JSON 字段定义 |
-| `response_contract_prompt` | 默认留空；仅当需要角色**额外**输出结构化字段时，补一段该字段的说明 + 一个完整 JSON 示例 | 重复定义 `speaker`/`content`/`narration`；要求 Markdown 代码围栏 |
+| `response_contract_prompt` | 默认留空用内置契约；需要完全自定义返回格式时填写，内容须自行覆盖 `speaker`/`content`/`narration`（以及需要用到的 `pass`、`session_attribute_updates` 等）的完整格式说明 + 一个完整 JSON 示例 | 要求 Markdown 代码围栏；只写字段不给示例 |
 | `narration_prompt` | 旁白/动作描写的风格要求 | — |
 | `runtime_system_prompt` | 需要运行时追加的简短指令 | — |
 
@@ -1080,7 +1077,7 @@ Props：`placeholder`、`submit_label`、`editing_submit_label`、`show_image_bu
 
 地图和自定义属性标签。移动端会作为状态抽屉呈现。
 
-这是桌面和移动端统一的地图、背包与持久化属性入口。移动端文档必须包含它，否则玩家在手机上看不到地图和角色状态（校验器只给警告、不拦导入，作者需自查）。属性会按 `attribute_schemas[].display_policy.group` 自动分组；会话背包使用运行时 `inventory_items`，不需要世界包再建 KV 镜像。
+这是桌面和移动端统一的地图、背包与持久化属性入口。移动端文档必须包含它，否则玩家在手机上看不到地图和角色状态（校验器只给警告、不拦导入，作者需自查）。属性会按 `attribute_schemas[].display_policy.group` 自动分组；背包是一个普通的世界级列表属性，随属性标签自动展示，不需要世界包再建 KV 镜像。
 
 Props：`show_map_tab`、`show_attribute_tabs`、`empty_text`、`drawer_label`。
 
@@ -1777,40 +1774,83 @@ div.game-ui-component[data-component="message_list"]  ← class_name
 }
 ```
 
-所有交互统一放在世界主控回复 JSON 顶层的 `interaction` 字段中，不能嵌在其它业务字段里。交互使用 `{ "kind", "prompt", "config" }`：
+世界主控通过 `request_player_interaction` 工具发起交互：世界声明类型后宿主自动把该工具下发给主控，参数是扁平的 `kind`（限已声明类型）、`prompt`（不超过 500 字）加上类型相关参数。调用后本回合立即结束并等待玩家作答，主控不要再安排角色发言：
 
-| 类型 | 说明 | `config` 关键字段 |
+| 类型 | 说明 | 类型相关参数 |
 |---|---|---|
-| `choice` | 单选 | `options: [{ "id", "label" }]` |
+| `choice` | 单选 | `options: ["选项文本", ...]` |
 | `multi_choice` | 多选 | `options`、`min`、`max` |
 | `form` | 表单 | `fields: [{ "id", "label", "input": "text" | "number" | "textarea", "required" }]` |
 | `confirm` | 确认 | `confirm_label`、`cancel_label` |
 | `slider` | 滑条 | `min`、`max`、`step`、`default` |
 
-单选示例：
+单选示例（工具调用参数）：
 
 ```json
 {
-  "interaction": {
-    "kind": "choice",
-    "prompt": "你准备走哪条路？",
-    "config": {
-      "options": [
-        { "id": "mountain", "label": "翻山绕行" },
-        { "id": "river", "label": "沿河疾行" }
-      ]
+  "kind": "choice",
+  "prompt": "你准备走哪条路？",
+  "options": ["翻山绕行", "沿河疾行"]
+}
+```
+
+在世界主控提示词里只需说明**何时**出题和选项语义；工具的精确参数格式由宿主自动下发。玩家提交后，宿主先把交互标记为已回答，再把选项标签、表单内容、确认文案或滑条数值格式化成一条真实玩家消息，并自动启动下一模型回合，因此后续剧情会像普通玩家输入一样继续。回答**幂等**：重复提交返回首次结果，不会重复创建玩家消息。`interaction_answered` 事件只用于世界包确实需要的额外本地逻辑，不能代替正常回合提交。
+
+宿主校验后会统一归一化并持久化为世界主控消息的 `metadata.interaction.config`，前端只渲染这个归一化结果（选项归一化为 `{ "id", "label" }`）。旧版本把 `interaction` 写在主控回复 JSON 顶层，宿主仍兼容解析该字段，但新世界包应依赖工具调用。表单字段必须使用 `id` 与 `input`，不能使用 `key` 与 `type`。
+
+### 玩家角色切换
+
+`allow_player_character_switch` 控制世界主控能否提议玩家切换到其他角色，默认 `true`。切换由主控调用 `switch_player_character` 工具完成；关闭后该工具不再下发给主控，旧 JSON 字段 `switch_character_proposal` 也会被运行时丢弃。玩家仍可由应用的独立切换功能手动切换。
+
+### 返回格式自定义（response_contract_prompt）
+
+世界主控的返回格式说明默认由框架生成（字段清单、填写时机、工具指引）。在 `director_config.response_contract_prompt` 填写文本后**完全替代**内置契约——作者全权控制这段输入，可以只写一行"你应该返回如下 JSON，不必解释：{...}"这样的极简格式。约定：
+
+- 留空 = 使用框架内置契约（默认，推荐大多数世界）。
+- 填写后引擎不再追加任何内置格式文本；`planned_speakers`（每回合必填）、`session_attribute_updates` / `character_attribute_updates`（属性写回）等字段的格式说明由作者契约自行负责，缺了对应功能会退化。
+- 场景切换、换角色、交互等仍走工具调用，不受契约影响；契约只管"返回 JSON 长什么样"。
+- 支持全部[提示词变量](#提示词变量与插值管理)。
+
+### 提示词变量与插值管理
+
+所有作者可编辑的提示词输入框（世界运行时上下文、主控预设、主控返回格式、角色系统提示模板、返回格式提示词、运行时上下文、背景、旁白）都支持 `{{变量}}` 插值，发送前展开：
+
+**内置变量**
+
+| 写法 | 展开为 |
+|---|---|
+| `{{time}}` / `{{current_time}}` / `{{当前时间}}` | 本机当前时间 `YYYY-MM-DD HH:mm:ss` |
+| `{{date}}` / `{{current_date}}` | 本机当前日期 `YYYY-MM-DD` |
+| `{{user}}` / `{{player}}` / `{{玩家}}` | 玩家角色名 |
+| `{{world_name}}` | 世界名 |
+| `{{location}}` | 当前地点 |
+| `{{scene}}` / `{{scene_name}}` | 当前场景名 |
+| `{{random:甲,乙,丙}}` | 每次发送随机选一项 |
+| `{{var:key}}` | 会话运行时变量（世界包声明 `variables` KV 命名空间后由 logic.js / 世界事件写入；缺失展开为空串） |
+| `{{world:name/genre/summary/opening_scene}}`、`{{session:location/time/scene/player}}` | 命名空间老写法 |
+
+**插值管理（世界级自定义变量）**
+
+`director_config.prompt_variables` 定义世界级自定义变量，随世界包导入导出，世界编辑器"运行时上下文"页提供可视化管理：
+
+```json
+{
+  "director_config": {
+    "prompt_variables": {
+      "nickname": "陆师弟",
+      "intro": "{{user}}行至{{location}}"
     }
   }
 }
 ```
 
-在世界主控提示词里只需说明**何时**出题和选项语义；宿主会按世界声明自动补充精确 JSON 格式。玩家提交后，宿主先把交互标记为已回答，再把选项标签、表单内容、确认文案或滑条数值格式化成一条真实玩家消息，并自动启动下一模型回合，因此后续剧情会像普通玩家输入一样继续。回答**幂等**：重复提交返回首次结果，不会重复创建玩家消息。`interaction_answered` 事件只用于世界包确实需要的额外本地逻辑，不能代替正常回合提交。
+规则：
 
-候选解析器也兼容把 `options`、`fields`、`min/max` 等字段直接放在 `interaction` 顶层，但这是宽容输入，不是作者应要求模型生成的标准格式。宿主校验后会统一持久化为世界主控消息的 `metadata.interaction.config`，前端只渲染这个归一化结果。选项标识必须使用 `id`，不能使用 `value`；表单字段必须使用 `id` 与 `input`，不能使用 `key` 与 `type`。
-
-### 玩家角色切换
-
-`allow_player_character_switch` 控制世界主控能否提议玩家切换到其他角色，默认 `true`。关闭后，主控返回的 `switch_character_proposal` 会被运行时丢弃；玩家仍可由应用的独立切换功能手动切换。
+- 自定义变量**优先于**内置变量（可以覆盖任何内置名字）。
+- 变量值里可以再引用内置变量（最多展开三轮，防循环）。
+- 未识别的占位符按原文保留——在 Prompt 预览里能直接看到拼写错误。
+- 角色的 `system_prompt_template` 里另有模板占位符 `{{speaker}}` / `{{role}}` / `{{background_prompt}}`，属于模板渲染而非变量插值，两者可同时使用。
+- 请求参数里的 `response_schema` 仍由框架生成（大多数端点只用于 json_object 模式，不参与格式说明）。
 
 ### 提示词模块（prompt_presets）
 
@@ -2017,7 +2057,7 @@ v2 数据不会被删除。当前迁移层会：
 |---|---|
 | 主控交互 | `director_interaction_kinds` 声明 `choice` / `confirm` / `slider` |
 | 世界属性 | 17 条 `attribute_schemas`（9 number / 5 text / 3 list），示范 `session_character` 作用域——数值随角色在每局会话内变化 |
-| 开局物品 | `initial_inventory_items` 3 件 |
+| 开局物品 | 世界级列表属性 `mortal_inventory`（“背包”分组）默认 3 件 |
 | 双入口 | runtime v3，桌面与移动各一份完整 UI 文档与样式表 |
 
 玩法闭环的讲解见[叙事 RPG 制作手册](world-package-rpg-cookbook.md)：主控输出固定 ID 选项 → 玩家点击后宿主写成真实消息并自动开启下一回合 → 主控从 `current_state.runtime_attributes` 读取状态、用 `character_attribute_updates` 写回路线与数值 → `side_panel_tabs` 展示同一份权威属性。
@@ -2161,6 +2201,5 @@ v2 数据不会被删除。当前迁移层会：
 - 声明的 `platform_features` 在真机上逐项允许后可用，未允许时得到 `not_granted:` 报错。
 - 交互消息（如使用）在真机上出题、作答、重复点击不重复计分。
 - 每个 `logic.js` 处理器至少能从 `logic.events` 或 UI `logic.run` 到达，事件中的 handler 名与 `world.register` 完全一致。
-- `triggers` 只作为元数据；没有把它误当作剧情事件系统。
 - 关键词触发的提示词模块（如使用）在调试页可见命中与否。
 - 导出后的 ZIP 可在另一份本地数据环境中重新导入。

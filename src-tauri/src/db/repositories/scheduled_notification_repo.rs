@@ -1,6 +1,4 @@
-use crate::models::scheduled_notification::{
-    ScheduledNotification, ScheduledNotificationCreate,
-};
+use crate::models::scheduled_notification::{ScheduledNotification, ScheduledNotificationCreate};
 use chrono::Utc;
 use rusqlite::{params, Connection};
 

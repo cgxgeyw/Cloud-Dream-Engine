@@ -18,7 +18,6 @@ pub(crate) fn append_runtime_effects_journal(
     session_id: &str,
     turn_index: i32,
     runtime_application: &DirectorRuntimeApplication,
-    updated: &SessionSnapshot,
 ) -> Result<(), String> {
     if journal_has_completed_step(recovery_journal, "runtime_effects_applied") {
         return Ok(());
@@ -31,13 +30,6 @@ pub(crate) fn append_runtime_effects_journal(
         "completed",
         serde_json::json!({
             "state_phase": runtime_application.state_phase,
-            "state_tags_count": runtime_application.state_tags.len(),
-            "state_metric_keys": runtime_application.state_metrics.keys().cloned().collect::<Vec<_>>(),
-            "inventory_items_count": runtime_application
-                .inventory_items
-                .as_ref()
-                .map(|items| items.len())
-                .unwrap_or(updated.inventory_items.len()),
             "system_messages_count": runtime_application.system_messages.len(),
             "system_log_lines_count": runtime_application.system_log_lines.len(),
             "tool_call_logs_count": runtime_application.tool_call_logs.len(),
@@ -217,8 +209,6 @@ pub(crate) fn append_post_update_journals(
                 "current_speaker": updated.current_speaker,
                 "current_line": updated.current_line,
                 "state_phase": updated.state.phase,
-                "state_tags": updated.state.tags,
-                "state_metrics": updated.state.metrics,
                 "assets": updated.assets,
             }),
         )?;

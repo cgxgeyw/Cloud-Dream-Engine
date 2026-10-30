@@ -107,8 +107,7 @@ impl<'a> CharacterRepository<'a> {
         )
         .map_err(|e| e.to_string())?;
 
-        self.get(&id)?
-            .ok_or_else(|| "创建角色失败".to_string())
+        self.get(&id)?.ok_or_else(|| "创建角色失败".to_string())
     }
 
     pub fn update(
@@ -116,9 +115,7 @@ impl<'a> CharacterRepository<'a> {
         id: &str,
         req: &CharacterUpdateRequest,
     ) -> Result<CharacterDefinition, String> {
-        let existing = self
-            .get(id)?
-            .ok_or_else(|| "角色不存在".to_string())?;
+        let existing = self.get(id)?.ok_or_else(|| "角色不存在".to_string())?;
         let name = req
             .name
             .as_ref()
@@ -205,8 +202,7 @@ impl<'a> CharacterRepository<'a> {
         )
         .map_err(|e| e.to_string())?;
 
-        self.get(id)?
-            .ok_or_else(|| "更新角色失败".to_string())
+        self.get(id)?.ok_or_else(|| "更新角色失败".to_string())
     }
 
     pub fn delete(&self, id: &str) -> Result<(), String> {
@@ -217,9 +213,7 @@ impl<'a> CharacterRepository<'a> {
     }
 
     pub fn export_template(&self, id: &str) -> Result<CharacterTemplateExport, String> {
-        let character = self
-            .get(id)?
-            .ok_or_else(|| "角色不存在".to_string())?;
+        let character = self.get(id)?.ok_or_else(|| "角色不存在".to_string())?;
         Ok(CharacterTemplateExport {
             name: character.name,
             role: character.role,

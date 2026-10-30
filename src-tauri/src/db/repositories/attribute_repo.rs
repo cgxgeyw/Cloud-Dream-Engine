@@ -12,11 +12,11 @@ impl<'a> AttributeRepository<'a> {
     }
 
     pub fn list_schemas(&self, scope: Option<&str>) -> Result<Vec<AttributeSchema>, String> {
-        let mut sql = "SELECT * FROM attribute_schemas".to_string();
+        let mut sql = "SELECT id, scope, key, label, value_type, description, default_value_json, enum_options_json, display_policy_json, access_policy_json, mutation_policy_json, influence_policy_json, projection_policy_json, world_id, sort_order FROM attribute_schemas".to_string();
         if scope.is_some() {
             sql.push_str(" WHERE scope = ?1");
         }
-        sql.push_str(" ORDER BY scope, key");
+        sql.push_str(" ORDER BY scope, sort_order, key");
 
         let mut stmt = self.conn.prepare(&sql).map_err(|e| e.to_string())?;
 
@@ -38,6 +38,8 @@ impl<'a> AttributeRepository<'a> {
                     .unwrap_or_default(),
                 projection_policy: serde_json::from_str(&row.get::<_, String>(12)?)
                     .unwrap_or_default(),
+                world_id: row.get(13)?,
+                sort_order: row.get(14)?,
             })
         };
 
@@ -64,6 +66,24 @@ impl<'a> AttributeRepository<'a> {
         Ok(schemas)
     }
 
+    pub fn list_schemas_for_world(
+        &self,
+        scope: &str,
+        world_id: &str,
+    ) -> Result<Vec<AttributeSchema>, String> {
+        let mut schemas = self.list_schemas(Some(scope))?;
+        schemas.retain(|schema| match schema.world_id.as_deref() {
+            Some(id) => id == world_id,
+            None => true,
+        });
+        schemas.sort_by(|left, right| {
+            left.sort_order
+                .cmp(&right.sort_order)
+                .then(left.key.cmp(&right.key))
+        });
+        Ok(schemas)
+    }
+
     pub fn create_schema(
         &self,
         req: &AttributeSchemaCreateRequest,
@@ -73,17 +93,18 @@ impl<'a> AttributeRepository<'a> {
             .ok_or_else(|| format!("不支持的属性作用域：{}", req.scope.trim()))?;
         let key = req.key.trim().to_string();
         let label = req.label.trim().to_string();
-        let value_type = normalize_attribute_value_type(req.value_type.as_str()).ok_or_else(|| {
-            format!(
-                "Unsupported attribute value_type: {}",
-                req.value_type.trim()
-            )
-        })?;
+        let value_type =
+            normalize_attribute_value_type(req.value_type.as_str()).ok_or_else(|| {
+                format!(
+                    "Unsupported attribute value_type: {}",
+                    req.value_type.trim()
+                )
+            })?;
         let description = req.description.trim().to_string();
         let enum_options = normalize_list(&req.enum_options);
         validate_attribute_value(&value_type, &req.default_value)?;
         self.conn.execute(
-            "INSERT INTO attribute_schemas (id, scope, key, label, value_type, description, default_value_json, enum_options_json, display_policy_json, access_policy_json, mutation_policy_json, influence_policy_json, projection_policy_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            "INSERT INTO attribute_schemas (id, scope, key, label, value_type, description, default_value_json, enum_options_json, display_policy_json, access_policy_json, mutation_policy_json, influence_policy_json, projection_policy_json, world_id, sort_order) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 id,
                 scope,
@@ -98,6 +119,8 @@ impl<'a> AttributeRepository<'a> {
                 serde_json::to_string(&req.mutation_policy).unwrap_or_default(),
                 serde_json::to_string(&req.influence_policy).unwrap_or_default(),
                 serde_json::to_string(&req.projection_policy).unwrap_or_default(),
+                req.world_id.as_deref(),
+                req.sort_order,
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -116,6 +139,8 @@ impl<'a> AttributeRepository<'a> {
             mutation_policy: req.mutation_policy.clone(),
             influence_policy: req.influence_policy.clone(),
             projection_policy: req.projection_policy.clone(),
+            world_id: req.world_id.clone(),
+            sort_order: req.sort_order,
         })
     }
 
@@ -128,17 +153,18 @@ impl<'a> AttributeRepository<'a> {
             .ok_or_else(|| format!("不支持的属性作用域：{}", req.scope.trim()))?;
         let key = req.key.trim().to_string();
         let label = req.label.trim().to_string();
-        let value_type = normalize_attribute_value_type(req.value_type.as_str()).ok_or_else(|| {
-            format!(
-                "Unsupported attribute value_type: {}",
-                req.value_type.trim()
-            )
-        })?;
+        let value_type =
+            normalize_attribute_value_type(req.value_type.as_str()).ok_or_else(|| {
+                format!(
+                    "Unsupported attribute value_type: {}",
+                    req.value_type.trim()
+                )
+            })?;
         let description = req.description.trim().to_string();
         let enum_options = normalize_list(&req.enum_options);
         validate_attribute_value(&value_type, &req.default_value)?;
         self.conn.execute(
-            "UPDATE attribute_schemas SET scope = ?1, key = ?2, label = ?3, value_type = ?4, description = ?5, default_value_json = ?6, enum_options_json = ?7, display_policy_json = ?8, access_policy_json = ?9, mutation_policy_json = ?10, influence_policy_json = ?11, projection_policy_json = ?12 WHERE id = ?13",
+            "UPDATE attribute_schemas SET scope = ?1, key = ?2, label = ?3, value_type = ?4, description = ?5, default_value_json = ?6, enum_options_json = ?7, display_policy_json = ?8, access_policy_json = ?9, mutation_policy_json = ?10, influence_policy_json = ?11, projection_policy_json = ?12, world_id = ?13, sort_order = ?14 WHERE id = ?15",
             params![
                 scope,
                 key,
@@ -152,6 +178,8 @@ impl<'a> AttributeRepository<'a> {
                 serde_json::to_string(&req.mutation_policy).unwrap_or_default(),
                 serde_json::to_string(&req.influence_policy).unwrap_or_default(),
                 serde_json::to_string(&req.projection_policy).unwrap_or_default(),
+                req.world_id.as_deref(),
+                req.sort_order,
                 id,
             ],
         )
@@ -159,7 +187,7 @@ impl<'a> AttributeRepository<'a> {
 
         let mut stmt = self
             .conn
-            .prepare("SELECT * FROM attribute_schemas WHERE id = ?1")
+            .prepare("SELECT id, scope, key, label, value_type, description, default_value_json, enum_options_json, display_policy_json, access_policy_json, mutation_policy_json, influence_policy_json, projection_policy_json, world_id, sort_order FROM attribute_schemas WHERE id = ?1")
             .map_err(|e| e.to_string())?;
         let mut rows = stmt
             .query_map(params![id], |row| {
@@ -184,6 +212,8 @@ impl<'a> AttributeRepository<'a> {
                         .unwrap_or_default(),
                     projection_policy: serde_json::from_str(&row.get::<_, String>(12)?)
                         .unwrap_or_default(),
+                    world_id: row.get(13)?,
+                    sort_order: row.get(14)?,
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -294,10 +324,7 @@ impl<'a> AttributeRepository<'a> {
     }
 }
 
-fn validate_attribute_value(
-    value_type: &str,
-    value: &serde_json::Value,
-) -> Result<(), String> {
+fn validate_attribute_value(value_type: &str, value: &serde_json::Value) -> Result<(), String> {
     let valid = match value_type {
         ATTRIBUTE_VALUE_TYPE_TEXT => value.is_null() || value.is_string(),
         ATTRIBUTE_VALUE_TYPE_NUMBER => value.is_null() || value.is_number(),

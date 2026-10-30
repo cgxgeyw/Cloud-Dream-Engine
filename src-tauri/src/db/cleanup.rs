@@ -15,6 +15,16 @@ use rusqlite::{params, Connection};
 /// 清理单个会话产生的全部关联数据(含会话行本身)。
 /// 删除顺序:先删子表(memories 触发 embeddings 级联),最后删 sessions / saves。
 pub fn purge_session_data(conn: &Connection, session_id: &str) -> Result<(), String> {
+    exec(
+        conn,
+        "DELETE FROM memory_relations WHERE session_id = ?1",
+        params![session_id],
+    )?;
+    exec(
+        conn,
+        "DELETE FROM memory_entities WHERE session_id = ?1",
+        params![session_id],
+    )?;
     // memories(其 memory_embeddings 经 FK 级联一并删除)
     exec(
         conn,
@@ -36,13 +46,13 @@ pub fn purge_session_data(conn: &Connection, session_id: &str) -> Result<(), Str
     // 会话内角色变量,owner_id 形如 "{session_id}:{character_id}"
     exec(
         conn,
-        "DELETE FROM scoped_kv WHERE owner_type = 'character' AND owner_id LIKE ?1 ESCAPE '\'",
+        r"DELETE FROM scoped_kv WHERE owner_type = 'character' AND owner_id LIKE ?1 ESCAPE '\'",
         params![format!("{}:%", escape_like(session_id))],
     )?;
     // 会话内角色属性,owner_id 形如 "{session_id}:{character_id}"
     exec(
         conn,
-        "DELETE FROM attribute_values WHERE owner_type = 'session_character' AND owner_id LIKE ?1 ESCAPE '\\'",
+        r"DELETE FROM attribute_values WHERE owner_type = 'session_character' AND owner_id LIKE ?1 ESCAPE '\'",
         params![format!("{}:%", escape_like(session_id))],
     )?;
     // 回合日志与各类调用追踪
@@ -114,7 +124,7 @@ pub fn purge_character_data(conn: &Connection, character_id: &str) -> Result<(),
     // 各会话内该角色的属性,owner_id 形如 "{session_id}:{character_id}"
     exec(
         conn,
-        "DELETE FROM attribute_values WHERE owner_type = 'session_character' AND owner_id LIKE ?1 ESCAPE '\\'",
+        r"DELETE FROM attribute_values WHERE owner_type = 'session_character' AND owner_id LIKE ?1 ESCAPE '\'",
         params![format!("%:{}", escape_like(character_id))],
     )?;
     // 该角色的记忆(memory_embeddings 经 FK 级联)
@@ -154,6 +164,8 @@ pub fn purge_world_attributes(conn: &Connection, world_id: &str) -> Result<(), S
 /// 清空所有会话衍生数据(删除全部世界时使用)。保留 attribute_schemas、model_configs 等全局配置。
 pub fn purge_all_session_scoped_data(conn: &Connection) -> Result<(), String> {
     for sql in [
+        "DELETE FROM memory_relations",
+        "DELETE FROM memory_entities",
         "DELETE FROM memories",
         "DELETE FROM attribute_values WHERE owner_type IN ('session', 'session_character', 'character', 'world')",
         "DELETE FROM scoped_kv",
@@ -188,7 +200,11 @@ fn collect_session_ids_by_world_name(
     Ok(ids)
 }
 
-fn exec(conn: &Connection, sql: &str, params: &[&dyn rusqlite::types::ToSql]) -> Result<(), String> {
+fn exec(
+    conn: &Connection,
+    sql: &str,
+    params: &[&dyn rusqlite::types::ToSql],
+) -> Result<(), String> {
     conn.execute(sql, params).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -199,4 +215,60 @@ fn escape_like(value: &str) -> String {
         .replace('\\', "\\\\")
         .replace('%', "\\%")
         .replace('_', "\\_")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn purge_session_removes_memory_graph_and_attributes_only_for_target() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        crate::db::schema::create_tables(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO attribute_schemas (id, scope, key, label) VALUES ('cleanup-attr', 'character', 'value', 'Value')",
+            [],
+        ).unwrap();
+        for session_id in ["session_%", "session-other"] {
+            conn.execute("INSERT INTO sessions (id, world_name) VALUES (?1, 'Cleanup')", params![session_id]).unwrap();
+            conn.execute(
+                "INSERT INTO memory_entities (id, world_id, session_id, name, name_normalized) VALUES (?1, 'cleanup-world', ?1, 'Entity', 'entity')",
+                params![session_id],
+            ).unwrap();
+            conn.execute(
+                "INSERT INTO memory_relations (id, world_id, session_id, subject_entity_id, predicate) VALUES (?1, 'cleanup-world', ?1, ?1, 'knows')",
+                params![session_id],
+            ).unwrap();
+            conn.execute(
+                "INSERT INTO attribute_values (id, schema_id, owner_type, owner_id) VALUES (?1, 'cleanup-attr', 'session_character', ?2)",
+                params![session_id, format!("{session_id}:npc")],
+            ).unwrap();
+            conn.execute(
+                "INSERT INTO scoped_kv (owner_type, owner_id, namespace, key) VALUES ('character', ?1, 'state', 'value')",
+                params![format!("{session_id}:npc")],
+            ).unwrap();
+        }
+        let tx = conn.unchecked_transaction().unwrap();
+        purge_session_data(&tx, "session_%").unwrap();
+        tx.commit().unwrap();
+        for table in ["sessions", "memory_entities", "memory_relations"] {
+            let ids: Vec<String> = conn.prepare(&format!("SELECT id FROM {table}"))
+                .unwrap().query_map([], |row| row.get(0)).unwrap()
+                .collect::<Result<_, _>>().unwrap();
+            assert_eq!(ids, ["session-other"], "{table}");
+        }
+        for table in ["attribute_values", "scoped_kv"] {
+            let remaining: i64 = conn.query_row(
+                &format!("SELECT COUNT(*) FROM {table} WHERE owner_id = 'session-other:npc'"),
+                [], |row| row.get(0),
+            ).unwrap();
+            let removed: i64 = conn.query_row(
+                &format!("SELECT COUNT(*) FROM {table} WHERE owner_id = 'session_%:npc'"),
+                [], |row| row.get(0),
+            ).unwrap();
+            assert_eq!(remaining, 1, "{table}");
+            assert_eq!(removed, 0, "{table}");
+        }
+    }
 }

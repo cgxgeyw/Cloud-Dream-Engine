@@ -46,15 +46,7 @@ pub fn dispatch_event(
         return Err("This world event is handled by the session workflow".to_string());
     };
     let actor = event.actor();
-    let command = resolve_action(
-        conn,
-        world,
-        session_id,
-        handler,
-        input.clone(),
-        actor,
-        None,
-    )?;
+    let command = resolve_action(conn, world, session_id, handler, input.clone(), actor, None)?;
     Ok(crate::services::workflow::WorldEventResult::from_command(
         event,
         command.result,
@@ -93,9 +85,9 @@ pub fn tool_handler(world: &WorldDefinition, name: &str, speaker: &str) -> Optio
 fn handler_is_declared(world: &WorldDefinition, handler: &str) -> bool {
     if handler.is_empty()
         || handler.len() > MAX_HANDLER_NAME_BYTES
-        || !handler
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-'))
+        || !handler.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-')
+        })
     {
         return false;
     }
@@ -168,8 +160,15 @@ fn canonical_actor(world: &WorldDefinition, raw: &str) -> Option<String> {
     }
 }
 
-fn state_field<'a>(protocol: &'a serde_json::Map<String, Value>, key: &str, fallback: &'a str) -> &'a str {
-    protocol.get(key).and_then(Value::as_str).unwrap_or(fallback)
+fn state_field<'a>(
+    protocol: &'a serde_json::Map<String, Value>,
+    key: &str,
+    fallback: &'a str,
+) -> &'a str {
+    protocol
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or(fallback)
 }
 
 fn derive_turn_from_view(
@@ -196,17 +195,29 @@ fn derive_turn_from_view(
     };
     let phase_name = state_field(protocol, "phase_field", "phase");
     let actor_name = state_field(protocol, "active_actor_field", "turn");
-    let phase = view.get(phase_name).and_then(Value::as_str).map(str::to_owned);
+    let phase = view
+        .get(phase_name)
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     let raw_actor = view.get(actor_name).and_then(Value::as_str);
     let next_actor = raw_actor.and_then(|raw| canonical_actor(world, raw));
     let terminal_values = protocol
         .get("terminal_phase_values")
         .and_then(Value::as_array)
         .cloned()
-        .unwrap_or_else(|| vec![Value::String("over".to_string()), Value::String("ended".to_string())]);
+        .unwrap_or_else(|| {
+            vec![
+                Value::String("over".to_string()),
+                Value::String("ended".to_string()),
+            ]
+        });
     let game_over = phase
         .as_deref()
-        .map(|value| terminal_values.iter().any(|item| item.as_str() == Some(value)))
+        .map(|value| {
+            terminal_values
+                .iter()
+                .any(|item| item.as_str() == Some(value))
+        })
         .unwrap_or(false);
     let turn_ended = game_over || next_actor.as_deref().is_some_and(|next| next != actor);
     GameTurnTransition {
@@ -216,7 +227,9 @@ fn derive_turn_from_view(
         previous_actor: previous.map(|state| state.active_actor.clone()),
         next_actor: next_actor.clone(),
         phase,
-        turn_index: previous.map(|state| state.turn_index + i64::from(turn_ended)).unwrap_or(0),
+        turn_index: previous
+            .map(|state| state.turn_index + i64::from(turn_ended))
+            .unwrap_or(0),
         sequence: previous.map(|state| state.sequence + 1).unwrap_or(1),
         continue_action: !turn_ended && !game_over,
         turn_ended,
@@ -315,7 +328,11 @@ fn record_trace(
 ) {
     let (status, result_json, error) = match result {
         Ok(value) => ("completed", bounded_json(value), String::new()),
-        Err(error) => ("failed", "null".to_string(), error.chars().take(1024).collect()),
+        Err(error) => (
+            "failed",
+            "null".to_string(),
+            error.chars().take(1024).collect(),
+        ),
     };
     // 测试和旧的嵌入式调用者可能使用精简 schema；缺少调试表时不应改变业务结果。
     let _ = conn.execute(
@@ -439,13 +456,7 @@ pub fn resolve_action(
     let command_id = uuid::Uuid::new_v4().to_string();
     let mut transition = if let Some(state_handler) = protocol_state_handler(world) {
         let view = invoke(conn, world, session_id, state_handler, json!({}), "system")?;
-        derive_turn_from_view(
-            world,
-            &view,
-            actor,
-            previous.as_ref(),
-            command_id,
-        )
+        derive_turn_from_view(world, &view, actor, previous.as_ref(), command_id)
     } else {
         derive_turn_from_view(world, &result, actor, previous.as_ref(), command_id)
     };
@@ -467,18 +478,24 @@ pub fn apply_agent_turn_tool_choice(
     speaker: &str,
     request: &mut crate::services::llm::client::ChatRequest,
 ) -> Result<(), String> {
-    if !request.tools.as_ref().is_some_and(|tools| tools.iter().any(|tool| {
-        tool_handler(world, &tool.name, speaker).is_some()
-    })) {
+    if !request.tools.as_ref().is_some_and(|tools| {
+        tools
+            .iter()
+            .any(|tool| tool_handler(world, &tool.name, speaker).is_some())
+    }) {
         return Ok(());
     }
     let trigger = &world.ui_theme_config["logic"]["agent_turn"];
     let required = if let Some(state_handler) = protocol_state_handler(world) {
         let view = invoke(conn, world, session_id, state_handler, json!({}), "system")?;
         let transition = derive_turn_from_view(world, &view, "agent", None, String::new());
-        transition.next_actor.as_deref() == Some("agent") && transition.phase.as_deref() != Some("over")
+        transition.next_actor.as_deref() == Some("agent")
+            && transition.phase.as_deref() != Some("over")
     } else {
-        let (Some(handler), Some(field)) = (trigger["view_handler"].as_str(), trigger["when_field"].as_str()) else {
+        let (Some(handler), Some(field)) = (
+            trigger["view_handler"].as_str(),
+            trigger["when_field"].as_str(),
+        ) else {
             return Ok(());
         };
         let view = invoke(conn, world, session_id, handler, json!({}), "system")?;
@@ -768,7 +785,11 @@ mod tests {
         let (conn, world) = setup();
         invoke(&conn, &world, "s1", "game.newGame", json!({}), "player").unwrap();
         let repo = WorldKvRepository::new(&conn);
-        let mut state = repo.get("session", "s1", "game", "state").unwrap().unwrap().value;
+        let mut state = repo
+            .get("session", "s1", "game", "state")
+            .unwrap()
+            .unwrap()
+            .value;
         state["tubes"] = json!(["water", "poison", "water"]);
         state["consumed"] = json!([]);
         state["turn"] = json!("devil");
@@ -780,19 +801,44 @@ mod tests {
         request.tools = Some(tool_definitions(&world));
         let speaker = "\u{5c0f}\u{6076}\u{9b54}";
         apply_agent_turn_tool_choice(&conn, &world, "s1", speaker, &mut request).unwrap();
-        assert!(matches!(request.tool_choice, Some(crate::services::llm::client::ChatToolChoice::Required)));
+        assert!(matches!(
+            request.tool_choice,
+            Some(crate::services::llm::client::ChatToolChoice::Required)
+        ));
         for action in ["use_incense", "drink_opponent"] {
             let handler = tool_handler(&world, "poison_feast_act", speaker).unwrap();
-            let result = invoke(&conn, &world, "s1", &handler, json!({"action":action}), "agent").unwrap();
+            let result = invoke(
+                &conn,
+                &world,
+                "s1",
+                &handler,
+                json!({"action":action}),
+                "agent",
+            )
+            .unwrap();
             assert_eq!(result["applied"], true);
             assert_eq!(result["turn_ended"], false);
             apply_agent_turn_tool_choice(&conn, &world, "s1", speaker, &mut request).unwrap();
-            assert!(matches!(request.tool_choice, Some(crate::services::llm::client::ChatToolChoice::Required)));
+            assert!(matches!(
+                request.tool_choice,
+                Some(crate::services::llm::client::ChatToolChoice::Required)
+            ));
         }
-        let result = invoke(&conn, &world, "s1", "game.devilAct", json!({"action":"drink_opponent"}), "agent").unwrap();
+        let result = invoke(
+            &conn,
+            &world,
+            "s1",
+            "game.devilAct",
+            json!({"action":"drink_opponent"}),
+            "agent",
+        )
+        .unwrap();
         assert_eq!(result["turn_ended"], true);
         apply_agent_turn_tool_choice(&conn, &world, "s1", speaker, &mut request).unwrap();
-        assert!(matches!(request.tool_choice, Some(crate::services::llm::client::ChatToolChoice::None)));
+        assert!(matches!(
+            request.tool_choice,
+            Some(crate::services::llm::client::ChatToolChoice::None)
+        ));
     }
 
     #[test]
@@ -817,7 +863,15 @@ mod tests {
             "player"
         )
         .is_err());
-        assert!(invoke(&conn, &world, "s1", "internal.not_declared", json!({}), "agent").is_err());
+        assert!(invoke(
+            &conn,
+            &world,
+            "s1",
+            "internal.not_declared",
+            json!({}),
+            "agent"
+        )
+        .is_err());
         world.ui_theme_config["logic"]["source"] =
             json!("world.register('game.newGame',()=>{while(true){}});");
         world.ui_theme_config["logic"]["timeout_ms"] = json!(100);
@@ -828,7 +882,13 @@ mod tests {
     fn framework_command_protocol_owns_turn_handoff() {
         let (conn, world) = setup();
         let started = resolve_action(
-            &conn, &world, "s1", "game.newGame", json!({}), "player", None,
+            &conn,
+            &world,
+            "s1",
+            "game.newGame",
+            json!({}),
+            "player",
+            None,
         )
         .unwrap();
         assert_eq!(started.transition.next_actor.as_deref(), Some("player"));

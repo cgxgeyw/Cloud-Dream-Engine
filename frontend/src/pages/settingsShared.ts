@@ -1,39 +1,4 @@
 // Extracted from SettingsPage.tsx — tabs, provider presets, form state
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
-import { useNavigate } from "react-router-dom";
-import { useIsMobile } from "../components/ResponsiveLayout";
-import { useSectionParam } from "../hooks/useSectionParam";
-import { open } from "@tauri-apps/plugin-dialog";
-import {
-  assetUrl,
-  createModel,
-  deleteModel,
-  discoverModels,
-  fetchModels,
-  fetchSettings,
-  getExportDirectorySuggestion,
-  isAndroidRuntime,
-  isTauriEnvironment,
-  setDefaultModel,
-  testImageModel,
-  testModel,
-  updateModel,
-  updateSettings,
-  uploadFile,
-  type ImageModelTestResult,
-  type ModelConfigResponse,
-  type SettingsResponse,
-} from "../data/apiAdapter";
-import { GenerationParamsEditor } from "../components/GenerationParamsEditor";
-import { ImageModelTestPanel } from "../components/ImageModelTestPanel";
-import { ConfirmDialog } from "../components/ModalDialog";
-import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
-import { showToast } from "../components/Toast";
-import { useSettings } from "../data/SettingsContext";
-import { ArrowLeft, ChevronRight } from "lucide-react";
-import { ThemePicker } from "../components/ThemePicker";
-import { WorldPermissionsPanel } from "../components/WorldPermissionsPanel";
-import { useT } from "../data/i18n/context";
 
 
 export const BUILTIN_EMBEDDING_MODEL_ID = "BAAI/bge-small-zh-v1.5";

@@ -143,11 +143,9 @@ pub fn ensure_media_payload_valid(
                 // 只解前 16 个 base64 字符（12 字节）看魔数即可。
                 let head_len = (payload.len().min(16) / 4) * 4;
                 let head = &payload[..head_len];
-                let decoded = base64::Engine::decode(
-                    &base64::engine::general_purpose::STANDARD,
-                    head,
-                )
-                .unwrap_or_default();
+                let decoded =
+                    base64::Engine::decode(&base64::engine::general_purpose::STANDARD, head)
+                        .unwrap_or_default();
                 if !looks_like_image(&decoded) {
                     return Err(
                         "图片附件不是有效的图片文件（可能误选了压缩包或其他格式），请重新选择后重试。"

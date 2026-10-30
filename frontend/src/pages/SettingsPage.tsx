@@ -37,7 +37,6 @@ import { useT } from "../data/i18n/context";
 import {
   BUILTIN_EMBEDDING_MODEL_ID,
   ModelFormState,
-  ModelTabId,
   TabId,
   commonProviderOptions,
   defaultModelForm,
@@ -59,7 +58,7 @@ export function SettingsPage() {
   const [activeTab, setActiveTab] = useState<TabId>("text-model");
   // 移动端「打开某项设置」由 URL 的 ?section= 驱动（见 useSectionParam）：
   // 打开即 push 一条历史，关闭则在有应用内历史时走历史回退、否则清参数回到列表。
-  const { activeSection, openSection: openSectionParam, closeSection } = useSectionParam<TabId>(
+  const { activeSection, openSection: openSectionParam } = useSectionParam<TabId>(
     tabIds.map((tab) => tab.id),
   );
 
@@ -150,12 +149,6 @@ export function SettingsPage() {
     }
     setError(null);
     closeModelEditor();
-  }
-
-  function closeMobileSection() {
-    closeModelEditor();
-    setError(null);
-    closeSection();
   }
 
 

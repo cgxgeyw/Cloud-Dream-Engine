@@ -8,9 +8,6 @@
 export type ThemeMode = "light" | "dark";
 export type ThemeStyle = "default" | "kawaii" | "mondrian";
 
-/** @deprecated Use ThemeMode + ThemeStyle instead. Kept for backward compat. */
-export type AppTheme = ThemeMode;
-
 export const ALL_THEME_STYLES: { id: ThemeStyle; label: string; description: string }[] = [
   { id: "default", label: "默认", description: "干净明亮的现代风格" },
   { id: "kawaii", label: "糖果梦境", description: "奶油底色 · 紫薄荷桃多色糖果 · 柔和" },
@@ -65,18 +62,4 @@ export function applyStyle(style: ThemeStyle) {
 export function persistStyle(style: ThemeStyle) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(STYLE_STORAGE_KEY, style);
-}
-
-// ─── Backward-compatible wrappers (AppTheme) ───
-
-export function resolveInitialTheme(): AppTheme {
-  return resolveInitialMode();
-}
-
-export function applyTheme(theme: AppTheme) {
-  applyMode(theme);
-}
-
-export function persistTheme(theme: AppTheme) {
-  persistMode(theme);
 }

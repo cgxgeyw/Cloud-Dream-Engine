@@ -557,7 +557,10 @@ mod tests {
         .expect_err("empty content without pass must fail");
 
         assert_eq!(failure.failure_code, "schema_validation_failed");
-        assert!(failure.schema_errors.iter().any(|value| value == "content is required"));
+        assert!(failure
+            .schema_errors
+            .iter()
+            .any(|value| value == "content is required"));
     }
 
     /// 截断但已解析出可用对象时不作废整轮：宽松解析常能补全尾部被截的 JSON。

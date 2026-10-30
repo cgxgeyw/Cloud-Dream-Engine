@@ -262,10 +262,6 @@ export function NewGameSetupPage() {
                 <strong>{t("newGame.openingLocation")}</strong>
                 <span>{world.opening_scene || t("newGame.notSet")}</span>
               </div>
-              <div className="newgame-info-row">
-                <strong>{t("newGame.timeSystem")}</strong>
-                <span>{world.time_system || t("newGame.notSet")}</span>
-              </div>
               <div className="newgame-info-row newgame-info-row--wide">
                 <strong>{t("newGame.presentCharacters")}</strong>
                 <span>{characters.length > 0 ? characters.map((item) => item.name).join(" / ") : t("newGame.noCharacters")}</span>

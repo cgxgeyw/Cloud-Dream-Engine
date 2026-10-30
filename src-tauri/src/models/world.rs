@@ -12,7 +12,6 @@ pub struct WorldDefinition {
     pub summary: String,
     pub time_system: String,
     pub map_nodes: serde_json::Value,
-    pub triggers: Vec<String>,
     pub time_config: serde_json::Value,
     pub director_config: serde_json::Value,
     pub ui_theme_config: serde_json::Value,
@@ -39,7 +38,6 @@ pub struct WorldCreateRequest {
     pub summary: String,
     pub time_system: String,
     pub map_nodes: serde_json::Value,
-    pub triggers: Vec<String>,
     pub time_config: serde_json::Value,
     pub director_config: serde_json::Value,
     pub ui_theme_config: serde_json::Value,
@@ -70,7 +68,6 @@ pub struct WorldUpdateRequest {
     pub summary: Option<String>,
     pub time_system: Option<String>,
     pub map_nodes: Option<serde_json::Value>,
-    pub triggers: Option<Vec<String>>,
     pub time_config: Option<serde_json::Value>,
     pub director_config: Option<serde_json::Value>,
     pub ui_theme_config: Option<serde_json::Value>,
@@ -169,7 +166,6 @@ pub struct WorldPackageWorldData {
     pub summary: String,
     pub time_system: String,
     pub map_nodes: serde_json::Value,
-    pub triggers: Vec<String>,
     pub time_config: serde_json::Value,
     pub director_config: serde_json::Value,
     pub ui_assets_config: serde_json::Value,
@@ -178,7 +174,7 @@ pub struct WorldPackageWorldData {
     #[serde(default)]
     pub attribute_schemas: Vec<crate::models::attribute::AttributeSchemaCreateRequest>,
     #[serde(default)]
-    pub initial_inventory_items: Vec<crate::models::session::InventoryItem>,
+    pub character_attribute_values: Vec<WorldPackageCharacterAttributeValue>,
     #[serde(default)]
     pub ui_runtime_version: Option<u32>,
     #[serde(default)]
@@ -196,6 +192,13 @@ pub struct WorldPackageWorldData {
     pub player_character_name: Option<String>,
     pub opening_character_source_ids: Vec<String>,
     pub player_character_source_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorldPackageCharacterAttributeValue {
+    pub source_character_id: String,
+    pub key: String,
+    pub value: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

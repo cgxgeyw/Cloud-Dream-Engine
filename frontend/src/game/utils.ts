@@ -1,11 +1,8 @@
 import type { CSSProperties } from "react";
 import {
-  assetUrl,
   type ChatMessageResponse,
   type CharacterResponse,
   type PlayerActionMode,
-  type RetryFailedLlmStepRequest,
-  type SaveResponse,
   type SessionSnapshotResponse,
   type SwitchCharacterProposalRequest,
   type WorldResponse,

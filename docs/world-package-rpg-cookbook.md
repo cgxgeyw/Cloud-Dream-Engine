@@ -29,7 +29,7 @@
 
 ## 2. 分清三种状态
 
-1. **引擎权威状态**：场景、位置、在场角色、角色属性、背包、规则和记忆。由主控结构化写回，适合叙事游戏的核心状态。世界包用 `attribute_schemas` 声明属性和默认值，用 `initial_inventory_items` 声明开局背包。
+1. **引擎权威状态**：场景、位置、在场角色、角色属性、背包、规则和记忆。由主控结构化写回，适合叙事游戏的核心状态。世界包用 `attribute_schemas` 声明属性和默认值，背包也只是一个世界级列表属性（开局物品写在 `default_value`）。
 2. **session KV**：单个存档内的路线、开关、计分和轻量聚合值。声明 `variables` namespace 后，可用 `{{var:key}}` 注入 Prompt。
 3. **records**：任务日志、事件历史、交易、图鉴等多条同构记录。需要主动通过 UI action 或 logic.js 写入。
 
@@ -39,7 +39,7 @@
 
 `map_nodes` 的 `nodes/root` 和顶层 `edges` 负责地图展示。边的 `source/target` 填节点 `label`。地图不会自动解锁角色、触发事件或推进章节。
 
-`triggers` 当前只是预留元数据，没有执行语义。自动逻辑使用：
+自动逻辑（本地确定性脚本）使用：
 
 - `session_start`：初始化存档变量。
 - `turn_completed`：回合完成后记日志、累计数值。
@@ -60,7 +60,7 @@
 
 常驻模块不填写 `keywords`。条件模块通过 `keywords` 控制是否注入，不能写 `scope: "keyword"`。世界背景写稳定设定；Prompt 模块写运行规则、条件知识和会话变量，不要重复堆砌同一段世界观。
 
-## 5. 交互必须进入世界主控回复 JSON
+## 5. 交互用主控工具发起
 
 先在 `director_config` 声明：
 
@@ -71,28 +71,22 @@
 然后在世界主控提示词中说明何时出题，例如：
 
 ```text
-当路线仍为“未选择”且剧情来到岔路时，必须用 choice 让玩家从 join、defend、flee 中选择；不要把三个选项只写成正文列表。
+当路线仍为“未选择”且剧情来到岔路时，必须让玩家从 join、defend、flee 中选择；不要把三个选项只写成正文列表。
 ```
 
-写主控提示词的通用原则（同样适用于角色提示词）：每要求一个输出字段，都要附一个完整、可直接解析的 JSON 示例，并明确要求"只输出 JSON 本身、不用代码围栏、字符串内换行写 `\n`"。只描述字段不给示例是模型输出无法解析的最常见原因。详见《world-package-guide-v3.md》"角色提示词怎么写"一节。
-
-宿主会把允许类型和精确格式加入世界主控回复契约。模型应输出：
+宿主会按声明自动向主控下发 `request_player_interaction` 工具。模型调用该工具发起交互（调用后本回合立即结束、等待玩家作答）：
 
 ```json
-"interaction": {
+{
   "kind": "choice",
   "prompt": "你准备如何应对？",
-  "config": {
-    "options": [
-      { "id": "join", "label": "投奔义军" },
-      { "id": "defend", "label": "守护乡里" },
-      { "id": "flee", "label": "避乱南下" }
-    ]
-  }
+  "options": ["投奔义军", "守护乡里", "避乱南下"]
 }
 ```
 
-玩家点击后，宿主会把选项 `label` 作为一条真实玩家回复并自动启动下一回合。主控会像处理普通输入一样处理这次选择，并用 `next_location`、`scene_visible_characters`、`inventory_items` 和属性更新写回结果，不需要 logic.js 中转。
+写主控提示词的通用原则（同样适用于角色提示词）：要求模型输出 JSON 字段时，都要附一个完整、可直接解析的示例，并明确要求"只输出 JSON 本身、不用代码围栏、字符串内换行写 `\n`"。只描述字段不给示例是模型输出无法解析的最常见原因。详见《world-package-guide-v3.md》"角色提示词怎么写"一节。
+
+玩家点击后，宿主会把选项 `label` 作为一条真实玩家回复并自动启动下一回合。主控会像处理普通输入一样处理这次选择，并通过 `change_scene` 工具和属性更新写回结果，不需要 logic.js 中转。
 
 ## 6. 用属性把结果接回世界
 
@@ -127,13 +121,11 @@ character_attribute_updates 更新 starter_route；奔跑、攀爬或负重时�
 starter_stamina。不能只在叙事中描述变化。
 ```
 
-主控返回示例：
+主控返回示例（场景与在场名单的变化走 `change_scene` 工具，不写 JSON 字段）：
 
 ```json
 {
   "planned_speakers": ["乡勇首领"],
-  "next_location": "村东土垒",
-  "scene_visible_characters": ["乡勇首领"],
   "character_attribute_updates": [
     { "character_name": "玩家角色名", "key": "starter_route", "value": "守护乡里" },
     { "character_name": "玩家角色名", "key": "starter_stamina", "value": 92 }
@@ -189,7 +181,6 @@ starter_stamina。不能只在叙事中描述变化。
 - 每个交互回答都会作为玩家消息进入下一回合；需要持久化的结果由主控写入权威状态。
 - 每个持久化值都有写入者和消费方。
 - 核心角色状态没有同时复制到 KV、records 或自定义面板状态。
-- 没有把 `triggers` 当作事件系统。
 - 没有引用 ZIP 中不存在的资源。
 - 地图、角色和设定只暴露当前剧情阶段需要的内容。
 - 桌面和移动 UI 都包含聊天、输入、状态入口和退出路径。

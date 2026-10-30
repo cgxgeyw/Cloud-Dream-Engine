@@ -1,13 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   createAttributeSchema,
   deleteAttributeSchema,
   fetchAttributeSchemas,
   fetchAttributeValues,
   upsertAttributeValue,
+  updateAttributeSchema,
   type AttributeSchemaResponse,
   type AttributeValueType,
 } from "../data/apiAdapter";
+import { GripVertical, Plus } from "lucide-react";
+import "./AttributePanel.css";
 
 type Scope = "world" | "character";
 type OwnerType = "world" | "character";
@@ -16,6 +19,8 @@ type AttributePanelProps = {
   scope: Scope;
   ownerType: OwnerType;
   ownerId?: string;
+  worldId?: string;
+  onSchemaChange?: () => void;
 };
 
 type DraftState = {
@@ -34,6 +39,10 @@ const emptyDraft: DraftState = {
   description: "",
   defaultValue: "",
   enumOptions: "",
+};
+
+const valueTypeLabels: Record<AttributeValueType, string> = {
+  text: "文本", number: "数值", boolean: "布尔", list: "列表", json: "JSON",
 };
 
 function stringifyValue(value: unknown) {
@@ -123,7 +132,7 @@ function schemaAppliesToOwner(schema: AttributeSchemaResponse, scope: Scope, own
   return applicableWorldIds.map(String).includes(ownerId);
 }
 
-export function AttributePanel({ scope, ownerType, ownerId }: AttributePanelProps) {
+export function AttributePanel({ scope, ownerType, ownerId, worldId, onSchemaChange }: AttributePanelProps) {
   const [schemas, setSchemas] = useState<AttributeSchemaResponse[]>([]);
   const [valueMap, setValueMap] = useState<Map<string, string>>(new Map());
   const [draft, setDraft] = useState<DraftState>(emptyDraft);
@@ -132,6 +141,11 @@ export function AttributePanel({ scope, ownerType, ownerId }: AttributePanelProp
   const [savingSchema, setSavingSchema] = useState(false);
   const [savingValueId, setSavingValueId] = useState<string | null>(null);
   const [deletingSchemaId, setDeletingSchemaId] = useState<string | null>(null);
+  const [addingSchema, setAddingSchema] = useState(false);
+  const [draggedSchemaId, setDraggedSchemaId] = useState<string | null>(null);
+  const [selectedSchemaId, setSelectedSchemaId] = useState<string | null>(null);
+  const [valueDrafts, setValueDrafts] = useState<Record<string, string>>({});
+  const [sorting, setSorting] = useState(false);
 
   async function loadData(options?: { isCancelled?: () => boolean }) {
     const isCancelled = options?.isCancelled ?? (() => false);
@@ -140,7 +154,7 @@ export function AttributePanel({ scope, ownerType, ownerId }: AttributePanelProp
       setError(null);
 
       const [schemaData, valueData] = await Promise.all([
-        fetchAttributeSchemas(scope),
+        fetchAttributeSchemas(scope, worldId),
         ownerId ? fetchAttributeValues({ ownerType, ownerId }) : Promise.resolve([]),
       ]);
 
@@ -148,7 +162,10 @@ export function AttributePanel({ scope, ownerType, ownerId }: AttributePanelProp
       if (isCancelled()) {
         return;
       }
-      setSchemas(schemaData.filter((schema) => schemaAppliesToOwner(schema, scope, ownerId)));
+      const applicableSchemas = schemaData.filter((schema) => schemaAppliesToOwner(schema, scope, worldId));
+      setSchemas(applicableSchemas);
+      setSelectedSchemaId((current) => applicableSchemas.some((schema) => schema.id === current)
+        ? current : applicableSchemas[0]?.id ?? null);
       setValueMap(new Map(valueData.map((item) => [item.schema_id, stringifyValue(item.value)])));
     } catch (loadError) {
       if (isCancelled()) {
@@ -164,19 +181,26 @@ export function AttributePanel({ scope, ownerType, ownerId }: AttributePanelProp
 
   useEffect(() => {
     let cancelled = false;
+    setValueDrafts({});
+    setAddingSchema(false);
+    setDraft(emptyDraft);
     void loadData({ isCancelled: () => cancelled });
     return () => {
       cancelled = true;
     };
-  }, [scope, ownerType, ownerId]);
+  }, [scope, ownerType, ownerId, worldId]);
 
-  const canEditValues = useMemo(() => Boolean(ownerId), [ownerId]);
+  const selectedSchema = schemas.find((schema) => schema.id === selectedSchemaId);
 
   function updateDraftField<K extends keyof DraftState>(key: K, value: DraftState[K]) {
     setDraft((current) => ({ ...current, [key]: value }));
   }
 
   async function handleCreateSchema() {
+    if (!worldId) {
+      setError("请先保存世界，再定义该世界的属性。");
+      return;
+    }
     if (!draft.key.trim() || !draft.label.trim()) {
       setError("属性 key 和标签不能为空。");
       return;
@@ -188,6 +212,8 @@ export function AttributePanel({ scope, ownerType, ownerId }: AttributePanelProp
 
       const created = await createAttributeSchema({
         scope,
+        world_id: worldId ?? null,
+        sort_order: schemas.length,
         key: draft.key.trim(),
         label: draft.label.trim(),
         value_type: draft.valueType,
@@ -213,6 +239,9 @@ export function AttributePanel({ scope, ownerType, ownerId }: AttributePanelProp
 
       setDraft(emptyDraft);
       await loadData();
+      setSelectedSchemaId(created.id);
+      setAddingSchema(false);
+      onSchemaChange?.();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "属性创建失败");
     } finally {
@@ -237,6 +266,13 @@ export function AttributePanel({ scope, ownerType, ownerId }: AttributePanelProp
         source: "manual",
       });
       await loadData();
+      setValueDrafts((current) => {
+        if (current[schema.id] !== rawValue) return current;
+        const next = { ...current };
+        delete next[schema.id];
+        return next;
+      });
+      onSchemaChange?.();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "属性值保存失败");
     } finally {
@@ -257,6 +293,7 @@ export function AttributePanel({ scope, ownerType, ownerId }: AttributePanelProp
       setError(null);
       await deleteAttributeSchema(schema.id);
       await loadData();
+      onSchemaChange?.();
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "属性删除失败");
     } finally {
@@ -264,22 +301,92 @@ export function AttributePanel({ scope, ownerType, ownerId }: AttributePanelProp
     }
   }
 
-  return (
-    <div className="editor-content">
-      {/* 新建属性定义 */}
-      <div className="surface-panel surface-panel--pad-lg" style={{ background: "var(--color-subtle-bg)" }}>
-        <div className="editor-content" style={{ gap: 12 }}>
-          <div>
-            <strong style={{ fontSize: 15 }}>新增自定义属性</strong>
-            <p className="text-muted" style={{ marginTop: 2, marginBottom: 0, fontSize: 13 }}>
-              先创建属性定义，再为当前角色或世界保存属性值。
-            </p>
-          </div>
+  async function reorderSchemas(draggedId: string, targetId: string) {
+    if (draggedId === targetId || sorting) return;
+    const reordered = [...schemas];
+    const draggedIndex = reordered.findIndex((item) => item.id === draggedId);
+    if (draggedIndex < 0) return;
+    const [dragged] = reordered.splice(draggedIndex, 1);
+    const targetIndex = reordered.findIndex((item) => item.id === targetId);
+    if (!dragged || targetIndex < 0) return;
+    reordered.splice(targetIndex, 0, dragged);
+    setSchemas(reordered);
+    setSorting(true);
+    try {
+      await Promise.all(reordered.map((schema, sort_order) => updateAttributeSchema(schema.id, {
+        scope: schema.scope,
+        world_id: schema.world_id,
+        sort_order,
+        key: schema.key,
+        label: schema.label,
+        value_type: schema.value_type,
+        description: schema.description,
+        default_value: schema.default_value,
+        enum_options: schema.enum_options,
+        display_policy: schema.display_policy,
+        access_policy: schema.access_policy,
+        mutation_policy: schema.mutation_policy,
+        influence_policy: schema.influence_policy,
+        projection_policy: schema.projection_policy,
+      })));
+      onSchemaChange?.();
+    } catch (saveError) {
+      await loadData();
+      setError(saveError instanceof Error ? saveError.message : "属性顺序保存失败");
+    } finally {
+      setSorting(false);
+    }
+  }
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+  return (
+    <div className="attribute-panel" aria-busy={loading}>
+      {error ? <p className="text-error" role="alert">{error}</p> : null}
+      <div className="attribute-panel__layout">
+      <nav className="attribute-panel__sidebar" aria-label={scope === "world" ? "世界属性" : "角色共享属性"}>
+      <div className="attribute-panel__list-heading">
+        <div>
+          <strong>{scope === "world" ? "世界属性" : "角色共享属性"}</strong>
+          <div className="text-muted" style={{ fontSize: 12 }}>{schemas.length} 个属性 · 拖动排序</div>
+        </div>
+        <button type="button" className="action-btn" onClick={() => setAddingSchema(true)} disabled={!worldId || savingSchema} title="新增属性" aria-label="新增属性" aria-pressed={addingSchema}>
+          <Plus size={16} />
+        </button>
+      </div>
+      <div className="attribute-panel__list">
+        {loading && schemas.length === 0 ? <p className="attribute-panel__list-empty text-muted" role="status">正在加载属性...</p> : null}
+        {!loading && schemas.length === 0 ? <p className="attribute-panel__list-empty text-muted">还没有属性，点击 ＋ 新增。</p> : null}
+        {schemas.map((schema) => (
+          <div key={schema.id} className="attribute-panel__item" data-selected={!addingSchema && schema.id === selectedSchemaId}
+            data-dragging={draggedSchemaId === schema.id}
+            onDragOver={(event) => { if (!sorting) event.preventDefault(); }}
+            onDrop={(event) => { event.preventDefault(); const dragged = event.dataTransfer.getData("text/plain") || draggedSchemaId; if (dragged) void reorderSchemas(dragged, schema.id); setDraggedSchemaId(null); }}>
+            <span className="attribute-panel__grip" draggable={!sorting}
+              title="拖动排序" aria-hidden="true"
+              onDragStart={(event) => { setDraggedSchemaId(schema.id); event.dataTransfer.setData("text/plain", schema.id); event.dataTransfer.effectAllowed = "move"; }}
+              onDragEnd={() => setDraggedSchemaId(null)}><GripVertical size={15} /></span>
+            <button type="button" className="attribute-panel__select" aria-pressed={!addingSchema && schema.id === selectedSchemaId}
+              onClick={() => { setSelectedSchemaId(schema.id); setAddingSchema(false); }}>
+              <span className="attribute-panel__item-name">{schema.label}</span>
+              <span className="attribute-panel__item-meta"><span>{schema.key}</span><span>{valueTypeLabels[schema.value_type]}</span></span>
+              {Object.prototype.hasOwnProperty.call(valueDrafts, schema.id) ? <span className="attribute-panel__unsaved">未保存</span> : null}
+            </button>
+          </div>
+        ))}
+      </div>
+      </nav>
+      <div className="attribute-panel__detail">
+      {/* 新建属性定义 */}
+      {addingSchema ? <div>
+        <div className="editor-content" style={{ gap: 12 }}>
+          <strong style={{ fontSize: 15 }}>{scope === "world" ? "新增世界属性" : "新增角色共享属性"}</strong>
+          <p className="text-muted" style={{ marginTop: 2, marginBottom: 0, fontSize: 13 }}>
+            {scope === "character" ? "定义绑定当前世界，所有角色使用相同字段，各自保存属性值。" : "定义绑定当前世界，并可由世界主控更新。"}
+          </p>
+
+          <div className="attribute-panel__fields">
             <label className="editor-field">
               <span className="editor-field-label">属性 key</span>
-              <input value={draft.key} onChange={(e) => updateDraftField("key", e.target.value)} className="editor-field-input" />
+              <input autoFocus value={draft.key} onChange={(e) => updateDraftField("key", e.target.value)} className="editor-field-input" />
             </label>
             <label className="editor-field">
               <span className="editor-field-label">显示名称</span>
@@ -287,7 +394,7 @@ export function AttributePanel({ scope, ownerType, ownerId }: AttributePanelProp
             </label>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div className="attribute-panel__fields">
             <label className="editor-field">
               <span className="editor-field-label">值类型</span>
               <select
@@ -339,84 +446,59 @@ export function AttributePanel({ scope, ownerType, ownerId }: AttributePanelProp
             >
               {savingSchema ? "创建中..." : "创建属性"}
             </button>
-            {!ownerId ? (
-              <span className="text-muted" style={{ alignSelf: "center", fontSize: 13 }}>
-                请先保存当前对象，属性值才能绑定到具体记录。
-              </span>
-            ) : null}
+            <button type="button" className="action-btn" disabled={savingSchema} onClick={() => setAddingSchema(false)}>取消</button>
           </div>
         </div>
-      </div>
+      </div> : null}
 
-      {/* 已有属性列表 */}
-      <div className="editor-content">
-        <div>
-          <strong style={{ fontSize: 15 }}>已定义属性</strong>
-          <p className="text-muted" style={{ marginTop: 2, marginBottom: 0, fontSize: 13 }}>
-            当前 scope: {scope}，共 {schemas.length} 个属性。
-          </p>
+      {!addingSchema && selectedSchema ? (
+        <AttributeDetails
+          schema={selectedSchema}
+          value={valueDrafts[selectedSchema.id] ?? valueMap.get(selectedSchema.id) ?? stringifyValue(selectedSchema.default_value)}
+          disabled={!ownerId}
+          saving={savingValueId === selectedSchema.id}
+          deleting={deletingSchemaId === selectedSchema.id}
+          onChange={(value) => setValueDrafts((current) => ({ ...current, [selectedSchema.id]: value }))}
+          onSave={handleSaveValue}
+          onDelete={handleDeleteSchema}
+        />
+      ) : null}
+      {!addingSchema && !selectedSchema ? (
+        <div className="attribute-panel__empty">
+          <strong>{loading ? "正在加载属性..." : "添加第一个自定义属性"}</strong>
+          {!loading ? <p className="text-muted">{worldId ? "点击左侧 ＋ 定义属性，之后在这里查看详情和编辑值。" : "请先保存世界，再添加自定义属性。"}</p> : null}
         </div>
-
-        {loading ? <p className="text-muted">正在加载属性...</p> : null}
-        {error ? <p className="text-error">{error}</p> : null}
-
-        {!loading && schemas.length === 0 ? (
-          <p className="text-muted">还没有可用属性，先创建一个吧。</p>
-        ) : null}
-
-        {!loading && schemas.length > 0
-          ? schemas.map((schema) => {
-              const currentValue = valueMap.get(schema.id) ?? stringifyValue(schema.default_value);
-              return (
-                <AttributeValueCard
-                  key={schema.id}
-                  schema={schema}
-                  initialValue={currentValue}
-                  disabled={!canEditValues}
-                  saving={savingValueId === schema.id}
-                  deleting={deletingSchemaId === schema.id}
-                  onSave={handleSaveValue}
-                  onDelete={handleDeleteSchema}
-                />
-              );
-            })
-          : null}
+      ) : null}
+      </div>
       </div>
     </div>
   );
 }
 
-function AttributeValueCard({
+function AttributeDetails({
   schema,
-  initialValue,
+  value,
   disabled,
   saving,
   deleting,
+  onChange,
   onSave,
   onDelete,
 }: {
   schema: AttributeSchemaResponse;
-  initialValue: string;
+  value: string;
   disabled: boolean;
   saving: boolean;
   deleting: boolean;
+  onChange: (value: string) => void;
   onSave: (schema: AttributeSchemaResponse, rawValue: string) => Promise<void>;
   onDelete: (schema: AttributeSchemaResponse) => Promise<void>;
 }) {
-  const [value, setValue] = useState(initialValue);
-
-  useEffect(() => {
-    setValue(initialValue);
-  }, [initialValue]);
-
   return (
-    <div className="surface-panel surface-panel--pad-lg" style={{ background: "var(--color-subtle-bg)" }}>
       <div className="editor-content" style={{ gap: 10 }}>
-        <div>
-          <strong style={{ fontSize: 14 }}>{schema.label}</strong>
-          <span className="text-muted" style={{ fontSize: 12, marginLeft: 8 }}>
-            {schema.key} / {schema.value_type}
-          </span>
+        <div className="attribute-panel__detail-heading">
+          <strong>{schema.label}</strong>
+          <div className="text-muted" style={{ fontSize: 12, marginTop: 4 }}>{schema.key} · {valueTypeLabels[schema.value_type]}</div>
           {schema.description ? (
             <p className="text-muted" style={{ marginTop: 2, marginBottom: 0, fontSize: 13 }}>
               {schema.description}
@@ -425,19 +507,24 @@ function AttributeValueCard({
         </div>
 
         <label className="editor-field">
-          <span className="editor-field-label">当前值</span>
-          <textarea value={value} onChange={(e) => setValue(e.target.value)} className="editor-kv-value" rows={3} />
+          <span className="editor-field-label">默认值</span>
+          <pre className="attribute-panel__default">{stringifyValue(schema.default_value) || "（空）"}</pre>
         </label>
 
+        {!disabled ? <label className="editor-field">
+          <span className="editor-field-label">当前值</span>
+          <textarea value={value} onChange={(e) => onChange(e.target.value)} className="editor-kv-value" rows={7} disabled={deleting} />
+        </label> : <p className="text-muted" style={{ fontSize: 13 }}>每个角色独立保存属性值；请保存角色后，在角色编辑页设置。未设置时使用默认值。</p>}
+
         <div className="editor-actions">
-          <button
+          {!disabled ? <button
             type="button"
             onClick={() => void onSave(schema, value)}
             disabled={disabled || saving || deleting}
             className="action-btn action-btn--accent"
           >
             {saving ? "保存中..." : "保存属性值"}
-          </button>
+          </button> : null}
           <button
             type="button"
             onClick={() => void onDelete(schema)}
@@ -448,6 +535,5 @@ function AttributeValueCard({
           </button>
         </div>
       </div>
-    </div>
   );
 }

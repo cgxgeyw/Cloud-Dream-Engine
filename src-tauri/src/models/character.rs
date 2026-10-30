@@ -1,10 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 fn normalize_runtime_prompt_value(value: Option<&str>) -> String {
-    value
-        .map(str::trim)
-        .unwrap_or_default()
-        .to_string()
+    value.map(str::trim).unwrap_or_default().to_string()
 }
 
 pub fn resolve_character_system_prompt_template(value: Option<&str>) -> String {

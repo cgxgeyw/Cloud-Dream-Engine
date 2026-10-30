@@ -92,22 +92,11 @@ enum StructuredOutputMode {
     Omit,
 }
 
-#[derive(Clone, Copy)]
-enum ToolMode {
-    Include,
-    /// 保留：用于显式构造不带工具的请求（当前流式/非流式均走 Include，
-    /// 由 build_openai_request 内部按 native_tool_calling 决定是否真正附带工具）。
-    #[allow(dead_code)]
-    Omit,
-}
-
 fn build_openai_request(
     request: &ChatRequest,
     structured_mode: StructuredOutputMode,
-    tool_mode: ToolMode,
 ) -> OpenAIRequest {
-    let include_tools = matches!(tool_mode, ToolMode::Include)
-        && request.native_tool_calling.unwrap_or(false)
+    let include_tools = request.native_tool_calling.unwrap_or(false)
         && request
             .tools
             .as_ref()
@@ -384,7 +373,9 @@ fn accumulate_tool_call_deltas(
     deltas: Vec<OpenAIStreamToolCallDelta>,
 ) {
     for delta in deltas {
-        let index = delta.index.unwrap_or_else(|| tool_calls.len().saturating_sub(1));
+        let index = delta
+            .index
+            .unwrap_or_else(|| tool_calls.len().saturating_sub(1));
         if index >= tool_calls.len() {
             tool_calls.resize_with(index + 1, StreamingToolCall::default);
         }
@@ -500,13 +491,12 @@ pub async fn chat_completion(
 ) -> Result<ChatResponse, String> {
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
     let mut structured_mode = StructuredOutputMode::JsonObject;
-    let tool_mode = ToolMode::Include;
 
     let mut response = send_chat_completion(
         client,
         &url,
         api_key,
-        &build_openai_request(request, structured_mode, tool_mode),
+        &build_openai_request(request, structured_mode),
     )
     .await?;
 
@@ -531,7 +521,7 @@ pub async fn chat_completion(
                     client,
                     &url,
                     api_key,
-                    &build_openai_request(request, structured_mode, tool_mode),
+                    &build_openai_request(request, structured_mode),
                 )
                 .await?;
                 continue;
@@ -607,7 +597,7 @@ where
             stream: true,
             // 请求服务端在流末尾回送一个带 usage 的 chunk，否则流式路径拿不到 token 计量。
             stream_options: Some(serde_json::json!({ "include_usage": true })),
-            ..build_openai_request(request, structured_mode, ToolMode::Include)
+            ..build_openai_request(request, structured_mode)
         };
         let response = client
             .post(&url)
@@ -656,9 +646,7 @@ where
                 // 流读取中途失败时，已累积的 delta 已经通过 on_chunk 推送到 UI。
                 // 若已有内容/推理/工具调用，则按部分完成处理，返回已得内容，
                 // 避免 UI 显示了半截回复却又收到整体失败、显示与落库不一致。
-                if content.trim().is_empty()
-                    && reasoning.trim().is_empty()
-                    && tool_calls.is_empty()
+                if content.trim().is_empty() && reasoning.trim().is_empty() && tool_calls.is_empty()
                 {
                     return Err(format!("读取响应流失败：{}", error));
                 }
@@ -1104,7 +1092,6 @@ mod tests {
         let serialized = build_openai_request(
             &request,
             StructuredOutputMode::JsonSchema,
-            ToolMode::Include,
         );
 
         assert!(serialized.response_format.is_none());

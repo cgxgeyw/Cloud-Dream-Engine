@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  fetchAttributeSchemas,
   fetchWorldOpeningPromptPreview,
+  type AttributeSchemaResponse,
   type WorldOpeningPromptPreviewResponse,
 } from "../data/apiAdapter";
 
@@ -9,12 +11,15 @@ export type UseWorldPromptPreviewParams = {
   isNew: boolean;
   worldId: string | null | undefined;
   playerCharacterId: string | null | undefined;
+  directorConfig?: Record<string, unknown>;
 };
 
 export type WorldPromptPreviewState = {
   preview: WorldOpeningPromptPreviewResponse | null;
+  attributeSchemas: AttributeSchemaResponse[];
   loading: boolean;
   error: string | null;
+  attributeSchemaError: string | null;
   reload: () => Promise<void>;
 };
 
@@ -23,10 +28,13 @@ export function useWorldPromptPreview({
   isNew,
   worldId,
   playerCharacterId,
+  directorConfig,
 }: UseWorldPromptPreviewParams): WorldPromptPreviewState {
   const [preview, setPreview] = useState<WorldOpeningPromptPreviewResponse | null>(null);
+  const [attributeSchemas, setAttributeSchemas] = useState<AttributeSchemaResponse[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [attributeSchemaError, setAttributeSchemaError] = useState<string | null>(null);
   const requestIdRef = useRef(0);
 
   const load = useCallback(async (stableWorldId: string, stablePlayerCharacterId?: string | null) => {
@@ -35,12 +43,32 @@ export function useWorldPromptPreview({
     try {
       setLoading(true);
       setError(null);
-      const data = await fetchWorldOpeningPromptPreview(stableWorldId, {
-        playerCharacterId: stablePlayerCharacterId,
-        playerInput: "\u7ee7\u7eed",
-      });
+      setAttributeSchemaError(null);
+      const schemasPromise = Promise.all([
+        fetchAttributeSchemas("world", stableWorldId),
+        fetchAttributeSchemas("character", stableWorldId),
+      ]).then(([worldSchemas, characterSchemas]) => ({
+        schemas: [...worldSchemas, ...characterSchemas],
+      })).catch((schemaError: unknown) => ({
+        schemaError: schemaError instanceof Error ? schemaError.message : "加载属性定义失败",
+      }));
+      const [data, schemaResult] = await Promise.all([
+        fetchWorldOpeningPromptPreview(stableWorldId, {
+          playerCharacterId: stablePlayerCharacterId,
+          playerInput: "\u7ee7\u7eed",
+          directorConfig,
+        }),
+        schemasPromise,
+      ]);
       if (requestId === requestIdRef.current) {
         setPreview(data);
+        if ("schemas" in schemaResult) {
+          setAttributeSchemas(schemaResult.schemas);
+          setAttributeSchemaError(null);
+        } else {
+          setAttributeSchemas([]);
+          setAttributeSchemaError(schemaResult.schemaError);
+        }
       }
     } catch (previewError) {
       if (requestId === requestIdRef.current) {
@@ -51,7 +79,7 @@ export function useWorldPromptPreview({
         setLoading(false);
       }
     }
-  }, []);
+  }, [directorConfig]);
 
   const reload = useCallback(async () => {
     if (isNew || !worldId) {
@@ -76,5 +104,5 @@ export function useWorldPromptPreview({
     };
   }, [active, isNew, load, playerCharacterId, worldId]);
 
-  return { preview, loading, error, reload };
+  return { preview, attributeSchemas, loading, error, attributeSchemaError, reload };
 }

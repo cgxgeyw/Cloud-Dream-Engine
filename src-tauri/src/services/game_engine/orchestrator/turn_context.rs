@@ -17,7 +17,6 @@ pub(crate) struct CharacterMemoryContext {
 pub(crate) fn build_character_turn_payload(
     world: &WorldDefinition,
     speaker_name: &str,
-    speaker_profile: Option<&CharacterDefinition>,
     session: &SessionSnapshot,
     player_name: &str,
     location: &str,
@@ -27,22 +26,34 @@ pub(crate) fn build_character_turn_payload(
     recalled_memories: &[MemoryEntry],
     memory_pool: &[MemoryEntry],
     visible_attribute_lines: &[String],
-    visible_inventory_items: &[InventoryItem],
     public_scene_state_lines: &[String],
 ) -> String {
-    let speaker_character_id = speaker_profile.map(|profile| profile.id.as_str());
     let visibility_context = build_character_visibility_context_payload(
         visible_attribute_lines,
-        visible_inventory_items,
         public_scene_state_lines,
-        speaker_character_id,
-        speaker_name,
     );
     let memory_context =
         build_character_memory_context(world, session, recalled_memories, memory_pool);
+    let mut recent_dialogue = build_recent_dialogue_payload(recent_messages, player_name);
+    // The turn runner appends the current input after the persisted session history.
+    // Keep earlier identical inputs and replies from NPCs that already spoke this turn.
+    if let Some(index) = recent_messages
+        .iter()
+        .rposition(|message| message.role == "player")
+    {
+        let message = &recent_messages[index];
+        if message.content.as_str() == player_input
+            && !session
+                .messages
+                .iter()
+                .any(|saved| saved.message_id == message.message_id)
+        {
+            recent_dialogue.remove(index);
+        }
+    }
     serde_json::to_string_pretty(&serde_json::json!({
         "dialogue_history": {
-            "recent_dialogue": build_recent_dialogue_payload(recent_messages, player_name),
+            "recent_dialogue": recent_dialogue,
             "memory_context": build_memory_context_payload(&memory_context, recent_messages, player_name),
         },
         "current_state": {
@@ -303,10 +314,7 @@ pub(crate) fn extract_message_turn_index(message: &ChatMessage) -> Option<i32> {
 
 pub(crate) fn build_character_visibility_context_payload(
     visible_attribute_lines: &[String],
-    visible_inventory_items: &[InventoryItem],
     public_scene_state_lines: &[String],
-    character_id: Option<&str>,
-    character_name: &str,
 ) -> serde_json::Value {
     // 同一批可见数据原来存了三套(records 结构化 + lines 行文本，且 scene_state 还有一份)。
     // 这里把 visibility_context 定为唯一来源，只保留结构化 records，删除行文本副本；
@@ -325,14 +333,6 @@ pub(crate) fn build_character_visibility_context_payload(
             serde_json::json!(attribute_records),
         );
     }
-    let inventory_records =
-        build_visible_inventory_records(visible_inventory_items, character_id, character_name);
-    if !inventory_records.is_empty() {
-        context.insert(
-            "visible_inventory_records".to_string(),
-            serde_json::json!(inventory_records),
-        );
-    }
     serde_json::Value::Object(context)
 }
 
@@ -347,10 +347,6 @@ pub(crate) fn build_character_scene_state_payload(
     // - 数组/映射/标签为空时不放入，减少噪声与 token
     let mut state = serde_json::Map::new();
     state.insert("location".to_string(), serde_json::json!(location));
-    let time_label = session.time_label.trim();
-    if !time_label.is_empty() {
-        state.insert("time_label".to_string(), serde_json::json!(time_label));
-    }
     if !session.scene.temporary_tags.is_empty() {
         state.insert(
             "scene_tags".to_string(),
@@ -360,18 +356,6 @@ pub(crate) fn build_character_scene_state_payload(
     let state_phase = session.state.phase.trim();
     if !state_phase.is_empty() {
         state.insert("state_phase".to_string(), serde_json::json!(state_phase));
-    }
-    if !session.state.tags.is_empty() {
-        state.insert(
-            "state_tags".to_string(),
-            serde_json::json!(session.state.tags),
-        );
-    }
-    if !session.state.metrics.is_empty() {
-        state.insert(
-            "state_metrics".to_string(),
-            serde_json::json!(session.state.metrics),
-        );
     }
     let present_characters = collect_memory_participants(session);
     if !present_characters.is_empty() {
@@ -393,69 +377,18 @@ pub(crate) fn build_visible_attribute_records(
         .collect()
 }
 
-pub(crate) fn build_visible_inventory_records(
-    visible_inventory_items: &[InventoryItem],
-    character_id: Option<&str>,
-    character_name: &str,
-) -> Vec<serde_json::Value> {
-    let normalized_character_id = character_id
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
-    let normalized_character_name = character_name.trim().to_string();
-    visible_inventory_items
-        .iter()
-        .map(|item| {
-            let knowledge_scope = if item.owner_type == "character"
-                && normalized_character_id
-                    .as_ref()
-                    .map(|value| value == &item.owner_id)
-                    .unwrap_or(false)
-            {
-                "owned"
-            } else if item.disclosed_to.iter().any(|value| {
-                value == &normalized_character_name
-                    || normalized_character_id
-                        .as_ref()
-                        .map(|character_id| value == character_id)
-                        .unwrap_or(false)
-            }) {
-                "disclosed"
-            } else {
-                "public"
-            };
-            // 删除内部 UUID(item_id/owner_id)；visibility 与派生的 knowledge_scope
-            // 信息重叠，只留 knowledge_scope；description/tags/disclosed_to 空值不发。
-            let mut record = serde_json::Map::new();
-            record.insert("name".to_string(), serde_json::json!(item.name));
-            record.insert("category".to_string(), serde_json::json!(item.category));
-            record.insert("quantity".to_string(), serde_json::json!(item.quantity));
-            record.insert("owner_type".to_string(), serde_json::json!(item.owner_type));
-            record.insert(
-                "knowledge_scope".to_string(),
-                serde_json::json!(knowledge_scope),
-            );
-            if !item.description.trim().is_empty() {
-                record.insert(
-                    "description".to_string(),
-                    serde_json::json!(item.description),
-                );
-            }
-            if !item.tags.is_empty() {
-                record.insert("tags".to_string(), serde_json::json!(item.tags));
-            }
-            if !item.disclosed_to.is_empty() {
-                record.insert(
-                    "disclosed_to".to_string(),
-                    serde_json::json!(item.disclosed_to),
-                );
-            }
-            serde_json::Value::Object(record)
-        })
-        .collect()
-}
-
 pub(crate) fn parse_attribute_trace_line(line: &str) -> Option<serde_json::Value> {
     let trimmed = line.trim();
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if value
+            .get("key")
+            .and_then(serde_json::Value::as_str)
+            .is_some()
+            && value.get("current_value").is_some()
+        {
+            return Some(value);
+        }
+    }
     let (prefix_end, prefix_close) = (trimmed.find('[')?, trimmed.find(']')?);
     if prefix_end != 0 || prefix_close <= 1 {
         return None;
@@ -464,9 +397,12 @@ pub(crate) fn parse_attribute_trace_line(line: &str) -> Option<serde_json::Value
     let rest = trimmed[prefix_close + 1..].trim();
     let (key, value) = rest.split_once(" = ")?;
     Some(serde_json::json!({
+        "attribute_scope": if relation == "public" { "world" } else { "character" },
         "owner_relation": relation,
         "key": key.trim(),
-        "value": value.trim(),
+        "description": "",
+        "enum_options": [],
+        "current_value": value.trim(),
     }))
 }
 
@@ -488,11 +424,9 @@ pub(crate) fn collect_memory_participants(session: &SessionSnapshot) -> Vec<Stri
 pub(crate) fn build_public_scene_state_lines(
     session: &SessionSnapshot,
     visible_attribute_lines: &[String],
-    visible_inventory_items: &[InventoryItem],
 ) -> Vec<String> {
     let mut lines = vec![
         format!("location={}", session.location),
-        format!("time={}", session.time_label),
         format!(
             "scene_tags={}",
             if session.scene.temporary_tags.is_empty() {
@@ -512,39 +446,13 @@ pub(crate) fn build_public_scene_state_lines(
             .filter(|line| line.starts_with("[public]"))
             .cloned(),
     );
-    lines.extend(
-        visible_inventory_items
-            .iter()
-            .filter(|item| item.visibility == "public")
-            .map(|item| {
-                if item.quantity > 1 {
-                    format!("public_item={} x{}", item.name, item.quantity)
-                } else {
-                    format!("public_item={}", item.name)
-                }
-            }),
-    );
     lines
-}
-
-pub(crate) fn summarize_json_value(value: &serde_json::Value) -> String {
-    match value {
-        serde_json::Value::Null => "null".to_string(),
-        serde_json::Value::Bool(boolean) => boolean.to_string(),
-        serde_json::Value::Number(number) => number.to_string(),
-        serde_json::Value::String(text) => text.clone(),
-        serde_json::Value::Array(items) => items
-            .iter()
-            .map(summarize_json_value)
-            .collect::<Vec<_>>()
-            .join(" / "),
-        serde_json::Value::Object(_) => serde_json::to_string(value).unwrap_or_default(),
-    }
 }
 
 pub(crate) fn load_character_visible_attribute_lines(
     conn: &Connection,
     session: &SessionSnapshot,
+    world_id: &str,
     character_id: Option<&str>,
 ) -> Result<Vec<String>, String> {
     let Some(character_id) = character_id.filter(|value| !value.trim().is_empty()) else {
@@ -554,6 +462,7 @@ pub(crate) fn load_character_visible_attribute_lines(
     let schema_map = attribute_repo
         .list_schemas(None)?
         .into_iter()
+        .filter(|schema| schema.world_id.as_deref().is_none_or(|id| id == world_id))
         .map(|schema| (schema.id.clone(), schema))
         .collect::<HashMap<_, _>>();
     let mut values = attribute_repo.list_values(Some("session"), Some(&session.id), None)?;
@@ -569,6 +478,21 @@ pub(crate) fn load_character_visible_attribute_lines(
         let Some(schema) = schema_map.get(&value.schema_id) else {
             continue;
         };
+        let attribute_scope = if schema.scope == "world" {
+            "world"
+        } else {
+            "character"
+        };
+        let record = |current_value: &serde_json::Value| {
+            serde_json::json!({
+                "attribute_scope": attribute_scope,
+                "key": schema.key,
+                "description": schema.description,
+                "enum_options": schema.enum_options,
+                "current_value": current_value,
+            })
+            .to_string()
+        };
         if value.owner_type == "session" {
             if !schema
                 .access_policy
@@ -578,11 +502,7 @@ pub(crate) fn load_character_visible_attribute_lines(
             {
                 continue;
             }
-            lines.push(format!(
-                "[public] {} = {}",
-                schema.key,
-                summarize_json_value(&value.value)
-            ));
+            lines.push(record(&value.value));
             continue;
         }
 
@@ -605,50 +525,10 @@ pub(crate) fn load_character_visible_attribute_lines(
         if !can_view {
             continue;
         }
-        let relation = if owner_character_id == character_id {
-            "self"
-        } else {
-            "other"
-        };
-        lines.push(format!(
-            "[{}] {} = {}",
-            relation,
-            schema.key,
-            summarize_json_value(&value.value)
-        ));
+        lines.push(record(&value.value));
     }
     lines.sort();
     Ok(lines)
-}
-
-pub(crate) fn filter_inventory_for_character(
-    session: &SessionSnapshot,
-    character_id: Option<&str>,
-    character_name: &str,
-) -> Vec<InventoryItem> {
-    let character_name = character_name.trim().to_string();
-    let character_id = character_id.map(|value| value.trim().to_string());
-    session
-        .inventory_items
-        .iter()
-        .filter(|item| {
-            item.visibility == "public"
-                || item.disclosed_to.iter().any(|value| {
-                    value == &character_name
-                        || character_id
-                            .as_ref()
-                            .map(|character_id| value == character_id)
-                            .unwrap_or(false)
-                })
-                || character_id
-                    .as_ref()
-                    .map(|character_id| {
-                        item.owner_type == "character" && item.owner_id == *character_id
-                    })
-                    .unwrap_or(false)
-        })
-        .cloned()
-        .collect()
 }
 
 pub(crate) fn slice_character_history(
@@ -898,6 +778,19 @@ pub(crate) fn resolve_world_for_session(
 mod tests {
     use super::*;
 
+    #[test]
+    fn structured_attribute_trace_keeps_schema_and_current_value_without_owner_fields() {
+        let record = parse_attribute_trace_line(
+            r#"{"attribute_scope":"world","key":"realm","description":"修为境界","enum_options":["炼气","筑基"],"current_value":"炼气"}"#,
+        )
+        .expect("structured attribute should parse");
+        assert_eq!(record["description"], "修为境界");
+        assert_eq!(record["enum_options"][0], "炼气");
+        assert_eq!(record["current_value"], "炼气");
+        assert!(record.get("owner").is_none());
+        assert!(record.get("owner_relation").is_none());
+    }
+
     fn profile_with_strategy(memory_strategy: &str) -> CharacterDefinition {
         CharacterDefinition {
             id: "char-a".to_string(),
@@ -958,7 +851,6 @@ mod tests {
                 current: true,
             }],
             map_graph_edges: Vec::new(),
-            inventory_items: Vec::new(),
             system_log: Vec::new(),
             scene: SceneRuntime {
                 name: "七玄门山门".to_string(),
@@ -969,22 +861,23 @@ mod tests {
             generation_params: Default::default(),
         };
 
-        let scene_state = build_character_scene_state_payload(
-            &session,
-            &session.location,
-            &session.scene.name,
-        );
+        let scene_state =
+            build_character_scene_state_payload(&session, &session.location, &session.scene.name);
         assert_eq!(
             scene_state.get("location").and_then(|value| value.as_str()),
             Some("七玄门山门")
         );
         assert!(scene_state.get("scene_name").is_none());
         assert!(scene_state.get("discovered_locations").is_none());
+        assert!(scene_state.get("time_label").is_none());
 
-        let lines = build_public_scene_state_lines(&session, &[], &[]);
+        let lines = build_public_scene_state_lines(&session, &[]);
         assert!(lines.iter().any(|line| line == "location=七玄门山门"));
+        assert!(!lines.iter().any(|line| line.starts_with("time=")));
         assert!(!lines.iter().any(|line| line.starts_with("scene=")));
-        assert!(!lines.iter().any(|line| line.starts_with("discovered_locations=")));
+        assert!(!lines
+            .iter()
+            .any(|line| line.starts_with("discovered_locations=")));
         assert!(!lines.iter().any(|line| line.starts_with("world=")));
     }
 

@@ -3,13 +3,16 @@ use std::path::Path;
 
 use rusqlite::Connection;
 
-use crate::db::repositories::character_repo::CharacterRepository;
 use crate::db::repositories::attribute_repo::AttributeRepository;
+use crate::db::repositories::character_repo::CharacterRepository;
 use crate::db::repositories::world_repo::WorldRepository;
-use crate::models::character::{CharacterCreateRequest, CharacterDefinition, CharacterUpdateRequest};
+use crate::models::character::{
+    CharacterCreateRequest, CharacterDefinition, CharacterUpdateRequest,
+};
 use crate::models::session::{
-    AssetSelection, CharacterVisualState, ChatMessage, MessageContent, SceneRuntime,
-    SessionSnapshot, SessionState,
+    AssetSelection, CharacterVisualState, ChatMessage, MessageContent, RuntimeAttributeGroup,
+    RuntimeAttributeItem, SceneRuntime, SessionRuntimeAttributesResponse, SessionSnapshot,
+    SessionState,
 };
 use crate::models::world::{
     BinaryFileResponse, CharacterPromptTracePreview, WorldCreateRequest, WorldDefinition,
@@ -131,7 +134,6 @@ impl WorldService {
             summary: source_world.summary.clone(),
             time_system: source_world.time_system.clone(),
             map_nodes: source_world.map_nodes.clone(),
-            triggers: source_world.triggers.clone(),
             time_config: source_world.time_config.clone(),
             director_config: source_world.director_config.clone(),
             ui_theme_config: Self::normalize_world_ui_theme_config(&source_world.ui_theme_config),
@@ -178,7 +180,6 @@ impl WorldService {
                 summary: None,
                 time_system: None,
                 map_nodes: None,
-                triggers: None,
                 time_config: None,
                 director_config: Some(duplicated_director_config),
                 ui_theme_config: None,
@@ -235,11 +236,29 @@ impl WorldService {
 
         let world_repo = WorldRepository::new(conn);
         let char_repo = CharacterRepository::new(conn);
-        let world = Self::enrich_world(
+        let mut world = Self::enrich_world(
             world_repo
                 .get(world_id)?
                 .ok_or_else(|| "世界不存在".to_string())?,
         );
+        if let Some(director_config) = params
+            .as_ref()
+            .and_then(|value| {
+                value
+                    .get("directorConfig")
+                    .or_else(|| value.get("director_config"))
+            })
+            .filter(|value| value.is_object())
+        {
+            world.director_config = director_config.clone();
+            world = Self::enrich_world(world);
+        }
+        let all_mcp_tools =
+            crate::db::repositories::mcp_tool_repo::McpToolRepository::new(conn).list()?;
+        let mcp_servers =
+            crate::db::repositories::mcp_server_repo::McpServerRepository::new(conn).list()?;
+        let mcp_tools =
+            crate::services::mcp::executor::filter_executable_tools(&all_mcp_tools, &mcp_servers);
         let characters = char_repo.list_by_world(world_id)?;
 
         let player_character =
@@ -267,6 +286,12 @@ impl WorldService {
             &planned_characters,
             &opening_messages,
         );
+        let opening_runtime_attributes = Self::build_opening_preview_runtime_attributes(
+            conn,
+            &world,
+            &opening_session,
+            &characters,
+        );
 
         Ok(WorldOpeningPromptPreviewResponse {
             opening_calls_llm: false,
@@ -275,18 +300,25 @@ impl WorldService {
                 .iter()
                 .map(|character| character.name.clone())
                 .collect::<Vec<_>>(),
-            world_director_prompt_trace: self.director_service.build_runtime_prompt_call(
-                &world,
-                &opening_session,
-                &characters,
-                &player_input,
-                "opening_preview",
-                None,
-            ),
+            world_director_prompt_trace: self
+                .director_service
+                .build_runtime_prompt_call_with_mcp_tools(
+                    &world,
+                    &opening_session,
+                    &characters,
+                    &player_input,
+                    "opening_preview",
+                    None,
+                    &mcp_tools,
+                    &std::collections::HashMap::new(),
+                    Some(&opening_runtime_attributes),
+                    &[],
+                ),
             character_prompt_traces: planned_characters
                 .iter()
                 .map(|character| {
                     self.build_character_preview_trace(
+                        conn,
                         &world,
                         character,
                         &opening_session,
@@ -296,9 +328,11 @@ impl WorldService {
                 .collect(),
             opening_messages,
             notes: vec![
-                "创建会话时的开场预览不会调用 LLM；开场消息直接来自 world.opening_messages。".to_string(),
+                "创建会话时的开场预览不会调用 LLM；开场消息直接来自 world.opening_messages。"
+                    .to_string(),
                 "此预览展示玩家首次输入后生成的第一轮导演与角色提示词。".to_string(),
-                "预览包含运行时提示词组装、近期对话与视觉上下文，但不会执行工具或写回状态。".to_string(),
+                "预览包含运行时提示词组装、近期对话与视觉上下文，但不会执行工具或写回状态。"
+                    .to_string(),
             ],
         })
     }
@@ -308,8 +342,14 @@ impl WorldService {
         &self,
         conn: &Connection,
         world_id: &str,
-    ) -> Result<(WorldDefinition, Vec<CharacterDefinition>, Vec<crate::models::mcp_tool::McpToolDefinition>), String>
-    {
+    ) -> Result<
+        (
+            WorldDefinition,
+            Vec<CharacterDefinition>,
+            Vec<crate::models::mcp_tool::McpToolDefinition>,
+        ),
+        String,
+    > {
         let world_repo = WorldRepository::new(conn);
         let char_repo = CharacterRepository::new(conn);
         let mut world = Self::enrich_world(
@@ -318,7 +358,43 @@ impl WorldService {
                 .ok_or_else(|| "世界不存在".to_string())?,
         );
         let characters = char_repo.list_by_world(world_id)?;
-        world.ui_theme_config["knowledge_bases"] = serde_json::to_value(crate::commands::knowledge::export_bundled(conn, world_id)?).map_err(|e| e.to_string())?;
+        world.ui_theme_config["knowledge_bases"] =
+            serde_json::to_value(crate::commands::knowledge::export_bundled(conn, world_id)?)
+                .map_err(|e| e.to_string())?;
+        let schemas = AttributeRepository::new(conn)
+            .list_schemas(None)?
+            .into_iter()
+            .filter(|schema| schema.world_id.as_deref() == Some(world_id))
+            .collect::<Vec<_>>();
+        world.ui_theme_config["attribute_schemas"] =
+            serde_json::to_value(schemas).map_err(|e| e.to_string())?;
+        let attribute_repo = AttributeRepository::new(conn);
+        let schema_by_id = attribute_repo
+            .list_schemas(None)?
+            .into_iter()
+            .map(|schema| (schema.id.clone(), schema))
+            .collect::<HashMap<_, _>>();
+        let character_attribute_values = characters
+            .iter()
+            .flat_map(|character| {
+                let values = attribute_repo
+                    .list_values(Some("character"), Some(&character.id), None)
+                    .unwrap_or_default();
+                values.into_iter().filter_map(|value| {
+                    let schema = schema_by_id.get(&value.schema_id)?;
+                    if schema.world_id.as_deref() != Some(world_id) || schema.scope != "character" {
+                        return None;
+                    }
+                    Some(serde_json::json!({
+                        "source_character_id": character.id,
+                        "key": schema.key,
+                        "value": value.value,
+                    }))
+                })
+            })
+            .collect::<Vec<_>>();
+        world.ui_theme_config["character_attribute_values"] =
+            serde_json::json!(character_attribute_values);
         // v8：世界白名单引用到的 MCP 工具一并打包，导入方开箱即用。
         let mcp_tools =
             crate::db::repositories::mcp_tool_repo::McpToolRepository::new(conn).list()?;
@@ -482,12 +558,16 @@ impl WorldService {
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
             .unwrap_or_default();
-        let prompt_presets = object
-            .get("prompt_presets")
-            .and_then(|value| value.as_array())
+        let director_prompt_order = object
+            .get("director_prompt_order")
             .cloned()
-            .unwrap_or_default();
-        let director_interaction_kinds = crate::models::interaction::declared_director_interaction_kinds(raw);
+            .unwrap_or(serde_json::Value::Null);
+        let character_prompt_order = object
+            .get("character_prompt_order")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let director_interaction_kinds =
+            crate::models::interaction::declared_director_interaction_kinds(raw);
         let return_processing_rules = object
             .get("return_processing_rules")
             .and_then(|value| value.as_array())
@@ -537,7 +617,8 @@ impl WorldService {
             "director_model": director_model,
             "world_director_prompt": world_director_prompt,
             "runtime_context_prompt": runtime_context_prompt,
-            "prompt_presets": prompt_presets,
+            "director_prompt_order": director_prompt_order,
+            "character_prompt_order": character_prompt_order,
             "director_interaction_kinds": director_interaction_kinds,
             "return_processing_rules": return_processing_rules,
             "allowed_mcp_tool_ids": allowed_mcp_tool_ids,
@@ -706,11 +787,8 @@ impl WorldService {
         // 世界白名单里的 id 因此保持稳定，导入完成即可调用。
         if !imported.mcp_tools.is_empty() {
             let tool_repo = crate::db::repositories::mcp_tool_repo::McpToolRepository::new(&tx);
-            let existing_tool_ids: std::collections::BTreeSet<String> = tool_repo
-                .list()?
-                .into_iter()
-                .map(|tool| tool.id)
-                .collect();
+            let existing_tool_ids: std::collections::BTreeSet<String> =
+                tool_repo.list()?.into_iter().map(|tool| tool.id).collect();
             for tool in &imported.mcp_tools {
                 let request = crate::models::mcp_tool::McpToolCreateRequest {
                     name: tool.name.clone(),
@@ -746,7 +824,6 @@ impl WorldService {
             "storage": imported_world.ui_storage_config.clone(),
             "logic": imported_world.ui_logic_config.clone(),
             "attribute_schemas": imported_world.attribute_schemas.clone(),
-            "initial_inventory_items": imported_world.initial_inventory_items.clone(),
             "entries": {
                 "desktop": {
                     "document": desktop_ui_source,
@@ -768,35 +845,43 @@ impl WorldService {
             .map(|world| world.id);
         let world_id = match existing_world_id {
             Some(id) => id,
-            None => world_repo
-                .create(&WorldCreateRequest {
-                    name: imported_world.name.clone(),
-                    genre: imported_world.genre.clone(),
-                    background_prompt: imported_world.background_prompt.clone(),
-                    opening_scene: imported_world.opening_scene.clone(),
-                    summary: imported_world.summary.clone(),
-                    time_system: imported_world.time_system.clone(),
-                    map_nodes: imported_world.map_nodes.clone(),
-                    triggers: imported_world.triggers.clone(),
-                    time_config: imported_world.time_config.clone(),
-                    director_config: Self::normalize_world_director_config(
-                        &imported_world.director_config,
-                    ),
-                    ui_theme_config: ui_theme_config.clone(),
-                    opening_messages: imported_world.opening_messages.clone(),
-                    opening_character_ids: Vec::new(),
-                    player_character_id: None,
-                })?
-                .id,
+            None => {
+                world_repo
+                    .create(&WorldCreateRequest {
+                        name: imported_world.name.clone(),
+                        genre: imported_world.genre.clone(),
+                        background_prompt: imported_world.background_prompt.clone(),
+                        opening_scene: imported_world.opening_scene.clone(),
+                        summary: imported_world.summary.clone(),
+                        time_system: imported_world.time_system.clone(),
+                        map_nodes: imported_world.map_nodes.clone(),
+                        time_config: imported_world.time_config.clone(),
+                        director_config: Self::normalize_world_director_config(
+                            &imported_world.director_config,
+                        ),
+                        ui_theme_config: ui_theme_config.clone(),
+                        opening_messages: imported_world.opening_messages.clone(),
+                        opening_character_ids: Vec::new(),
+                        player_character_id: None,
+                    })?
+                    .id
+            }
         };
 
         let attribute_repo = AttributeRepository::new(&tx);
-        if let Some(bases) = &imported_world.knowledge_bases { crate::commands::knowledge::import_bundled(&tx, &world_id, bases)?; }
+        if let Some(bases) = &imported_world.knowledge_bases {
+            crate::commands::knowledge::import_bundled(&tx, &world_id, bases)?;
+        }
         let existing_schemas = attribute_repo.list_schemas(None)?;
-        for schema in &imported_world.attribute_schemas {
+        for declared_schema in &imported_world.attribute_schemas {
+            let mut schema = declared_schema.clone();
+            if matches!(schema.scope.as_str(), "world" | "character") {
+                schema.world_id = Some(world_id.clone());
+            }
             if let Some(existing) = existing_schemas.iter().find(|existing| {
                 existing.scope.trim() == schema.scope.trim()
                     && existing.key.trim() == schema.key.trim()
+                    && existing.world_id == schema.world_id
             }) {
                 let same_definition = existing.label.trim() == schema.label.trim()
                     && existing.value_type.trim() == schema.value_type.trim()
@@ -812,10 +897,10 @@ impl WorldService {
                     continue;
                 }
                 // 世界包更新同名属性时以包内定义为准（标签/说明/策略），避免二次导入被旧 schema 挡住。
-                attribute_repo.update_schema(&existing.id, schema)?;
+                attribute_repo.update_schema(&existing.id, &schema)?;
                 continue;
             }
-            attribute_repo.create_schema(schema)?;
+            attribute_repo.create_schema(&schema)?;
         }
 
         let mut id_map = HashMap::new();
@@ -858,12 +943,37 @@ impl WorldService {
                 .iter()
                 .find(|existing| existing.name.trim() == character.name.trim())
             {
-                Some(existing) => char_repo.update(&existing.id, &CharacterUpdateRequest::from(&request))?,
+                Some(existing) => {
+                    char_repo.update(&existing.id, &CharacterUpdateRequest::from(&request))?
+                }
                 None => char_repo.create(&world_id, &request)?,
             };
             let created_character_id = created_character.id.clone();
             id_map.insert(source_character_id, created_character_id.clone());
             name_map.insert(character.name.clone(), created_character_id);
+        }
+
+        let imported_attribute_values =
+            attribute_repo.list_schemas_for_world("character", &world_id)?;
+        for packaged_value in &imported_world.character_attribute_values {
+            let Some(character_id) = id_map.get(&packaged_value.source_character_id) else {
+                continue;
+            };
+            let Some(schema) = imported_attribute_values
+                .iter()
+                .find(|schema| schema.key == packaged_value.key)
+            else {
+                continue;
+            };
+            attribute_repo.upsert_value(
+                &crate::models::attribute::AttributeValueUpsertRequest {
+                    schema_id: schema.id.clone(),
+                    owner_type: "character".to_string(),
+                    owner_id: character_id.clone(),
+                    value: packaged_value.value.clone(),
+                    source: "world_package".to_string(),
+                },
+            )?;
         }
 
         let opening_character_ids = if !imported_world.opening_character_source_ids.is_empty() {
@@ -897,7 +1007,13 @@ impl WorldService {
 
         // 包即事实来源：升级已有世界时把界面/文案/地图这些一并刷成包内定义，
         // 只改 director_config 和角色关联会留下一半新一半旧的世界。
-        if imported_world.knowledge_bases.as_ref().is_some_and(|bases| !bases.is_empty()) { director_config["knowledge_access"] = serde_json::json!(true); }
+        if imported_world
+            .knowledge_bases
+            .as_ref()
+            .is_some_and(|bases| !bases.is_empty())
+        {
+            director_config["knowledge_access"] = serde_json::json!(true);
+        }
         let updated_world = world_repo.update(
             &world_id,
             &WorldUpdateRequest {
@@ -908,7 +1024,6 @@ impl WorldService {
                 summary: Some(imported_world.summary.clone()),
                 time_system: Some(imported_world.time_system.clone()),
                 map_nodes: Some(imported_world.map_nodes.clone()),
-                triggers: Some(imported_world.triggers.clone()),
                 time_config: Some(imported_world.time_config.clone()),
                 director_config: Some(Self::normalize_world_director_config(&director_config)),
                 ui_theme_config: Some(ui_theme_config),
@@ -1011,7 +1126,6 @@ impl WorldService {
             player_stats: Vec::new(),
             map_graph_nodes: map_topology.nodes,
             map_graph_edges: map_topology.edges,
-            inventory_items: Vec::new(),
             system_log: Vec::new(),
             scene: SceneRuntime {
                 scene_id: Self::slugify_scene_id(&opening_scene),
@@ -1038,8 +1152,6 @@ impl WorldService {
                     .collect(),
             },
             state: SessionState {
-                metrics: HashMap::new(),
-                tags: Vec::new(),
                 phase: "opening".to_string(),
             },
             // 新存档不覆盖任何采样参数：走世界与应用两层。
@@ -1049,6 +1161,7 @@ impl WorldService {
 
     fn build_character_preview_trace(
         &self,
+        conn: &Connection,
         world: &WorldDefinition,
         character: &CharacterDefinition,
         session: &SessionSnapshot,
@@ -1059,6 +1172,66 @@ impl WorldService {
             character.recent_dialogue_rounds,
             Some(session.player_character_name.as_str()),
         );
+        let mut visible_attribute_lines = Vec::new();
+        let attribute_repo =
+            crate::db::repositories::attribute_repo::AttributeRepository::new(conn);
+        let schemas = attribute_repo.list_schemas(None).unwrap_or_default();
+        let character_values = attribute_repo
+            .list_values(Some("character"), Some(&character.id), None)
+            .unwrap_or_default();
+        for schema in schemas.iter().filter(|schema| {
+            schema.world_id.as_deref().is_none_or(|id| id == world.id)
+                && schema.scope == "character"
+                && schema
+                    .access_policy
+                    .get("agent_self_read")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false)
+        }) {
+            let value = character_values
+                .iter()
+                .find(|value| value.schema_id == schema.id)
+                .map(|value| value.value.clone())
+                .unwrap_or_else(|| schema.default_value.clone());
+            visible_attribute_lines.push(
+                serde_json::json!({
+                    "attribute_scope": "character",
+                    "key": schema.key,
+                    "description": schema.description,
+                    "enum_options": schema.enum_options,
+                    "current_value": value,
+                })
+                .to_string(),
+            );
+        }
+        let world_values = attribute_repo
+            .list_values(Some("world"), Some(&world.id), None)
+            .unwrap_or_default();
+        for schema in schemas.iter().filter(|schema| {
+            schema.world_id.as_deref().is_none_or(|id| id == world.id)
+                && schema.scope == "world"
+                && schema
+                    .access_policy
+                    .get("agent_self_read")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false)
+        }) {
+            let value = world_values
+                .iter()
+                .find(|value| value.schema_id == schema.id)
+                .map(|value| value.value.clone())
+                .unwrap_or_else(|| schema.default_value.clone());
+            visible_attribute_lines.push(
+                serde_json::json!({
+                    "attribute_scope": "world",
+                    "key": schema.key,
+                    "description": schema.description,
+                    "enum_options": schema.enum_options,
+                    "current_value": value,
+                })
+                .to_string(),
+            );
+        }
         let artifacts = build_character_prompt_artifacts(
             &self.dialogue_pipeline,
             world,
@@ -1072,14 +1245,35 @@ impl WorldService {
             &recent_messages,
             &[],
             &[],
-            &[],
-            &[],
+            &visible_attribute_lines,
             &[],
             &session.scene.name,
             &session.location,
             &session.visible_characters,
             &std::collections::HashMap::new(),
             &[],
+        );
+        let all_mcp_tools = crate::db::repositories::mcp_tool_repo::McpToolRepository::new(conn)
+            .list()
+            .unwrap_or_default();
+        let mcp_servers = crate::db::repositories::mcp_server_repo::McpServerRepository::new(conn)
+            .list()
+            .unwrap_or_default();
+        let mcp_tools =
+            crate::services::mcp::executor::filter_executable_tools(&all_mcp_tools, &mcp_servers);
+        let mut tools =
+            crate::services::game_engine::director::tool_capabilities_to_chat_definitions(
+                &crate::services::game_engine::director::build_character_tool_capabilities(
+                    world, &mcp_tools,
+                ),
+            );
+        tools.extend(
+            crate::services::world_logic::tool_definitions(world)
+                .into_iter()
+                .filter(|tool| {
+                    crate::services::world_logic::tool_handler(world, &tool.name, &character.name)
+                        .is_some()
+                }),
         );
         CharacterPromptTracePreview {
             speaker: Some(character.name.clone()),
@@ -1096,6 +1290,7 @@ impl WorldService {
                 artifacts.response_contract,
                 serde_json::json!({
                     "preview": true,
+                    "tools": tools,
                     "speaker": character.name,
                     "role": character.role,
                     "background_prompt": character.background_prompt,
@@ -1119,11 +1314,93 @@ impl WorldService {
                         ),
                         serde_json::json!({
                             "json_mode": true,
-                            "note": "预览只含角色默认与世界级参数；应用级/会话级覆盖与通知工具(tools)在实际回合中才下发。"
+                            "note": "预览只含角色默认与世界级参数；应用级/会话级覆盖以实际回合为准。"
                         }),
                     ),
                 }),
             ),
+        }
+    }
+
+    fn build_opening_preview_runtime_attributes(
+        conn: &Connection,
+        world: &WorldDefinition,
+        session: &SessionSnapshot,
+        characters: &[CharacterDefinition],
+    ) -> SessionRuntimeAttributesResponse {
+        let repo = AttributeRepository::new(conn);
+        let schemas = repo
+            .list_schemas(None)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|schema| schema.world_id.as_deref() == Some(world.id.as_str()))
+            .collect::<Vec<_>>();
+        let world_values = repo
+            .list_values(Some("world"), Some(&world.id), None)
+            .unwrap_or_default();
+        let session_items = schemas
+            .iter()
+            .filter(|schema| schema.scope == "world")
+            .map(|schema| RuntimeAttributeItem {
+                schema_id: schema.id.clone(),
+                key: schema.key.clone(),
+                label: schema.label.clone(),
+                description: schema.description.clone(),
+                value_type: schema.value_type.clone(),
+                enum_options: schema.enum_options.clone(),
+                value: world_values
+                    .iter()
+                    .find(|value| value.schema_id == schema.id)
+                    .map(|value| value.value.clone())
+                    .unwrap_or_else(|| schema.default_value.clone()),
+                source: "preview_default".to_string(),
+                display_policy: serde_json::to_value(&schema.display_policy).unwrap_or_default(),
+                influence_policy: serde_json::to_value(&schema.influence_policy)
+                    .unwrap_or_default(),
+            })
+            .collect();
+        let mut character_attributes = Vec::new();
+        for character in characters {
+            let values = repo
+                .list_values(Some("character"), Some(&character.id), None)
+                .unwrap_or_default();
+            let items = schemas
+                .iter()
+                .filter(|schema| schema.scope == "character")
+                .map(|schema| RuntimeAttributeItem {
+                    schema_id: schema.id.clone(),
+                    key: schema.key.clone(),
+                    label: schema.label.clone(),
+                    description: schema.description.clone(),
+                    value_type: schema.value_type.clone(),
+                    enum_options: schema.enum_options.clone(),
+                    value: values
+                        .iter()
+                        .find(|value| value.schema_id == schema.id)
+                        .map(|value| value.value.clone())
+                        .unwrap_or_else(|| schema.default_value.clone()),
+                    source: "preview_default".to_string(),
+                    display_policy: serde_json::to_value(&schema.display_policy)
+                        .unwrap_or_default(),
+                    influence_policy: serde_json::to_value(&schema.influence_policy)
+                        .unwrap_or_default(),
+                })
+                .collect();
+            character_attributes.push(RuntimeAttributeGroup {
+                owner_type: "session_character".to_string(),
+                owner_id: format!("{}:{}", session.id, character.id),
+                owner_label: character.name.clone(),
+                items,
+            });
+        }
+        SessionRuntimeAttributesResponse {
+            session_attributes: vec![RuntimeAttributeGroup {
+                owner_type: "session".to_string(),
+                owner_id: session.id.clone(),
+                owner_label: session.world_name.clone(),
+                items: session_items,
+            }],
+            character_attributes,
         }
     }
 
@@ -1337,12 +1614,11 @@ mod tests {
                 summary: String::new(),
                 time_system: String::new(),
                 map_nodes: serde_json::json!({ "version": 1, "nodes": [] }),
-                triggers: Vec::new(),
                 time_config: serde_json::json!({}),
                 director_config: serde_json::json!({}),
                 ui_assets_config: serde_json::json!({}),
                 attribute_schemas: Vec::new(),
-                initial_inventory_items: Vec::new(),
+                character_attribute_values: Vec::new(),
                 ui_runtime_version: Some(2),
                 ui_capabilities: Vec::new(),
                 platform_features: Vec::new(),
@@ -1414,12 +1690,11 @@ mod tests {
                 summary: String::new(),
                 time_system: String::new(),
                 map_nodes: serde_json::json!({ "version": 1, "nodes": [] }),
-                triggers: Vec::new(),
                 time_config: serde_json::json!({}),
                 director_config: serde_json::json!({}),
                 ui_assets_config: serde_json::json!({}),
                 attribute_schemas: Vec::new(),
-                initial_inventory_items: Vec::new(),
+                character_attribute_values: Vec::new(),
                 ui_runtime_version: Some(3),
                 ui_capabilities: Vec::new(),
                 platform_features: Vec::new(),
@@ -1454,10 +1729,7 @@ mod tests {
         let first = service
             .persist_world_package(
                 &conn,
-                healthy_life_package(
-                    "旧版界面",
-                    vec![imported_character("coach", "健康小助手")],
-                ),
+                healthy_life_package("旧版界面", vec![imported_character("coach", "健康小助手")]),
             )
             .expect("first import");
         let coach_id_before = conn
@@ -1471,10 +1743,7 @@ mod tests {
         let second = service
             .persist_world_package(
                 &conn,
-                healthy_life_package(
-                    "新版界面",
-                    vec![imported_character("coach", "健康小助手")],
-                ),
+                healthy_life_package("新版界面", vec![imported_character("coach", "健康小助手")]),
             )
             .expect("second import");
 

@@ -3,6 +3,35 @@ use serde_json::Value;
 
 const STORAGE_NAME_MAX_BYTES: usize = 64;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn record_collections_require_explicit_storage_declarations() {
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        crate::db::schema::create_tables(&conn).expect("create schema");
+        conn.execute(
+            "INSERT INTO worlds (id, name, ui_theme_config_json) VALUES ('storage-test', 'Storage', ?1)",
+            params![serde_json::json!({ "capabilities": ["supports_world_records"] }).to_string()],
+        )
+        .expect("insert world");
+        assert!(require_record_collection(&conn, "storage-test", "entries").is_err());
+        conn.execute(
+            "UPDATE worlds SET ui_theme_config_json = ?1 WHERE id = 'storage-test'",
+            params![serde_json::json!({
+                "storage": { "collections": { "entries": { "schema": { "type": "object" } } } }
+            }).to_string()],
+        )
+        .expect("declare collection");
+        assert_eq!(
+            require_record_collection(&conn, "storage-test", "entries").unwrap(),
+            Some(serde_json::json!({ "type": "object" })),
+        );
+        assert!(require_record_collection(&conn, "storage-test", "other").is_err());
+    }
+}
+
 pub fn require_record_collection(
     conn: &Connection,
     world_id: &str,
@@ -23,14 +52,6 @@ pub fn require_record_collection(
         return Ok(config.get("schema").cloned());
     }
 
-    // Runtime v3 packages created before storage declarations used this capability.
-    if declared_collections
-        .map(|collections| collections.is_empty())
-        .unwrap_or(true)
-        && has_legacy_world_records_capability(&theme)
-    {
-        return Ok(None);
-    }
     Err(format!(
         "World package did not declare storage collection `{collection}`"
     ))
@@ -80,11 +101,7 @@ pub fn validate_record_against_schema(data: &Value, schema: Option<&Value>) -> R
     }
 
     let properties = schema.get("properties").and_then(Value::as_object);
-    if schema
-        .get("additionalProperties")
-        .and_then(Value::as_bool)
-        == Some(false)
-    {
+    if schema.get("additionalProperties").and_then(Value::as_bool) == Some(false) {
         if let Some(properties) = properties {
             if let Some(field) = data.keys().find(|field| !properties.contains_key(*field)) {
                 return Err(format!("世界记录字段 {field} 未声明"));
@@ -127,7 +144,9 @@ pub fn validate_storage_config(storage: &Value) -> Result<(), String> {
         for (name, config) in collections {
             normalize_storage_name(name, "collection")?;
             if !config.is_object() {
-                return Err(format!("storage collection `{name}` config must be an object"));
+                return Err(format!(
+                    "storage collection `{name}` config must be an object"
+                ));
             }
         }
     }
@@ -194,7 +213,9 @@ pub fn validate_logic_config(logic: &Value) -> Result<(), String> {
                     .as_array()
                     .ok_or_else(|| format!("logic.tools[{index}].speakers must be an array"))?;
                 if speakers.iter().any(|speaker| speaker.as_str().is_none()) {
-                    return Err(format!("logic.tools[{index}].speakers entries must be strings"));
+                    return Err(format!(
+                        "logic.tools[{index}].speakers entries must be strings"
+                    ));
                 }
             }
         }
@@ -220,9 +241,15 @@ pub fn validate_logic_config(logic: &Value) -> Result<(), String> {
                 let field = value
                     .as_str()
                     .filter(|value| !value.trim().is_empty() && value.len() <= 128)
-                    .ok_or_else(|| format!("logic.turn_protocol.{key} must be a non-empty string"))?;
-                if !field.chars().all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.')) {
-                    return Err(format!("logic.turn_protocol.{key} contains invalid characters"));
+                    .ok_or_else(|| {
+                        format!("logic.turn_protocol.{key} must be a non-empty string")
+                    })?;
+                if !field.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.')
+                }) {
+                    return Err(format!(
+                        "logic.turn_protocol.{key} contains invalid characters"
+                    ));
                 }
             }
         }
@@ -231,36 +258,51 @@ pub fn validate_logic_config(logic: &Value) -> Result<(), String> {
                 .as_object()
                 .ok_or_else(|| "logic.turn_protocol.actor_values must be an object".to_string())?;
             for (actor, value) in values {
-                if !matches!(actor.as_str(), "player" | "agent" | "system") || value.as_str().is_none() {
-                    return Err("logic.turn_protocol.actor_values must map player/agent/system to strings".to_string());
+                if !matches!(actor.as_str(), "player" | "agent" | "system")
+                    || value.as_str().is_none()
+                {
+                    return Err(
+                        "logic.turn_protocol.actor_values must map player/agent/system to strings"
+                            .to_string(),
+                    );
                 }
             }
         }
         if let Some(handlers) = protocol.get("command_handlers") {
-            let handlers = handlers
-                .as_object()
-                .ok_or_else(|| "logic.turn_protocol.command_handlers must be an object".to_string())?;
+            let handlers = handlers.as_object().ok_or_else(|| {
+                "logic.turn_protocol.command_handlers must be an object".to_string()
+            })?;
             for (handler, actor) in handlers {
-                validate_handler("logic.turn_protocol.command_handlers key", &Value::String(handler.clone()))?;
+                validate_handler(
+                    "logic.turn_protocol.command_handlers key",
+                    &Value::String(handler.clone()),
+                )?;
                 if !matches!(actor.as_str(), Some("player" | "agent" | "system")) {
-                    return Err(format!("logic.turn_protocol.command_handlers.{handler} has invalid actor"));
+                    return Err(format!(
+                        "logic.turn_protocol.command_handlers.{handler} has invalid actor"
+                    ));
                 }
             }
         }
         if let Some(values) = protocol.get("terminal_phase_values") {
-            let values = values
-                .as_array()
-                .ok_or_else(|| "logic.turn_protocol.terminal_phase_values must be an array".to_string())?;
+            let values = values.as_array().ok_or_else(|| {
+                "logic.turn_protocol.terminal_phase_values must be an array".to_string()
+            })?;
             if values.iter().any(|value| value.as_str().is_none()) {
-                return Err("logic.turn_protocol.terminal_phase_values entries must be strings".to_string());
+                return Err(
+                    "logic.turn_protocol.terminal_phase_values entries must be strings".to_string(),
+                );
             }
         }
         if let Some(handlers) = protocol.get("initialize_handlers") {
-            let handlers = handlers
-                .as_array()
-                .ok_or_else(|| "logic.turn_protocol.initialize_handlers must be an array".to_string())?;
+            let handlers = handlers.as_array().ok_or_else(|| {
+                "logic.turn_protocol.initialize_handlers must be an array".to_string()
+            })?;
             for (index, handler) in handlers.iter().enumerate() {
-                validate_handler(&format!("logic.turn_protocol.initialize_handlers[{index}]"), handler)?;
+                validate_handler(
+                    &format!("logic.turn_protocol.initialize_handlers[{index}]"),
+                    handler,
+                )?;
             }
         }
     }
@@ -276,11 +318,17 @@ pub fn validate_logic_config(logic: &Value) -> Result<(), String> {
             let handler = handler
                 .as_str()
                 .ok_or_else(|| format!("logic.events.{name} must be a handler name string"))?;
-            validate_handler(&format!("logic.events.{name}"), &Value::String(handler.to_string()))?;
+            validate_handler(
+                &format!("logic.events.{name}"),
+                &Value::String(handler.to_string()),
+            )?;
         }
     }
     if runtime == "sandbox-js-v1" {
-        let source = object.get("source").and_then(Value::as_str).unwrap_or_default();
+        let source = object
+            .get("source")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         if source.trim().is_empty() {
             return Err("sandbox-js-v1 requires a logic source file".to_string());
         }
@@ -304,21 +352,13 @@ fn load_world_ui_theme(conn: &Connection, world_id: &str) -> Result<Value, Strin
     serde_json::from_str(&raw).map_err(|error| format!("Invalid world UI config: {error}"))
 }
 
-fn has_legacy_world_records_capability(theme: &Value) -> bool {
-    theme
-        .get("capabilities")
-        .and_then(Value::as_array)
-        .map(|items| items.iter().any(|item| item.as_str() == Some("supports_world_records")))
-        .unwrap_or(false)
-}
-
 fn normalize_storage_name(value: &str, label: &str) -> Result<String, String> {
     let normalized = value.trim().to_ascii_lowercase();
     if normalized.is_empty()
         || normalized.len() > STORAGE_NAME_MAX_BYTES
-        || !normalized
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.'))
+        || !normalized.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
     {
         return Err(format!(
             "World storage {label} must use 1-{STORAGE_NAME_MAX_BYTES} ASCII letters, numbers, dots, dashes, or underscores"

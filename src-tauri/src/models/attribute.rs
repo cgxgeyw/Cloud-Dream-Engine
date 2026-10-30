@@ -37,6 +37,8 @@ pub fn normalize_attribute_value_type(value_type: &str) -> Option<String> {
 pub struct AttributeSchema {
     pub id: String,
     pub scope: String,
+    pub world_id: Option<String>,
+    pub sort_order: i32,
     pub key: String,
     pub label: String,
     pub value_type: String,
@@ -53,6 +55,10 @@ pub struct AttributeSchema {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttributeSchemaCreateRequest {
     pub scope: String,
+    #[serde(default)]
+    pub world_id: Option<String>,
+    #[serde(default)]
+    pub sort_order: i32,
     pub key: String,
     pub label: String,
     pub value_type: String,

@@ -136,8 +136,7 @@ impl<'a> ModelRepository<'a> {
         )
         .map_err(|e| e.to_string())?;
 
-        self.get(&id)?
-            .ok_or_else(|| "创建模型失败".to_string())
+        self.get(&id)?.ok_or_else(|| "创建模型失败".to_string())
     }
 
     pub fn update(&self, id: &str, req: &ModelConfigUpdateRequest) -> Result<ModelConfig, String> {
@@ -221,8 +220,7 @@ impl<'a> ModelRepository<'a> {
             self.set_default(id)?;
         }
 
-        self.get(id)?
-            .ok_or_else(|| "更新模型失败".to_string())
+        self.get(id)?.ok_or_else(|| "更新模型失败".to_string())
     }
 
     pub fn delete(&self, id: &str) -> Result<(), String> {
@@ -235,7 +233,10 @@ impl<'a> ModelRepository<'a> {
     pub fn set_default(&self, id: &str) -> Result<(), String> {
         let model = self.get(id)?.ok_or_else(|| "模型不存在".to_string())?;
         // L6: 清空同类默认 + 置位本行,放进事务内原子完成,避免中间态出现 0 或多个默认。
-        let tx = self.conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| e.to_string())?;
         self.conn
             .execute(
                 "UPDATE model_configs SET is_default = 0 WHERE model_type = ?1",
@@ -396,7 +397,9 @@ mod tests {
         crate::db::schema::create_tables(&conn).expect("create schema");
         let repo = ModelRepository::new(&conn);
 
-        let created = repo.create(&create_request(&["image"])).expect("create model");
+        let created = repo
+            .create(&create_request(&["image"]))
+            .expect("create model");
         assert!(!created.json_mode_disabled, "默认应开启 JSON 模式");
 
         let disabled = repo

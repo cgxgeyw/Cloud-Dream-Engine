@@ -103,7 +103,9 @@ impl ChatResponse {
         self.finish_reason
             .as_deref()
             .map(str::trim)
-            .map(|reason| reason.eq_ignore_ascii_case("length") || reason.eq_ignore_ascii_case("max_tokens"))
+            .map(|reason| {
+                reason.eq_ignore_ascii_case("length") || reason.eq_ignore_ascii_case("max_tokens")
+            })
             .unwrap_or(false)
     }
 }

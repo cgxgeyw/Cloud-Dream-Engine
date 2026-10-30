@@ -44,7 +44,9 @@ async fn request_world_permissions_impl(
     let wait = request.wait;
     use tauri::Manager;
     let bridge = app.state::<tauri_plugin_native_bridge::NativeBridge<tauri::Wry>>();
-    let granted = bridge.request_permissions(permissions.clone(), wait).await?;
+    let granted = bridge
+        .request_permissions(permissions.clone(), wait)
+        .await?;
     Ok(permissions
         .into_iter()
         .map(|permission| WorldPermissionStatus {
@@ -76,9 +78,9 @@ fn normalize_permissions(values: Vec<String>) -> Vec<String> {
     let mut output = Vec::new();
     for value in values {
         let normalized = match value.trim() {
-            "calendar" | "android.permission.READ_CALENDAR" | "android.permission.WRITE_CALENDAR" => {
-                "calendar"
-            }
+            "calendar"
+            | "android.permission.READ_CALENDAR"
+            | "android.permission.WRITE_CALENDAR" => "calendar",
             "microphone" | "mic" | "android.permission.RECORD_AUDIO" => "microphone",
             "notifications" | "notification" | "android.permission.POST_NOTIFICATIONS" => {
                 "notifications"

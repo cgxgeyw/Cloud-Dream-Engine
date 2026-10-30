@@ -34,9 +34,8 @@ impl<'a> McpToolRepository<'a> {
                     trigger_keywords: serde_json::from_str(&row.get::<_, String>(8)?)
                         .unwrap_or_default(),
                     input_schema: normalize_input_schema(
-                        serde_json::from_str(&row.get::<_, String>(9)?).unwrap_or_else(|_| {
-                            default_input_schema()
-                        }),
+                        serde_json::from_str(&row.get::<_, String>(9)?)
+                            .unwrap_or_else(|_| default_input_schema()),
                     ),
                     server_id: row.get(10)?,
                     impl_kind: row.get(11)?,
@@ -165,9 +164,8 @@ impl<'a> McpToolRepository<'a> {
                     trigger_keywords: serde_json::from_str(&row.get::<_, String>(8)?)
                         .unwrap_or_default(),
                     input_schema: normalize_input_schema(
-                        serde_json::from_str(&row.get::<_, String>(9)?).unwrap_or_else(|_| {
-                            default_input_schema()
-                        }),
+                        serde_json::from_str(&row.get::<_, String>(9)?)
+                            .unwrap_or_else(|_| default_input_schema()),
                     ),
                     server_id: row.get(10)?,
                     impl_kind: row.get(11)?,

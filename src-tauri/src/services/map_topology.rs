@@ -107,22 +107,39 @@ pub fn compile_map_topology(value: &Value, current_scene: &str) -> CompiledMapTo
     let mut edge_keys = HashSet::new();
     let mut edges = Vec::new();
     for (node, parent_id) in &nodes {
-        if let Some(parent_id) = parent_id.as_deref().map(slugify_scene_id).filter(|id| !id.is_empty()) {
+        if let Some(parent_id) = parent_id
+            .as_deref()
+            .map(slugify_scene_id)
+            .filter(|id| !id.is_empty())
+        {
             add_edge(&mut edges, &mut edge_keys, &parent_id, &node.node_id);
         }
     }
     for (source, target) in explicit_edges {
-        let source_id = id_by_label.get(&source).cloned().unwrap_or_else(|| slugify_scene_id(&source));
-        let target_id = id_by_label.get(&target).cloned().unwrap_or_else(|| slugify_scene_id(&target));
+        let source_id = id_by_label
+            .get(&source)
+            .cloned()
+            .unwrap_or_else(|| slugify_scene_id(&source));
+        let target_id = id_by_label
+            .get(&target)
+            .cloned()
+            .unwrap_or_else(|| slugify_scene_id(&target));
         add_edge(&mut edges, &mut edge_keys, &source_id, &target_id);
     }
 
     let current_scene = current_scene.trim();
-    let scene_names = nodes.iter().map(|(node, _)| node.label.clone()).collect::<Vec<_>>();
-    let mut session_nodes = nodes.into_iter().map(|(mut node, _)| {
-        node.current = !current_scene.is_empty() && map_labels_match(&node.label, current_scene);
-        node
-    }).collect::<Vec<_>>();
+    let scene_names = nodes
+        .iter()
+        .map(|(node, _)| node.label.clone())
+        .collect::<Vec<_>>();
+    let mut session_nodes = nodes
+        .into_iter()
+        .map(|(mut node, _)| {
+            node.current =
+                !current_scene.is_empty() && map_labels_match(&node.label, current_scene);
+            node
+        })
+        .collect::<Vec<_>>();
     if !current_scene.is_empty() && !session_nodes.iter().any(|node| node.current) {
         let node_id = slugify_scene_id(current_scene);
         session_nodes.push(SessionMapNode {
@@ -176,7 +193,11 @@ fn map_label_suffix(value: &str) -> &str {
         .unwrap_or(value.trim())
 }
 
-fn collect_single_node(value: &Value, parent_id: Option<String>, nodes: &mut Vec<FlatMapNode>) -> Option<String> {
+fn collect_single_node(
+    value: &Value,
+    parent_id: Option<String>,
+    nodes: &mut Vec<FlatMapNode>,
+) -> Option<String> {
     let object = value.as_object()?;
     let label = object
         .get("label")

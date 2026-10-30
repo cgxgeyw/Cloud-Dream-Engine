@@ -109,7 +109,6 @@ pub(crate) fn build_character_chat_request(
     recalled_memories: &[MemoryEntry],
     memory_pool: &[MemoryEntry],
     visible_attribute_lines: &[String],
-    visible_inventory_items: &[InventoryItem],
     public_scene_state_lines: &[String],
     kv_vars: &std::collections::HashMap<String, String>,
     generation: &GenerationParams,
@@ -130,7 +129,6 @@ pub(crate) fn build_character_chat_request(
         recalled_memories,
         memory_pool,
         visible_attribute_lines,
-        visible_inventory_items,
         public_scene_state_lines,
         scene_name,
         location,
@@ -140,13 +138,17 @@ pub(crate) fn build_character_chat_request(
     );
     // 工具下发与主控路共用同一套生成与转换逻辑：世界授权的自定义 MCP 工具与内置的
     // schedule_notification 一视同仁，不再只硬编码后者。
-    let mut definitions = tool_capabilities_to_chat_definitions(
-        &build_character_tool_capabilities(world, mcp_tools),
+    let mut definitions =
+        tool_capabilities_to_chat_definitions(&build_character_tool_capabilities(world, mcp_tools));
+    definitions.extend(
+        crate::services::world_logic::tool_definitions(world)
+            .into_iter()
+            .filter(|tool| {
+                crate::services::world_logic::tool_handler(world, &tool.name, speaker_name)
+                    .is_some()
+            }),
     );
-    definitions.extend(crate::services::world_logic::tool_definitions(world).into_iter()
-        .filter(|tool| crate::services::world_logic::tool_handler(world, &tool.name, speaker_name).is_some()));
-    let tools = Some(definitions)
-    .filter(|items| !items.is_empty());
+    let tools = Some(definitions).filter(|items| !items.is_empty());
     let native_tool_calling = tools
         .as_ref()
         .map(|items| !items.is_empty())
@@ -168,20 +170,7 @@ pub(crate) fn build_character_chat_request(
 }
 
 pub(crate) fn build_character_response_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type": "object",
-        "required": ["speaker", "content", "narration"],
-        "additionalProperties": true,
-        "properties": {
-            "speaker": { "type": "string" },
-            "content": { "type": "string" },
-            "narration": { "type": "string" },
-            "pass": {
-                "type": "boolean",
-                "description": "Set true when this character intentionally stays silent this turn. content and narration must then be empty strings."
-            }
-        }
-    })
+    crate::services::game_engine::return_format::character_response_schema()
 }
 
 pub(crate) fn build_director_transport_failure(
@@ -282,7 +271,6 @@ mod tests {
             summary: String::new(),
             time_system: String::new(),
             map_nodes: serde_json::json!({ "version": 1, "nodes": [] }),
-            triggers: Vec::new(),
             time_config: serde_json::json!({}),
             director_config: serde_json::json!({ "generation_params": generation_params }),
             ui_theme_config: serde_json::json!({}),
@@ -309,7 +297,6 @@ mod tests {
             player_stats: Vec::new(),
             map_graph_nodes: Vec::new(),
             map_graph_edges: Vec::new(),
-            inventory_items: Vec::new(),
             system_log: Vec::new(),
             scene: Default::default(),
             assets: Default::default(),
@@ -344,7 +331,6 @@ mod tests {
             "开场",
             "开场",
             "看图说话",
-            &[],
             &[],
             &[],
             &[],
@@ -385,7 +371,6 @@ mod tests {
             "开场",
             "开场",
             "纯文本",
-            &[],
             &[],
             &[],
             &[],
@@ -456,7 +441,6 @@ mod tests {
             &[],
             &[],
             &[],
-            &[],
             &std::collections::HashMap::new(),
             &GenerationParams::default(),
             &[],
@@ -514,6 +498,149 @@ mod tests {
         assert_eq!(names, vec!["stock_quote".to_string()]);
     }
 
+    /// 插值管理（世界级）与内置变量在角色运行时上下文里展开。
+    #[test]
+    fn character_runtime_context_renders_prompt_variables() {
+        let mut world = params_test_world(serde_json::json!({}));
+        world.director_config = serde_json::json!({ "prompt_variables": { "pet": "小灰" } });
+        let session = params_test_session("session-vars", "参数世界");
+        let mut character = profile_with_strategy("");
+        character.runtime_system_prompt = "{{user}}带着{{pet}}在{{location}}。".to_string();
+        let pipeline = DialoguePipeline::new();
+
+        let request = build_character_chat_request(
+            &pipeline,
+            &world,
+            &params_test_model(),
+            "Alice",
+            Some(&character),
+            &session,
+            "玩家",
+            "开场",
+            "开场",
+            "你好",
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &std::collections::HashMap::new(),
+            &GenerationParams::default(),
+            &[],
+            &[],
+        );
+
+        let section = request
+            .messages
+            .iter()
+            .find(|message| {
+                message
+                    .metadata
+                    .as_ref()
+                    .and_then(|meta| meta.get("prompt_section_id"))
+                    .and_then(|value| value.as_str())
+                    == Some("character_runtime_context")
+            })
+            .expect("character_runtime_context message");
+        let content = section.content.as_str().unwrap_or_default();
+        assert!(content.contains("玩家带着小灰在开场"), "实际: {content}");
+    }
+
+    /// 角色自定义契约完全替代内置契约：不再追加 BUILTIN_RESPONSE_CONTRACT。
+    #[test]
+    fn character_custom_response_contract_replaces_builtin() {
+        let world = params_test_world(serde_json::json!({}));
+        let session = params_test_session("session-contract", "参数世界");
+        let mut character = profile_with_strategy("");
+        character.response_contract_prompt =
+            "只返回如下 JSON，不必解释：{\"speaker\":\"名字\",\"content\":\"台词\"}".to_string();
+        let pipeline = DialoguePipeline::new();
+
+        let request = build_character_chat_request(
+            &pipeline,
+            &world,
+            &params_test_model(),
+            "Alice",
+            Some(&character),
+            &session,
+            "玩家",
+            "开场",
+            "开场",
+            "你好",
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &std::collections::HashMap::new(),
+            &GenerationParams::default(),
+            &[],
+            &[],
+        );
+
+        let section = request
+            .messages
+            .iter()
+            .find(|message| {
+                message
+                    .metadata
+                    .as_ref()
+                    .and_then(|meta| meta.get("prompt_section_id"))
+                    .and_then(|value| value.as_str())
+                    == Some("response_contract")
+            })
+            .expect("response_contract message");
+        let content = section.content.as_str().unwrap_or_default();
+        assert!(
+            content.contains("只返回如下 JSON"),
+            "自定义契约应原样发送: {content}"
+        );
+        assert!(
+            !content.contains("【回复格式】"),
+            "内置契约不应再追加: {content}"
+        );
+
+        // 留空时仍发送内置契约（默认世界的兜底）。
+        let default_request = build_character_chat_request(
+            &pipeline,
+            &world,
+            &params_test_model(),
+            "Alice",
+            Some(&profile_with_strategy("")),
+            &session,
+            "玩家",
+            "开场",
+            "开场",
+            "你好",
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &std::collections::HashMap::new(),
+            &GenerationParams::default(),
+            &[],
+            &[],
+        );
+        let default_section = default_request
+            .messages
+            .iter()
+            .find(|message| {
+                message
+                    .metadata
+                    .as_ref()
+                    .and_then(|meta| meta.get("prompt_section_id"))
+                    .and_then(|value| value.as_str())
+                    == Some("response_contract")
+            })
+            .expect("response_contract message");
+        assert!(default_section
+            .content
+            .as_str()
+            .unwrap_or_default()
+            .contains("【回复格式】"));
+    }
+
     /// 模型关闭 JSON 模式后，角色请求不再带 json_mode=true。
     /// 某些端点（实测 step-5-preview）在 json_object 下会写坏字段名。
     #[test]
@@ -533,7 +660,6 @@ mod tests {
             "开场",
             "开场",
             "你好",
-            &[],
             &[],
             &[],
             &[],
@@ -564,13 +690,16 @@ mod tests {
             &[],
             &[],
             &[],
-            &[],
             &std::collections::HashMap::new(),
             &GenerationParams::default(),
             &[],
             &[],
         );
-        assert_eq!(disabled.json_mode, Some(false), "关闭后不该再要 json_object");
+        assert_eq!(
+            disabled.json_mode,
+            Some(false),
+            "关闭后不该再要 json_object"
+        );
         assert_eq!(enabled.response_schema, disabled.response_schema);
     }
 

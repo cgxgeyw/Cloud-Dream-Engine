@@ -100,11 +100,6 @@ pub(crate) fn build_runtime_updated_session_snapshot(
             input.next_location,
         ),
         map_graph_edges: input.session.map_graph_edges.clone(),
-        inventory_items: input
-            .runtime_application
-            .inventory_items
-            .clone()
-            .unwrap_or_else(|| input.session.inventory_items.clone()),
         system_log: append_system_log(
             &merge_system_log_lines(
                 &merge_system_log_lines(
@@ -127,9 +122,9 @@ pub(crate) fn build_runtime_updated_session_snapshot(
             present_characters: resolved_scene_runtime.present_characters,
         },
         assets: input.session.assets.clone(),
+        // 阶段标签直接来自导演的 world_phase/state_phase 决定，
+        // 不再有本地状态引擎重写（旧引擎会把阶段改成英文 idle/alert/combat-ready）。
         state: SessionState {
-            metrics: input.runtime_application.state_metrics.clone(),
-            tags: input.runtime_application.state_tags.clone(),
             phase: if input.runtime_application.state_phase.trim().is_empty() {
                 input.session.state.phase.clone()
             } else {
