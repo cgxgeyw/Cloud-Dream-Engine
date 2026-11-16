@@ -41,8 +41,13 @@ build/
 /data/
 /frontend/data/
 
-# Oversized generated screenshot: keep locally, do not track (99MB)
+# Generated screenshots: local only, never commit
+/output/mortal-ui-shots/
+/output/world-ui-shots/
+/output/kb_open.png
+/output/mimo_kb1.png
 /output/mimo_kb_open.png
+/output/poison-feast-assets-preview.jpg
 
 # Logs
 *.log
