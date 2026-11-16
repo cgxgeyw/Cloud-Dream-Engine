@@ -41,6 +41,9 @@ build/
 /data/
 /frontend/data/
 
+# Oversized generated screenshot: keep locally, do not track (99MB)
+/output/mimo_kb_open.png
+
 # Logs
 *.log
 *.err
