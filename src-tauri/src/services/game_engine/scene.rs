@@ -164,7 +164,7 @@ impl SceneManager {
         next_tags
     }
 
-    fn slugify(&self, value: &str) -> String {
+    pub(crate) fn slugify(&self, value: &str) -> String {
         let slug = regex::Regex::new(r"[^a-zA-Z0-9\u4e00-\u9fff]+")
             .ok()
             .map(|re| re.replace_all(value, "-").to_string())

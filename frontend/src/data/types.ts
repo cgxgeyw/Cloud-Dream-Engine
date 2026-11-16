@@ -135,6 +135,11 @@ export type WorldOpeningPromptPreviewResponse = {
   notes: string[];
 };
 
+export type MemorySummaryPromptDefaults = {
+  character: string;
+  director: string;
+};
+
 export type WorldUiDocumentRequest = {
   source: string;
   platform?: string | null;
@@ -416,6 +421,8 @@ export type AssetSelection = {
 
 export type SessionState = {
   phase: string;
+  director_summary?: string;
+  director_history_rounds?: number | null;
 };
 
 export type SessionSnapshot = {

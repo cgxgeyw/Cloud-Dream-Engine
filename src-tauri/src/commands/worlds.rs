@@ -130,6 +130,15 @@ pub fn get_default_director_response_contract() -> Result<String, String> {
     Ok(crate::services::game_engine::director::default_director_response_contract_text())
 }
 
+/// 内置角色/主控总结提示词，供世界编辑器预填输入框。
+#[tauri::command]
+pub fn get_default_memory_summary_prompts() -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!({
+        "character": crate::services::game_engine::memory::default_character_memory_summary_prompt(),
+        "director": crate::services::game_engine::memory::default_director_memory_summary_prompt(),
+    }))
+}
+
 #[tauri::command]
 pub async fn export_world_package(
     state: State<'_, AppState>,

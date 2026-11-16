@@ -20,7 +20,7 @@ import type {
   SettingsResponse, SettingsUpdateRequest, PluginResponse,
   McpToolResponse, McpToolUpsertRequest,
   McpServerConfig, McpServerUpsertRequest, McpServerProbeResult,
-  MemoryEntry, MemoryEntity, MemoryRelation,
+  MemoryEntry, MemoryEntity, MemoryRelation, MemorySummaryPromptDefaults,
   AttributeSchemaResponse, AttributeSchemaUpsertRequest,
   AttributeValueResponse, AttributeValueUpsertRequest,
   RuntimeAttributeItem, RuntimeAttributeGroup, SessionRuntimeAttributesResponse,
@@ -243,6 +243,10 @@ export function fetchWorldOpeningPromptPreview(worldId: string, params?: { playe
 
 export function fetchDefaultDirectorResponseContract(): Promise<string> {
   unsupportedInHttpMode("fetchDefaultDirectorResponseContract");
+}
+
+export function fetchDefaultMemorySummaryPrompts(): Promise<MemorySummaryPromptDefaults> {
+  unsupportedInHttpMode("fetchDefaultMemorySummaryPrompts");
 }
 
 function unsupportedInHttpMode(name: string): never {

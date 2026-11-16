@@ -130,6 +130,8 @@ pub(crate) fn build_runtime_updated_session_snapshot(
             } else {
                 input.runtime_application.state_phase.clone()
             },
+            director_summary: input.session.state.director_summary.clone(),
+            director_history_rounds: input.session.state.director_history_rounds,
         },
         // 生成参数是玩家偏好，不由模型提议、也不随回合状态变化，原样带过。
         generation_params: input.session.generation_params.clone(),

@@ -4,7 +4,11 @@ use crate::models::mcp_tool::MCP_TOOL_SCHEDULE_NOTIFICATION_ID;
 use crate::models::session::*;
 use crate::models::world::WorldDefinition;
 use crate::services::game_engine::dialogue::DialoguePipeline;
-use crate::services::game_engine::memory::MemoryService;
+use crate::services::game_engine::memory::{
+    align_history_rounds_to_summary_bucket, resolve_memory_summary_interval, MemoryService,
+    RecallCutoff,
+};
+use crate::services::game_engine::scene::SceneManager;
 use crate::services::game_engine::structured_output::{
     validate_character_payload, StructuredOutputFailure,
 };
@@ -16,6 +20,7 @@ use crate::services::notifications::{
 use super::character_prompt::*;
 use super::request_building::*;
 use super::run::*;
+use super::session_materialization::build_turn_participants;
 use super::turn_context::*;
 use super::writeback::*;
 use crate::services::game_engine::prompting::load_prompt_kv_vars;
@@ -89,6 +94,11 @@ impl SessionOrchestrator {
                         .unwrap_or_else(|| speaker_name.clone());
                     // 自主 pass 的发言在恢复路径上同样不写入可见台词。
                     if !recovered_pass {
+                        let mut recovered_witnesses =
+                            build_turn_participants(visible_chars, &session.player_character_name);
+                        if !recovered_witnesses.contains(&recovered_speaker) {
+                            recovered_witnesses.push(recovered_speaker.clone());
+                        }
                         messages.push(ChatMessage {
                             message_id: ChatMessage::generate_id(),
                             created_at: chrono::Utc::now().to_rfc3339(),
@@ -99,7 +109,10 @@ impl SessionOrchestrator {
                             metadata: Some(serde_json::json!({
                                 "turn_index": turn_index,
                                 "recovered": true,
-                                "message_kind": "agent_response"
+                                "message_kind": "agent_response",
+                                "scene_id": SceneManager::new().slugify(next_scene_name),
+                                "scene_name": next_scene_name,
+                                "witnesses": recovered_witnesses,
                             })),
                         });
                     }
@@ -146,7 +159,19 @@ impl SessionOrchestrator {
                     resolve_character_memory_recall_limit(speaker_char),
                     (resolve_character_memory_hit_turns(world) as i32 * 6).max(12),
                 );
-                let recall_plan = memory_service.prepare_character_recall(
+                let requested_rounds = speaker_char
+                    .map(|character| character.recent_dialogue_rounds)
+                    .unwrap_or(2);
+                let summary_interval = resolve_memory_summary_interval(world);
+                let aligned_rounds = align_history_rounds_to_summary_bucket(
+                    conn,
+                    &session.id,
+                    speaker_character_id,
+                    turn_index,
+                    requested_rounds,
+                    summary_interval,
+                );
+                let recall_plan = memory_service.prepare_character_recall_with_cutoff(
                     conn,
                     world,
                     &world.id,
@@ -158,13 +183,16 @@ impl SessionOrchestrator {
                     &build_turn_participants(visible_chars, &session.player_character_name),
                     recall_limit,
                     speaker_char.map(|character| character.memory_strategy.as_str()),
+                    Some(RecallCutoff {
+                        current_turn: turn_index,
+                        raw_rounds: aligned_rounds,
+                    }),
                 )?;
                 let recent_messages = slice_character_history(
                     &messages,
-                    speaker_char
-                        .map(|character| character.recent_dialogue_rounds)
-                        .unwrap_or(2),
+                    aligned_rounds,
                     Some(session.player_character_name.as_str()),
+                    Some(speaker_name),
                 );
                 (
                     speaker_model,
@@ -715,6 +743,35 @@ impl SessionOrchestrator {
                             "reasoning_expanded": false,
                             "raw_response": raw_response.clone()
                         });
+                        // 这条台词发生在导演确定的新场景里；观众 = 新名册 + 玩家 + 实际说话人。
+                        let mut witnesses =
+                            build_turn_participants(visible_chars, &session.player_character_name);
+                        if !witnesses
+                            .iter()
+                            .any(|name| name == &parsed_response.speaker)
+                        {
+                            witnesses.push(parsed_response.speaker.clone());
+                        }
+                        if let Some(object) = message_metadata.as_object_mut() {
+                            object.insert(
+                                "scene_id".to_string(),
+                                serde_json::json!(SceneManager::new().slugify(next_scene_name)),
+                            );
+                            object.insert(
+                                "scene_name".to_string(),
+                                serde_json::json!(next_scene_name),
+                            );
+                            object.insert(
+                                "witnesses".to_string(),
+                                serde_json::json!(witnesses),
+                            );
+                            if let Some(character) = speaker_char {
+                                object.insert(
+                                    "speaker_character_id".to_string(),
+                                    serde_json::json!(character.id),
+                                );
+                            }
+                        }
                         // 本回合实际执行过的工具记入最终消息 metadata，
                         // 前端在回复下方显示「已调用：…」。
                         if !notification_tool_results.is_empty() {

@@ -62,6 +62,12 @@ pub fn director_return_fields() -> Vec<ReturnFieldSpec> {
             })),
         ),
         spec(
+            "event",
+            Some("核心字段，每回合都返回。用旁白口吻写本回合实际发生的剧情推进（1~3 句）：谁做了什么、出现什么新情况、局面发生了怎样的变化或代价。这段文字会原样展示给玩家，并进入后续历史；不要写角色台词、不要复述玩家发言、不要只写气氛或心理活动，也不要以旁白口吻替玩家做决定。即使没有角色发言，也必须给出一件推动剧情的新事件。"),
+            true,
+            Some(json!({ "type": "string" })),
+        ),
+        spec(
             "world_phase",
             Some("叙事阶段，只能是 opening、escalation 或 crisis；仅在阶段推进时返回。"),
             false,
@@ -364,12 +370,12 @@ mod tests {
         }
         assert_eq!(
             director_core_field_ids(),
-            vec!["planned_speakers"],
+            vec!["planned_speakers", "event"],
             "core 字段由 required 标记生成"
         );
         assert_eq!(
             schema.get("required").unwrap(),
-            &serde_json::json!(["planned_speakers"])
+            &serde_json::json!(["planned_speakers", "event"])
         );
         // 退役字段不得回流契约或 schema。
         for legacy in DIRECTOR_LEGACY_RETURN_FIELD_IDS {

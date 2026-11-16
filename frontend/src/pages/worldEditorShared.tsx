@@ -51,6 +51,8 @@ export type FoldableEditorSectionProps = {
   children: ReactNode;
 };
 
+export type MemoryMode = "embedding" | "oag";
+
 export type DirectorConfig = {
   service_mode: "world_sim" | "agent_chat";
   default_agent_id: string;
@@ -59,6 +61,8 @@ export type DirectorConfig = {
   };
   allow_scene_transition: boolean;
   knowledge_access: boolean;
+  /** 记忆模式：历史 + Embedding 召回 / 历史 + OAG（结构化层尚未接入）。对话历史始终注入。 */
+  memory_mode: MemoryMode;
   allow_npc_spawn: boolean;
   allow_player_character_switch: boolean;
   director_interaction_kinds: InteractionKind[];
@@ -69,8 +73,15 @@ export type DirectorConfig = {
   character_memory_event_window_rounds: number;
   character_memory_dialogue_window_rounds: number;
   character_memory_retrieval_mode: "lexical_only" | "hybrid" | "semantic_only";
-  character_memory_candidate_limit: number;
   character_memory_semantic_weight: number;
+  /** 固定桶记忆总结间隔（回合）：1-10、11-20……默认 10。 */
+  memory_summary_interval_rounds: number;
+  /** 总结用文本模型；留空用应用默认文本模型。 */
+  memory_summary_model: string;
+  /** 角色总结提示词模板；留空用内置默认。支持 {{character_name}} 等占位符。 */
+  character_memory_summary_prompt: string;
+  /** 世界主控全局总结提示词模板；留空用内置默认。 */
+  director_memory_summary_prompt: string;
   runtime_context_prompt: string;
   /** 主控返回格式：非空时完全替代框架内置返回契约。 */
   response_contract_prompt: string;
@@ -166,18 +177,22 @@ export const defaultDirectorConfig: DirectorConfig = {
   },
   allow_scene_transition: true,
   knowledge_access: false,
+  memory_mode: "embedding",
   allow_npc_spawn: true,
   allow_player_character_switch: true,
   director_interaction_kinds: [],
-  history_dialogue_rounds: 6,
+  history_dialogue_rounds: 30,
   director_tool_loop_limit: 4,
   director_model: "",
   character_memory_hit_turns: 2,
   character_memory_event_window_rounds: 10,
   character_memory_dialogue_window_rounds: 2,
   character_memory_retrieval_mode: "hybrid",
-  character_memory_candidate_limit: 200,
   character_memory_semantic_weight: 0.65,
+  memory_summary_interval_rounds: 10,
+  memory_summary_model: "",
+  character_memory_summary_prompt: "",
+  director_memory_summary_prompt: "",
   runtime_context_prompt: "",
   response_contract_prompt: "",
   prompt_variables: {},
@@ -399,6 +414,14 @@ export function normalizeDirectorConfig(raw: Record<string, unknown> | undefined
           : defaultDirectorConfig.runtime_policy.memory_write_mode,
     },
     knowledge_access: raw?.knowledge_access === true,
+    memory_mode:
+      raw?.memory_mode === "oag"
+        ? "oag"
+        : raw?.memory_mode === "embedding" || raw?.memory_mode === "history"
+          ? "embedding"
+          : raw?.oag_enabled === true
+            ? "oag"
+            : defaultDirectorConfig.memory_mode,
     allow_scene_transition:
       typeof raw?.allow_scene_transition === "boolean"
         ? raw.allow_scene_transition
@@ -412,7 +435,7 @@ export function normalizeDirectorConfig(raw: Record<string, unknown> | undefined
     director_interaction_kinds: normalizeInteractionKinds(raw?.director_interaction_kinds),
     history_dialogue_rounds:
       typeof raw?.history_dialogue_rounds === "number"
-        ? Math.max(0, Math.min(20, Math.round(raw.history_dialogue_rounds)))
+        ? Math.max(0, Math.round(raw.history_dialogue_rounds))
         : defaultDirectorConfig.history_dialogue_rounds,
     director_tool_loop_limit:
       typeof raw?.director_tool_loop_limit === "number"
@@ -440,14 +463,24 @@ export function normalizeDirectorConfig(raw: Record<string, unknown> | undefined
       raw?.character_memory_retrieval_mode === "hybrid"
         ? raw.character_memory_retrieval_mode
         : defaultDirectorConfig.character_memory_retrieval_mode,
-    character_memory_candidate_limit:
-      typeof raw?.character_memory_candidate_limit === "number"
-        ? Math.max(20, Math.min(600, Math.round(raw.character_memory_candidate_limit)))
-        : defaultDirectorConfig.character_memory_candidate_limit,
     character_memory_semantic_weight:
       typeof raw?.character_memory_semantic_weight === "number"
         ? Math.max(0, Math.min(1, Number(raw.character_memory_semantic_weight)))
         : defaultDirectorConfig.character_memory_semantic_weight,
+    memory_summary_interval_rounds:
+      typeof raw?.memory_summary_interval_rounds === "number"
+        ? Math.max(1, Math.min(100, Math.round(raw.memory_summary_interval_rounds)))
+        : defaultDirectorConfig.memory_summary_interval_rounds,
+    memory_summary_model:
+      typeof raw?.memory_summary_model === "string" ? raw.memory_summary_model : "",
+    character_memory_summary_prompt:
+      typeof raw?.character_memory_summary_prompt === "string"
+        ? raw.character_memory_summary_prompt
+        : "",
+    director_memory_summary_prompt:
+      typeof raw?.director_memory_summary_prompt === "string"
+        ? raw.director_memory_summary_prompt
+        : "",
     world_director_prompt:
       typeof raw?.world_director_prompt === "string" && raw.world_director_prompt.trim()
         ? raw.world_director_prompt

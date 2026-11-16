@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   assetUrl,
@@ -19,8 +19,9 @@ import {
 import { AttributePanel } from "../components/AttributePanel";
 import { ConfirmDialog } from "../components/ModalDialog";
 import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
+import { useIsMobile } from "../components/ResponsiveLayout";
 import { showToast } from "../components/Toast";
-import { GripVertical } from "lucide-react";
+import { ArrowLeft, ChevronRight, GripVertical, MoreHorizontal } from "lucide-react";
 import { characterPromptSections } from "./worldEditorShared";
 
 const fixedTabs = [
@@ -37,6 +38,18 @@ const fixedTabs = [
 
 type FixedTabId = (typeof fixedTabs)[number]["id"];
 
+const fixedTabMeta: Record<FixedTabId, { group: string; desc: string }> = {
+  basic: { group: "角色内容", desc: "名称、身份、所属世界与调用模型" },
+  prompt: { group: "角色内容", desc: "长期背景、系统提示词与返回格式" },
+  promptPlan: { group: "角色内容", desc: "拖动调整最终提示词片段顺序" },
+  runtimeContext: { group: "角色内容", desc: "每回合注入的实时上下文" },
+  avatar: { group: "素材", desc: "角色列表与对话头像" },
+  portrait: { group: "素材", desc: "场景与角色面板立绘" },
+  memory: { group: "记忆与属性", desc: "记忆策略与带入历史轮数" },
+  attribute: { group: "记忆与属性", desc: "角色标签与结构化属性" },
+  preview: { group: "其他", desc: "查看当前配置的完整 JSON" },
+};
+
 const newCharacterDraft: CharacterResponse = {
   id: "new",
   name: "新角色",
@@ -45,7 +58,7 @@ const newCharacterDraft: CharacterResponse = {
   background_prompt: "",
   model: "",
   memory_strategy: "",
-  recent_dialogue_rounds: 2,
+  recent_dialogue_rounds: 30,
   attributes: [],
   portrait_assets: [],
   avatar_asset: "",
@@ -82,6 +95,7 @@ export function CharacterEditorPage() {
   const sourceCharacterId = searchParams.get("fromCharacterId") ?? "";
 
   const [activeTab, setActiveTab] = useState<FixedTabId>("basic");
+  const [mobileListOpen, setMobileListOpen] = useState(true);
   const [character, setCharacter] = useState<CharacterResponse | null>(isNew ? newCharacterDraft : null);
   const [attributeSchemas, setAttributeSchemas] = useState<AttributeSchemaResponse[]>([]);
   const [worlds, setWorlds] = useState<WorldResponse[]>([]);
@@ -91,7 +105,10 @@ export function CharacterEditorPage() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showLeaveDialog, setShowLeaveDialog] = useState(false);
   const [draggedSectionId, setDraggedSectionId] = useState<string | null>(null);
+  const isMobile = useIsMobile();
+  const dirtyBaselineRef = useRef<string | null>(null);
 
   const backTarget = character?.world_id
     ? `/worlds/${character.world_id}/characters`
@@ -106,6 +123,7 @@ export function CharacterEditorPage() {
       try {
         setLoading(true);
         setError(null);
+        dirtyBaselineRef.current = null;
 
         const [worldData, modelData] = await Promise.all([fetchWorlds(), fetchModels("text")]);
         if (cancelled) {
@@ -161,6 +179,34 @@ export function CharacterEditorPage() {
   }, [id, isNew, preselectedWorldId, sourceCharacterId]);
 
   const selectedWorld = worlds.find((world) => world.id === character?.world_id) ?? null;
+  const hasUnsavedChanges = Boolean(
+    character
+    && dirtyBaselineRef.current !== null
+    && JSON.stringify(character) !== dirtyBaselineRef.current,
+  );
+  useEffect(() => {
+    if (!loading && character && dirtyBaselineRef.current === null) {
+      dirtyBaselineRef.current = JSON.stringify(character);
+    }
+  }, [loading, character]);
+  function requestLeave() {
+    if (hasUnsavedChanges) {
+      setShowLeaveDialog(true);
+      return;
+    }
+    navigate(backTarget);
+  }
+  function handleMobileBack() {
+    if (!mobileListOpen) {
+      setMobileListOpen(true);
+      return;
+    }
+    requestLeave();
+  }
+  function openMobileSection(tabId: FixedTabId) {
+    setActiveTab(tabId);
+    setMobileListOpen(false);
+  }
   useEffect(() => {
     let cancelled = false;
     if (!character?.world_id) {
@@ -333,6 +379,7 @@ export function CharacterEditorPage() {
       }
 
       setCharacter(saved);
+      dirtyBaselineRef.current = JSON.stringify(saved);
       showToast("角色已保存");
 
       if (isNew) {
@@ -364,13 +411,74 @@ export function CharacterEditorPage() {
     }
   }
 
+  function renderMobileSectionList() {
+    if (!character) {
+      return null;
+    }
+    const groups: Array<{ label: string; ids: FixedTabId[] }> = [];
+    for (const tab of fixedTabs) {
+      const group = fixedTabMeta[tab.id].group;
+      const current = groups.find((item) => item.label === group);
+      if (current) {
+        current.ids.push(tab.id);
+      } else {
+        groups.push({ label: group, ids: [tab.id] });
+      }
+    }
+    const summary = (tabId: FixedTabId) => {
+      switch (tabId) {
+        case "basic":
+          return [character.name.trim() || "未命名角色", character.role.trim() || "未设置身份"].join(" · ");
+        case "prompt":
+          return character.background_prompt.trim() ? `背景 ${character.background_prompt.length} 字` : "尚未填写背景";
+        case "promptPlan":
+          return `${promptOrder.length} 个提示词片段`;
+        case "runtimeContext":
+          return character.runtime_system_prompt.trim() ? `${character.runtime_system_prompt.length} 字` : "使用内置默认";
+        case "avatar":
+          return character.avatar_asset.trim() ? "已上传头像" : "未上传头像";
+        case "portrait":
+          return character.portrait_assets.length > 0 ? `${character.portrait_assets.length} 张立绘` : "未上传立绘";
+        case "memory":
+          return `历史 ${character.recent_dialogue_rounds} 轮`;
+        case "attribute":
+          return `${(character.attributes ?? []).length} 个角色标签`;
+        default:
+          return "查看完整 JSON";
+      }
+    };
+    return (
+      <div className="wed-m-list">
+        {groups.map((group) => (
+          <section key={group.label} className="wed-m-group">
+            <div className="wed-m-group-title">{group.label}</div>
+            <div className="wed-m-cards">
+              {group.ids.map((tabId) => {
+                const tab = fixedTabs.find((item) => item.id === tabId)!;
+                return (
+                  <button key={tabId} type="button" className="wed-m-card" onClick={() => openMobileSection(tabId)}>
+                    <span className="wed-m-card-copy">
+                      <span className="t">{tab.label}</span>
+                      <span className="s">{summary(tabId)}</span>
+                    </span>
+                    <ChevronRight size={16} aria-hidden="true" />
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <ScreenLayout
-      title={character?.name ?? "角色编辑"}
+      title={isMobile ? "" : (character?.name ?? "角色编辑")}
       subtitle=""
-      toolbar={(
+      toolbar={isMobile ? undefined : (
         <>
-          <button type="button" onClick={() => navigate(-1)} className="action-btn">返回</button>
+          <button type="button" onClick={requestLeave} className="action-btn">返回</button>
           {!isNew ? (
             <button
               type="button"
@@ -392,35 +500,57 @@ export function CharacterEditorPage() {
         </>
       )}
     >
-      <div className="character-editor-mobile-actions show-mobile">
-        <button type="button" onClick={() => navigate(-1)} className="action-btn">
-          返回
-        </button>
-        {!isNew ? (
+      {isMobile ? (
+        <div className="mobile-editor-topbar">
           <button
             type="button"
-            onClick={() => setShowDeleteDialog(true)}
-            disabled={deleting || saving}
-            className="action-btn action-btn--danger"
+            className="mobile-editor-back"
+            onClick={handleMobileBack}
+            aria-label={mobileListOpen ? "返回角色池" : "返回角色分区列表"}
           >
-            删除
+            <ArrowLeft size={18} />
           </button>
-        ) : null}
-        <button
-          type="button"
-          onClick={() => void handleSave()}
-          disabled={saving || deleting}
-          className="action-btn action-btn--accent"
-        >
-          {saving ? "保存中..." : "保存角色"}
-        </button>
-      </div>
+          <div className="mobile-editor-heading">
+            <strong className="mobile-editor-title">
+              {mobileListOpen
+                ? character?.name?.trim() || (isNew ? "未命名角色" : "角色编辑")
+                : fixedTabs.find((tab) => tab.id === activeTab)?.label ?? "角色编辑"}
+              {hasUnsavedChanges ? <i className="mobile-editor-dirty-dot" aria-label="有未保存修改" /> : null}
+            </strong>
+            <span className="mobile-editor-kicker">{isNew ? "新建角色" : "角色编辑"}</span>
+          </div>
+          {!isNew ? (
+            <button
+              type="button"
+              className="mobile-editor-more"
+              onClick={() => setShowDeleteDialog(true)}
+              disabled={deleting || saving}
+              aria-label="更多操作"
+            >
+              <MoreHorizontal size={18} />
+            </button>
+          ) : (
+            <span className="mobile-editor-more-spacer" aria-hidden="true" />
+          )}
+        </div>
+      ) : null}
 
       {loading ? <SurfacePanel className="surface-panel--pad-lg">正在加载角色详情...</SurfacePanel> : null}
       {error ? <SurfacePanel className="surface-panel--pad-lg text-error">{error}</SurfacePanel> : null}
 
       {!loading && character ? (
+        isMobile && mobileListOpen ? (
+          <div className="editor-content">{renderMobileSectionList()}</div>
+        ) : (
         <div className="editor-content">
+          {isMobile ? (
+            <div className="wed-pane-head">
+              <div>
+                <h2 className="wed-pane-title">{fixedTabs.find((tab) => tab.id === activeTab)?.label}</h2>
+                <div className="wed-pane-sub">{fixedTabMeta[activeTab].desc}</div>
+              </div>
+            </div>
+          ) : (
           <div className="editor-tabs character-editor-tabs">
             {fixedTabs.map((tab) => (
               <button
@@ -433,6 +563,7 @@ export function CharacterEditorPage() {
               </button>
             ))}
           </div>
+          )}
 
           <SurfacePanel className="surface-panel--pad-lg">
             {activeTab === "basic" ? (
@@ -565,7 +696,7 @@ export function CharacterEditorPage() {
                       }
                     }
                   })();
-                  return (
+  return (
                     <details key={sectionId} draggable
                       onDragStart={(event) => { setDraggedSectionId(sectionId); event.dataTransfer.setData("text/plain", sectionId); event.dataTransfer.effectAllowed = "move"; }}
                       onDragOver={(event) => { event.preventDefault(); }}
@@ -760,6 +891,20 @@ export function CharacterEditorPage() {
             ) : null}
           </SurfacePanel>
         </div>
+        )
+      ) : null}
+
+      {isMobile ? (
+        <div className="mobile-editor-actionbar">
+          <button
+            type="button"
+            onClick={() => void handleSave()}
+            disabled={saving || deleting}
+            className="action-btn action-btn--accent"
+          >
+            {saving ? "保存中..." : "保存角色"}
+          </button>
+        </div>
       ) : null}
 
       <ConfirmDialog
@@ -771,6 +916,20 @@ export function CharacterEditorPage() {
         confirmDisabled={deleting || saving}
         onClose={() => !deleting && setShowDeleteDialog(false)}
         onConfirm={() => void handleDelete()}
+      />
+
+      <ConfirmDialog
+        open={showLeaveDialog}
+        title="放弃未保存的修改？"
+        description="当前角色的修改尚未保存，离开后这些修改会丢失。"
+        confirmLabel="放弃修改"
+        cancelLabel="继续编辑"
+        confirmVariant="danger"
+        onClose={() => setShowLeaveDialog(false)}
+        onConfirm={() => {
+          setShowLeaveDialog(false);
+          navigate(backTarget);
+        }}
       />
     </ScreenLayout>
   );

@@ -21,6 +21,7 @@ type AttributePanelProps = {
   ownerId?: string;
   worldId?: string;
   onSchemaChange?: () => void;
+  hideTitle?: boolean;
 };
 
 type DraftState = {
@@ -132,7 +133,7 @@ function schemaAppliesToOwner(schema: AttributeSchemaResponse, scope: Scope, own
   return applicableWorldIds.map(String).includes(ownerId);
 }
 
-export function AttributePanel({ scope, ownerType, ownerId, worldId, onSchemaChange }: AttributePanelProps) {
+export function AttributePanel({ scope, ownerType, ownerId, worldId, onSchemaChange, hideTitle = false }: AttributePanelProps) {
   const [schemas, setSchemas] = useState<AttributeSchemaResponse[]>([]);
   const [valueMap, setValueMap] = useState<Map<string, string>>(new Map());
   const [draft, setDraft] = useState<DraftState>(emptyDraft);
@@ -345,7 +346,7 @@ export function AttributePanel({ scope, ownerType, ownerId, worldId, onSchemaCha
       <nav className="attribute-panel__sidebar" aria-label={scope === "world" ? "世界属性" : "角色共享属性"}>
       <div className="attribute-panel__list-heading">
         <div>
-          <strong>{scope === "world" ? "世界属性" : "角色共享属性"}</strong>
+          {hideTitle ? null : <strong>{scope === "world" ? "世界属性" : "角色共享属性"}</strong>}
           <div className="text-muted" style={{ fontSize: 12 }}>{schemas.length} 个属性 · 拖动排序</div>
         </div>
         <button type="button" className="action-btn" onClick={() => setAddingSchema(true)} disabled={!worldId || savingSchema} title="新增属性" aria-label="新增属性" aria-pressed={addingSchema}>

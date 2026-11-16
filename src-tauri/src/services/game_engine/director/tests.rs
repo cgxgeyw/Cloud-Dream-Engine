@@ -701,7 +701,7 @@ fn build_runtime_turn_payload_uses_minimal_director_contract() {
         response_contract
             .get("return_policy")
             .and_then(|value| value.as_str()),
-        Some("仅返回本回合发生变化的字段")
+        Some("每回合必须返回 planned_speakers 和 event；其它字段仅在本回合发生变化时返回")
     );
     assert_eq!(
         response_contract

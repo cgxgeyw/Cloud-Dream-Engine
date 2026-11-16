@@ -33,6 +33,23 @@ pub struct MemoryQueryParams {
     pub limit: Option<i32>,
 }
 
+/// 固定桶记忆总结的元数据。正文在 `memories` 里，`memory_type = "summary"`。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemorySummaryRange {
+    pub memory_id: String,
+    pub world_id: String,
+    pub session_id: String,
+    pub character_id: String,
+    pub bucket_index: i32,
+    pub bucket_start: i32,
+    pub bucket_end: i32,
+    pub scene_id: String,
+    pub scene_name: String,
+    pub turn_start: i32,
+    pub turn_end: i32,
+    pub created_at: String,
+}
+
 /// 事实卡片:实体(人物/物品/地点/概念)。按 session 隔离,
 /// name_normalized 是归一化后的匹配键(UNIQUE(session_id, name_normalized)),
 /// aliases 记录出现过的其它写法(归一化后的形式)。

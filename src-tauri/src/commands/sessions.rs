@@ -1,8 +1,10 @@
 use rusqlite::Connection;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::events::session_events::SessionEventEmitter;
+use crate::models::character::CharacterDefinition;
 use crate::models::session::*;
+use crate::models::world::WorldDefinition;
 use crate::services::game_engine::service_mode::{resolve_service_runtime_config, ServiceMode};
 use crate::services::notifications::{
     NotificationScheduler, NotificationToolInput, NotificationToolRuntime,
@@ -138,6 +140,7 @@ pub(crate) async fn submit_player_action_inner(
         messages,
         director_completed_payload,
     } = prepared;
+    let mut messages = messages;
     // 第 10 项（校验点 A）：玩家附件只发给声明了对应输入模态的模型。
     // 导演模式校验导演模型 + 全部角色模型（任一都可能被安排发言）；
     // 不支持即提交即报错，不写回合数据、不发 HTTP。
@@ -321,6 +324,48 @@ pub(crate) async fn submit_player_action_inner(
             )?
     };
 
+    // 世界主控本回合写出的剧情推进旁白：作为一条"事件"消息紧跟在玩家发言之后，
+    // 让本回合所有角色都能看到"刚刚发生了什么"，同时在界面上作为正文段落展示。
+    if let Some(event_text) = runtime_preparation
+        .event
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let witnesses =
+            crate::services::game_engine::orchestrator::session_materialization::build_turn_participants(
+                &runtime_preparation.visible_chars,
+                &session.player_character_name,
+            );
+        messages.push(crate::models::session::ChatMessage {
+            message_id: crate::models::session::ChatMessage::generate_id(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            parent_message_id: None,
+            role: "narration".to_string(),
+            content: crate::models::session::MessageContent::Text(event_text.to_string()),
+            speaker: Some("旁白".to_string()),
+            metadata: Some(serde_json::json!({
+                "turn_index": turn_index,
+                "message_kind": "event",
+                "event": event_text,
+                "scene_name": runtime_preparation.next_scene_name,
+                "witnesses": witnesses,
+            })),
+        });
+    }
+
+    // 进度快照里，玩家发言与导演事件旁白属于"已发生"的前半段。
+    let has_event = runtime_preparation
+        .event
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    let base_message_count = session
+        .messages
+        .len()
+        .saturating_add(1)
+        .saturating_add(usize::from(has_event));
+
     {
         let snapshot = build_progress_snapshot(
             &session,
@@ -334,13 +379,12 @@ pub(crate) async fn submit_player_action_inner(
                 is_error: false,
             },
             turn_index,
-            session.messages.len().saturating_add(1),
+            base_message_count,
         );
         SessionEventEmitter::emit_snapshot_logged(&app, &session_id, &snapshot);
     }
 
     let speaker_turn_result = {
-        let base_message_count = session.messages.len().saturating_add(1);
         let mut emit_progress =
             |progress: crate::services::game_engine::orchestrator::SpeakerTurnProgress| {
                 let snapshot = build_progress_snapshot(
@@ -496,6 +540,7 @@ pub(crate) async fn submit_player_action_inner(
             director_turn.tool_loop_limit,
         )?;
     }
+    schedule_memory_summaries(&app, &world, &updated, &characters, turn_index);
 
     Ok(updated)
 }
@@ -847,6 +892,7 @@ async fn run_agent_chat_player_action(
             &world,
         )?;
     }
+    schedule_memory_summaries(app, &world, &updated, &characters, turn_index);
     SessionEventEmitter::emit_snapshot_logged(app, &session_id, &updated);
     Ok(updated)
 }
@@ -1261,6 +1307,177 @@ fn finalize_turn_snapshot(
     )?;
     SessionEventEmitter::emit_snapshot_logged(app, session_id, updated);
     Ok(())
+}
+
+/// 固定桶总结：每个 `memory_summary_interval_rounds` 回合结束后，异步为每个
+/// 在场角色生成桶内、按场景拆分的记忆总结。失败不阻塞回合，也不影响主回复。
+fn schedule_memory_summaries(
+    app: &AppHandle,
+    world: &WorldDefinition,
+    updated: &SessionSnapshot,
+    characters: &[CharacterDefinition],
+    turn_index: i32,
+) {
+    let interval = crate::services::game_engine::memory::resolve_memory_summary_interval(world);
+    if interval <= 0 || turn_index <= 0 || turn_index % interval != 0 {
+        return;
+    }
+    let (current_bucket, _, _) =
+        crate::services::game_engine::memory::summary_bucket_bounds(turn_index, interval);
+    let director_summary_enabled = world
+        .director_config
+        .get("service_mode")
+        .and_then(|value| value.as_str())
+        != Some("agent_chat");
+    let app = app.clone();
+    let world = world.clone();
+    let session = updated.clone();
+    let characters = characters.to_vec();
+    tauri::async_runtime::spawn(async move {
+        // 先算出所有缺失的桶：新存档通常只有当前桶；老存档升级时会回填
+        // 最近 12 个能生成总结的桶，避免一直停留在“只有原文兜底”的状态。
+        let (llm, model, work) = {
+            let state = app.state::<AppState>();
+            let db = state.db.lock().await;
+            let preferred = world
+                .director_config
+                .get("memory_summary_model")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let model = match crate::services::game_engine::orchestrator::resolve_text_model(
+                db.conn(),
+                preferred,
+            ) {
+                Ok(model) => model,
+                Err(_) => return,
+            };
+            let summary_repo =
+                crate::db::repositories::memory_summary_repo::MemorySummaryRepository::new(db.conn());
+            let character_summary_prompt =
+                crate::services::game_engine::memory::resolve_character_memory_summary_prompt(&world);
+            let director_summary_prompt =
+                crate::services::game_engine::memory::resolve_director_memory_summary_prompt(&world);
+            let mut work = Vec::new();
+            // 一次最多回填最近 12 个桶（默认 120 回合），避免老存档升级时
+            // 一次打出上百个总结请求；更早的桶继续走原文兜底，不会失忆。
+            const MAX_BACKFILL_BUCKETS: i32 = 12;
+            let first_bucket = (current_bucket - MAX_BACKFILL_BUCKETS + 1).max(0);
+            for bucket_index in first_bucket..=current_bucket {
+                let (_, bucket_start, bucket_end) =
+                    crate::services::game_engine::memory::summary_bucket_bounds(
+                        bucket_index * interval + 1,
+                        interval,
+                    );
+                let director_missing = director_summary_enabled
+                    && crate::services::game_engine::memory::bucket_has_any_messages(
+                        &session,
+                        bucket_start,
+                        bucket_end,
+                    )
+                    && !summary_repo
+                        .has_bucket(&session.id, "director", bucket_index)
+                        .unwrap_or(false);
+                let mut missing = Vec::new();
+                for character in &characters {
+                    if character.name == session.player_character_name {
+                        continue;
+                    }
+                    if crate::services::game_engine::memory::parse_memory_strategy(
+                        &character.memory_strategy,
+                    )
+                    .disabled
+                    {
+                        continue;
+                    }
+                    if !crate::services::game_engine::memory::character_has_visible_messages(
+                        &session,
+                        &character.name,
+                        bucket_start,
+                        bucket_end,
+                    ) {
+                        continue;
+                    }
+                    if !summary_repo
+                        .has_bucket(&session.id, &character.id, bucket_index)
+                        .unwrap_or(false)
+                    {
+                        missing.push(character.clone());
+                    }
+                }
+                if director_missing || !missing.is_empty() {
+                    work.push((
+                        bucket_index,
+                        bucket_start,
+                        bucket_end,
+                        missing,
+                        director_missing,
+                        character_summary_prompt.clone(),
+                        director_summary_prompt.clone(),
+                    ));
+                }
+            }
+            (state.services.llm_client.clone(), model, work)
+        };
+        for (
+            bucket_index,
+            bucket_start,
+            bucket_end,
+            missing,
+            director_missing,
+            character_prompt,
+            director_prompt,
+        ) in work
+        {
+            let mut drafts = Vec::new();
+            if director_missing {
+                if let Some(draft) =
+                    crate::services::game_engine::memory::generate_director_bucket_summary(
+                        &llm,
+                        &model,
+                        &session,
+                        bucket_start,
+                        bucket_end,
+                        &director_prompt,
+                    )
+                    .await
+                {
+                    drafts.push(draft);
+                }
+            }
+            if !missing.is_empty() {
+                drafts.extend(
+                    crate::services::game_engine::memory::generate_bucket_summaries(
+                        &llm,
+                        &model,
+                        &session,
+                        &missing,
+                        bucket_index,
+                        bucket_start,
+                        bucket_end,
+                        &character_prompt,
+                    )
+                    .await,
+                );
+            }
+            if drafts.is_empty() {
+                continue;
+            }
+            let state = app.state::<AppState>();
+            let db = state.db.lock().await;
+            for draft in &drafts {
+                let _ = crate::services::game_engine::memory::persist_summary(
+                    db.conn(),
+                    &world,
+                    &session,
+                    draft,
+                    bucket_index,
+                    bucket_start,
+                    bucket_end,
+                );
+            }
+        }
+    });
 }
 
 fn schedule_pending_notifications(

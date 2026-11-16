@@ -23,7 +23,7 @@ const baseSnapshot = {
   attributes: Object.fromEntries(items.map(s => [s.key, s.value])),
   attribute_items: items,
   visible_characters: ['韩立', '张铁', '王护法'],
-  side_tabs: [{ key: 'map', label: '地图' }, ...groups.map(label => ({ key: `attribute:${label}`, label })), { key: 'attribute:背包', label: '背包' }],
+  side_tabs: [{ key: 'map', label: '地图' }, ...groups.map(label => ({ key: `attribute:${label}`, label })), ...(groups.includes('背包') ? [] : [{ key: 'attribute:背包', label: '背包' }])],
   active_side_tab: 'map', active_attribute_items: [], active_attribute_content: '',
   messages: [
     { message_id: 'director', role: 'system', content: '安排入门试炼', metadata: { action_type: 'director_trace', reasoning: '根据当前场景安排角色。'.repeat(25), trace_text: '安排入门试炼' } },
@@ -48,9 +48,10 @@ function Harness() {
     testWindow.received.push(action);
     if (action.type === 'clear-action-error') setSnapshot(s => ({ ...s, errors: { action_error: null } }));
     if (action.type === 'switch-side-tab') {
+      const contentOnly = action.tabKey === 'attribute:背包';
       setSnapshot(s => ({ ...s, active_side_tab: action.tabKey,
-        active_attribute_items: items.filter(i => `attribute:${i.display_policy.group}` === action.tabKey) as never[],
-        active_attribute_content: action.tabKey === 'attribute:背包' ? '干粮 x3\n旧水囊 x1\n铜钱 x18' : '',
+        active_attribute_items: contentOnly ? [] : items.filter(i => `attribute:${i.display_policy.group}` === action.tabKey) as never[],
+        active_attribute_content: contentOnly ? '干粮 x3\n旧水囊 x1\n铜钱 x18' : '',
       }));
     }
     if (action.type === 'set-draft-value') setSnapshot(s => ({ ...s, draft_input: { ...s.draft_input, value: action.value } }));

@@ -12,6 +12,7 @@ export const tabIds = [
   { id: "background", labelKey: "settings.tabBackground" },
   { id: "theme", labelKey: "settings.tabTheme" },
   { id: "export", labelKey: "settings.tabExport" },
+  { id: "tools", labelKey: "settings.tabTools" },
 ] as const;
 
 export const commonProviderOptions = [

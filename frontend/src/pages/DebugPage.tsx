@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useIsMobile } from "../components/ResponsiveLayout";
-import { PromptCallCard, TraceBlock } from "../components/PromptTraceView";
+import { TraceBlock } from "../components/PromptTraceView";
 import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
 import {
   fetchMemoryEntities,
@@ -174,27 +174,21 @@ export function DebugPage() {
 
         {!loading && !error && debugData ? (
           <div style={{ display: "grid", gap: 16 }}>
-            {sessionId ? <SessionGenerationParamsPanel sessionId={sessionId} /> : null}
-
             <SurfacePanel style={{ padding: 20 }}>
-              <h3 style={{ marginTop: 0, fontSize: 22 }}>按回合查看 LLM 调用</h3>
+              <h3 style={{ marginTop: 0, fontSize: 22 }}>每回合输入与输出原文</h3>
               <div style={{ color: "rgba(255,255,255,0.70)", fontSize: 13, lineHeight: 1.6, marginBottom: 14 }}>
-                每个回合可以整体折叠。回合内按世界主控、工具调用链、角色调用分组；每张卡片都会优先展示最终发送内容、模型返回、处理后返回和写入结果。
+                按回合列出世界主控和每个角色的完整输入、模型原始输出。只展示原文，不做加工。
               </div>
 
               <div style={{ display: "grid", gap: 18 }}>
                 {turnIndexes.length === 0 ? (
-                  <div style={{ color: "rgba(255,255,255,0.62)" }}>没有捕获到新的 PromptCall 调试记录。</div>
+                  <div style={{ color: "rgba(255,255,255,0.62)" }}>没有捕获到新的调用记录。</div>
                 ) : null}
 
                 {turnIndexes.map((turnIndex, turnListIndex) => {
                   const calls = debugData.prompt_calls.filter((item) => item.turn_index === turnIndex);
                   const directorCalls = calls.filter((item) => item.recipient_type === "director");
                   const characterCalls = calls.filter((item) => item.recipient_type === "character");
-                  const toolCalls = calls.filter((item) => {
-                    const modules = item.prompt_call?.modules;
-                    return Array.isArray(modules) && modules.some((module) => String((module as Record<string, unknown>).name ?? "").includes("工具"));
-                  });
 
                   return (
                     <details key={turnIndex} open={turnListIndex === turnIndexes.length - 1} style={rawBlockStyle}>
@@ -202,38 +196,32 @@ export function DebugPage() {
                         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
                           <strong>{`第 ${turnIndex} 回合`}</strong>
                           <span style={{ color: "rgba(255,255,255,0.62)" }}>
-                            世界主控 {directorCalls.length} 次 / 工具链 {toolCalls.length} 条 / 角色 {characterCalls.length} 次
+                            世界主控 {directorCalls.length} 次 / 角色 {characterCalls.length} 次
                           </span>
                         </div>
                       </summary>
 
                       <div style={{ display: "grid", gap: 14, marginTop: 14 }}>
-                        <section style={{ display: "grid", gap: 10 }}>
-                          <h4 style={{ margin: 0, fontSize: 16 }}>世界主控调用</h4>
-                          {directorCalls.length
-                            ? directorCalls.map((item, index) => <PromptCallCard key={`${item.step}-${index}`} item={item} index={index} />)
-                            : <div style={{ color: "rgba(255,255,255,0.62)" }}>本回合没有世界主控调用。</div>}
-                        </section>
-
-                        <section style={{ display: "grid", gap: 10 }}>
-                          <h4 style={{ margin: 0, fontSize: 16 }}>工具调用链</h4>
-                          {toolCalls.length
-                            ? toolCalls.map((item, index) => <PromptCallCard key={`tool-${item.step}-${index}`} item={item} index={index} defaultOpen={false} />)
-                            : <div style={{ color: "rgba(255,255,255,0.62)" }}>本回合没有工具资料或工具结果。</div>}
-                        </section>
-
-                        <section style={{ display: "grid", gap: 10 }}>
-                          <h4 style={{ margin: 0, fontSize: 16 }}>角色调用列表</h4>
-                          {characterCalls.length
-                            ? characterCalls.map((item, index) => <PromptCallCard key={`${item.step}-${item.recipient_name}-${index}`} item={item} index={index} />)
-                            : <div style={{ color: "rgba(255,255,255,0.62)" }}>本回合没有角色调用。</div>}
-                        </section>
+                        <RawCallSection
+                          title="世界主控"
+                          calls={directorCalls}
+                          fallbackName="世界主控"
+                          emptyText="本回合没有世界主控调用。"
+                        />
+                        <RawCallSection
+                          title="角色"
+                          calls={characterCalls}
+                          fallbackName="角色"
+                          emptyText="本回合没有角色调用。"
+                        />
                       </div>
                     </details>
                   );
                 })}
               </div>
             </SurfacePanel>
+
+            {sessionId ? <SessionGenerationParamsPanel sessionId={sessionId} /> : null}
 
             <SurfacePanel style={{ padding: 20 }}>
               <h3 style={{ marginTop: 0, fontSize: 22 }}>事实卡片</h3>
@@ -306,6 +294,84 @@ export function DebugPage() {
   );
 }
 
+function rawText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value === undefined || value === null) return "";
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function RawTextBlock({ label, text }: { label: string; text: string }) {
+  return (
+    <div style={{ display: "grid", gap: 6 }}>
+      <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: 700, letterSpacing: 0.4 }}>{label}</div>
+      <pre
+        style={{
+          margin: 0,
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+          fontSize: 12.5,
+          lineHeight: 1.6,
+          color: "rgba(255,255,255,0.88)",
+          background: "rgba(0,0,0,0.24)",
+          border: "1px solid rgba(255,255,255,0.08)",
+          borderRadius: 8,
+          padding: 14,
+          maxHeight: 420,
+          overflow: "auto",
+        }}
+      >
+        {text || "（未记录）"}
+      </pre>
+    </div>
+  );
+}
+
+function RawCallSection({
+  title,
+  calls,
+  fallbackName,
+  emptyText,
+}: {
+  title: string;
+  calls: SessionDebugResponse["prompt_calls"];
+  fallbackName: string;
+  emptyText: string;
+}) {
+  return (
+    <section style={{ display: "grid", gap: 10 }}>
+      <h4 style={{ margin: 0, fontSize: 16 }}>{title}</h4>
+      {calls.length === 0 ? (
+        <div style={{ color: "rgba(255,255,255,0.62)" }}>{emptyText}</div>
+      ) : (
+        calls.map((item, index) => {
+          const call = item.prompt_call ?? {};
+          const rawName = String(item.recipient_name ?? call.recipient_name ?? "").trim();
+          const name = item.recipient_type === "director" && (!rawName || rawName === "world_director")
+            ? "世界主控"
+            : rawName || fallbackName;
+          const stage = String(call.stage ?? item.stage ?? item.step ?? "").trim();
+
+          return (
+            <div key={`${item.step ?? "call"}-${index}`} style={{ display: "grid", gap: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                <strong>{`${index + 1}. ${name}`}</strong>
+                <span style={{ color: "rgba(255,255,255,0.55)", fontSize: 12 }}>{stage}</span>
+              </div>
+              <RawTextBlock label="输入" text={rawText(call.final_sent_content)} />
+              <RawTextBlock label="输出" text={rawText(call.raw_model_return)} />
+            </div>
+          );
+        })
+      )}
+    </section>
+  );
+}
+
 /**
  * 本局生成参数（第 8 项）。放在调试面板而非游戏界面里：游戏界面由世界包的 UI 文档
  * 渲染，宿主往里塞控件会改动世界包外观；调试面板是宿主自己的页面，且旁边就是
@@ -375,7 +441,7 @@ function SessionGenerationParamsPanel({ sessionId }: { sessionId: string }) {
         每回合的「采样/模式参数」卡片里能看到被过滤的项和原因。
       </div>
 
-      <div style={{ display: "grid", gap: 16, gridTemplateColumns: "minmax(0, 1fr) minmax(0, 320px)" }}>
+      <div className="debug-params-grid" style={{ display: "grid", gap: 16 }}>
         <div>
           <GenerationParamsEditor
             value={draft}

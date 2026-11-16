@@ -34,18 +34,23 @@ const desktopMenuItems: MenuItem[] = [
     icon: <Globe size={18} />,
   },
   {
-    titleKey: "home.menuSettingsTitle",
-    descKey: "home.menuSettingsDesc",
-    to: "/settings",
-    icon: <Settings size={18} />,
-  },
-  {
     titleKey: "home.menuToolsTitle",
     descKey: "home.menuToolsDesc",
     to: "/mcp-tools",
     icon: <Wrench size={18} />,
   },
-  { titleKey: 'home.menuKnowledgeTitle', descKey: 'home.menuKnowledgeDesc', to: '/knowledge', icon: <BookOpen size={18} /> },
+  {
+    titleKey: "home.menuKnowledgeTitle",
+    descKey: "home.menuKnowledgeDesc",
+    to: "/knowledge",
+    icon: <BookOpen size={18} />,
+  },
+  {
+    titleKey: "home.menuSettingsTitle",
+    descKey: "home.menuSettingsDesc",
+    to: "/settings",
+    icon: <Settings size={18} />,
+  },
 ];
 
 export function HomePage() {
@@ -111,10 +116,6 @@ export function HomePage() {
           <span className="home-mobile-btn-icon"><Save size={22} /></span>
           <span className="home-mobile-btn-text">{t("home.mobileContinue")}</span>
         </button>
-      </div>
-      <div style={{ display: 'grid', gap: 8, marginTop: 16 }}>
-        <MenuButton title={t('home.menuToolsTitle')} icon={<Wrench size={18} />} onClick={() => navigate('/mcp-tools')} />
-        <MenuButton title={t('home.menuKnowledgeTitle')} icon={<BookOpen size={18} />} onClick={() => navigate('/knowledge')} />
       </div>
       <div style={{ marginTop: 32 }}>
         <p style={{ fontSize: 12, color: "var(--color-muted)", margin: 0 }}>{t("home.freeNote")}</p>

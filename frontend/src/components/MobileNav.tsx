@@ -5,12 +5,16 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft, Globe, Menu, Moon, Play, Save, Settings, Sun, Wrench, X, BookOpen } from "lucide-react";
 import appIconUrl from "../assets/app-icon.svg";
+import { isAndroidRuntime } from "../data/apiAdapter";
+import { resolveParentPath } from "../lib/routeBack";
+import { readNativeSafeAreaInsets } from "../lib/nativeInsets";
 import {
   applyMode,
   persistMode,
@@ -39,47 +43,49 @@ const navItems = [
   { path: '/knowledge', label: '知识库', Icon: BookOpen },
 ];
 
-const DRAG_OPEN_THRESHOLD = 40;
 const DRAG_CLOSE_THRESHOLD = 40;
-const DRAG_ACTIVATE_PX = 12;
-const DRAG_CANCEL_VERTICAL = 48;
+const DRAG_ACTIVATE_PX = 4;
+const DRAG_CANCEL_VERTICAL = 20;
 const SIDEBAR_CLOSE_RATIO = 0.28;
 const SIDEBAR_CLOSE_MAX_PX = 96;
+const HANDLE_REVEAL_RATIO = 0.26;
+const HANDLE_WIDTH = (viewportWidth: number) => Math.max(240, Math.min(viewportWidth - 24, 320));
 
-function resolveParentPath(pathname: string, search: string) {
-  const params = new URLSearchParams(search);
-  const worldId = params.get("worldId");
+const FAB_SIZE = 52;
+const FAB_CONDENSED_SIZE = 44;
+const FAB_EDGE_MARGIN = 16;
+const FAB_VERTICAL_MARGIN = 12;
+/** 超过该位移才算拖动，否则按点按处理（避免手抖导致菜单点不开） */
+const FAB_DRAG_THRESHOLD = 6;
+const FAB_STORAGE_KEY = "od-mobile-fab-position";
 
-  if (pathname === "/" || pathname.startsWith("/game/") || pathname.startsWith("/debug/")) {
-    return "/";
+type FabSide = "left" | "right";
+type StoredFabPosition = { side: FabSide; ratio: number };
+
+function readStoredFabPosition(): StoredFabPosition | null {
+  try {
+    const raw = window.localStorage.getItem(FAB_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<StoredFabPosition>;
+    if (parsed.side !== "left" && parsed.side !== "right") return null;
+    if (typeof parsed.ratio !== "number" || !Number.isFinite(parsed.ratio)) return null;
+    return { side: parsed.side, ratio: Math.min(1, Math.max(0, parsed.ratio)) };
+  } catch {
+    return null;
   }
-
-  if (pathname === "/new-game" || pathname === "/saves" || pathname === "/worlds" || pathname === "/settings" || pathname === "/mcp-tools") {
-    return "/";
-  }
-
-  if (pathname.startsWith("/new-game/setup/")) {
-    return "/new-game";
-  }
-
-  if (pathname === "/worlds/new" || /^\/worlds\/[^/]+\/edit$/.test(pathname)) {
-    return "/worlds";
-  }
-
-  if (/^\/worlds\/[^/]+\/characters$/.test(pathname)) {
-    return "/worlds";
-  }
-
-  if (pathname === "/characters/new" || /^\/characters\/[^/]+\/edit$/.test(pathname)) {
-    return worldId ? `/worlds/${encodeURIComponent(worldId)}/characters` : "/worlds";
-  }
-
-  const segments = pathname.split("/").filter(Boolean);
-  if (segments.length <= 1) {
-    return "/";
-  }
-  return `/${segments.slice(0, -1).join("/")}`;
 }
+
+function fabMaxTop(bottomInset: number) {
+  return Math.max(
+    FAB_VERTICAL_MARGIN,
+    window.innerHeight - FAB_SIZE - Math.max(bottomInset, 0) - FAB_VERTICAL_MARGIN,
+  );
+}
+
+/** 编辑器页面自带返回按钮，不再叠加全局悬浮返回，避免同一高度出现两个返回。 */
+const SELF_MANAGED_BACK_PATTERN = /^\/(characters\/(new|[^/]+\/edit)|worlds\/(new|[^/]+\/edit)|worlds\/[^/]+\/characters|mcp-tools|new-game|new-game\/setup\/[^/]+|knowledge)\/?$/;
+
+
 
 function useMobileVisualViewport(): MobileViewportState {
   const [viewport, setViewport] = useState<MobileViewportState>(() => ({
@@ -92,10 +98,20 @@ function useMobileVisualViewport(): MobileViewportState {
     }
 
     let frameId = 0;
+    // 安卓 edge-to-edge + adjustResize 时键盘常常不缩 WebView，visualViewport 高度不变；
+    // 这里用原生 IME inset 兜底收缩，保证世界界面 iframe 与输入区不被键盘盖住。
+    let maxLayoutHeight = 0;
     const updateViewport = () => {
       window.cancelAnimationFrame(frameId);
       frameId = window.requestAnimationFrame(() => {
-        const nextHeight = Math.round(window.visualViewport?.height ?? window.innerHeight);
+        const layout = Math.round(window.innerHeight);
+        if (layout > maxLayoutHeight) maxLayoutHeight = layout;
+        const visualHeight = Math.round(window.visualViewport?.height ?? layout);
+        const nativeKeyboard = Math.max(0, Math.round(Number((window as { __nativeKeyboardHeight?: unknown }).__nativeKeyboardHeight) || 0));
+        const alreadyShrunk = layout < maxLayoutHeight - 8 || visualHeight < maxLayoutHeight - 8;
+        const nextHeight = !alreadyShrunk && nativeKeyboard > 0
+          ? Math.max(1, maxLayoutHeight - nativeKeyboard)
+          : visualHeight;
         setViewport((current) => (current.height === nextHeight ? current : { height: nextHeight }));
       });
     };
@@ -105,6 +121,7 @@ function useMobileVisualViewport(): MobileViewportState {
     window.visualViewport?.addEventListener("scroll", updateViewport);
     window.addEventListener("resize", updateViewport);
     window.addEventListener("orientationchange", updateViewport);
+    window.addEventListener("native-keyboard", updateViewport);
 
     return () => {
       window.cancelAnimationFrame(frameId);
@@ -112,6 +129,7 @@ function useMobileVisualViewport(): MobileViewportState {
       window.visualViewport?.removeEventListener("scroll", updateViewport);
       window.removeEventListener("resize", updateViewport);
       window.removeEventListener("orientationchange", updateViewport);
+      window.removeEventListener("native-keyboard", updateViewport);
     };
   }, []);
 
@@ -120,12 +138,15 @@ function useMobileVisualViewport(): MobileViewportState {
 
 /** 安卓 WebView 里 env(safe-area-inset-*) 恒为 0；MainActivity 把原生精确值注入主窗口，这里接成 CSS 变量。 */
 function readAppSafeAreaInsets(): { top: number; bottom: number; left: number; right: number } {
-  const raw = (window as { __nativeSafeAreaInsets?: Record<string, unknown> }).__nativeSafeAreaInsets ?? {};
-  const read = (key: string) => {
-    const value = Number(raw[key]);
-    return Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
+  const native = readNativeSafeAreaInsets();
+  // 原生值尚未注入（且无缓存）时先留出状态栏高度，避免首帧内容顶到状态栏上。
+  const fallbackTop = isAndroidRuntime() ? 28 : 0;
+  return {
+    top: Math.max(native?.top ?? 0, native ? 0 : fallbackTop),
+    bottom: native?.bottom ?? 0,
+    left: native?.left ?? 0,
+    right: native?.right ?? 0,
   };
-  return { top: read("top"), bottom: read("bottom"), left: read("left"), right: read("right") };
 }
 
 function useAppSafeAreaInsets(): { top: number; bottom: number; left: number; right: number } {
@@ -146,6 +167,17 @@ export function MobileNav({ children }: MobileNavProps) {
   const [sidebarDragging, setSidebarDragging] = useState(false);
   const [handleDragX, setHandleDragX] = useState(0);
   const [handleDragging, setHandleDragging] = useState(false);
+  const [fabCondensed, setFabCondensed] = useState(false);
+  const [fabSide, setFabSide] = useState<FabSide>(() => readStoredFabPosition()?.side ?? "right");
+  const [fabY, setFabY] = useState<number>(() => {
+    const stored = readStoredFabPosition();
+    const maxTop = fabMaxTop(readAppSafeAreaInsets().bottom);
+    const ratio = stored?.ratio ?? 0.99;
+    return Math.min(maxTop, FAB_VERTICAL_MARGIN + ratio * Math.max(0, maxTop - FAB_VERTICAL_MARGIN));
+  });
+  const [fabDragPos, setFabDragPos] = useState<{ x: number; y: number } | null>(null);
+  const [fabDragging, setFabDragging] = useState(false);
+  const [handleReveal, setHandleReveal] = useState(0);
   const navigate = useNavigate();
   const location = useLocation();
   const mobileViewport = useMobileVisualViewport();
@@ -162,18 +194,107 @@ export function MobileNav({ children }: MobileNavProps) {
     [viewportHeight, appSafeArea],
   );
   const isImmersiveRoute = location.pathname.startsWith("/game/");
-  const showBackButton = !isImmersiveRoute && location.pathname !== "/";
+  /** 编辑器页内禁用边缘/把手拖动，避免与编辑内容的横向手势冲突；仍可用顶部菜单按钮打开 */
+  const isEditorRoute = /^\/(characters\/(new|[^/]+\/edit)|worlds\/(new|[^/]+\/edit)|worlds\/[^/]+\/characters)\/?$/.test(location.pathname);
+  const showBackButton = !isImmersiveRoute
+    && location.pathname !== "/"
+    && !SELF_MANAGED_BACK_PATTERN.test(location.pathname);
 
   const sidebarRef = useRef<HTMLElement | null>(null);
   const isOpenRef = useRef(false);
   const sidebarDragXRef = useRef(0);
+  const handleRevealRef = useRef(0);
   /** 仅在「刚完成一次真实拖动」时为 true，用于吃掉紧随其后的 click；不使用定时器，避免误伤菜单点击 */
   const swallowClickRef = useRef(false);
   const cleanupGestureRef = useRef<null | (() => void)>(null);
+  const fabDragRef = useRef<null | { dx: number; dy: number; startX: number; startY: number; active: boolean }>(null);
+  const fabDragEndedAtRef = useRef(0);
+  /** 位置按可用高度的比例保存，旋转/键盘/安全区变化后仍落在相同相对高度 */
+  const fabRatioRef = useRef<number>(readStoredFabPosition()?.ratio ?? 0.99);
 
   useEffect(() => {
     isOpenRef.current = isOpen;
   }, [isOpen]);
+
+  useEffect(() => {
+    setFabCondensed(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    let lastY = 0;
+    let settleTimer = 0;
+    const handleScroll = (event: Event) => {
+      const target = event.target;
+      const scrollEl = target instanceof HTMLElement ? target : document.scrollingElement;
+      const y = scrollEl instanceof HTMLElement ? scrollEl.scrollTop : window.scrollY;
+      const delta = y - lastY;
+      if (Math.abs(delta) < 6) return;
+      lastY = y;
+      if (delta > 0 && y > 24) setFabCondensed(true);
+      else if (delta < 0) setFabCondensed(false);
+      window.clearTimeout(settleTimer);
+      settleTimer = window.setTimeout(() => setFabCondensed(false), 1400);
+    };
+    document.addEventListener("scroll", handleScroll, true);
+    return () => {
+      document.removeEventListener("scroll", handleScroll, true);
+      window.clearTimeout(settleTimer);
+    };
+  }, []);
+
+  const clampFabPosition = useCallback(
+    (x: number, y: number) => {
+      const minX = 8;
+      const maxX = Math.max(minX, window.innerWidth - FAB_SIZE - 8);
+      const minY = Math.max(8, appSafeArea.top + 8);
+      const maxY = Math.max(minY, window.innerHeight - FAB_SIZE - Math.max(appSafeArea.bottom, 0) - 8);
+      return {
+        x: Math.min(Math.max(x, minX), maxX),
+        y: Math.min(Math.max(y, minY), maxY),
+      };
+    },
+    [appSafeArea.top, appSafeArea.bottom],
+  );
+
+  const persistFabPosition = useCallback(
+    (side: FabSide, y: number) => {
+      const maxTop = fabMaxTop(appSafeArea.bottom);
+      const range = maxTop - FAB_VERTICAL_MARGIN;
+      const ratio = range > 0 ? (y - FAB_VERTICAL_MARGIN) / range : 1;
+      const safeRatio = Math.min(1, Math.max(0, ratio));
+      fabRatioRef.current = safeRatio;
+      try {
+        window.localStorage.setItem(FAB_STORAGE_KEY, JSON.stringify({ side, ratio: safeRatio }));
+      } catch {
+        // localStorage 不可用时保持当前会话位置
+      }
+    },
+    [appSafeArea.bottom],
+  );
+
+  const layoutFabY = useCallback(() => {
+    const maxTop = fabMaxTop(appSafeArea.bottom);
+    return FAB_VERTICAL_MARGIN + fabRatioRef.current * Math.max(0, maxTop - FAB_VERTICAL_MARGIN);
+  }, [appSafeArea.bottom]);
+
+  useEffect(() => {
+    setFabY(layoutFabY());
+  }, [layoutFabY]);
+
+  useEffect(() => {
+    const handleResize = () => setFabY(layoutFabY());
+    window.addEventListener("resize", handleResize);
+    window.visualViewport?.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      window.visualViewport?.removeEventListener("resize", handleResize);
+    };
+  }, [layoutFabY]);
+
+  const setReveal = useCallback((value: number) => {
+    handleRevealRef.current = value;
+    setHandleReveal(value);
+  }, []);
 
   const setSidebarDrag = useCallback((x: number) => {
     sidebarDragXRef.current = x;
@@ -204,15 +325,8 @@ export function MobileNav({ children }: MobileNavProps) {
       swallowClickRef.current = false;
       return;
     }
-    const historyIdx =
-      typeof window !== "undefined" && window.history.state && typeof window.history.state.idx === "number"
-        ? (window.history.state.idx as number)
-        : 0;
-    if (historyIdx > 0) {
-      navigate(-1);
-    } else {
-      navigate(resolveParentPath(location.pathname, location.search));
-    }
+    // 返回固定遵循路由层级（上一级），不使用浏览器历史，避免从外部入口进入时退错页面。
+    navigate(resolveParentPath(location.pathname, location.search));
     setIsOpen(false);
   };
 
@@ -290,6 +404,7 @@ export function MobileNav({ children }: MobileNavProps) {
         setIsOpen(nextOpen);
         setHandleDragX(0);
         setHandleDragging(false);
+        setReveal(0);
         stopGesture();
       };
 
@@ -302,6 +417,7 @@ export function MobileNav({ children }: MobileNavProps) {
             finished = true;
             setHandleDragX(0);
             setHandleDragging(false);
+            setReveal(0);
             stopGesture();
             return;
           }
@@ -310,8 +426,10 @@ export function MobileNav({ children }: MobileNavProps) {
           }
           activate();
           if (!openedAtStart) {
-            setHandleDragX(Math.max(0, dx));
-            if (dx >= DRAG_OPEN_THRESHOLD) settleOpen(true);
+            // 跟手拉开抽屉：把手位移 + 面板随进度滑出，松手后按进度决定开合。
+            const width = HANDLE_WIDTH(window.innerWidth);
+            setReveal(Math.min(1, Math.max(0, dx / width)));
+            setHandleDragX(Math.min(18, Math.max(0, dx) * 0.22));
             return;
           }
           setHandleDragX(Math.min(0, dx));
@@ -323,9 +441,13 @@ export function MobileNav({ children }: MobileNavProps) {
             return;
           }
           finished = true;
-          // 未达阈值：视为点按，不 swallow，交给 click 开关
+          if (!openedAtStart && handleRevealRef.current >= HANDLE_REVEAL_RATIO) {
+            swallowClickRef.current = true;
+            setIsOpen(true);
+          }
           setHandleDragX(0);
           setHandleDragging(false);
+          setReveal(0);
           stopGesture();
         },
       });
@@ -402,10 +524,83 @@ export function MobileNav({ children }: MobileNavProps) {
     [attachWindowGesture, stopGesture],
   );
 
+  /**
+   * 悬浮球拖动：Pointer Events + setPointerCapture 一套代码覆盖鼠标/触摸/触控笔。
+   * 位移不足阈值时保留 click（点按开合菜单）；拖动松手后抑制 click，并按最近的一侧贴边。
+   */
   const onFabPointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
     if (event.pointerType === "mouse" && event.button !== 0) return;
+    if (isEditorRoute) return;
     // 不 preventDefault：保留随后的 click，用于点按开关
-    beginHandleGesture(event.clientX, event.clientY, event.pointerId, event.currentTarget);
+    const rect = event.currentTarget.getBoundingClientRect();
+    fabDragRef.current = {
+      dx: event.clientX - rect.left,
+      dy: event.clientY - rect.top,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false,
+    };
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // 某些 WebView 下 capture 失败也能继续拖动
+    }
+  };
+
+  const onFabPointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = fabDragRef.current;
+    if (!drag) return;
+    if (!drag.active) {
+      const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+      if (distance < FAB_DRAG_THRESHOLD) return;
+      drag.active = true;
+      setFabDragging(true);
+    }
+    setFabDragPos(clampFabPosition(event.clientX - drag.dx, event.clientY - drag.dy));
+  };
+
+  const onFabPointerUp = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = fabDragRef.current;
+    fabDragRef.current = null;
+    if (!drag) return;
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    } catch {
+      // ignore
+    }
+    setFabDragging(false);
+    if (!drag.active) {
+      setFabDragPos(null);
+      return;
+    }
+    const finalPos = clampFabPosition(event.clientX - drag.dx, event.clientY - drag.dy);
+    const side: FabSide = finalPos.x + FAB_SIZE / 2 < window.innerWidth / 2 ? "left" : "right";
+    setFabSide(side);
+    setFabY(finalPos.y);
+    setFabDragPos(null);
+    persistFabPosition(side, finalPos.y);
+    // 触摸拖动后浏览器可能不再补发 click，用时间窗兜底，避免吞掉下一次真实点按
+    fabDragEndedAtRef.current = performance.now();
+  };
+
+  const onFabPointerCancel = () => {
+    fabDragRef.current = null;
+    setFabDragging(false);
+    setFabDragPos(null);
+  };
+
+  const onFabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+    event.preventDefault();
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      const side: FabSide = event.key === "ArrowLeft" ? "left" : "right";
+      setFabSide(side);
+      persistFabPosition(side, fabY);
+      return;
+    }
+    const nextY = clampFabPosition(0, fabY + (event.key === "ArrowUp" ? -24 : 24)).y;
+    setFabY(nextY);
+    persistFabPosition(fabSide, nextY);
   };
 
   const onFabClick = () => {
@@ -413,9 +608,13 @@ export function MobileNav({ children }: MobileNavProps) {
       swallowClickRef.current = false;
       return;
     }
+    if (performance.now() - fabDragEndedAtRef.current < 400) {
+      return;
+    }
     setIsOpen(!isOpen);
     setSidebarDragX(0);
     setHandleDragX(0);
+    setReveal(0);
   };
 
   const onEdgePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -438,6 +637,30 @@ export function MobileNav({ children }: MobileNavProps) {
     setIsOpen(false);
     setSidebarDragX(0);
     setHandleDragX(0);
+    setReveal(0);
+  };
+
+  useEffect(() => {
+    const openSidebar = () => {
+      setSidebarDragX(0);
+      setHandleDragX(0);
+      setReveal(0);
+      setIsOpen(true);
+    };
+    window.addEventListener("od-mobile-nav-open", openSidebar);
+    return () => window.removeEventListener("od-mobile-nav-open", openSidebar);
+  }, []);
+
+  const fabCondensedNow = fabCondensed && !isOpen && !fabDragging && !fabDragPos;
+  const fabLayoutSize = fabCondensedNow ? FAB_CONDENSED_SIZE : FAB_SIZE;
+  const fabLeft = fabDragPos
+    ? fabDragPos.x
+    : fabSide === "left"
+      ? FAB_EDGE_MARGIN + appSafeArea.left
+      : window.innerWidth - fabLayoutSize - FAB_EDGE_MARGIN - appSafeArea.right;
+  const fabStyle: CSSProperties = {
+    left: `${Math.round(fabLeft)}px`,
+    top: `${Math.round(fabDragPos ? fabDragPos.y : fabY)}px`,
   };
 
   return (
@@ -445,29 +668,25 @@ export function MobileNav({ children }: MobileNavProps) {
       className={`mobile-nav-container${isImmersiveRoute ? " mobile-nav-container--immersive" : ""}`}
       style={mobileViewportStyle}
     >
-      {!isOpen ? (
-        <div
-          className="mobile-edge-swipe-zone"
-          aria-hidden="true"
-          onPointerDown={onEdgePointerDown}
-        />
-      ) : null}
-
+      {isEditorRoute || isImmersiveRoute ? null : (
       <button
         type="button"
-        className={`mobile-fab${handleDragging ? " mobile-fab--dragging" : ""}`}
-        onClick={onFabClick}
+        className={`mobile-fab mobile-fab--${fabSide}${isOpen ? " mobile-fab--open" : ""}${fabCondensedNow ? " mobile-fab--condensed" : ""}${fabDragging ? " is-dragging" : ""}`}
+        style={fabStyle}
         onPointerDown={onFabPointerDown}
-        aria-label={isOpen ? "收起导航菜单" : "展开导航菜单"}
+        onPointerMove={onFabPointerMove}
+        onPointerUp={onFabPointerUp}
+        onPointerCancel={onFabPointerCancel}
+        onKeyDown={onFabKeyDown}
+        onClick={onFabClick}
+        aria-label={isOpen ? "关闭主菜单" : "打开主菜单（可拖动贴边）"}
         aria-expanded={isOpen}
-        title={isOpen ? "收起导航菜单 / 向左拖关闭" : "展开导航菜单 / 向右拖打开"}
-        style={{
-          touchAction: "none",
-          transform: handleDragX !== 0 ? `translateX(${handleDragX}px)` : undefined,
-        }}
       >
-        <span className="mobile-fab-icon">{isOpen ? <X size={16} /> : <Menu size={16} />}</span>
+        <span className="mobile-fab-icon" aria-hidden="true">
+          {isOpen ? <X size={20} /> : <Menu size={22} />}
+        </span>
       </button>
+      )}
       {showBackButton ? (
         <button
           type="button"
@@ -475,16 +694,19 @@ export function MobileNav({ children }: MobileNavProps) {
           onClick={handleBack}
           aria-label="返回"
         >
-          <ArrowLeft size={17} />
-          <span>返回</span>
+          <ArrowLeft size={18} />
         </button>
       ) : null}
 
-      {isOpen ? (
-        <div className="mobile-overlay" onClick={onOverlayClick}>
+      {isOpen || handleReveal > 0 ? (
+        <div
+          className={`mobile-overlay${handleReveal > 0 ? " mobile-overlay--revealing" : ""}`}
+          onClick={onOverlayClick}
+          style={handleReveal > 0 ? { opacity: handleReveal } : undefined}
+        >
           <nav
             ref={sidebarRef}
-            className={`mobile-sidebar${sidebarDragging ? " is-dragging" : ""}`}
+            className={`mobile-sidebar${sidebarDragging ? " is-dragging" : ""}${handleReveal > 0 ? " mobile-sidebar--revealing" : ""}`}
             onClick={(event) => {
               // 仅阻止「拖动后误触发的点击」冒泡到遮罩
               if (swallowClickRef.current) {
@@ -496,7 +718,9 @@ export function MobileNav({ children }: MobileNavProps) {
             }}
             onPointerDown={onSidebarPointerDown}
             style={{
-              transform: `translateX(${sidebarDragX}px)`,
+              transform: handleReveal > 0
+                ? `translateX(${(handleReveal - 1) * 100}%)`
+                : `translateX(${sidebarDragX}px)`,
             }}
           >
             <div className="mobile-sidebar-brand">

@@ -501,8 +501,7 @@
 
 :root[data-color-scheme="mondrian"] .mobile-fab {
   border: var(--mondrian-line);
-  border-left: 0;
-  border-radius: 0 8px 8px 0;
+  border-radius: 50%;
   box-shadow: var(--mondrian-offset-sm);
   background:
     var(--mondrian-dot),
@@ -518,6 +517,16 @@
   background-size: 7px 7px, auto;
   transform: none;
   box-shadow: 2px 2px 0 var(--mondrian-ink);
+}
+
+:root[data-color-scheme="mondrian"] .mcp-server-row {
+  border: var(--mondrian-line);
+  border-radius: var(--mondrian-panel-radius);
+  background:
+    var(--mondrian-dot),
+    var(--mondrian-paper);
+  background-size: var(--mondrian-dot-size), auto;
+  box-shadow: var(--mondrian-offset-sm);
 }
 
 @media (max-width: 767px) {
@@ -571,6 +580,126 @@
     border-top: 0;
     border-bottom: 0;
     border-radius: 0 18px 18px 0;
+  }
+
+  :root[data-color-scheme="mondrian"] .home-mobile-btn {
+    border: var(--mondrian-line);
+    border-radius: var(--mondrian-btn-radius);
+    background:
+      var(--mondrian-dot),
+      var(--mondrian-paper);
+    background-size: var(--mondrian-dot-size), auto;
+    color: var(--mondrian-ink);
+    box-shadow: var(--mondrian-offset-sm);
+  }
+
+  :root[data-color-scheme="mondrian"] .home-mobile-btn--primary {
+    background:
+      var(--mondrian-dot-strong),
+      var(--mondrian-blue);
+    background-size: 8px 8px, auto;
+    color: var(--mondrian-white);
+  }
+
+  :root[data-color-scheme="mondrian"] .home-mobile-btn:active {
+    transform: translate(1px, 1px);
+    box-shadow: 1px 1px 0 var(--mondrian-ink);
+  }
+
+  :root[data-color-scheme="mondrian"] .theme-picker-mode-btn {
+    border: var(--mondrian-line);
+    border-radius: var(--mondrian-btn-radius);
+    background: var(--mondrian-paper);
+    color: var(--mondrian-ink);
+    box-shadow: var(--mondrian-offset-sm);
+    font-weight: 800;
+  }
+
+  :root[data-color-scheme="mondrian"] .theme-picker-mode-btn--active {
+    border-color: var(--mondrian-ink);
+    background:
+      var(--mondrian-dot),
+      var(--mondrian-ink);
+    background-size: 7px 7px, auto;
+    color: var(--mondrian-paper);
+  }
+
+  :root[data-color-scheme="mondrian"] .theme-picker-mode-btn:active {
+    transform: translate(1px, 1px);
+    box-shadow: 1px 1px 0 var(--mondrian-ink);
+  }
+
+  :root[data-color-scheme="mondrian"] .wed-m-card {
+    border: var(--mondrian-line);
+    border-radius: var(--mondrian-panel-radius);
+    background:
+      var(--mondrian-dot),
+      var(--mondrian-paper);
+    background-size: var(--mondrian-dot-size), auto;
+    box-shadow: var(--mondrian-offset-sm);
+    font-weight: 700;
+  }
+
+  :root[data-color-scheme="mondrian"] .wed-m-hero {
+    border: var(--mondrian-line);
+    border-radius: var(--mondrian-panel-radius);
+    background:
+      var(--mondrian-dot),
+      linear-gradient(90deg, var(--mondrian-red) 0 6px, transparent 6px),
+      var(--mondrian-paper);
+    background-size: 7px 7px, auto, auto;
+    color: var(--mondrian-ink);
+    box-shadow: var(--mondrian-offset);
+  }
+
+  :root[data-color-scheme="mondrian"] .wed-m-saved {
+    border: 2px solid var(--mondrian-ink);
+    background: var(--mondrian-paper-deep);
+    color: var(--mondrian-ink);
+  }
+
+  :root[data-color-scheme="mondrian"] .wed-m-hero-save {
+    border: var(--mondrian-line-thin);
+    border-radius: 10px;
+    background: var(--mondrian-yellow);
+    color: var(--mondrian-ink);
+    box-shadow: var(--mondrian-offset-sm);
+    font-weight: 800;
+  }
+
+  :root[data-color-scheme="mondrian"] .attribute-panel__layout {
+    border: var(--mondrian-line);
+    border-radius: var(--mondrian-panel-radius);
+  }
+
+  :root[data-color-scheme="mondrian"] .mobile-editor-topbar {
+    border: var(--mondrian-line);
+    border-radius: var(--mondrian-panel-radius);
+    padding-inline: 6px;
+    background:
+      var(--mondrian-dot),
+      var(--mondrian-paper);
+    background-size: var(--mondrian-dot-size), auto;
+    box-shadow: var(--mondrian-offset-sm);
+  }
+
+  :root[data-color-scheme="mondrian"] .mobile-editor-back,
+  :root[data-color-scheme="mondrian"] .mobile-editor-more {
+    border: var(--mondrian-line-thin);
+    border-radius: 10px;
+    background: var(--mondrian-paper);
+    color: var(--mondrian-ink);
+    box-shadow: none;
+  }
+
+  :root[data-color-scheme="mondrian"] .mobile-editor-back:active,
+  :root[data-color-scheme="mondrian"] .mobile-editor-more:active {
+    background: var(--mondrian-yellow);
+  }
+
+  :root[data-color-scheme="mondrian"] .mobile-editor-actionbar {
+    border-top: var(--mondrian-line);
+    background: var(--mondrian-paper);
   }
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "dream-narrative-engine"
-version = "0.3.0"
+version = "0.2.0"
 description = "梦叙引擎：以 AI 驱动的叙事游戏引擎"
 authors = ["Dream Narrative Engine"]
 edition = "2021"
@@ -64,3 +64,8 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]
 notify-rust = "4.17.0"
+
+# rquickjs-sys 0.9.0 does not ship aarch64-linux-android bindings.
+# The vendored copy adds Android binding files (same LP64 ABI as linux-gnu).
+[patch.crates-io]
+rquickjs-sys = { path = "vendor/rquickjs-sys" }

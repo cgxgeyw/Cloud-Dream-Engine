@@ -192,7 +192,7 @@ pub(crate) fn build_director_transport_failure(
         raw_text_excerpt: if raw_text.trim().is_empty() {
             error.to_string()
         } else {
-            raw_text.trim().chars().take(280).collect()
+            raw_text.trim().chars().take(4000).collect()
         },
         repair_summary: Some(error.to_string()),
         schema_errors: Vec::new(),

@@ -1,6 +1,7 @@
 @import "./styles/theme.css";
 @import "./styles/kawaii.css";
 @import "./styles/mondrian.css";
+@import "./styles/mobile-editor.css";
 
 html,
 body,

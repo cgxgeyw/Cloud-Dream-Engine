@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo, useRef, type ChangeEvent } from "react";
 import { useNavigate } from "react-router-dom";
+import { ArrowLeft, ChevronRight, Plus } from "lucide-react";
 import { useIsMobile } from "../components/ResponsiveLayout";
 import {
   createMcpTool,
@@ -159,6 +160,7 @@ export function McpToolsPage() {
   const [implConfigText, setImplConfigText] = useState(defaultImplConfigText);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [mobilePane, setMobilePane] = useState<"list" | "servers">("list");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -251,6 +253,18 @@ export function McpToolsPage() {
     setImplConfigText(defaultImplConfigText);
     setEditorOpen(true);
     setError(null);
+  }
+
+  function handleMobileBack() {
+    if (editorOpen) {
+      closeEditor();
+      return;
+    }
+    if (mobilePane === "servers") {
+      setMobilePane("list");
+      return;
+    }
+    navigate("/");
   }
 
   function beginEdit(tool: McpToolResponse) {
@@ -490,26 +504,48 @@ export function McpToolsPage() {
     </ScreenLayout>
   );
 
-  // ===== Mobile Layout (列表/编辑器切换) =====
+  // ===== Mobile Layout (列表 / 服务连接 / 工具编辑) =====
   const mobileLayout = (
-    <ScreenLayout title="MCP 工具" compactHeader maxWidth={980}>
-      {editorOpen ? null : (
-        <div style={{ marginBottom: 12 }}>
-          <McpServersPanel onServersChanged={() => void loadServers()} />
+    <ScreenLayout title="" compactHeader maxWidth={980}>
+      <div className="mobile-editor-topbar">
+        <button
+          type="button"
+          className="mobile-editor-back"
+          onClick={handleMobileBack}
+          aria-label={editorOpen ? "返回工具列表" : mobilePane === "servers" ? "返回工具列表" : "返回首页"}
+        >
+          <ArrowLeft size={18} />
+        </button>
+        <div className="mobile-editor-heading">
+          <strong className="mobile-editor-title">
+            {editorOpen ? (editingId ? "编辑工具" : "新增工具") : mobilePane === "servers" ? "服务连接" : "工具清单"}
+          </strong>
+          <span className="mobile-editor-kicker">MCP 工具</span>
         </div>
-      )}
+        {!editorOpen && mobilePane === "list" ? (
+          <button
+            type="button"
+            className="mobile-editor-more"
+            onClick={openCreateEditor}
+            aria-label="新增工具"
+          >
+            <Plus size={18} />
+          </button>
+        ) : (
+          <span className="mobile-editor-more-spacer" aria-hidden="true" />
+        )}
+      </div>
+
       {editorOpen ? (
-        <div className="settings-page-shell">
-          <div className="settings-detail-head">
-            <button type="button" className="action-btn" onClick={closeEditor}>
-              返回工具列表
-            </button>
-            <div className="settings-detail-head-copy">
-              <strong>{editingId ? "编辑工具" : "新增工具"}</strong>
+        <SurfacePanel className="surface-panel--pad-lg">
+          <div className="wed-pane-head">
+            <div>
+              <h2 className="wed-pane-title">{editingId ? "编辑工具" : "新增工具"}</h2>
+              <div className="wed-pane-sub">填写工具信息，保存后写入工具清单。</div>
             </div>
           </div>
 
-          <SurfacePanel className="surface-panel--pad-lg">
+          <div className="editor-content">
             {error ? <div className="error-text">{error}</div> : null}
 
             <div className="settings-section">
@@ -636,71 +672,77 @@ export function McpToolsPage() {
                 </button>
               </div>
             </div>
-          </SurfacePanel>
-        </div>
+          </div>
+        </SurfacePanel>
+      ) : mobilePane === "servers" ? (
+        <McpServersPanel compact onServersChanged={() => void loadServers()} />
       ) : (
-        <div className="settings-page-shell">
-          <div className="mcp-mobile-header">
-            <div className="settings-detail-head-copy">
-              <strong>{"MCP \u5de5\u5177"}</strong>
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button type="button" className="action-btn" disabled={importing} onClick={pickImportFile}>
-                导入
-              </button>
-              <button type="button" className="action-btn" disabled={exporting} onClick={() => void handleExport()}>
-                导出
-              </button>
-              <button type="button" className="action-btn action-btn--accent" onClick={openCreateEditor}>
-                + 新增工具
-              </button>
-            </div>
+        <SurfacePanel className="surface-panel--pad-lg">
+          <div className="mcp-mobile-actions">
+            <button type="button" className="action-btn" disabled={importing} onClick={pickImportFile}>
+              {importing ? "导入中..." : "导入"}
+            </button>
+            <button type="button" className="action-btn" disabled={exporting} onClick={() => void handleExport()}>
+              {exporting ? "导出中..." : "导出"}
+            </button>
           </div>
 
-          <SurfacePanel className="surface-panel--pad-lg">
-            {loading ? <div>正在加载 MCP 工具...</div> : null}
-            {error ? <div className="error-text">{error}</div> : null}
-            {!loading && tools.length === 0 ? <div className="empty-text">暂无 MCP 工具。</div> : null}
+          <div className="wed-m-cards" style={{ marginBottom: 18 }}>
+            <button type="button" className="wed-m-card" onClick={() => setMobilePane("servers")}>
+              <span className="wed-m-card-copy">
+                <span className="t">MCP 服务连接</span>
+                <span className="s">
+                  {servers.length > 0 ? "已连接 " + servers.length + " 个 server" : "尚未连接任何 server"}
+                </span>
+              </span>
+              <ChevronRight size={16} aria-hidden="true" />
+            </button>
+          </div>
 
-            {!loading && tools.length > 0 ? (
-              <div className="mcp-tool-list">
-                {tools.map((tool) => {
-                  return (
-                  <div key={tool.id} className="mcp-tool-card">
-                    <div className="mcp-tool-card-head">
-                      <div className="mcp-tool-card-copy">
-                        <strong>{tool.name}</strong>
-                        <span style={toolKindBadgeStyle}>{resolveToolKindLabel(tool)}</span>
-                      </div>
-                      <div className="mcp-tool-card-meta">
-                        <button
-                          type="button"
-                          className={`mcp-tool-meta-btn mcp-tool-state${tool.enabled ? " mcp-tool-state--enabled" : ""}`}
-                          onClick={() => void toggleTool(tool)}
-                        >
-                          {tool.enabled ? "启用" : "停用"}
-                        </button>
-                      </div>
+          <div className="wed-m-group-title" style={{ marginBottom: 6 }}>
+            工具 · {tools.length}
+          </div>
+
+          {loading ? <div className="text-muted">正在加载 MCP 工具...</div> : null}
+          {error ? <div className="error-text">{error}</div> : null}
+          {!loading && tools.length === 0 ? <div className="empty-text">暂无 MCP 工具。</div> : null}
+
+          {!loading && tools.length > 0 ? (
+            <div className="mcp-tool-list mcp-mobile-tool-list">
+              {tools.map((tool) => (
+                <div key={tool.id} className="mcp-tool-card">
+                  <div className="mcp-tool-card-head">
+                    <div className="mcp-tool-card-copy">
+                      <strong>{tool.name}</strong>
+                      <span style={toolKindBadgeStyle}>{resolveToolKindLabel(tool)}</span>
                     </div>
-
-                    <div className="mcp-tool-card-actions">
-                      <button type="button" className="action-btn" onClick={() => beginEdit(tool)}>
-                        编辑
-                      </button>
-                      <button type="button" className="action-btn" onClick={() => void toggleTool(tool)}>
-                        {tool.enabled ? "停用" : "启用"}
-                      </button>
-                      <button type="button" className="action-btn action-btn--danger" onClick={() => void removeTool(tool.id)}>
-                        删除
+                    <div className="mcp-tool-card-meta">
+                      <button
+                        type="button"
+                        className={"mcp-tool-meta-btn mcp-tool-state" + (tool.enabled ? " mcp-tool-state--enabled" : "")}
+                        onClick={() => void toggleTool(tool)}
+                      >
+                        {tool.enabled ? "启用" : "停用"}
                       </button>
                     </div>
                   </div>
-                  );
-                })}
-              </div>
-            ) : null}
-          </SurfacePanel>
-        </div>
+
+                  <div className="mcp-tool-card-actions">
+                    <button type="button" className="action-btn" onClick={() => beginEdit(tool)}>
+                      编辑
+                    </button>
+                    <button type="button" className="action-btn" onClick={() => void toggleTool(tool)}>
+                      {tool.enabled ? "停用" : "启用"}
+                    </button>
+                    <button type="button" className="action-btn action-btn--danger" onClick={() => void removeTool(tool.id)}>
+                      删除
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </SurfacePanel>
       )}
     </ScreenLayout>
   );

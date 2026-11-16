@@ -500,16 +500,32 @@ impl WorldService {
             .map(|value| value.trim().to_string())
             .filter(|value| matches!(value.as_str(), "lexical_only" | "hybrid" | "semantic_only"))
             .unwrap_or_else(|| "hybrid".to_string());
-        let character_memory_candidate_limit = object
-            .get("character_memory_candidate_limit")
-            .and_then(|value| value.as_i64())
-            .map(|value| value.clamp(20, 600))
-            .unwrap_or(200);
         let character_memory_semantic_weight = object
             .get("character_memory_semantic_weight")
             .and_then(|value| value.as_f64())
             .map(|value| value.clamp(0.0, 1.0))
             .unwrap_or(0.65);
+        let memory_summary_interval_rounds = object
+            .get("memory_summary_interval_rounds")
+            .and_then(|value| value.as_i64())
+            .map(|value| value.clamp(1, 100))
+            .unwrap_or(10);
+        let memory_summary_model = object
+            .get("memory_summary_model")
+            .and_then(|value| value.as_str())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_default();
+        let character_memory_summary_prompt = object
+            .get("character_memory_summary_prompt")
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string())
+            .unwrap_or_default();
+        let director_memory_summary_prompt = object
+            .get("director_memory_summary_prompt")
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string())
+            .unwrap_or_default();
         let director_tool_call_limit = object
             .get("director_tool_call_limit")
             .and_then(|value| value.as_i64())
@@ -610,8 +626,11 @@ impl WorldService {
             "character_memory_event_window_rounds": character_memory_event_window_rounds,
             "character_memory_dialogue_window_rounds": character_memory_dialogue_window_rounds,
             "character_memory_retrieval_mode": character_memory_retrieval_mode,
-            "character_memory_candidate_limit": character_memory_candidate_limit,
             "character_memory_semantic_weight": character_memory_semantic_weight,
+            "memory_summary_interval_rounds": memory_summary_interval_rounds,
+            "memory_summary_model": memory_summary_model,
+            "character_memory_summary_prompt": character_memory_summary_prompt,
+            "director_memory_summary_prompt": director_memory_summary_prompt,
             "director_tool_call_limit": director_tool_call_limit,
             "director_stage_labels": director_stage_labels,
             "director_model": director_model,
@@ -1153,6 +1172,8 @@ impl WorldService {
             },
             state: SessionState {
                 phase: "opening".to_string(),
+                director_summary: String::new(),
+                director_history_rounds: None,
             },
             // 新存档不覆盖任何采样参数：走世界与应用两层。
             generation_params: Default::default(),

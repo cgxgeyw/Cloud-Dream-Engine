@@ -23,6 +23,7 @@ import type {
   ImageModelTestRequest,
   McpServerUpsertRequest,
   McpToolCreateRequest,
+  MemorySummaryPromptDefaults,
   McpToolImportSummary,
   ModelConfig,
   PlayerActionRequest,
@@ -184,6 +185,7 @@ export type {
   AttributeValueResponse,
   AttributeValueUpsertRequest,
   MemoryEntry,
+  MemorySummaryPromptDefaults,
   RuntimeAttributeItem,
   RuntimeAttributeGroup,
   SessionRuntimeAttributesResponse,
@@ -437,6 +439,10 @@ export async function fetchWorldOpeningPromptPreview(worldId: string, params?: {
 
 export async function fetchDefaultDirectorResponseContract(): Promise<string> {
   return isTauri ? (await getTauri()).fetchDefaultDirectorResponseContract() : (await getHttp()).fetchDefaultDirectorResponseContract();
+}
+
+export async function fetchDefaultMemorySummaryPrompts(): Promise<MemorySummaryPromptDefaults> {
+  return isTauri ? (await getTauri()).fetchDefaultMemorySummaryPrompts() : (await getHttp()).fetchDefaultMemorySummaryPrompts();
 }
 
 export async function validateWorldUiDocument(payload: WorldUiDocumentRequest): Promise<WorldUiDocumentValidationResult> {

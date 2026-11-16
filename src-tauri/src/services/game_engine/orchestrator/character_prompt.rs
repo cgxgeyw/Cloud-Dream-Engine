@@ -11,6 +11,7 @@ use crate::services::game_engine::dialogue::{
     build_character_system_prompt, DialoguePipeline, BUILTIN_MEMORY_CONTRACT,
     BUILTIN_RESPONSE_CONTRACT,
 };
+use crate::services::game_engine::memory::resolve_fact_extraction_enabled;
 use crate::services::game_engine::prompting::{
     build_prompt_call, llm_chat_messages_to_values, resolve_prompt_section_order,
     resolve_runtime_context_prompt, CHARACTER_PROMPT_SECTION_IDS,
@@ -74,13 +75,38 @@ pub(crate) fn build_character_prompt_artifacts(
             &prompt_ctx,
         );
     // 模板内部已做过时间类渲染，这里再按完整上下文补一遍其余变量。
-    let system_prompt =
+    // 模型内部思考时先用渲染前的空模板去拼，再把骨架变量补一次，避免二次渲染误伤。
+    let base_system_prompt =
         crate::services::game_engine::prompting::render_prompt_variables_with_context(
             &build_character_system_prompt(speaker_name, speaker_profile, None),
             &prompt_ctx,
         );
-    let fact_extraction_enabled =
-        crate::services::game_engine::memory::resolve_fact_extraction_enabled(world);
+    // 角色卡可能只填了身份/背景而没填 system_prompt_template（世界主控新建角色常见）。
+    // 这里补最小人设，并统一追加署名硬约束：否则模型容易把身份/官职当成 speaker，
+    // 触发 domain_validation_failed 导致整个回合暂停。
+    let speaker_lock = format!(
+        "你正在扮演「{speaker_name}」。回复 JSON 的 \"speaker\" 字段必须逐字写作「{speaker_name}」，不得用身份、官职、称号或别称代替。"
+    );
+    let system_prompt = if base_system_prompt.trim().is_empty() {
+        let mut fallback = format!("你是{speaker_name}。");
+        if let Some(role) = speaker_profile
+            .map(|profile| profile.role.trim())
+            .filter(|value| !value.is_empty())
+        {
+            fallback.push_str(&format!("身份：{role}。"));
+        }
+        if let Some(background) = speaker_profile
+            .map(|profile| profile.background_prompt.trim())
+            .filter(|value| !value.is_empty())
+        {
+            fallback.push(' ');
+            fallback.push_str(background);
+        }
+        format!("{}\n\n{speaker_lock}", fallback.trim())
+    } else {
+        format!("{}\n\n{speaker_lock}", base_system_prompt.trim())
+    };
+    let fact_extraction_enabled = resolve_fact_extraction_enabled(world);
     let custom_response_contract = resolve_character_response_contract_prompt(
         speaker_profile.map(|profile| profile.response_contract_prompt.as_str()),
     );
@@ -155,6 +181,19 @@ pub(crate) fn build_character_prompt_artifacts(
     if let Some(context) = prompt_visibility_context.as_object_mut() {
         context.remove("visible_attribute_records");
     }
+    // 对话历史始终发送最近 N 轮。Embedding/OAG 只决定额外注入哪一层，
+    // 额外上下文统一从 oag_context 发一次；chat_history 仍只发最近对话，
+    // 避免同一份记忆重复下发。
+    let oag_context_value = turn_value
+        .pointer("/dialogue_history/memory_context")
+        .cloned()
+        .unwrap_or_default();
+    let chat_history_value = serde_json::json!({
+        "recent_dialogue": turn_value
+            .pointer("/dialogue_history/recent_dialogue")
+            .cloned()
+            .unwrap_or_default()
+    });
     let mut sections = std::collections::HashMap::<
         String,
         (String, String, serde_json::Value, String, bool),
@@ -169,19 +208,14 @@ pub(crate) fn build_character_prompt_artifacts(
             false,
         ),
     );
-    // OAG/记忆检索注入这块计划重做，重做前维持过渡态，不要按小修处理：
-    // memory_context 在这里（oag_context，可独立排序）和下方 chat_history
-    // （整个 dialogue_history）各下发一份，同一请求重复发送是已知问题。
-    // 重做方向：oag_context 单独承载记忆注入，chat_history 只发 recent_dialogue。
+    // 额外注入层（Embedding 记忆召回 / OAG 结构化信息）统一放在这里；
+    // 没有命中时该 section 为空，不发送。
     sections.insert(
         "oag_context".into(),
         (
             "OAG/记忆检索注入信息".into(),
             "character_memory.retrieval".into(),
-            turn_value
-                .pointer("/dialogue_history/memory_context")
-                .cloned()
-                .unwrap_or_default(),
+            oag_context_value,
             "system".into(),
             false,
         ),
@@ -247,12 +281,9 @@ pub(crate) fn build_character_prompt_artifacts(
     sections.insert(
         "chat_history".into(),
         (
-            "对话历史与记忆".into(),
+            "对话历史".to_string(),
             "runtime.dialogue_history".into(),
-            turn_value
-                .get("dialogue_history")
-                .cloned()
-                .unwrap_or_default(),
+            chat_history_value,
             "user".into(),
             false,
         ),
@@ -361,7 +392,8 @@ pub(crate) fn build_character_prompt_artifacts(
         } else {
             format!("【{label}】\n{section_content}")
         };
-        let sent = !(id == "oag_context" && value.as_object().is_some_and(|map| map.is_empty()))
+        let sent = !value.is_null()
+            && !(id == "oag_context" && value.as_object().is_some_and(|map| map.is_empty()))
             && !content.trim().is_empty();
         modules.push(serde_json::json!({"id": id, "name": label, "source": source, "content": content, "editable": editable, "locked": false, "sent": sent}));
         if !sent {
@@ -651,6 +683,120 @@ mod tests {
         assert!(
             content.contains("mortal_time"),
             "动态属性 section 内容缺少属性键原文: {content}"
+        );
+    }
+
+    #[test]
+    fn chat_history_always_sent_and_memory_injected_once() {
+        let pipeline = DialoguePipeline::new();
+        let mut world = test_world();
+        world.director_config = serde_json::json!({ "memory_mode": "embedding" });
+        let session = test_session();
+        let memory = MemoryEntry {
+            id: "mem-1".to_string(),
+            world_id: "world-1".to_string(),
+            session_id: "sess-1".to_string(),
+            character_id: "char-a".to_string(),
+            layer: "working".to_string(),
+            content: "银钥匙藏在12号柜".to_string(),
+            source: "speaker_response".to_string(),
+            importance: 0.8,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            turn_index: 1,
+            conversation_id: None,
+            event_id: None,
+            item_id: None,
+            scene_id: None,
+            memory_type: "dialogue".to_string(),
+            speaker: Some("韩立".to_string()),
+            role: Some("agent".to_string()),
+            location: Some("开场".to_string()),
+            participants: vec!["玩家".to_string(), "韩立".to_string()],
+            keywords: vec!["银钥匙".to_string()],
+        };
+        let build_artifacts = |world: &WorldDefinition| {
+            build_character_prompt_artifacts(
+                &pipeline,
+                world,
+                "韩立",
+                None,
+                &session,
+                "玩家",
+                "开场",
+                "开场",
+                "继续",
+                &[],
+                std::slice::from_ref(&memory),
+                std::slice::from_ref(&memory),
+                &[],
+                &[],
+                "开场",
+                "开场",
+                &[],
+                &std::collections::HashMap::new(),
+                &[],
+            )
+        };
+        fn module<'a>(artifacts: &'a CharacterPromptArtifacts, id: &str) -> &'a serde_json::Value {
+            artifacts
+                .modules
+                .iter()
+                .find(|item| item.get("id").and_then(|value| value.as_str()) == Some(id))
+                .unwrap_or_else(|| panic!("missing module {id}"))
+        }
+
+        let artifacts = build_artifacts(&world);
+        assert_eq!(
+            module(&artifacts, "oag_context")
+                .get("sent")
+                .and_then(|v| v.as_bool()),
+            Some(true),
+            "Embedding 模式应发送记忆注入 section"
+        );
+        assert!(
+            module(&artifacts, "oag_context")
+                .get("content")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .contains("银钥匙"),
+            "记忆注入 section 应包含召回的记忆"
+        );
+        let chat_history = module(&artifacts, "chat_history")
+            .get("content")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        assert!(
+            chat_history.contains("recent_dialogue"),
+            "对话历史必须始终发送"
+        );
+        assert!(
+            !chat_history.contains("memory_context"),
+            "记忆只能从 oag_context 注入一次，chat_history 不应重复"
+        );
+        assert_eq!(
+            module(&artifacts, "fact_memory_rules")
+                .get("sent")
+                .and_then(|v| v.as_bool()),
+            Some(false),
+            "Embedding 模式不应发送事实/记忆提取契约"
+        );
+
+        // OAG 结构化层尚未接入，暂按 Embedding 召回运行；但事实抽取仍须显式开启。
+        world.director_config = serde_json::json!({ "memory_mode": "oag" });
+        let artifacts = build_artifacts(&world);
+        assert_eq!(
+            module(&artifacts, "oag_context")
+                .get("sent")
+                .and_then(|v| v.as_bool()),
+            Some(true),
+            "OAG 模式应发送注入 section（当前回退为 Embedding 召回）"
+        );
+        assert_eq!(
+            module(&artifacts, "fact_memory_rules")
+                .get("sent")
+                .and_then(|v| v.as_bool()),
+            Some(false),
+            "OAG 模式不自动启用事实抽取"
         );
     }
 }

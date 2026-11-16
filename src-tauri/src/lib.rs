@@ -61,6 +61,7 @@ pub fn run() {
             commands::worlds::duplicate_world,
             commands::worlds::preview_opening_prompt,
             commands::worlds::get_default_director_response_contract,
+            commands::worlds::get_default_memory_summary_prompts,
             commands::worlds::export_world_package,
             commands::worlds::export_world_package_to_downloads,
             commands::worlds::import_world_package,

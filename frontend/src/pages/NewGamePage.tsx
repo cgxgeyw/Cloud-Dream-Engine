@@ -9,7 +9,9 @@ import {
   type WorldResponse,
 } from "../data/apiAdapter";
 import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
+import { MobilePageBar } from "../components/MobilePageBar";
 import { useT } from "../data/i18n/context";
+import { useIsMobile } from "../components/ResponsiveLayout";
 import { ArrowLeft } from "lucide-react";
 
 function countMapNodes(value: WorldResponse["map_nodes"]): number {
@@ -87,6 +89,7 @@ function useWorldList(preferredWorldId?: string | null) {
 export function NewGamePage() {
   const navigate = useNavigate();
   const t = useT();
+  const isMobile = useIsMobile();
   const [searchParams] = useSearchParams();
   const preferredWorldId = searchParams.get("worldId");
   const { worlds, loading, error } = useWorldList(preferredWorldId);
@@ -98,11 +101,14 @@ export function NewGamePage() {
       compactHeader
       maxWidth={980}
       toolbar={
-        <button type="button" onClick={() => navigate(-1)} className="action-btn">
+        isMobile ? undefined : (
+        <button type="button" onClick={() => navigate("/")} className="action-btn">
           <ArrowLeft size={14} /> {t("newGame.home")}
         </button>
+        )
       }
     >
+      {isMobile ? <MobilePageBar title={t("newGame.title")} /> : null}
       {loading ? <div className="empty-text">{t("newGame.loadingWorlds")}</div> : null}
       {error ? <div className="error-text">{t("newGame.loadError").replace("{error}", error)}</div> : null}
 
@@ -152,6 +158,7 @@ export function NewGamePage() {
 export function NewGameSetupPage() {
   const navigate = useNavigate();
   const t = useT();
+  const isMobile = useIsMobile();
   const { worldId = "" } = useParams();
   const [world, setWorld] = useState<WorldResponse | null>(null);
   const [characters, setCharacters] = useState<CharacterResponse[]>([]);
@@ -237,11 +244,16 @@ export function NewGameSetupPage() {
       compactHeader
       maxWidth={860}
       toolbar={
-        <button type="button" onClick={() => navigate(-1)} className="action-btn">
+        isMobile ? undefined : (
+        <button type="button" onClick={() => navigate("/new-game")} className="action-btn">
           <ArrowLeft size={14} /> {t("newGame.back")}
         </button>
+        )
       }
     >
+      {isMobile ? (
+        <MobilePageBar title={t("newGame.setupTitle")} onBack={() => navigate("/new-game")} />
+      ) : null}
       {loading ? <div className="empty-text">{t("newGame.loadingSetup")}</div> : null}
       {error ? <div className="error-text">{t("newGame.loadError").replace("{error}", error)}</div> : null}
 

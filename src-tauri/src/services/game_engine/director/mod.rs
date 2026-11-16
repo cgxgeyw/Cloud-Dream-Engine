@@ -39,16 +39,17 @@ pub fn default_director_response_contract() -> serde_json::Value {
     let field_guide = return_format::director_field_guide();
     serde_json::json!({
         "required_style": "仅返回 JSON 对象",
-        "return_policy": "仅返回本回合发生变化的字段",
+        "return_policy": "每回合必须返回 planned_speakers 和 event；其它字段仅在本回合发生变化时返回",
         "core_fields": core_fields,
         "optional_fields_when_changed": optional_fields,
-        "how_to_fill": "只返回一个 JSON 对象。每回合都必须包含 planned_speakers（即使为空）。只有字段在本回合确实适用或发生变化时才返回；未变化的字段必须省略，不要把当前状态原样回传。不要重复返回 basic_setting、current_state 或 chat_history。场景切换、在场角色名单、新建角色、切换玩家视角和背景图生成不要写成 JSON 字段，请通过 change_scene / switch_player_character / generate_image 工具调用完成；向玩家发起选择、确认等交互时使用 request_player_interaction 工具。各字段的含义和填写时机见 field_guide。",
+        "how_to_fill": "只返回一个 JSON 对象。每回合都必须包含 planned_speakers（即使为空）和 event（本回合实际发生、推动剧情的新事件，用旁白写出，会直接展示给玩家）。只有其它字段在本回合确实适用或发生变化时才返回；未变化的字段必须省略，不要把当前状态原样回传。不要重复返回 basic_setting、current_state 或 chat_history。场景切换、在场角色名单、新建角色、切换玩家视角和背景图生成不要写成 JSON 字段，请通过 change_scene / switch_player_character / generate_image 工具调用完成；向玩家发起选择、确认等交互时使用 request_player_interaction 工具。各字段的含义和填写时机见 field_guide。",
         "field_guide": field_guide,
         "runtime_update_format": return_format::director_runtime_update_format(),
         "forbidden_fields": return_format::DIRECTOR_FORBIDDEN_FIELDS,
         "notes": [
             "省略未变化字段。",
             "不要重建完整会话状态。",
+            "event 是每回合的剧情推进旁白：只写具体发生的事和结果，不写角色台词，不替玩家做决定。",
             "只有确实需要非对话场景更新时才返回 current_line。",
             "使用 session_attribute_updates 按属性键更新会话/世界自定义属性；时间等状态也按此方式处理。",
             "使用 character_attribute_updates 按角色名和准确属性键更新角色自定义属性。",
@@ -186,6 +187,8 @@ pub struct ParsedDirectorRuntimePayload {
     pub next_location: String,
     pub next_scene_name: String,
     pub current_line: Option<String>,
+    /// 本回合由世界主控写出的剧情推进旁白，会作为一条"事件"消息展示并进入历史。
+    pub event: Option<String>,
     pub next_scene_background_hint: Option<String>,
     pub background_asset_name: Option<String>,
     pub background_asset_path: Option<String>,
@@ -226,7 +229,10 @@ impl WorldDirectorService {
             kv_vars: Some(kv_vars),
             custom_vars: Some(&custom_vars),
         };
-        let history_rounds = self.resolve_director_history_rounds(world);
+        let history_rounds = session
+            .state
+            .director_history_rounds
+            .unwrap_or_else(|| self.resolve_director_history_rounds(world));
         let chat_history = self.build_history_dialogue(
             &session.messages,
             history_rounds,
@@ -255,6 +261,7 @@ impl WorldDirectorService {
             &runtime_context_prompt,
             &payload,
             &tool_loop_messages,
+            &session.state.director_summary,
             player_media,
         );
         let mut modules = ordered_messages
@@ -351,6 +358,7 @@ impl WorldDirectorService {
         runtime_context_prompt: &str,
         payload: &serde_json::Value,
         tool_loop_messages: &[serde_json::Value],
+        director_summary: &str,
         player_media: &[crate::models::session::ContentPart],
     ) -> Vec<serde_json::Value> {
         let basic = &payload["basic_setting"];
@@ -376,6 +384,14 @@ impl WorldDirectorService {
         }
         let mut sections =
             std::collections::HashMap::<String, (String, String, serde_json::Value, bool)>::new();
+        let director_summary_value = {
+            let summary = director_summary.trim();
+            if summary.is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::Value::String(summary.to_string())
+            }
+        };
         sections.insert(
             "world_background".into(),
             (
@@ -391,9 +407,9 @@ impl WorldDirectorService {
         sections.insert(
             "oag_context".into(),
             (
-                "OAG 注入信息".into(),
-                "oag".into(),
-                serde_json::Value::Null,
+                "OAG/记忆总结注入信息".into(),
+                "memory.summary".into(),
+                director_summary_value,
                 false,
             ),
         );
@@ -579,7 +595,9 @@ impl WorldDirectorService {
                 continue;
             }
             if id == "oag_context" {
-                continue;
+                if value.is_null() {
+                    continue;
+                }
             }
             let is_dynamic_attribute =
                 id.starts_with("world_attribute:") || id.starts_with("character_attribute:");
@@ -587,6 +605,7 @@ impl WorldDirectorService {
                 serde_json::to_string_pretty(value).unwrap_or_else(|_| "null".to_string())
             } else if id == "director_rules"
                 || id == "world_runtime_context"
+                || id == "oag_context"
                 // 自定义返回契约是纯文本，直接发，不再包【标签】+JSON 壳。
                 || (id == "response_contract" && value.is_string())
             {
@@ -2100,6 +2119,9 @@ impl WorldDirectorService {
         };
         let current_line = normalize_llm_text(parsed.get("current_line"))
             .filter(|line| !looks_like_director_authored_speech(line));
+        // event 是每回合必给的剧情推进正文，允许提到角色台词，不做"像台词就丢弃"
+        // 的过滤；只做空值/纯空白清理。
+        let event = normalize_llm_text(parsed.get("event"));
         let next_scene_background_hint = normalize_llm_text(
             parsed
                 .get("next_scene_background_hint")
@@ -2161,6 +2183,7 @@ impl WorldDirectorService {
             next_location,
             next_scene_name,
             current_line,
+            event,
             next_scene_background_hint,
             background_asset_name,
             background_asset_path,
@@ -2275,7 +2298,7 @@ impl WorldDirectorService {
                 .get("recent_dialogue_rounds")
                 .and_then(|value| value.as_i64())
                 .map(|value| value as i32)
-                .unwrap_or(6)
+                .unwrap_or(30)
                 .max(1),
             attributes: vec![],
             portrait_assets: vec![],
@@ -2369,7 +2392,7 @@ impl WorldDirectorService {
                     recent_dialogue_rounds: player_profile
                         .as_ref()
                         .map(|character| character.recent_dialogue_rounds.max(1))
-                        .unwrap_or(6),
+                        .unwrap_or(30),
                     attributes: vec![],
                     portrait_assets: vec![],
                     avatar_asset: String::new(),
@@ -2740,7 +2763,7 @@ impl WorldDirectorService {
             .get("history_dialogue_rounds")
             .and_then(|value| value.as_i64())
             .map(|value| value as i32)
-            .unwrap_or(6)
+            .unwrap_or(30)
     }
 
     fn slice_director_history(

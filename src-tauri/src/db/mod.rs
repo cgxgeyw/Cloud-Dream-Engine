@@ -20,6 +20,9 @@ impl Database {
 
         let db = Database { conn };
         db.initialize_schema()?;
+        if let Err(error) = seeds::bundled_worlds::ensure_bundled_worlds(&db.conn, data_dir) {
+            eprintln!("[db] bundled world import skipped: {error}");
+        }
         Ok(db)
     }
 

@@ -299,6 +299,21 @@ pub async fn discover_models(
     base_url: String,
     api_key: String,
 ) -> Result<ModelDiscoverResponse, String> {
+    // 编辑已有模型时，前端拿到的 api_key 是脱敏值（••••••••abcd）；直接拿去请求必然 401。
+    // 这里按 provider + Base URL 回查已保存的密钥，用户只在新增模型时手填。
+    let mut api_key = api_key;
+    if api_key.trim().is_empty() || is_masked_api_key(&api_key) {
+        let db = state.db.lock().await;
+        let repo = crate::db::repositories::model_repo::ModelRepository::new(db.conn());
+        let normalized_base = base_url.trim().trim_end_matches('/');
+        if let Some(stored) = repo.list(None)?.into_iter().find(|model| {
+            model.provider == provider
+                && model.base_url.trim().trim_end_matches('/') == normalized_base
+                && !model.api_key.trim().is_empty()
+        }) {
+            api_key = stored.api_key;
+        }
+    }
     let request = ModelDiscoverRequest {
         provider,
         base_url,

@@ -103,16 +103,15 @@ export function SavesPage() {
 
   return (
     <ScreenLayout
-      title={t("saves.title")}
-      subtitle={t("saves.subtitle")}
+      title={isMobile ? "" : t("saves.title")}
+      subtitle={isMobile ? undefined : t("saves.subtitle")}
       compactHeader={isMobile}
       toolbar={
+        isMobile ? undefined : (
         <>
-          {!isMobile ? (
-            <button type="button" onClick={() => navigate("/")} className="action-btn">
-              {t("saves.backHome")}
-            </button>
-          ) : null}
+          <button type="button" onClick={() => navigate("/")} className="action-btn">
+            {t("saves.backHome")}
+          </button>
           {saves.length > 0 ? (
             <button
               type="button"
@@ -124,6 +123,7 @@ export function SavesPage() {
             </button>
           ) : null}
         </>
+        )
       }
       maxWidth={980}
     >

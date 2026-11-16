@@ -130,6 +130,7 @@ pub struct ModelInfo {
     pub owned_by: Option<String>,
 }
 
+#[derive(Clone)]
 pub struct LlmClient {
     http_client: reqwest::Client,
 }

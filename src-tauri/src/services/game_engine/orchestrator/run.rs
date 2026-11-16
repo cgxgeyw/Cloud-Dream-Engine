@@ -91,6 +91,7 @@ pub struct DirectorRuntimePreparation {
     pub next_location: String,
     pub next_scene_name: String,
     pub current_line: Option<String>,
+    pub event: Option<String>,
     pub next_scene_background_hint: String,
     pub next_time_label: String,
     pub scene_visible_characters: Option<Vec<String>>,
@@ -692,7 +693,7 @@ impl SessionOrchestrator {
         let resume_incomplete_turn = replay_turn_index.is_some()
             && !recovery_journal.is_empty()
             && !journal_has_completed_step(&recovery_journal, "finished");
-        let session = if let Some(turn_index) = replay_turn_index {
+        let mut session = if let Some(turn_index) = replay_turn_index {
             if resume_incomplete_turn {
                 loaded_session.clone()
             } else {
@@ -725,6 +726,33 @@ impl SessionOrchestrator {
             (true, Some(replay_index)) => replay_index,
             _ => next_turn_index(conn, session_id)?,
         };
+        // 主控的全局总结与原文窗口：与角色路一样按桶对齐，避免总结和原文重叠/断档。
+        let director_requested_rounds = world
+            .director_config
+            .get("history_dialogue_rounds")
+            .and_then(|value| value.as_i64())
+            .map(|value| value as i32)
+            .unwrap_or(30);
+        let summary_interval =
+            crate::services::game_engine::memory::resolve_memory_summary_interval(&world);
+        let director_history_rounds =
+            crate::services::game_engine::memory::align_history_rounds_to_summary_bucket(
+                conn,
+                &session.id,
+                Some("director"),
+                turn_index,
+                director_requested_rounds,
+                summary_interval,
+            );
+        session.state.director_history_rounds = Some(director_history_rounds);
+        session.state.director_summary =
+            crate::services::game_engine::memory::load_director_summary_text(
+                conn,
+                &session.id,
+                turn_index,
+                director_history_rounds,
+            )
+            .unwrap_or_default();
         if !journal_has_completed_step(&recovery_journal, "created") {
             append_turn_journal(
                 conn,
@@ -796,6 +824,11 @@ impl SessionOrchestrator {
             Vec::new()
         };
         let mut messages = session.messages.clone();
+        // 玩家消息发生在导演切换场景之前，观众用回合开始时的名册。
+        let player_witnesses = super::session_materialization::build_turn_participants(
+            &session.visible_characters,
+            &session.player_character_name,
+        );
         messages.push(ChatMessage {
             message_id: ChatMessage::generate_id(),
             created_at: chrono::Utc::now().to_rfc3339(),
@@ -805,7 +838,10 @@ impl SessionOrchestrator {
             speaker: Some(session.player_character_name.clone()),
             metadata: Some(serde_json::json!({
                 "turn_index": turn_index,
-                "message_kind": "player_action"
+                "message_kind": "player_action",
+                "scene_id": session.scene.scene_id,
+                "scene_name": session.scene.name,
+                "witnesses": player_witnesses,
             })),
         });
         let director_completed_payload = if resume_incomplete_turn
@@ -847,6 +883,7 @@ impl SessionOrchestrator {
         let mut next_location = director_runtime_payload.next_location.clone();
         let mut next_scene_name = director_runtime_payload.next_scene_name.clone();
         let current_line = director_runtime_payload.current_line.clone();
+        let event = director_runtime_payload.event.clone();
         let mut next_scene_background_hint = director_runtime_payload
             .next_scene_background_hint
             .clone()
@@ -897,6 +934,9 @@ impl SessionOrchestrator {
                     "current_line".to_string(),
                     serde_json::Value::String(current_line),
                 );
+            }
+            if let Some(event) = event.clone() {
+                object.insert("event".to_string(), serde_json::Value::String(event));
             }
             object.insert(
                 "next_time_label".to_string(),
@@ -1212,6 +1252,7 @@ impl SessionOrchestrator {
             next_location,
             next_scene_name,
             current_line,
+            event,
             next_scene_background_hint,
             next_time_label,
             scene_visible_characters,

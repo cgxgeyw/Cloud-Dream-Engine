@@ -57,7 +57,7 @@ function textToMap(value: string): Record<string, string> {
   return result;
 }
 
-export function McpServersPanel({ onServersChanged }: { onServersChanged?: () => void }) {
+export function McpServersPanel({ onServersChanged, compact = false }: { onServersChanged?: () => void; compact?: boolean }) {
   const [servers, setServers] = useState<McpServerConfig[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -175,7 +175,15 @@ export function McpServersPanel({ onServersChanged }: { onServersChanged?: () =>
 
   return (
     <SurfacePanel className="surface-panel--pad-lg">
+      {compact ? (
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: servers.length > 0 ? 12 : 0 }}>
+          <button type="button" className="action-btn action-btn--accent" onClick={openCreate}>
+            新建连接
+          </button>
+        </div>
+      ) : (
       <div
+        className="mcp-servers-head"
         style={{
           display: "flex",
           justifyContent: "space-between",
@@ -184,7 +192,7 @@ export function McpServersPanel({ onServersChanged }: { onServersChanged?: () =>
           marginBottom: 14,
         }}
       >
-        <div>
+        <div className="mcp-servers-head-copy">
           <strong style={{ fontSize: 18 }}>MCP 服务连接</strong>
           <div className="text-muted" style={{ marginTop: 4, fontSize: 13 }}>
             配置外部 MCP server；只有连得上的 server 上的工具才会下发给模型
@@ -194,49 +202,40 @@ export function McpServersPanel({ onServersChanged }: { onServersChanged?: () =>
           新建连接
         </button>
       </div>
-      {isAndroid ? (
+      )}
+      {!compact && isAndroid ? (
         <div className="text-muted" style={{ marginBottom: 12 }}>
           当前为安卓平台：只能使用 http 方式连接远程 MCP server，stdio（本地进程）不可用。
         </div>
       ) : null}
       {servers.length === 0 ? (
-        <div className="text-muted">还没有配置 MCP server。世界包需要外部工具能力时，先在这里连上对应的 server。</div>
+        compact ? null : (
+          <div className="text-muted">还没有配置 MCP server。世界包需要外部工具能力时，先在这里连上对应的 server。</div>
+        )
       ) : (
         <div style={{ display: "grid", gap: 10 }}>
           {servers.map((server) => {
             const unsupported = isAndroid && server.transport === "stdio";
             return (
-              <div
-                key={server.id}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 12,
-                  padding: 12,
-                  borderRadius: 10,
-                  border: "1px solid rgba(255,255,255,0.08)",
-                  background: "rgba(0,0,0,0.18)",
-                }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontWeight: 600 }}>
+              <div key={server.id} className="mcp-server-row">
+                <div className="mcp-server-row-main">
+                  <div className="mcp-server-row-name">
                     {server.name}
                     {server.enabled ? null : <span className="text-muted">（已停用）</span>}
                   </div>
-                  <div className="text-muted" style={{ marginTop: 4, fontSize: 12 }}>
+                  <div className="mcp-server-row-meta text-muted">
                     {server.transport === "stdio"
                       ? `stdio · ${server.command} ${argsToText(server.args)}`
                       : `http · ${server.url}`}
                     {` · 超时 ${server.timeout_ms}ms · 结果上限 ${server.max_result_bytes}B`}
                   </div>
                   {unsupported ? (
-                    <div style={{ marginTop: 4, fontSize: 12, color: "#ffb4a2" }}>
+                    <div className="mcp-server-row-warning">
                       本平台不支持 stdio：安卓无法启动本地子进程，请改用 http 方式
                     </div>
                   ) : null}
                 </div>
-                <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                <div className="mcp-server-row-actions">
                   <button
                     type="button"
                     className="action-btn"

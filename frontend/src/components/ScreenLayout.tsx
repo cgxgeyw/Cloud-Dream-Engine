@@ -34,6 +34,7 @@ export function ScreenLayout({
   compactHeader = false,
 }: ScreenLayoutProps) {
   const { backgroundUrl, backgroundIsVideo } = useSettings();
+  const hasHeader = Boolean(title || subtitle || toolbar);
 
   return (
     <div
@@ -65,21 +66,23 @@ export function ScreenLayout({
         className={`layout-inner${compactHeader ? " layout-inner--compact" : ""}${backgroundUrl ? " layout-inner--has-bg" : ""}`}
         style={{ maxWidth }}
       >
-        <header className={`layout-header${compactHeader ? " layout-header--compact" : ""}${backgroundUrl ? " layout-header--has-bg" : ""}`}>
-          <div className="layout-title-shell">
-            <div className="grid grid--gap-xs">
-              <div className="layout-brand">云朵梦境</div>
-              <h1 className={`layout-title${compactHeader ? " layout-title--compact" : ""}`}>{title}</h1>
-              {subtitle ? <p className="layout-subtitle">{subtitle}</p> : null}
+        {hasHeader ? (
+          <header className={`layout-header${compactHeader ? " layout-header--compact" : ""}${backgroundUrl ? " layout-header--has-bg" : ""}`}>
+            <div className="layout-title-shell">
+              <div className="grid grid--gap-xs">
+                <div className="layout-brand">云朵梦境</div>
+                <h1 className={`layout-title${compactHeader ? " layout-title--compact" : ""}`}>{title}</h1>
+                {subtitle ? <p className="layout-subtitle">{subtitle}</p> : null}
+              </div>
             </div>
-          </div>
 
-          {toolbar ? (
-            <div className="layout-toolbar-shell">
-              <div className="layout-toolbar">{toolbar}</div>
-            </div>
-          ) : null}
-        </header>
+            {toolbar ? (
+              <div className="layout-toolbar-shell">
+                <div className="layout-toolbar">{toolbar}</div>
+              </div>
+            ) : null}
+          </header>
+        ) : null}
 
         {children}
       </div>

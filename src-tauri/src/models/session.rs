@@ -358,6 +358,12 @@ pub struct CharacterVisualState {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SessionState {
     pub phase: String,
+    /// 世界主控的固定桶剧情总结（每回合由 prepare_turn_context 从 memory_summary_ranges 装载）。
+    #[serde(default)]
+    pub director_summary: String,
+    /// 主控原文窗口对齐后的轮数；None 表示还没算过，沿用 director_config。
+    #[serde(default)]
+    pub director_history_rounds: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

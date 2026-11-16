@@ -1,13 +1,90 @@
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
-const { spawn } = require("node:child_process");
+const { spawn, execFileSync } = require("node:child_process");
 const { readDevConfig } = require("./dev-config");
 
 const rootDir = path.resolve(__dirname, "..");
 const tauriDevOverridePath = path.resolve(rootDir, "src-tauri", "tauri.dev.override.json");
 const { host, frontendPort } = readDevConfig();
 const frontendUrl = `http://${host}:${frontendPort}`;
+
+/**
+ * 在普通 PowerShell 里 `npm run tauri:dev` 默认拿不到 VS 的 link.exe / Windows SDK
+ * 的 rc.exe，Tauri 的 winres 构建会直接 panic。这里自动从 vswhere 找 Build Tools，
+ * 把 MSVC 和 SDK 的 bin 目录补进当前 Node 进程，再传给 tauri 子进程。
+ */
+function ensureWindowsToolchain() {
+  if (process.platform !== "win32") {
+    return;
+  }
+  const vswhere = "C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe";
+  if (!fs.existsSync(vswhere)) {
+    return;
+  }
+
+  let installPath = "";
+  try {
+    installPath = execFileSync(
+      vswhere,
+      [
+        "-latest",
+        "-products",
+        "*",
+        "-requires",
+        "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+        "-property",
+        "installationPath",
+      ],
+      { encoding: "utf8" },
+    ).trim();
+  } catch {
+    return;
+  }
+  if (!installPath) {
+    return;
+  }
+
+  const msvcRoot = path.join(installPath, "VC", "Tools", "MSVC");
+  let msvcBin = "";
+  try {
+    const versions = fs
+      .readdirSync(msvcRoot)
+      .filter((version) =>
+        fs.existsSync(path.join(msvcRoot, version, "bin", "Hostx64", "x64", "link.exe")),
+      )
+      .sort()
+      .reverse();
+    if (versions.length > 0) {
+      msvcBin = path.join(msvcRoot, versions[0], "bin", "Hostx64", "x64");
+    }
+  } catch {
+    return;
+  }
+
+  const sdkBinRoot = "C:\\Program Files (x86)\\Windows Kits\\10\\bin";
+  let sdkBin = "";
+  try {
+    const versions = fs
+      .readdirSync(sdkBinRoot)
+      .filter((version) => fs.existsSync(path.join(sdkBinRoot, version, "x64", "rc.exe")))
+      .sort()
+      .reverse();
+    if (versions.length > 0) {
+      sdkBin = path.join(sdkBinRoot, versions[0], "x64");
+    }
+  } catch {
+    return;
+  }
+
+  const additions = [msvcBin, sdkBin].filter(Boolean);
+  if (additions.length > 0) {
+    process.env.PATH = `${additions.join(";")};${process.env.PATH || ""}`;
+  }
+  if (sdkBin) {
+    process.env.RC = path.join(sdkBin, "rc.exe");
+  }
+}
 
 function quoteWindowsArg(value) {
   const text = String(value);
@@ -85,6 +162,7 @@ function removeTauriDevOverride() {
 }
 
 async function main() {
+  ensureWindowsToolchain();
   let frontendDev = null;
   const frontendAlreadyRunning = await isHttpReady(frontendUrl);
 

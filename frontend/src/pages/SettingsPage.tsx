@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type FocusEvent as ReactFocusEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useIsMobile } from "../components/ResponsiveLayout";
 import { useSectionParam } from "../hooks/useSectionParam";
@@ -30,7 +30,7 @@ import { HelpTip } from "../components/HelpTip";
 import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
 import { showToast } from "../components/Toast";
 import { useSettings } from "../data/SettingsContext";
-import { ArrowLeft, ChevronRight } from "lucide-react";
+import { ArrowLeft, ChevronRight, ChevronDown, RefreshCw, Wrench, BookOpen } from "lucide-react";
 import { ThemePicker } from "../components/ThemePicker";
 import { WorldPermissionsPanel } from "../components/WorldPermissionsPanel";
 import { useT } from "../data/i18n/context";
@@ -75,6 +75,8 @@ export function SettingsPage() {
   const [isNewModel, setIsNewModel] = useState(false);
   const [modelForm, setModelForm] = useState<ModelFormState>(defaultModelForm);
   const [modelDiscovery, setModelDiscovery] = useState<{ ok: boolean; detail: string; modelIds: string[] } | null>(null);
+  const [modelIdMenuOpen, setModelIdMenuOpen] = useState(false);
+  const [modelIdFiltering, setModelIdFiltering] = useState(false);
   const [pendingDeleteModel, setPendingDeleteModel] = useState<ModelConfigResponse | null>(null);
   const [uploading, setUploading] = useState(false);
   const [customProviderMode, setCustomProviderMode] = useState(false);
@@ -575,6 +577,23 @@ export function SettingsPage() {
     const namePlaceholderKey = isDesktop ? "settings.phMainModel" : "settings.phNarrativeName";
     const modelIdPlaceholderKey = isDesktop ? "settings.phExampleGpt" : "settings.phExampleGptLocal";
     const customProviderPlaceholderKey = isDesktop ? "settings.phProviderName" : "settings.phCustomProvider";
+    const configuredModelIds = (activeModelTab === "text-model"
+      ? textModels
+      : activeModelTab === "image-model"
+        ? imageModels
+        : embeddingModels
+    ).map((model) => model.model_id).filter(Boolean);
+    const modelIdOptions = Array.from(new Set([...(modelDiscovery?.modelIds ?? []), ...configuredModelIds]));
+    const modelIdQuery = modelForm.model_id.trim().toLowerCase();
+    const filteredModelIds = modelIdFiltering && modelIdQuery
+      ? modelIdOptions.filter((modelId) => modelId.toLowerCase().includes(modelIdQuery))
+      : modelIdOptions;
+    const canDiscoverModels = activeModelTab !== "image-model" && !isBuiltinLocalProvider;
+    const closeModelIdMenuOnBlur = (event: ReactFocusEvent<HTMLDivElement>) => {
+      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+        setModelIdMenuOpen(false);
+      }
+    };
 
     return (
       <>
@@ -637,19 +656,86 @@ export function SettingsPage() {
           ) : null}
         </label>
 
-        <label className="field-label">
+        <div className="field-label settings-model-id-field" onBlur={closeModelIdMenuOnBlur}>
           <span className="field-label-head">
             <span className="field-label-text">{t("settings.modelId")}</span>
             <HelpTip text={t("settings.tip.modelId")} />
           </span>
-          <input
-            value={modelForm.model_id}
-            onChange={(event) => patchModelForm({ model_id: event.target.value })}
-            className="field-input"
-            placeholder={t(modelIdPlaceholderKey)}
-            readOnly={isBuiltinLocalProvider}
-          />
-        </label>
+          <div className="settings-model-id-row">
+            <div className="settings-model-id-control">
+              <input
+                value={modelForm.model_id}
+                onChange={(event) => {
+                  patchModelForm({ model_id: event.target.value });
+                  setModelIdFiltering(true);
+                  setModelIdMenuOpen(true);
+                }}
+                onFocus={() => setModelIdMenuOpen(true)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") setModelIdMenuOpen(false);
+                  if (event.key === "ArrowDown" && filteredModelIds.length > 0) {
+                    event.preventDefault();
+                    setModelIdMenuOpen(true);
+                  }
+                }}
+                className="field-input settings-model-id-input"
+                placeholder={t(modelIdPlaceholderKey)}
+                readOnly={isBuiltinLocalProvider}
+                role="combobox"
+                aria-expanded={modelIdMenuOpen}
+                aria-autocomplete="list"
+              />
+              <button
+                type="button"
+                className="settings-model-id-toggle"
+                onClick={() => {
+                  setModelIdFiltering(false);
+                  setModelIdMenuOpen((open) => !open);
+                }}
+                aria-label={t("settings.toggleModelIdList")}
+                tabIndex={-1}
+              >
+                <ChevronDown size={14} aria-hidden="true" />
+              </button>
+            </div>
+            {canDiscoverModels ? (
+              <button
+                type="button"
+                onClick={() => void handleDiscoverModels()}
+                disabled={discoveringModels || !modelForm.base_url.trim()}
+                className="settings-model-id-fetch"
+                title={t("settings.fetchModelList")}
+              >
+                <RefreshCw size={13} aria-hidden="true" className={discoveringModels ? "settings-spin" : undefined} />
+                <span>{discoveringModels ? t("settings.fetchingShort") : t("settings.fetchShort")}</span>
+              </button>
+            ) : null}
+          </div>
+          {modelIdMenuOpen && filteredModelIds.length > 0 ? (
+            <div className="settings-model-id-menu" role="listbox" aria-label={t("settings.modelId")}>
+              {filteredModelIds.map((modelId) => (
+                <button
+                  key={modelId}
+                  type="button"
+                  role="option"
+                  aria-selected={modelForm.model_id === modelId}
+                  className={`settings-model-id-option${modelForm.model_id === modelId ? " is-active" : ""}`}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    patchModelForm({ model_id: modelId });
+                    setModelIdFiltering(false);
+                    setModelIdMenuOpen(false);
+                  }}
+                >
+                  {modelId}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {modelDiscovery ? (
+            <div className={`settings-model-id-status${modelDiscovery.ok ? "" : " text-error"}`}>{modelDiscovery.detail}</div>
+          ) : null}
+        </div>
 
         <label className="field-label">
           <span className="field-label-head">
@@ -782,47 +868,6 @@ export function SettingsPage() {
           <div className="settings-form-grid settings-form-grid--model-editor">
             {renderModelFields("desktop")}
           </div>
-
-          {activeModelTab !== "image-model" && !isBuiltinLocalProvider ? (
-            <div className="settings-model-discovery">
-              <div className="settings-model-discovery-header">
-                <div className="settings-model-discovery-copy">
-                  <div className="field-label-head">
-                    <span className="field-label-text">{t("settings.modelListLabel")}</span>
-                    <HelpTip text={t("settings.tip.modelList")} />
-                  </div>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => void handleDiscoverModels()}
-                disabled={discoveringModels || !modelForm.base_url.trim()}
-                className="action-btn action-btn--accent settings-model-discovery-btn"
-              >
-                {discoveringModels ? t("settings.discovering") : t("settings.fetchModelList")}
-              </button>
-
-              {modelDiscovery ? (
-                <div className={modelDiscovery.ok ? "text-muted" : "text-error"}>{modelDiscovery.detail}</div>
-              ) : null}
-
-              {modelDiscovery?.modelIds.length ? (
-                <div className="settings-model-suggestions">
-                  {modelDiscovery.modelIds.map((modelId) => (
-                    <button
-                      key={modelId}
-                      type="button"
-                      onClick={() => patchModelForm({ model_id: modelId })}
-                      className={`action-btn${modelForm.model_id === modelId ? " action-btn--accent" : ""}`}
-                    >
-                      {modelId}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
 
           <div className="settings-form-actions">
             <button
@@ -1091,6 +1136,27 @@ export function SettingsPage() {
     );
   }
 
+  function renderToolsSection() {
+    return (
+      <SurfacePanel className="surface-panel--pad-lg">
+        <div className="settings-section">
+          <h3 className="settings-section-title">{t("settings.tabTools")}</h3>
+          <p className="text-muted" style={{ marginTop: 4, marginBottom: 12 }}>
+            {t("settings.toolsHint")}
+          </p>
+          <div className="settings-form-actions">
+            <button type="button" className="action-btn" onClick={() => navigate("/mcp-tools")}>
+              <Wrench size={14} /> {t("home.menuToolsTitle")}
+            </button>
+            <button type="button" className="action-btn" onClick={() => navigate("/knowledge")}>
+              <BookOpen size={14} /> {t("home.menuKnowledgeTitle")}
+            </button>
+          </div>
+        </div>
+      </SurfacePanel>
+    );
+  }
+
   function renderMobileSectionContent() {
     if (!activeSection) return renderSectionList();
 
@@ -1109,6 +1175,7 @@ export function SettingsPage() {
         {activeSection === "generation-params" ? renderGenerationParamsSection() : null}
         {activeSection === "theme" ? renderThemeSection() : null}
         {activeSection === "export" ? renderExportSection() : null}
+        {activeSection === "tools" ? renderToolsSection() : null}
         {activeSection === "world-permissions" ? (
           <SurfacePanel className="surface-panel--pad-lg">
             <WorldPermissionsPanel />
@@ -1166,44 +1233,6 @@ export function SettingsPage() {
                 <div className="settings-form-grid settings-form-grid--model-editor">
                   {renderModelFields("mobile")}
                 </div>
-
-                {activeTab !== "image-model" && !isBuiltinLocalProvider ? (
-                  <div className="settings-model-discovery">
-                    <div className="settings-model-discovery-header">
-                      <div className="settings-model-discovery-copy">
-                        <div className="field-label-head">
-                          <span className="field-label-text">{t("settings.endpointModelList")}</span>
-                          <HelpTip text={t("settings.tip.endpointList")} />
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => void handleDiscoverModels()}
-                        disabled={discoveringModels || !modelForm.base_url.trim()}
-                        className="action-btn"
-                      >
-                        {discoveringModels ? t("settings.discovering") : t("settings.fetchFromEndpoint")}
-                      </button>
-                    </div>
-                    {modelDiscovery ? (
-                      <div className={modelDiscovery.ok ? "text-muted" : "text-error"}>{modelDiscovery.detail}</div>
-                    ) : null}
-                    {modelDiscovery?.modelIds.length ? (
-                      <div className="settings-model-suggestions">
-                        {modelDiscovery.modelIds.map((modelId) => (
-                          <button
-                            key={modelId}
-                            type="button"
-                            onClick={() => patchModelForm({ model_id: modelId })}
-                            className={`action-btn${modelForm.model_id === modelId ? " action-btn--accent" : ""}`}
-                          >
-                            {modelId}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
 
                 <div className="settings-form-actions">
                   <button
@@ -1413,6 +1442,8 @@ export function SettingsPage() {
             </div>
           </SurfacePanel>
         ) : null}
+
+        {activeTab === "tools" ? renderToolsSection() : null}
       </>
     );
   }
@@ -1420,12 +1451,12 @@ export function SettingsPage() {
   // ==================== Main render ====================
   return (
     <ScreenLayout
-      title={t("settings.title")}
+      title={isMobile ? "" : t("settings.title")}
       subtitle={isMobile ? undefined : t("settings.subtitle")}
       compactHeader
       toolbar={
         isMobile ? null : (
-          <button type="button" onClick={() => navigate(-1)} className="action-btn">
+          <button type="button" onClick={() => navigate("/")} className="action-btn">
             <ArrowLeft size={14} /> {t("common.back")}
           </button>
         )

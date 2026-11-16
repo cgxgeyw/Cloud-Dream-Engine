@@ -132,9 +132,8 @@ fn character_prompt_sends_current_input_once_and_preserves_prior_turns_and_npc_r
             .as_array()
             .unwrap();
         assert_eq!(history.len(), 2);
-        assert_eq!(history[0]["content"], "Repeat action");
-        assert_eq!(history[1]["speaker"], "Bob");
-        assert_eq!(history[1]["content"], "I saw the action.");
+        assert_eq!(history[0].as_str(), Some("[玩家发言：Repeat action]"));
+        assert_eq!(history[1].as_str(), Some("[Bob：I saw the action.]"));
     }
 
     // A preview can use the same text as the last saved input, without appending a new one.

@@ -159,6 +159,8 @@ export type SceneFocusMessage = {
 export const MESSAGE_KIND_RANK: Record<string, number> = {
   player_action: 0,
   director_trace: 1,
+  world_event: 2,
+  event: 2,
   system_action: 2,
   llm_structured_error: 2,
   agent_response: 3,

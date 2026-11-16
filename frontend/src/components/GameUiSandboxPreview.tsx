@@ -34,9 +34,10 @@ type WorldFrameHostProps = {
   className?: string;
   onAction?: (action: WorldFrameAction) => unknown | Promise<unknown>;
   onDiagnostic?: (diagnostic: WorldFrameDiagnostic) => void;
+  showDebugToggle?: boolean;
 };
 
-export function WorldFrameHost({ mode, payload, title, className, onAction, onDiagnostic }: WorldFrameHostProps) {
+export function WorldFrameHost({ mode, payload, title, className, onAction, onDiagnostic, showDebugToggle = true }: WorldFrameHostProps) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const connectionRef = useRef<FrameConnection | null>(null);
   const revisionRef = useRef(0);
@@ -156,6 +157,7 @@ export function WorldFrameHost({ mode, payload, title, className, onAction, onDi
         }}
         className="world-ui-sandbox-preview-frame"
       />
+      {showDebugToggle ? (
       <div className="world-ui-sandbox-debug">
         <button type="button" className="world-ui-sandbox-debug-toggle" onClick={() => setShowDiagnostics((value) => !value)} title="查看世界界面运行时诊断">
           <Bug size={14} aria-hidden="true" />
@@ -177,6 +179,7 @@ export function WorldFrameHost({ mode, payload, title, className, onAction, onDi
           </div>
         ) : null}
       </div>
+      ) : null}
       {frameState === "connecting" ? (
         <div className="world-ui-sandbox-preview-status">{"\u6b63\u5728\u542f\u52a8\u9694\u79bb\u754c\u9762..."}</div>
       ) : null}

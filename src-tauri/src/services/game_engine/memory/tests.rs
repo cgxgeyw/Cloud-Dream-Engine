@@ -1,7 +1,9 @@
 
 use super::*;
 use crate::db::repositories::memory_repo::MemoryRepository;
+use crate::db::repositories::memory_summary_repo::MemorySummaryRepository;
 use crate::db::schema;
+use crate::models::memory::MemorySummaryRange;
 use crate::models::session::{AssetSelection, MessageContent, SceneRuntime, SessionState};
 use rusqlite::Connection;
 
@@ -910,4 +912,224 @@ fn persist_fact_updates_skips_invalid_items() {
         )
         .expect("persist invalid facts");
     assert_eq!((added, invalidated), (0, 0));
+}
+
+#[test]
+fn memory_mode_defaults_to_embedding_and_gates_fact_extraction() {
+    let mut world = sample_world();
+    assert_eq!(resolve_memory_mode(&world), MemoryMode::Embedding);
+    assert!(!resolve_oag_enabled(&world));
+    assert!(
+        !resolve_fact_extraction_enabled(&world),
+        "默认 Embedding 模式不抽取事实"
+    );
+
+    // 旧值 history 迁移为 embedding：历史始终发送，只是现在默认再注入记忆召回。
+    world.director_config = serde_json::json!({ "memory_mode": "history" });
+    assert_eq!(resolve_memory_mode(&world), MemoryMode::Embedding);
+    assert!(!resolve_oag_enabled(&world));
+
+    world.director_config = serde_json::json!({ "memory_mode": "embedding" });
+    assert_eq!(resolve_memory_mode(&world), MemoryMode::Embedding);
+    assert!(!resolve_oag_enabled(&world));
+    assert!(!resolve_fact_extraction_enabled(&world));
+
+    world.director_config = serde_json::json!({ "memory_mode": "oag" });
+    assert_eq!(resolve_memory_mode(&world), MemoryMode::Oag);
+    assert!(resolve_oag_enabled(&world));
+    assert!(
+        !resolve_fact_extraction_enabled(&world),
+        "OAG 打开不等于允许角色在扮演时抽事实，必须显式开启"
+    );
+
+    world.director_config = serde_json::json!({
+        "memory_mode": "oag",
+        "fact_extraction_enabled": true
+    });
+    assert!(resolve_fact_extraction_enabled(&world));
+
+    world.director_config = serde_json::json!({
+        "memory_mode": "oag",
+        "fact_extraction_enabled": false
+    });
+    assert!(!resolve_fact_extraction_enabled(&world));
+
+    // 旧字段迁移：oag_enabled=true 按 OAG 模式处理。
+    world.director_config = serde_json::json!({ "oag_enabled": true });
+    assert_eq!(resolve_memory_mode(&world), MemoryMode::Oag);
+    assert!(resolve_oag_enabled(&world));
+    assert!(!resolve_fact_extraction_enabled(&world));
+}
+
+#[test]
+fn recall_candidates_cover_all_session_memories() {
+    let conn = Connection::open_in_memory().expect("open sqlite");
+    schema::create_tables(&conn).expect("create tables");
+    let repo = MemoryRepository::new(&conn);
+    let service = MemoryService::new();
+    let world = sample_world();
+
+    // 超过旧的 200 条候选上限；如果候选仍按最新 200 条截断，这个数量会失败。
+    for index in 0..250 {
+        repo.insert(&MemoryEntry {
+            id: format!("m-{index}"),
+            world_id: "world-1".to_string(),
+            session_id: "sess-1".to_string(),
+            character_id: "char-a".to_string(),
+            layer: "working".to_string(),
+            content: format!("旧档案记录 {index}"),
+            source: "speaker_response".to_string(),
+            importance: 0.5,
+            created_at: Utc::now().to_rfc3339(),
+            turn_index: index + 1,
+            conversation_id: Some("sess-1".to_string()),
+            event_id: None,
+            item_id: None,
+            scene_id: Some("harbor-scene".to_string()),
+            memory_type: "dialogue".to_string(),
+            speaker: Some("Alice".to_string()),
+            role: Some("agent".to_string()),
+            location: Some("Harbor".to_string()),
+            participants: vec!["Player".to_string(), "Alice".to_string()],
+            keywords: vec!["档案".to_string()],
+        })
+        .expect("insert memory");
+    }
+
+    let plan = service
+        .prepare_character_recall(
+            &conn,
+            &world,
+            "world-1",
+            "sess-1",
+            Some("char-a"),
+            "旧档案",
+            "Harbor",
+            Some("harbor-scene"),
+            &["Player".to_string(), "Alice".to_string()],
+            8,
+            None,
+        )
+        .expect("prepare recall");
+
+    assert_eq!(
+        plan.candidates.len(),
+        250,
+        "候选池必须覆盖本存档该角色的全部记忆，而不是最近 200 条"
+    );
+}
+
+#[test]
+fn recall_cutoff_uses_summary_and_suppresses_raw_in_summarized_bucket() {
+    let conn = Connection::open_in_memory().expect("open sqlite");
+    schema::create_tables(&conn).expect("create tables");
+    let repo = MemoryRepository::new(&conn);
+    let service = MemoryService::new();
+    let world = sample_world();
+
+    let summary = MemoryEntry {
+        id: "summary-1".to_string(),
+        world_id: "world-1".to_string(),
+        session_id: "sess-1".to_string(),
+        character_id: "char-a".to_string(),
+        layer: "archive".to_string(),
+        content: "我记得第一桶：在码头拿到了银钥匙。".to_string(),
+        source: "summary".to_string(),
+        importance: 0.8,
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        turn_index: 10,
+        conversation_id: Some("sess-1".to_string()),
+        event_id: None,
+        item_id: None,
+        scene_id: Some("harbor-scene".to_string()),
+        memory_type: "summary".to_string(),
+        speaker: None,
+        role: Some("memory".to_string()),
+        location: Some("Harbor".to_string()),
+        participants: vec!["Player".to_string(), "Alice".to_string()],
+        keywords: vec!["银钥匙".to_string()],
+    };
+    repo.insert(&summary).expect("insert summary");
+    MemorySummaryRepository::new(&conn)
+        .insert(&MemorySummaryRange {
+            memory_id: summary.id.clone(),
+            world_id: "world-1".to_string(),
+            session_id: "sess-1".to_string(),
+            character_id: "char-a".to_string(),
+            bucket_index: 0,
+            bucket_start: 1,
+            bucket_end: 10,
+            scene_id: "harbor-scene".to_string(),
+            scene_name: "Harbor".to_string(),
+            turn_start: 1,
+            turn_end: 10,
+            created_at: summary.created_at.clone(),
+        })
+        .expect("insert summary range");
+
+    let raw_in_summarized_bucket = MemoryEntry {
+        id: "raw-1".to_string(),
+        world_id: "world-1".to_string(),
+        session_id: "sess-1".to_string(),
+        character_id: "char-a".to_string(),
+        layer: "working".to_string(),
+        content: "原始台词：银钥匙在12号柜".to_string(),
+        source: "speaker_response".to_string(),
+        importance: 0.7,
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        turn_index: 5,
+        conversation_id: Some("sess-1".to_string()),
+        event_id: None,
+        item_id: None,
+        scene_id: Some("harbor-scene".to_string()),
+        memory_type: "dialogue".to_string(),
+        speaker: Some("Alice".to_string()),
+        role: Some("agent".to_string()),
+        location: Some("Harbor".to_string()),
+        participants: vec!["Player".to_string(), "Alice".to_string()],
+        keywords: vec!["银钥匙".to_string()],
+    };
+    repo.insert(&raw_in_summarized_bucket).expect("insert raw 1");
+    let raw_in_unsummarized_bucket = MemoryEntry {
+        id: "raw-2".to_string(),
+        turn_index: 20,
+        content: "原始台词：第二桶还没总结".to_string(),
+        ..raw_in_summarized_bucket.clone()
+    };
+    repo.insert(&raw_in_unsummarized_bucket).expect("insert raw 2");
+
+    let plan = service
+        .prepare_character_recall_with_cutoff(
+            &conn,
+            &world,
+            "world-1",
+            "sess-1",
+            Some("char-a"),
+            "银钥匙",
+            "Harbor",
+            Some("harbor-scene"),
+            &["Player".to_string(), "Alice".to_string()],
+            10,
+            None,
+            Some(RecallCutoff {
+                current_turn: 61,
+                raw_rounds: 30,
+            }),
+        )
+        .expect("prepare recall");
+
+    let ids = plan
+        .candidates
+        .iter()
+        .map(|entry| entry.id.as_str())
+        .collect::<Vec<_>>();
+    assert!(ids.contains(&"summary-1"), "总结桶应进入候选: {ids:?}");
+    assert!(
+        !ids.contains(&"raw-1"),
+        "已有总结的桶不应再插入原始对话: {ids:?}"
+    );
+    assert!(
+        ids.contains(&"raw-2"),
+        "还没有总结的桶保留原文兜底: {ids:?}"
+    );
 }

@@ -317,6 +317,7 @@ export function WorldsPage() {
       compactHeader
       maxWidth={980}
       toolbar={
+        isMobile ? undefined : (
         <div className="worlds-toolbar">
           <button type="button" onClick={() => navigate("/")} className="action-btn">
             {t("common.back")}
@@ -356,6 +357,7 @@ export function WorldsPage() {
             {t("worlds.newWorld")}
           </button>
         </div>
+        )
       }
     >
       <input

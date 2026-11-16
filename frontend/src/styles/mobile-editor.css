@@ -1,0 +1,142 @@
+/*
+  手机编辑器布局：扁平化 / 主题无关。
+  必须在 theme.css、kawaii.css、mondrian.css 之后引入，
+  用顺序覆盖各主题给 .surface-panel / .wed-* 画的卡片与外框。
+*/
+@media (max-width: 767px), (hover: none) and (pointer: coarse) {
+  .layout-inner:has(.mobile-editor-topbar) .surface-panel {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .layout-inner:has(.mobile-editor-topbar) .wed-shell {
+    gap: 20px;
+  }
+
+  .layout-inner:has(.mobile-editor-topbar) .wed-panel,
+  .layout-inner:has(.mobile-editor-topbar) .wed-pane,
+  .layout-inner:has(.mobile-editor-topbar) .wed-block,
+  .layout-inner:has(.mobile-editor-topbar) .editor-foldable {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    overflow: visible;
+  }
+
+  .layout-inner:has(.mobile-editor-topbar) .wed-panel-head,
+  .layout-inner:has(.mobile-editor-topbar) .wed-pane-head,
+  .layout-inner:has(.mobile-editor-topbar) .editor-foldable-toggle {
+    padding: 0 0 10px;
+    border-bottom: 1px solid var(--color-border);
+    background: transparent;
+  }
+
+  /* 同屏多个小模块之间用一条细灰线分隔，不再叠卡片 */
+  .layout-inner:has(.mobile-editor-topbar) .wed-pane > .wed-block + .wed-block,
+  .layout-inner:has(.mobile-editor-topbar) .wed-pane > .wed-block + .wed-empty,
+  .layout-inner:has(.mobile-editor-topbar) .wed-pane > .wed-empty + .wed-block,
+  .layout-inner:has(.mobile-editor-topbar) .wed-panel-body > .wed-block + .wed-block {
+    padding-top: 16px;
+    border-top: 1px solid var(--color-border);
+  }
+
+  /* 标题右侧带操作按钮时改成上下排，避免按钮压住说明文字 */
+  .layout-inner:has(.mobile-editor-topbar) .wed-panel-head:has(.action-btn) {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .layout-inner:has(.mobile-editor-topbar) .wed-panel-head:has(.action-btn) > .action-btn {
+    align-self: flex-start;
+  }
+
+  .layout-inner:has(.mobile-editor-topbar) .wed-panel-body,
+  .layout-inner:has(.mobile-editor-topbar) .wed-pane-body,
+  .layout-inner:has(.mobile-editor-topbar) .editor-foldable-body {
+    padding: 14px 0 0;
+    border-top: 0;
+  }
+
+  .layout-inner:has(.mobile-editor-topbar) .editor-foldable + .editor-foldable {
+    margin-top: 20px;
+    padding-top: 20px;
+  }
+
+  .layout-inner:has(.mobile-editor-topbar) .editor-foldable + .editor-foldable::before {
+    display: none;
+  }
+
+  .layout-inner:has(.mobile-editor-topbar) .wed-nav {
+    padding: 0 14px 0 0;
+    border: 0;
+    background: transparent;
+    position: static;
+  }
+
+  /* 主控摘要与下方分区导航重复，手机上只保留一套 */
+  .layout-inner:has(.mobile-editor-topbar) .wed-summary {
+    display: none;
+  }
+
+  .layout-inner:has(.mobile-editor-topbar) .wed-empty {
+    padding: 10px 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .layout-inner:has(.mobile-editor-topbar) .wed-panel-title,
+  .layout-inner:has(.mobile-editor-topbar) .wed-pane-title {
+    font-size: 15px;
+  }
+
+  /* 自定义属性：内部两栏再多包一层卡片更乱，这里只留一条分隔 */
+  .layout-inner:has(.mobile-editor-topbar) .attribute-panel__layout {
+    border: 0;
+    border-radius: 0;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .layout-inner:has(.mobile-editor-topbar) .attribute-panel__sidebar {
+    background: transparent;
+    border-bottom: 1px solid color-mix(in srgb, var(--color-border) 32%, transparent);
+  }
+
+  .layout-inner:has(.mobile-editor-topbar) .attribute-panel__list-heading {
+    padding: 0 0 10px;
+    border-bottom: 0;
+  }
+
+  .layout-inner:has(.mobile-editor-topbar) .attribute-panel__list {
+    padding: 8px 0 12px;
+    max-height: none;
+    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  }
+
+  .layout-inner:has(.mobile-editor-topbar) .attribute-panel__detail {
+    padding: 14px 0 0;
+    background: transparent;
+  }
+
+  .layout-inner:has(.mobile-editor-topbar) .attribute-panel__detail-heading {
+    padding-bottom: 10px;
+  }
+
+  /* 全局悬浮返回已移到左侧，带自绘标题的页面需要为它让出位置 */
+  .mobile-nav-container:has(> .mobile-back-btn) .worlds-mobile-title,
+  .mobile-nav-container:has(> .mobile-back-btn) .saves-mobile-title {
+    padding-left: 68px;
+  }
+
+  .mobile-nav-container:has(> .mobile-back-btn) .settings-mobile-overview-head {
+    padding-left: 68px;
+  }
+}

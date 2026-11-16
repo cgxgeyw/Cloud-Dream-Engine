@@ -88,7 +88,7 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             background_prompt TEXT NOT NULL DEFAULT '',
             model TEXT NOT NULL DEFAULT '',
             memory_strategy TEXT NOT NULL DEFAULT 'default',
-            recent_dialogue_rounds INTEGER NOT NULL DEFAULT 10,
+            recent_dialogue_rounds INTEGER NOT NULL DEFAULT 30,
             attributes_json TEXT NOT NULL DEFAULT '[]',
             portrait_assets_json TEXT NOT NULL DEFAULT '[]',
             avatar_asset TEXT NOT NULL DEFAULT '',
@@ -167,10 +167,31 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
         );
 
+        -- 固定桶记忆总结的元数据。总结正文仍存 memories(memory_type='summary')，
+        -- 这样可以直接复用 memory_embeddings；这张表只记录桶/场景/回合范围。
+        CREATE TABLE IF NOT EXISTS memory_summary_ranges (
+            memory_id TEXT PRIMARY KEY,
+            world_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            character_id TEXT NOT NULL,
+            bucket_index INTEGER NOT NULL,
+            bucket_start INTEGER NOT NULL,
+            bucket_end INTEGER NOT NULL,
+            scene_id TEXT NOT NULL DEFAULT '',
+            scene_name TEXT NOT NULL DEFAULT '',
+            turn_start INTEGER NOT NULL DEFAULT 0,
+            turn_end INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE,
+            UNIQUE(session_id, character_id, bucket_index, scene_id)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id);
         CREATE INDEX IF NOT EXISTS idx_memories_character ON memories(character_id);
         CREATE INDEX IF NOT EXISTS idx_memories_world ON memories(world_id);
         CREATE INDEX IF NOT EXISTS idx_memory_embeddings_model_key ON memory_embeddings(model_key);
+        CREATE INDEX IF NOT EXISTS idx_memory_summary_ranges_lookup
+            ON memory_summary_ranges(session_id, character_id, bucket_index);
 
         CREATE TABLE IF NOT EXISTS memory_entities (
             id TEXT PRIMARY KEY,

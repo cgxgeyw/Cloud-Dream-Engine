@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   assetUrl,
@@ -7,6 +7,7 @@ import {
   deleteWorld,
   downloadWorldPackage,
   fetchDefaultDirectorResponseContract,
+  fetchDefaultMemorySummaryPrompts,
   fetchModels,
   fetchMcpTools,
   fetchWorld,
@@ -19,6 +20,7 @@ import {
   type CharacterResponse,
   type ModelConfigResponse,
   type McpToolResponse,
+  type MemorySummaryPromptDefaults,
   type WorldCreateRequest,
   type WorldOpeningMessage,
   type WorldResponse,
@@ -35,7 +37,21 @@ import { PromptSectionList } from "../components/PromptSectionList";
 import { buildDirectorAttributePreview } from "../components/promptAttributePreview";
 import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
 import { showToast } from "../components/Toast";
-import { ArrowLeft, Save } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowLeft,
+  ArrowUp,
+  Check,
+  ChevronRight,
+  GripVertical,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  RotateCcw,
+  Save,
+  Search,
+  Trash2,
+} from "lucide-react";
 import {
   defaultGameUiFile,
   parseGameUiDocument,
@@ -77,6 +93,50 @@ import {
   resolveSceneNames,
 } from "./worldEditorShared";
 
+type DirectorPaneId =
+  | "mode"
+  | "permissions"
+  | "context"
+  | "memory"
+  | "prompt"
+  | "tools"
+  | "params"
+  | "summaries";
+
+type StylePaneId = "backgrounds" | "scenes" | "ui" | "preview";
+
+const DIRECTOR_NAV_GROUPS: Array<{ label: string; items: Array<{ id: DirectorPaneId; label: string }> }> = [
+  {
+    label: "基础",
+    items: [
+      { id: "mode", label: "运行方式" },
+      { id: "permissions", label: "权限与判定" },
+      { id: "context", label: "上下文轮数" },
+      { id: "memory", label: "角色记忆" },
+    ],
+  },
+  { label: "提示词", items: [{ id: "prompt", label: "主控预设" }] },
+  { label: "工具", items: [{ id: "tools", label: "MCP 工具授权" }] },
+  {
+    label: "高级",
+    items: [
+      { id: "params", label: "生成参数" },
+      { id: "summaries", label: "总结提示词" },
+    ],
+  },
+];
+
+const DIRECTOR_PANE_META: Record<DirectorPaneId, { title: string; desc: string }> = {
+  mode: { title: "运行方式", desc: "决定主控怎么调度角色，以及使用哪个文本模型" },
+  permissions: { title: "权限与判定", desc: "控制主控能改动哪些内容、能否向玩家发起选择" },
+  context: { title: "上下文轮数", desc: "控制每回合带多少历史，以及工具循环的上限" },
+  memory: { title: "角色记忆", desc: "召回窗口、检索方式与固定桶总结间隔" },
+  prompt: { title: "主控预设", desc: "世界主控的系统提示词，留空时使用框架默认" },
+  tools: { title: "MCP 工具授权", desc: "授权给主控的自定义工具，按需开启" },
+  params: { title: "生成参数", desc: "留空即使用应用默认，存档还可以再覆盖" },
+  summaries: { title: "总结提示词", desc: "固定桶记忆总结使用的模板，留空使用内置默认" },
+};
+
 export function WorldEditorPage() {
   const isMobile = useIsMobile();
   const navigate = useNavigate();
@@ -101,6 +161,9 @@ export function WorldEditorPage() {
   const [exporting, setExporting] = useState(false);
   const [uploadingBackground, setUploadingBackground] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const mobileListScrollRef = useRef(0);
+  const [showLeaveDialog, setShowLeaveDialog] = useState(false);
   const [openingComposerRole, setOpeningComposerRole] = useState<OpeningComposerRole>("system");
   const [openingComposerSpeaker, setOpeningComposerSpeaker] = useState("");
   const [openingComposerContent, setOpeningComposerContent] = useState("");
@@ -109,6 +172,17 @@ export function WorldEditorPage() {
   const [openingEditSpeaker, setOpeningEditSpeaker] = useState("");
   const [openingEditContent, setOpeningEditContent] = useState("");
   const [mcpToolSearch, setMcpToolSearch] = useState("");
+  const [directorPane, setDirectorPane] = useState<DirectorPaneId>("mode");
+  const [stylePane, setStylePane] = useState<StylePaneId>("backgrounds");
+  const [styleScene, setStyleScene] = useState("");
+  const [openingMode, setOpeningMode] = useState<"organize" | "preview">("organize");
+  const [openingNpcSearch, setOpeningNpcSearch] = useState("");
+  const [openingComposerOpen, setOpeningComposerOpen] = useState(false);
+  const [dragMessageIndex, setDragMessageIndex] = useState<number | null>(null);
+  const [directorPromptDraft, setDirectorPromptDraft] = useState<string | null>(null);
+  const [summaryPromptDefaults, setSummaryPromptDefaults] = useState<MemorySummaryPromptDefaults | null>(null);
+  const [savedSignature, setSavedSignature] = useState("");
+  const [reverting, setReverting] = useState(false);
   const {
     preview: promptPreview,
     attributeSchemas: promptAttributeSchemas,
@@ -135,6 +209,20 @@ export function WorldEditorPage() {
 
   useEffect(() => {
     let cancelled = false;
+    fetchDefaultMemorySummaryPrompts()
+      .then((defaults) => {
+        if (!cancelled) setSummaryPromptDefaults(defaults);
+      })
+      .catch(() => {
+        // 读取失败时保持输入框空白，仍可手写模板。
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
     async function loadData() {
       try {
         setLoading(true);
@@ -147,6 +235,7 @@ export function WorldEditorPage() {
           const draft = createNewWorldDraft();
           setWorld(draft);
           setMapTopologySource(formatMapTopologyJson(draft.map_nodes));
+          setSavedSignature(`${JSON.stringify(draft)}|${formatMapTopologyJson(draft.map_nodes)}`);
           setCharacters([]);
           setMcpTools(toolData);
           setTextModels(modelData);
@@ -169,6 +258,7 @@ export function WorldEditorPage() {
           };
           setWorld(normalizedWorld);
           setMapTopologySource(formatMapTopologyJson(normalizedWorld.map_nodes));
+          setSavedSignature(`${JSON.stringify(normalizedWorld)}|${formatMapTopologyJson(normalizedWorld.map_nodes)}`);
           setCharacters(characterData);
           setMcpTools(toolData);
           setTextModels(modelData);
@@ -343,6 +433,21 @@ export function WorldEditorPage() {
       ) ?? null
     );
   }, [directorConfig.director_model, textModels]);
+  const filteredOpeningCharacters = useMemo(() => {
+    const keyword = openingNpcSearch.trim().toLowerCase();
+    if (!keyword) {
+      return characters;
+    }
+    return characters.filter((character) =>
+      [character.name, character.role]
+        .join(" ")
+        .toLowerCase()
+        .includes(keyword),
+    );
+  }, [characters, openingNpcSearch]);
+  const activeStyleScene = styleScene && sceneNames.includes(styleScene) ? styleScene : (sceneNames[0] ?? "");
+  const dirtySignature = world ? `${JSON.stringify(world)}|${mapTopologySource}` : "";
+  const isDirty = Boolean(world) && savedSignature !== "" && dirtySignature !== savedSignature;
   const directorModelSelectValue = resolvedDirectorModelOption?.id ?? directorConfig.director_model.trim();
   const previewJson = useMemo(
     () =>
@@ -482,6 +587,7 @@ export function WorldEditorPage() {
     ]);
     setError(null);
     setOpeningComposerContent("");
+    setOpeningComposerOpen(false);
   }
 
   function removeOpeningMessage(index: number) {
@@ -509,6 +615,25 @@ export function WorldEditorPage() {
     updateOpeningMessages(nextMessages);
   }
 
+  function reorderOpeningMessages(from: number, to: number) {
+    if (from === to || from < 0 || to < 0 || from >= openingMessages.length || to >= openingMessages.length) {
+      return;
+    }
+    const nextMessages = [...openingMessages];
+    const [moved] = nextMessages.splice(from, 1);
+    nextMessages.splice(to, 0, moved);
+    if (editingOpeningIndex === from) {
+      setEditingOpeningIndex(to);
+    } else if (editingOpeningIndex !== null) {
+      if (from < editingOpeningIndex && to >= editingOpeningIndex) {
+        setEditingOpeningIndex(editingOpeningIndex - 1);
+      } else if (from > editingOpeningIndex && to <= editingOpeningIndex) {
+        setEditingOpeningIndex(editingOpeningIndex + 1);
+      }
+    }
+    updateOpeningMessages(nextMessages);
+  }
+
   function startEditOpeningMessage(index: number) {
     const message = openingMessages[index];
     if (!message) {
@@ -518,6 +643,7 @@ export function WorldEditorPage() {
     setOpeningEditRole(message.role === "agent" ? "agent" : "system");
     setOpeningEditSpeaker(message.speaker?.trim() || "");
     setOpeningEditContent(message.content);
+    setOpeningComposerOpen(false);
     setError(null);
   }
 
@@ -698,45 +824,56 @@ export function WorldEditorPage() {
     const parsedPreview = previewPlatform === "mobile" ? parsedMobileGameUi : parsedDesktopGameUi;
     const previewStylesheet = previewPlatform === "mobile" ? mobilePreviewStylesheet : desktopPreviewStylesheet;
     return (
-      <FoldableEditorSection title="界面预览">
-        <div className="flex flex--items-center flex--justify-between world-editor-section-head" style={{ gap: 12 }}>
-          <div className="editor-field-label">{previewLabel}</div>
-        </div>
-        <div className={`world-style-preview-shell world-style-preview-shell--${previewPlatform}`}>
-          <div className={`world-style-preview-frame world-style-preview-frame--${previewPlatform}`}>
-            <GameUiSandboxPreview
-              platform={previewPlatform}
-              document={parsedPreview.document}
-              stylesheet={previewStylesheet}
-              rootStyle={stylePreview}
-              worldName={previewWorldName}
-              location={previewLocation}
-              timeLabel={previewTimeLabel}
-              playerName={previewPlayerName}
-              visibleCharacters={previewVisibleCharacters}
-              focusSpeaker={previewFocusMessage?.speaker?.trim() || previewCharacter?.name?.trim() || undefined}
-              focusContent={previewFocusMessage?.content?.trim() || undefined}
-              portraitSrc={previewPortraitSrc}
-              narration={previewNarration}
-              messages={previewMessages}
-              statusTabs={previewStatusTabs}
-              parseError={parsedPreview.error}
-              usedFallback={parsedPreview.usedFallback}
-              showStyleDebug
-            />
+      <section className="wed-panel">
+        <div className="wed-panel-head">
+          <div>
+            <div className="wed-panel-title">界面预览</div>
+            <div className="wed-panel-sub">{previewLabel}</div>
           </div>
         </div>
-      </FoldableEditorSection>
+        <div className="wed-panel-body">
+          <div className={`world-style-preview-shell world-style-preview-shell--${previewPlatform}`}>
+            <div className={`world-style-preview-frame world-style-preview-frame--${previewPlatform}`}>
+              <GameUiSandboxPreview
+                platform={previewPlatform}
+                document={parsedPreview.document}
+                stylesheet={previewStylesheet}
+                rootStyle={stylePreview}
+                worldName={previewWorldName}
+                location={previewLocation}
+                timeLabel={previewTimeLabel}
+                playerName={previewPlayerName}
+                visibleCharacters={previewVisibleCharacters}
+                focusSpeaker={previewFocusMessage?.speaker?.trim() || previewCharacter?.name?.trim() || undefined}
+                focusContent={previewFocusMessage?.content?.trim() || undefined}
+                portraitSrc={previewPortraitSrc}
+                narration={previewNarration}
+                messages={previewMessages}
+                statusTabs={previewStatusTabs}
+                parseError={parsedPreview.error}
+                usedFallback={parsedPreview.usedFallback}
+                showStyleDebug
+              />
+            </div>
+          </div>
+        </div>
+      </section>
     );
   }
 
   function renderGameUiGovernanceSection() {
     const compatibilityDocuments = uiGovernance.compatibility?.documents ?? [];
     return (
-      <FoldableEditorSection title="界面治理">
+      <section className="wed-panel">
+        <div className="wed-panel-head">
+          <div>
+            <div className="wed-panel-title">界面治理</div>
+            <div className="wed-panel-sub">后端校验、编译与兼容性检查</div>
+          </div>
+        </div>
+        <div className="wed-panel-body">
         <div
-          className="editor-content"
-          style={{ padding: 12, border: "1px solid var(--color-border)", borderRadius: 16, display: "grid", gap: 10 }}
+          style={{ display: "grid", gap: 10 }}
         >
           <div className="editor-field-label">后端治理快照</div>
           <div className="text-muted" style={{ fontSize: 12 }}>
@@ -789,7 +926,8 @@ export function WorldEditorPage() {
             </div>
           ) : null}
         </div>
-      </FoldableEditorSection>
+        </div>
+      </section>
     );
   }
 
@@ -981,6 +1119,59 @@ export function WorldEditorPage() {
     });
   }
 
+  function renderBackgroundTiles(assets: string[], sceneName?: string) {
+    if (assets.length === 0) {
+      return <div className="wed-empty">暂无背景素材。</div>;
+    }
+    return (
+      <div className="wed-tiles">
+        {assets.map((asset, index) => {
+          const isVideo = /\.(mp4|webm|mov|m4v)$/i.test(asset);
+          return (
+            <article key={asset} className="wed-tile">
+              <div className="wed-tile-media">
+                {isVideo ? (
+                  <video src={assetUrl(asset)} muted loop playsInline preload="metadata" />
+                ) : (
+                  <div className="wed-tile-image" style={{ backgroundImage: `url("${assetUrl(asset)}")` }} />
+                )}
+                <span className="wed-tile-badge">{index === 0 ? "主背景" : `#${index + 1}`}</span>
+              </div>
+              <div className="wed-tile-body">
+                <div className="wed-tile-copy">
+                  <div className="wed-tile-name">{getAssetDisplayName(asset)}</div>
+                  <div className="wed-tile-path">{asset}</div>
+                </div>
+                <div className="wed-tile-actions">
+                  {index > 0 ? (
+                    <button
+                      type="button"
+                      className="wed-icon-btn"
+                      title="设为主背景"
+                      aria-label="设为主背景"
+                      onClick={() => setPrimaryBackgroundAsset(asset, sceneName)}
+                    >
+                      <Check size={14} />
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="wed-icon-btn wed-icon-btn--danger"
+                    title="删除"
+                    aria-label="删除背景"
+                    onClick={() => removeBackgroundAsset(asset, sceneName)}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    );
+  }
+
   async function handleSave() {
     if (!world || !world.name.trim()) {
       setError("世界名称不能为空");
@@ -1016,6 +1207,7 @@ export function WorldEditorPage() {
       };
       setWorld(normalizedSaved);
       setMapTopologySource(formatMapTopologyJson(normalizedSaved.map_nodes));
+      setSavedSignature(`${JSON.stringify(normalizedSaved)}|${formatMapTopologyJson(normalizedSaved.map_nodes)}`);
       showToast("世界已保存");
       if (isNew) {
         navigate(`/worlds/${saved.id}/edit`, { replace: true });
@@ -1027,6 +1219,98 @@ export function WorldEditorPage() {
     }
   }
 
+  async function handleRevert() {
+    if (!world || isNew) {
+      return;
+    }
+    try {
+      setReverting(true);
+      setError(null);
+      const [worldData, characterData] = await Promise.all([
+        fetchWorld(world.id),
+        fetchWorldCharacters(world.id),
+      ]);
+      const normalizedWorld = {
+        ...worldData,
+        time_config: normalizeTimeConfig(worldData.time_config as Record<string, unknown>),
+        director_config: normalizeDirectorConfig(worldData.director_config as Record<string, unknown>),
+        ui_theme_config: buildUiThemeEnvelope(normalizeUiThemeConfig(worldData.ui_theme_config as Record<string, unknown>)),
+        opening_messages: normalizeOpeningMessages(worldData.opening_messages),
+        opening_character_ids: normalizeOpeningCharacterIds(worldData.opening_character_ids, characterData),
+      };
+      setWorld(normalizedWorld);
+      setMapTopologySource(formatMapTopologyJson(normalizedWorld.map_nodes));
+      setSavedSignature(`${JSON.stringify(normalizedWorld)}|${formatMapTopologyJson(normalizedWorld.map_nodes)}`);
+      cancelEditOpeningMessage();
+      setOpeningComposerOpen(false);
+      showToast("已还原为上次保存的内容");
+    } catch (revertError) {
+      setError(revertError instanceof Error ? revertError.message : "还原世界失败");
+    } finally {
+      setReverting(false);
+    }
+  }
+
+  useEffect(() => {
+    function handleShortcut(event: KeyboardEvent) {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "s") {
+        return;
+      }
+      event.preventDefault();
+      if (!saving && !deleting && !exporting && world) {
+        void handleSave();
+      }
+    }
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, [deleting, exporting, saving, world]);
+
+  useEffect(() => {
+    if (!isDirty) {
+      return;
+    }
+    function handleBeforeUnload(event: BeforeUnloadEvent) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isDirty]);
+
+  useEffect(() => {
+    const sheetOpen = isMobile && activeSection === "opening" && (editingOpeningIndex !== null || openingComposerOpen);
+    if (!sheetOpen) {
+      return;
+    }
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [activeSection, editingOpeningIndex, isMobile, openingComposerOpen]);
+
+  useEffect(() => {
+    if (!isMobile || !activeSection) {
+      return;
+    }
+    document
+      .querySelectorAll<HTMLElement>(".mobile-content, .layout-inner")
+      .forEach((element) => {
+        element.scrollTop = 0;
+      });
+  }, [activeSection, isMobile]);
+
+  useEffect(() => {
+    if (directorPromptDraft === null) {
+      return;
+    }
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [directorPromptDraft]);
+
   async function handleDelete() {
     if (!world || isNew) {
       return;
@@ -1036,7 +1320,7 @@ export function WorldEditorPage() {
       setError(null);
       await deleteWorld(world.id);
       setShowDeleteDialog(false);
-      navigate(-1);
+      navigate("/worlds");
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "删除世界失败");
     } finally {
@@ -1073,41 +1357,140 @@ export function WorldEditorPage() {
   }
 
   // Mobile-specific navigation
+  function mobileScrollers(): HTMLElement[] {
+    return Array.from(
+      document.querySelectorAll<HTMLElement>(".mobile-content, .layout-inner"),
+    );
+  }
+
   function openSection(sectionId: FixedTabId) {
+    mobileListScrollRef.current = mobileScrollers().reduce(
+      (max, element) => Math.max(max, element.scrollTop),
+      0,
+    );
+    cancelEditOpeningMessage();
+    setOpeningComposerOpen(false);
     openSectionParam(sectionId);
     setError(null);
   }
 
   function handleDetailBack() {
+    cancelEditOpeningMessage();
+    setOpeningComposerOpen(false);
     // activeSection 由 ?section= 驱动：有应用内历史时走历史回退（与侧滑/系统返回
     // 一致），无历史（首屏深链/刷新进入）时清除 ?section= 回到列表，避免离开应用。
     closeSection();
+    const restoreListScroll = () => {
+      mobileScrollers().forEach((element) => {
+        element.scrollTop = mobileListScrollRef.current;
+      });
+    };
+    window.requestAnimationFrame(() => window.requestAnimationFrame(restoreListScroll));
+  }
+
+  const mobileSectionLabel = activeSection
+    ? fixedTabs.find((tab) => tab.id === activeSection)?.label ?? "世界编辑"
+    : "";
+  function performMobileBack() {
+    setMobileMenuOpen(false);
+    if (activeSection) {
+      handleDetailBack();
+      return;
+    }
+    navigate("/worlds");
+  }
+  function requestMobileBack() {
+    setMobileMenuOpen(false);
+    // 分区详情返回列表不会丢草稿（仍保留未保存标记），只有离开编辑页才需要确认。
+    if (isDirty && !activeSection) {
+      setShowLeaveDialog(true);
+      return;
+    }
+    performMobileBack();
   }
 
   // ==================== Mobile-specific rendering ====================
   function renderMobileSectionList() {
+    if (!world) {
+      return null;
+    }
+    const groups: Array<{ label: string; ids: FixedTabId[] }> = [
+      { label: "世界内容", ids: ["basic", "background", "opening", "map"] },
+      { label: "运行与提示词", ids: ["director", "runtimeContext", "promptPreview"] },
+      { label: "界面与规则", ids: ["style", "returnRules", "configPreview"] },
+      { label: "高级", ids: ["customAttributes"] },
+    ];
+    const summary = (id: FixedTabId) => {
+      switch (id) {
+        case "basic":
+          return world.genre.trim() || "名称、类型与概述";
+        case "background":
+          return world.background_prompt.trim() ? `${world.background_prompt.length} 字` : "尚未填写";
+        case "opening":
+          return `${openingMessages.length} 条消息 · ${openingCharacterIds.length} 位 NPC`;
+        case "map":
+          return `${Array.isArray(world.map_nodes) ? world.map_nodes.length : 0} 个节点`;
+        case "runtimeContext":
+          return directorConfig.runtime_context_prompt.trim() ? `${directorConfig.runtime_context_prompt.length} 字` : "使用内置默认";
+        case "director":
+          return `${directorConfig.service_mode === "agent_chat" ? "单智能体对话" : "世界模拟"} · ${directorConfig.world_director_prompt.length} 字提示词`;
+        case "promptPreview":
+          return "查看实际发送的 Prompt";
+        case "style":
+          return `${uiThemeConfig.local_background_assets.length} 张背景 · ${sceneNames.length} 个场景`;
+        case "returnRules":
+          return `${directorConfig.return_processing_rules.length} 条规则`;
+        case "configPreview":
+          return "查看完整配置 JSON";
+        case "customAttributes":
+          return "世界属性扩展";
+        default:
+          return "";
+      }
+    };
     return (
       <SurfacePanel className="surface-panel--pad-lg">
-        <div className="editor-content">
-          {fixedTabs.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => openSection(tab.id)}
-              className="action-btn"
-              style={{
-                width: "100%",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                padding: "16px 18px",
-                textAlign: "left",
-                borderRadius: 18,
-              }}
-            >
-              <span style={{ fontSize: 16, fontWeight: 700 }}>{tab.label}</span>
-              <span aria-hidden="true" style={{ fontSize: 18, opacity: 0.72 }}>›</span>
-            </button>
+        <div className="wed-m-list">
+          <div className="wed-m-hero">
+            <div>
+              <div className="wed-m-hero-name">{world.name.trim() || "未命名世界"}</div>
+              <div className="wed-m-hero-meta">
+                {world.genre.trim() || "未设置类型"} · {characters.length} 个角色 · {sceneNames.length} 个场景
+              </div>
+            </div>
+            <span className={isDirty ? "wed-dirty" : "wed-m-saved"}>{isDirty ? "有未保存修改" : "已保存"}</span>
+            {isDirty ? (
+              <button
+                type="button"
+                className="wed-m-hero-save"
+                onClick={() => void handleSave()}
+                disabled={saving || deleting || exporting}
+              >
+                <Save size={14} /> {saving ? "保存中..." : "保存修改"}
+              </button>
+            ) : null}
+          </div>
+          {groups.map((group) => (
+            <section key={group.label} className="wed-m-group">
+              <div className="wed-m-group-title">{group.label}</div>
+              <div className="wed-m-cards">
+                {group.ids.map((id) => {
+                  const tab = fixedTabs.find((item) => item.id === id);
+                  if (!tab) {
+                    return null;
+                  }
+                  return (
+                    <button key={id} type="button" className="wed-m-card" onClick={() => openSection(id)}>
+                      <span className="wed-m-card-copy">
+                        <span className="t">{tab.label}</span>
+                        <span className="s">{summary(id)}</span>
+                      </span>
+                      <ChevronRight size={16} aria-hidden="true" />
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
           ))}
         </div>
       </SurfacePanel>
@@ -1118,29 +1501,30 @@ export function WorldEditorPage() {
     const sectionId = sectionOverride ?? activeSection;
     if (!sectionId || !world) return null;
 
-    const currentSectionMeta = fixedTabs.find((tab) => tab.id === sectionId);
     const mobileSaveBar = !embedded ? (
-      <div className="world-editor-mobile-savebar">
+      <div className="mobile-editor-actionbar">
+        <button
+          type="button"
+          onClick={() => void handleRevert()}
+          disabled={reverting || saving || deleting || exporting || !isDirty || isNew}
+          className="action-btn"
+        >
+          <RotateCcw size={15} />
+          取消
+        </button>
         <button
           type="button"
           onClick={() => void handleSave()}
           disabled={saving || deleting || exporting}
-          className="action-btn action-btn--accent world-editor-mobile-savebar-btn"
+          className="action-btn action-btn--accent"
         >
-          <Save size={16} />
-          {saving ? "保存中..." : `保存${currentSectionMeta?.label ?? "当前修改"}`}
+          <Save size={15} />
+          {saving ? "保存中..." : "保存修改"}
         </button>
       </div>
     ) : null;
     return (
-      <div className="editor-content">
-        {!embedded ? (
-          <div className="settings-detail-head">
-            <div className="settings-detail-head-copy">
-              <strong>{currentSectionMeta?.label}</strong>
-            </div>
-          </div>
-        ) : null}
+      <div className={`editor-content${sectionId === "director" && !isMobile ? " editor-content--fill" : ""}`}>
 
         {sectionId === "basic" ? (
           <SurfacePanel className="surface-panel--pad-lg">
@@ -1177,108 +1561,193 @@ export function WorldEditorPage() {
 
         {sectionId === "opening" ? (
           <SurfacePanel className="surface-panel--pad-lg">
-            <div className="editor-content">
-              <div className="editor-content" style={{ padding: 12, border: "1px solid var(--color-border)", borderRadius: 16 }}>
-                <div className="editor-field-label">开局在场 NPC</div>
-                {characters.length === 0 ? (
-                  <div className="text-muted">当前世界还没有角色，先去角色池创建角色。</div>
-                ) : (
-                  <div className="settings-form-grid">
-                    {characters.map((character) => {
-                      const checked = openingCharacterIds.includes(character.id);
-                      return (
-                        <label
-                          key={character.id}
-                          className="editor-field"
-                          style={{ padding: 12, border: "1px solid var(--color-border)", borderRadius: 14, gap: 8 }}
-                        >
-                          <span className="flex flex--items-center" style={{ gap: 10 }}>
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => toggleOpeningCharacter(character.id)}
-                            />
-                            <span>{character.name}</span>
-                          </span>
-                          <span className="text-muted">{character.role || "未设置身份"}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-              <div className="editor-content" style={{ padding: 12, border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16 }}>
-                <div className="settings-form-grid">
-                  <label className="editor-field">
-                    <span className="editor-field-label">发言身份</span>
-                    <select
-                      value={openingComposerRole}
-                      onChange={(e) => {
-                        const nextRole = e.target.value as OpeningComposerRole;
-                        setOpeningComposerRole(nextRole);
-                        if (nextRole !== "agent") {
-                          setOpeningComposerSpeaker("");
-                        }
-                      }}
-                      className="editor-field-input editor-field-select"
-                    >
-                      <option value="system">系统旁白</option>
-                      <option value="agent">角色</option>
-                    </select>
-                  </label>
-                  {openingComposerRole === "agent" ? (
-                    <label className="editor-field">
-                      <span className="editor-field-label">角色</span>
-                      <select
-                        value={openingComposerSpeaker}
-                        onChange={(e) => setOpeningComposerSpeaker(e.target.value)}
-                        className="editor-field-input editor-field-select"
-                      >
-                        <option value="">{openingSpeakerOptions[0]?.label ?? "选择角色"}</option>
-                        {openingSpeakerOptions.map((option) => (
-                          <option key={option.value} value={option.value}>{option.label}</option>
-                        ))}
-                      </select>
-                    </label>
-                  ) : null}
+            <div className="wed-shell">
+              <div className="wed-toolbar">
+                <div className="wed-seg" role="tablist" aria-label="开场配置视图">
+                  <button type="button" role="tab" aria-selected={openingMode === "organize"} onClick={() => setOpeningMode("organize")}>消息编排</button>
+                  <button type="button" role="tab" aria-selected={openingMode === "preview"} onClick={() => setOpeningMode("preview")}>开场预览</button>
                 </div>
-                <label className="editor-field">
-                  <span className="editor-field-label">开场内容</span>
-                  <textarea
-                    value={openingComposerContent}
-                    onChange={(e) => setOpeningComposerContent(e.target.value)}
-                    className="editor-field-input editor-field-textarea"
-                    style={{ minHeight: 140 }}
-                    placeholder="写一段开场旁白，或让指定角色说出第一句话。"
-                  />
-                </label>
-                <div className="flex flex--justify-end">
-                  <button type="button" className="action-btn action-btn--accent" onClick={addOpeningMessage}>加入开场聊天</button>
-                </div>
+                <span className="wed-meta">{openingMessages.length} 条消息 · {openingCharacterIds.length} 位在场 NPC</span>
               </div>
-              <div className="editor-content" style={{ padding: 12, border: "1px solid var(--color-border)", borderRadius: 16 }}>
-                <div className="editor-field-label">开场预览</div>
-                <div className="editor-content" style={{ gap: 8, padding: 0 }}>
-                  <div className="editor-field-label">开场场景内角色</div>
-                  {openingSceneCharacters.length > 0 ? (
-                    <div className="game-scene-characters" style={{ justifyContent: "flex-start" }}>
-                      {openingSceneCharacters.map((character) => (
-                        <span key={character.id} className="game-scene-char">{character.name}</span>
-                      ))}
+
+              {openingMode === "organize" ? (
+                <>
+                  <div className="wed-panel">
+                    <div className="wed-panel-head">
+                      <div>
+                        <div className="wed-panel-title">开场在场 NPC</div>
+                        <div className="wed-panel-sub">决定开局同时出现的角色，可搜索后点选</div>
+                      </div>
+                      <span className="wed-count">{openingCharacterIds.length} 位</span>
                     </div>
-                  ) : (
-                    <div className="text-muted">当前没有配置开局就在场的 NPC。</div>
-                  )}
-                </div>
-                <div className="opening-preview-messages">
-                  {openingMessages.length === 0 ? <div className="text-muted">当前还没有开场消息。</div> : null}
-                  {openingMessages.map((message, index) => {
-                    const isEditing = editingOpeningIndex === index;
-                    return (
-                      <div key={`opening-msg-${index}`} className={`opening-preview-message opening-preview-message--${isEditing ? openingEditRole : message.role}${isEditing ? " opening-preview-message--editing" : ""}`}>
-                        {isEditing ? (
-                          <div className="opening-preview-edit">
-                            <div className="settings-form-grid">
+                    <div className="wed-panel-body">
+                      {characters.length === 0 ? (
+                        <div className="text-muted">当前世界还没有角色，先去角色池创建角色。</div>
+                      ) : (
+                        <>
+                          <div className="wed-search">
+                            <Search size={14} aria-hidden="true" />
+                            <input
+                              type="search"
+                              value={openingNpcSearch}
+                              onChange={(event) => setOpeningNpcSearch(event.target.value)}
+                              placeholder="搜索角色名或身份"
+                              className="editor-field-input"
+                              aria-label="搜索角色"
+                            />
+                          </div>
+                          <div className="wed-chips" role="group" aria-label="可选角色">
+                            {filteredOpeningCharacters.map((character) => {
+                              const checked = openingCharacterIds.includes(character.id);
+                              return (
+                                <button
+                                  key={character.id}
+                                  type="button"
+                                  className="wed-chip"
+                                  aria-pressed={checked}
+                                  title={character.role || "未设置身份"}
+                                  onClick={() => toggleOpeningCharacter(character.id)}
+                                >
+                                  {checked ? <Check size={13} aria-hidden="true" /> : null}
+                                  {character.name}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {filteredOpeningCharacters.length === 0 ? (
+                            <div className="text-muted">没有匹配的角色，清空搜索词可查看全部。</div>
+                          ) : null}
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="wed-open-grid">
+                    <div className="wed-panel">
+                      <div className="wed-panel-head">
+                        <div>
+                          <div className="wed-panel-title">开场消息</div>
+                          <div className="wed-panel-sub">拖动或用箭头调整顺序，点击任意一条在右侧编辑</div>
+                        </div>
+                        <button
+                          type="button"
+                          className="action-btn action-btn--accent"
+                          onClick={() => {
+                            setEditingOpeningIndex(null);
+                            setOpeningComposerOpen(true);
+                          }}
+                        >
+                          <Plus size={14} aria-hidden="true" /> 添加消息
+                        </button>
+                      </div>
+                      <div className="wed-panel-body">
+                        {openingMessages.length === 0 ? (
+                          <div className="wed-empty">
+                            <div className="wed-empty-title">还没有开场消息</div>
+                            <div>添加第一条旁白或角色台词，玩家进入世界时会按顺序播放。</div>
+                          </div>
+                        ) : (
+                          <ol className="wed-timeline" aria-label="开场消息列表">
+                            {openingMessages.map((message, index) => {
+                              const selected = editingOpeningIndex === index;
+                              return (
+                                <li
+                                  key={`opening-msg-${index}`}
+                                  className={`wed-msg${selected ? " is-selected" : ""}${dragMessageIndex === index ? " is-dragging" : ""}`}
+                                  draggable
+                                  aria-selected={selected}
+                                  onClick={() => startEditOpeningMessage(index)}
+                                  onDragStart={() => setDragMessageIndex(index)}
+                                  onDragOver={(event) => event.preventDefault()}
+                                  onDrop={(event) => {
+                                    event.preventDefault();
+                                    if (dragMessageIndex !== null) {
+                                      reorderOpeningMessages(dragMessageIndex, index);
+                                    }
+                                    setDragMessageIndex(null);
+                                  }}
+                                  onDragEnd={() => setDragMessageIndex(null)}
+                                >
+                                  <span className="wed-msg-grip" aria-hidden="true"><GripVertical size={14} /></span>
+                                  <span className="wed-msg-index">{index + 1}</span>
+                                  <span className="wed-msg-body">
+                                    <span className="wed-msg-role">
+                                      {message.role === "agent" ? resolveOpeningSpeakerLabel(message) : "旁白"}
+                                    </span>
+                                    <span className="wed-msg-text">{message.content}</span>
+                                  </span>
+                                  <span className="wed-msg-actions">
+                                    <button
+                                      type="button"
+                                      className="wed-icon-btn"
+                                      aria-label="上移这条消息"
+                                      disabled={index === 0}
+                                      onClick={(event) => { event.stopPropagation(); moveOpeningMessage(index, -1); }}
+                                    >
+                                      <ArrowUp size={14} />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="wed-icon-btn"
+                                      aria-label="下移这条消息"
+                                      disabled={index === openingMessages.length - 1}
+                                      onClick={(event) => { event.stopPropagation(); moveOpeningMessage(index, 1); }}
+                                    >
+                                      <ArrowDown size={14} />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="wed-icon-btn"
+                                      aria-label="编辑这条消息"
+                                      onClick={(event) => { event.stopPropagation(); startEditOpeningMessage(index); }}
+                                    >
+                                      <Pencil size={14} />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="wed-icon-btn wed-icon-btn--danger"
+                                      aria-label="删除这条消息"
+                                      onClick={(event) => { event.stopPropagation(); removeOpeningMessage(index); }}
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  </span>
+                                </li>
+                              );
+                            })}
+                          </ol>
+                        )}
+                      </div>
+                    </div>
+
+                    {(editingOpeningIndex !== null || openingComposerOpen) ? (
+                      <div
+                        className="wed-sheet-backdrop"
+                        aria-hidden="true"
+                        onClick={() => {
+                          cancelEditOpeningMessage();
+                          setOpeningComposerOpen(false);
+                        }}
+                      />
+                    ) : null}
+                    <aside
+                      className={`wed-panel wed-inspector${editingOpeningIndex !== null || openingComposerOpen ? " wed-inspector--sheet" : " wed-inspector--idle"}`}
+                      aria-label="消息编辑"
+                    >
+                      <div className="wed-sheet-handle" aria-hidden="true" />
+                      {editingOpeningIndex !== null ? (
+                        <>
+                          <div className="wed-panel-head">
+                            <div>
+                              <div className="wed-panel-title">编辑第 {editingOpeningIndex + 1} 条消息</div>
+                              <div className="wed-panel-sub">修改后保存，不会影响已生成的存档</div>
+                            </div>
+                            <button type="button" className="wed-icon-btn" aria-label="关闭检查器" onClick={cancelEditOpeningMessage}>
+                              <ArrowLeft size={14} />
+                            </button>
+                          </div>
+                          <div className="wed-panel-body">
+                            <div className="wed-field-grid">
                               <label className="editor-field">
                                 <span className="editor-field-label">发言身份</span>
                                 <select
@@ -1318,32 +1787,143 @@ export function WorldEditorPage() {
                                 value={openingEditContent}
                                 onChange={(e) => setOpeningEditContent(e.target.value)}
                                 className="editor-field-input editor-field-textarea"
-                                style={{ minHeight: 120 }}
+                                style={{ minHeight: 180 }}
                                 placeholder="修改这条开场消息的内容。"
                               />
                             </label>
-                            <div className="flex flex--gap-sm" style={{ marginTop: 8, flexWrap: "wrap" }}>
-                              <button type="button" className="action-btn action-btn--accent" onClick={saveOpeningMessage}>保存</button>
+                            <div className="wed-inspector-actions">
+                              <button type="button" className="action-btn action-btn--accent" onClick={saveOpeningMessage}>保存修改</button>
                               <button type="button" className="action-btn" onClick={cancelEditOpeningMessage}>取消</button>
                             </div>
                           </div>
-                        ) : (
-                          <>
-                            {message.role === "agent" ? <div className="opening-preview-speaker">{resolveOpeningSpeakerLabel(message)}</div> : null}
-                            <div className={`opening-preview-content ${message.role === "system" ? "opening-preview-content--system" : "opening-preview-content--default"}`}>{message.content}</div>
-                            <div className="flex flex--gap-sm" style={{ marginTop: 8, flexWrap: "wrap" }}>
-                              <button type="button" className="action-btn" onClick={() => startEditOpeningMessage(index)}>编辑</button>
-                              <button type="button" className="action-btn" onClick={() => moveOpeningMessage(index, -1)} disabled={index === 0}>上移</button>
-                              <button type="button" className="action-btn" onClick={() => moveOpeningMessage(index, 1)} disabled={index === openingMessages.length - 1}>下移</button>
-                              <button type="button" className="action-btn" onClick={() => removeOpeningMessage(index)}>删除</button>
+                        </>
+                      ) : openingComposerOpen ? (
+                        <>
+                          <div className="wed-panel-head">
+                            <div>
+                              <div className="wed-panel-title">添加开场消息</div>
+                              <div className="wed-panel-sub">新消息会追加到当前顺序末尾</div>
                             </div>
-                          </>
-                        )}
+                          </div>
+                          <div className="wed-panel-body">
+                            <div className="wed-field-grid">
+                              <label className="editor-field">
+                                <span className="editor-field-label">发言身份</span>
+                                <select
+                                  value={openingComposerRole}
+                                  onChange={(e) => {
+                                    const nextRole = e.target.value as OpeningComposerRole;
+                                    setOpeningComposerRole(nextRole);
+                                    if (nextRole !== "agent") {
+                                      setOpeningComposerSpeaker("");
+                                    }
+                                  }}
+                                  className="editor-field-input editor-field-select"
+                                >
+                                  <option value="system">系统旁白</option>
+                                  <option value="agent">角色</option>
+                                </select>
+                              </label>
+                              {openingComposerRole === "agent" ? (
+                                <label className="editor-field">
+                                  <span className="editor-field-label">角色</span>
+                                  <select
+                                    value={openingComposerSpeaker}
+                                    onChange={(e) => setOpeningComposerSpeaker(e.target.value)}
+                                    className="editor-field-input editor-field-select"
+                                  >
+                                    <option value="">{openingSpeakerOptions[0]?.label ?? "选择角色"}</option>
+                                    {openingSpeakerOptions.map((option) => (
+                                      <option key={option.value} value={option.value}>{option.label}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                              ) : null}
+                            </div>
+                            <label className="editor-field">
+                              <span className="editor-field-label">开场内容</span>
+                              <textarea
+                                value={openingComposerContent}
+                                onChange={(e) => setOpeningComposerContent(e.target.value)}
+                                className="editor-field-input editor-field-textarea"
+                                style={{ minHeight: 180 }}
+                                placeholder="写一段开场旁白，或让指定角色说出第一句话。"
+                              />
+                            </label>
+                            <div className="wed-inspector-actions">
+                              <button type="button" className="action-btn action-btn--accent" onClick={addOpeningMessage}>加入开场聊天</button>
+                              <button type="button" className="action-btn" onClick={() => setOpeningComposerOpen(false)}>取消</button>
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="wed-empty wed-empty--inspector">
+                          <div className="wed-empty-title">选择一条消息开始编辑</div>
+                          <div>左侧点选消息，或新建一条旁白 / 台词。草稿会随世界一起保存。</div>
+                          <button
+                            type="button"
+                            className="action-btn"
+                            onClick={() => {
+                              setEditingOpeningIndex(null);
+                              setOpeningComposerOpen(true);
+                            }}
+                          >
+                            <Plus size={14} aria-hidden="true" /> 添加消息
+                          </button>
+                        </div>
+                      )}
+                    </aside>
+                  </div>
+                </>
+              ) : (
+                <div className="wed-open-grid">
+                  <div className="wed-panel">
+                    <div className="wed-panel-head">
+                      <div>
+                        <div className="wed-panel-title">开场预览</div>
+                        <div className="wed-panel-sub">按当前消息顺序模拟玩家进入世界的第一屏</div>
                       </div>
-                    );
-                  })}
+                    </div>
+                    <div className="wed-panel-body">
+                      <div className="wed-preview-stage">
+                        <div className="wed-preview-scene">
+                          <span className="wed-preview-where">{world.name || "未命名世界"} · {world.opening_scene || sceneNames[0] || "未命名场景"}</span>
+                          <strong>{world.opening_scene || sceneNames[0] || "未命名场景"}</strong>
+                        </div>
+                        <div className="wed-preview-messages">
+                          {openingMessages.length === 0 ? (
+                            <div className="text-muted">当前还没有开场消息。</div>
+                          ) : (
+                            openingMessages.map((message, index) => (
+                              <div
+                                key={`opening-preview-${index}`}
+                                className={`wed-bubble wed-bubble--${message.role === "agent" ? "agent" : "system"}`}
+                              >
+                                <span className="wed-bubble-who">
+                                  {message.role === "agent" ? resolveOpeningSpeakerLabel(message) : "旁白"}
+                                </span>
+                                <span className="wed-bubble-text">{message.content}</span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <aside className="wed-panel">
+                    <div className="wed-panel-head">
+                      <div className="wed-panel-title">配置摘要</div>
+                    </div>
+                    <div className="wed-panel-body">
+                      <ul className="wed-side-list">
+                        <li><span>消息条数</span><strong>{openingMessages.length} 条</strong></li>
+                        <li><span>在场角色</span><strong>{openingSceneCharacters.length ? openingSceneCharacters.map((character) => character.name).join("、") : "无"}</strong></li>
+                        <li><span>开场场景</span><strong>{world.opening_scene || sceneNames[0] || "未设定"}</strong></li>
+                      </ul>
+                    </div>
+                  </aside>
                 </div>
-              </div>
+              )}
             </div>
           </SurfacePanel>
         ) : null}
@@ -1363,18 +1943,13 @@ export function WorldEditorPage() {
         {sectionId === "customAttributes" ? (
           <SurfacePanel className="surface-panel--pad-lg">
             <div className="editor-content">
-              <FoldableEditorSection
-                title="世界属性"
-                defaultOpen
-              >
-                <AttributePanel
-                  scope="world"
-                  ownerType="world"
-                  ownerId={isNew ? undefined : world.id}
-                  worldId={isNew ? undefined : world.id}
-                  onSchemaChange={() => void reloadPromptPreview()}
-                />
-              </FoldableEditorSection>
+              <AttributePanel
+                scope="world"
+                ownerType="world"
+                ownerId={isNew ? undefined : world.id}
+                worldId={isNew ? undefined : world.id}
+                onSchemaChange={() => void reloadPromptPreview()}
+              />
             </div>
           </SurfacePanel>
         ) : null}
@@ -1493,9 +2068,72 @@ export function WorldEditorPage() {
         ) : null}
 
         {sectionId === "director" ? (
-          <SurfacePanel className="surface-panel--pad-lg">
-            <div className="editor-content">
-              <FoldableEditorSection title="运行模式" defaultOpen>
+          <SurfacePanel className={`surface-panel--pad-lg${isMobile ? "" : " surface-panel--fill"}`}>
+            <div className="wed-shell">
+              <div className="wed-summary" role="list" aria-label="主控配置摘要">
+                {[
+                  { section: "mode" as DirectorPaneId, k: "运行模式", v: directorConfig.service_mode === "agent_chat" ? "单智能体对话" : "世界模拟" },
+                  { section: "permissions" as DirectorPaneId, k: "记忆模式", v: directorConfig.memory_mode === "oag" ? "OAG 召回" : "Embedding 召回" },
+                  { section: "context" as DirectorPaneId, k: "历史对话", v: `${directorConfig.history_dialogue_rounds} 轮 · 循环 ${directorConfig.director_tool_loop_limit}` },
+                  { section: "prompt" as DirectorPaneId, k: "主控预设", v: `${directorConfig.world_director_prompt.length} 字` },
+                  { section: "tools" as DirectorPaneId, k: "工具授权", v: `${selectedMcpTools.length} 个` },
+                ].map((item) => (
+                  <button key={item.k} type="button" role="listitem" className="wed-summary-item" onClick={() => setDirectorPane(item.section)}>
+                    <span className="k">{item.k}</span>
+                    <span className="v">{item.v}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="wed-grid">
+                <nav className="wed-nav" aria-label="主控配置分区">
+                  {DIRECTOR_NAV_GROUPS.map((group) => (
+                    <div key={group.label}>
+                      <div className="wed-nav-group">{group.label}</div>
+                      {group.items.map((item) => {
+                        const hint =
+                          item.id === "mode" ? (directorConfig.service_mode === "agent_chat" ? "单智能体对话" : "世界模拟")
+                            : item.id === "permissions" ? `${[directorConfig.knowledge_access, directorConfig.allow_scene_transition, directorConfig.allow_npc_spawn, directorConfig.allow_player_character_switch].filter(Boolean).length}/4 项开启`
+                              : item.id === "context" ? `历史 ${directorConfig.history_dialogue_rounds} 轮`
+                                : item.id === "memory" ? (directorConfig.character_memory_retrieval_mode === "lexical_only" ? "关键词检索" : directorConfig.character_memory_retrieval_mode === "semantic_only" ? "语义检索" : "混合检索")
+                                  : item.id === "prompt" ? `${directorConfig.world_director_prompt.length} 字`
+                                    : item.id === "tools" ? `${selectedMcpTools.length} 个已授权`
+                                      : item.id === "params" ? "温度 / 采样 / 上限"
+                                        : "记忆总结模板";
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            className="wed-nav-item"
+                            aria-current={directorPane === item.id ? "true" : "false"}
+                            onClick={() => setDirectorPane(item.id)}
+                          >
+                            <span className="t">{item.label}</span>
+                            <span className="s">{hint}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </nav>
+                <div className="wed-pane">
+                  <div className="wed-pane-head">
+                    <div>
+                      <h2 className="wed-pane-title">{DIRECTOR_PANE_META[directorPane].title}</h2>
+                      <div className="wed-pane-sub">{DIRECTOR_PANE_META[directorPane].desc}</div>
+                    </div>
+                    {directorPane === "prompt" ? (
+                      <div className="wed-pane-actions">
+                        <span className="wed-meta">{directorConfig.world_director_prompt.length} 字</span>
+                        <button type="button" className="action-btn" onClick={() => setDirectorPromptDraft(directorConfig.world_director_prompt)}>全屏编辑</button>
+                      </div>
+                    ) : null}
+                  </div>
+                  {(directorPane === "permissions" || directorPane === "context" || directorPane === "prompt") && directorConfig.service_mode !== "world_sim" ? (
+                    <div className="wed-empty">当前为「单智能体对话」模式，本分区仅在世界模拟模式下可用。</div>
+                  ) : null}
+
+                  {directorPane === "mode" ? (
+                    <div className="wed-block">
                 <div className="settings-form-grid">
                   <label className="editor-field">
                     <span className="editor-field-label">服务模式</span>
@@ -1532,11 +2170,29 @@ export function WorldEditorPage() {
                     当前默认回复者：{selectedDefaultAgent?.name ?? "自动选择第一个可用角色"}
                   </div>
                 ) : null}
-              </FoldableEditorSection>
+                    </div>
+                  ) : null}
 
-              {directorConfig.service_mode === "world_sim" ? (
-                <FoldableEditorSection title="基础权限" defaultOpen>
+                  {directorPane === "permissions" ? (
+                    <>
+                      {directorConfig.service_mode === "world_sim" ? (
+                        <div className="wed-block">
+                          <div className="wed-block-title">基础权限</div>
                   <div className="settings-form-grid">
+                    <label className="editor-field">
+                      <span className="editor-field-label">记忆模式</span>
+                      <select
+                        value={directorConfig.memory_mode}
+                        onChange={(e) => updateDirectorPatch({ memory_mode: e.target.value as DirectorConfig["memory_mode"] })}
+                        className="editor-field-input editor-field-select"
+                      >
+                        <option value="embedding">历史对话 + Embedding 记忆</option>
+                        <option value="oag">历史对话 + OAG（开发中）</option>
+                      </select>
+                      <span>
+                        两种模式都会发送按 witnesses 过滤的最近 N 轮对话；Embedding 额外注入向量/词法记忆召回；OAG 额外注入结构化事实/关系，尚未接入，暂按 Embedding 运行。
+                      </span>
+                    </label>
                     <label className="editor-field">
                       <span className="editor-field-label">允许主控和角色查询知识库</span>
                       <div className="settings-inline-toggle"><input type="checkbox" checked={directorConfig.knowledge_access} onChange={e => updateDirectorPatch({ knowledge_access: e.target.checked })} /></div>
@@ -1561,11 +2217,12 @@ export function WorldEditorPage() {
                       </div>
                     </label>
                   </div>
-                </FoldableEditorSection>
+                        </div>
               ) : null}
 
               {directorConfig.service_mode === "world_sim" ? (
-                <FoldableEditorSection title="行动选项">
+                <div className="wed-block">
+                  <div className="wed-block-title">行动选项</div>
                   <fieldset className="editor-interaction-source">
                     <legend>世界主控提供</legend>
                     <div className="editor-interaction-options">
@@ -1581,35 +2238,41 @@ export function WorldEditorPage() {
                       ))}
                     </div>
                   </fieldset>
-                </FoldableEditorSection>
+                </div>
               ) : null}
+                    </>
+                  ) : null}
 
-              {directorConfig.service_mode === "world_sim" ? (
-                <FoldableEditorSection title="运行上下文">
+                  {directorPane === "context" ? (
+                    <>
+                      {directorConfig.service_mode === "world_sim" ? (
+                        <div className="wed-block">
                   <div className="settings-form-grid">
                     <label className="editor-field">
                       <span className="editor-field-label">历史对话轮数</span>
-                      <input type="number" min="0" max="20" value={directorConfig.history_dialogue_rounds} onChange={(e) => updateDirectorPatch({ history_dialogue_rounds: Number(e.target.value) })} className="editor-field-input" />
+                      <input type="number" min="0" value={directorConfig.history_dialogue_rounds} onChange={(e) => updateDirectorPatch({ history_dialogue_rounds: Number(e.target.value) })} className="editor-field-input" />
                     </label>
                     <label className="editor-field">
                       <span className="editor-field-label">工具循环上限</span>
                       <input type="number" min="1" max="12" value={directorConfig.director_tool_loop_limit} onChange={(e) => updateDirectorPatch({ director_tool_loop_limit: Number(e.target.value) })} className="editor-field-input" />
                     </label>
                   </div>
-                </FoldableEditorSection>
+                        </div>
               ) : null}
+                    </>
+                  ) : null}
 
-              <FoldableEditorSection
-                title="生成参数"
-                description="本世界的采样参数。留空的项用应用设置里的全局默认；玩家还能在自己的存档里再覆盖。所连服务不支持的参数会被自动过滤。"
-              >
-                <GenerationParamsEditor
-                  value={directorConfig.generation_params}
-                  onChange={(next) => updateDirectorPatch({ generation_params: next })}
-                />
-              </FoldableEditorSection>
+                  {directorPane === "params" ? (
+                    <div className="wed-block">
+                      <GenerationParamsEditor
+                        value={directorConfig.generation_params}
+                        onChange={(next) => updateDirectorPatch({ generation_params: next })}
+                      />
+                    </div>
+                  ) : null}
 
-              <FoldableEditorSection title="角色记忆">
+                  {directorPane === "memory" ? (
+                    <div className="wed-block">
                 <div className="settings-form-grid">
                   <label className="editor-field">
                     <span className="editor-field-label">记忆触发轮数</span>
@@ -1641,18 +2304,35 @@ export function WorldEditorPage() {
                     </select>
                   </label>
                   <label className="editor-field">
-                    <span className="editor-field-label">候选数量</span>
-                    <input type="number" min="20" max="600" value={directorConfig.character_memory_candidate_limit} onChange={(e) => updateDirectorPatch({ character_memory_candidate_limit: Number(e.target.value) })} className="editor-field-input" />
-                  </label>
-                  <label className="editor-field">
                     <span className="editor-field-label">语义权重</span>
                     <input type="number" min="0" max="1" step="0.05" value={directorConfig.character_memory_semantic_weight} onChange={(e) => updateDirectorPatch({ character_memory_semantic_weight: Number(e.target.value) })} className="editor-field-input" />
                   </label>
+                  <label className="editor-field">
+                    <span className="editor-field-label">总结间隔（回合）</span>
+                    <input type="number" min="1" max="100" value={directorConfig.memory_summary_interval_rounds} onChange={(e) => updateDirectorPatch({ memory_summary_interval_rounds: Number(e.target.value) })} className="editor-field-input" />
+                    <span>按固定桶总结：每 N 回合一个桶（默认 1-10、11-20……），桶内按场景拆条；只召回已经离开原文窗口的总结。</span>
+                  </label>
+                  <label className="editor-field">
+                    <span className="editor-field-label">角色总结提示词</span>
+                    <textarea
+                      value={directorConfig.character_memory_summary_prompt || summaryPromptDefaults?.character || ""}
+                      onChange={(e) => updateDirectorPatch({ character_memory_summary_prompt: e.target.value })}
+                      className="editor-field-input editor-field-textarea"
+                      style={{ minHeight: 160 }}
+                      placeholder="留空使用内置默认。支持 {{character_name}}、{{scene_name}}、{{bucket_start}}、{{bucket_end}}、{{turn_start}}、{{turn_end}}、{{transcript}}。"
+                    />
+                    <span className="text-muted" style={{ fontSize: 12 }}>
+                      当前显示内置默认模板，可直接修改并保存；清空输入后恢复默认。角色总结按该角色 witnesses 可见的消息生成；模板忘了写 {"{{transcript}}"} 时，对话材料会自动附在末尾。
+                    </span>
+                  </label>
                 </div>
-              </FoldableEditorSection>
+                    </div>
+                  ) : null}
 
-              {directorConfig.service_mode === "world_sim" ? (
-                <FoldableEditorSection title="主控提示词" defaultOpen>
+                  {directorPane === "prompt" ? (
+                    <>
+                      {directorConfig.service_mode === "world_sim" ? (
+                        <div className="wed-block">
                   <label className="editor-field">
                     <span className="editor-field-label">世界主控提示词</span>
                     <select
@@ -1676,12 +2356,40 @@ export function WorldEditorPage() {
                     <div className="text-muted" style={{ fontSize: 12 }}>
                       当前支持的变量：{"{{current_time}}"}、{"{{当前时间}}"}
                     </div>
-                    <textarea value={directorConfig.world_director_prompt} onChange={(e) => updateMergedDirectorPrompt(e.target.value)} className="editor-field-input editor-field-textarea" style={{ minHeight: 300 }} />
+                    <textarea value={directorConfig.world_director_prompt} onChange={(e) => updateMergedDirectorPrompt(e.target.value)} className="editor-field-input editor-field-textarea" style={{ minHeight: 340 }} />
                   </label>
-                </FoldableEditorSection>
+                  <div className="wed-prompt-bar">
+                    <div className="wed-chips">
+                      <button type="button" className="wed-chip" onClick={() => updateMergedDirectorPrompt(`${directorConfig.world_director_prompt}{{current_time}}`)}>+ {"{{current_time}}"}</button>
+                      <button type="button" className="wed-chip" onClick={() => updateMergedDirectorPrompt(`${directorConfig.world_director_prompt}{{当前时间}}`)}>+ {"{{当前时间}}"}</button>
+                    </div>
+                    <span className="wed-meta">{directorConfig.world_director_prompt.length} 字 · 留空使用框架默认</span>
+                  </div>
+                        </div>
               ) : null}
+                    </>
+                  ) : null}
 
-              <FoldableEditorSection title="MCP 工具权限">
+                  {directorPane === "summaries" ? (
+                    <div className="wed-block">
+                      <label className="editor-field">
+                        <span className="editor-field-label">主控总结提示词</span>
+                        <textarea
+                          value={directorConfig.director_memory_summary_prompt || summaryPromptDefaults?.director || ""}
+                          onChange={(e) => updateDirectorPatch({ director_memory_summary_prompt: e.target.value })}
+                          className="editor-field-input editor-field-textarea"
+                          style={{ minHeight: 240 }}
+                          placeholder="留空使用内置默认。支持 {{bucket_start}}、{{bucket_end}}、{{turn_start}}、{{turn_end}}、{{transcript}}。"
+                        />
+                        <span className="text-muted" style={{ fontSize: 12 }}>
+                          当前显示内置默认模板，可直接修改并保存；清空输入后恢复默认。主控总结按固定桶汇总全部剧情，并注入主控 prompt；不会按角色隔离。角色总结模板在「角色记忆」分区。
+                        </span>
+                      </label>
+                    </div>
+                  ) : null}
+
+                  {directorPane === "tools" ? (
+                    <div className="wed-block">
                 <div className="editor-field-label">已选工具</div>
                 {selectedMcpTools.length === 0 ? <div className="text-muted">当前未选择任何 MCP 工具。</div> : null}
                 {selectedMcpTools.map((tool) => (
@@ -1710,8 +2418,44 @@ export function WorldEditorPage() {
                     </div>
                   ))}
                 </div>
-              </FoldableEditorSection>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
             </div>
+
+            {directorPromptDraft !== null ? (
+              <div className="wed-modal" role="dialog" aria-modal="true" aria-label="主控预设全屏编辑">
+                <div className="wed-modal-card">
+                  <div className="wed-modal-head">
+                    <div>
+                      <div className="wed-panel-title">主控预设 · 全屏编辑</div>
+                      <div className="wed-panel-sub">{directorPromptDraft.length} 字 · 留空使用框架默认</div>
+                    </div>
+                  </div>
+                  <textarea
+                    className="editor-field-input editor-field-textarea wed-modal-textarea"
+                    value={directorPromptDraft}
+                    onChange={(event) => setDirectorPromptDraft(event.target.value)}
+                    spellCheck={false}
+                    autoFocus
+                  />
+                  <div className="wed-modal-actions">
+                    <button type="button" className="action-btn" onClick={() => setDirectorPromptDraft(null)}>取消</button>
+                    <button
+                      type="button"
+                      className="action-btn action-btn--accent"
+                      onClick={() => {
+                        updateMergedDirectorPrompt(directorPromptDraft);
+                        setDirectorPromptDraft(null);
+                      }}
+                    >
+                      保存到配置
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </SurfacePanel>
         ) : null}
 
@@ -1788,62 +2532,128 @@ export function WorldEditorPage() {
 
         {sectionId === "style" ? (
           <SurfacePanel className="surface-panel--pad-lg">
-            <div className="editor-content">
-              <FoldableEditorSection title="背景素材" defaultOpen>
-                <div className="editor-field-label">通用背景</div>
-                {uiThemeConfig.local_background_assets.length === 0 ? <div className="text-muted">暂无通用背景。</div> : null}
-                {uiThemeConfig.local_background_assets.map((asset, index) => (
-                  <div key={asset} className="settings-form-grid" style={{ padding: 12, border: "1px solid var(--color-border)", borderRadius: 12 }}>
-                    <div>
-                      <div>{getAssetDisplayName(asset)}</div>
-                      <div className="text-muted">{asset}</div>
-                    </div>
-                    <div className="editor-field" style={{ alignSelf: "center", gap: 8 }}>
-                      {index > 0 ? <button type="button" className="action-btn" onClick={() => setPrimaryBackgroundAsset(asset)}>设为主背景</button> : null}
-                      <button type="button" className="action-btn" onClick={() => removeBackgroundAsset(asset)}>删除</button>
-                    </div>
-                  </div>
-                ))}
-                <div className="editor-field-label">上传通用背景</div>
-                <label className="action-btn action-btn--accent" style={{ cursor: uploadingBackground ? "wait" : "pointer" }}>
-                  {uploadingBackground ? "上传中..." : "选择文件"}
-                  <input type="file" accept="image/*,video/*" onChange={(e) => void handleUploadBackground(e.target.files?.[0] ?? null)} disabled={uploadingBackground} style={{ display: "none" }} />
-                </label>
-              </FoldableEditorSection>
+            <div className="wed-shell">
+              <div className="wed-toolbar">
+                <div className="wed-seg" role="tablist" aria-label="界面风格分区">
+                  {([
+                    { id: "backgrounds", label: "背景素材" },
+                    { id: "scenes", label: "场景背景" },
+                    { id: "ui", label: "UI 文档" },
+                    { id: "preview", label: "预览与校验" },
+                  ] as Array<{ id: StylePaneId; label: string }>).map((tab) => (
+                    <button key={tab.id} type="button" role="tab" aria-selected={stylePane === tab.id} onClick={() => setStylePane(tab.id)}>
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+                <span className="wed-meta">{uiThemeConfig.local_background_assets.length} 张通用背景 · {sceneNames.length} 个场景</span>
+              </div>
 
-              <FoldableEditorSection title="场景背景">
-                {sceneNames.map((scene) => (
-                  <div key={scene} className="editor-content" style={{ padding: 12, border: "1px solid var(--color-border)", borderRadius: 12, marginBottom: 12 }}>
-                    <div className="editor-field-label">{scene}</div>
-                    {(uiThemeConfig.local_scene_backgrounds[scene] ?? []).length === 0 ? <div className="text-muted">暂无场景背景。</div> : null}
-                    {(uiThemeConfig.local_scene_backgrounds[scene] ?? []).map((asset, index) => (
-                      <div key={asset} className="settings-form-grid" style={{ padding: 8, border: "1px solid var(--color-border-light)", borderRadius: 8, marginTop: 8 }}>
-                        <div>
-                          <div>{getAssetDisplayName(asset)}</div>
-                          <div className="text-muted">{asset}</div>
-                        </div>
-                        <div className="editor-field" style={{ alignSelf: "center", gap: 8 }}>
-                          {index > 0 ? <button type="button" className="action-btn" onClick={() => setPrimaryBackgroundAsset(asset, scene)}>设为主背景</button> : null}
-                          <button type="button" className="action-btn" onClick={() => removeBackgroundAsset(asset, scene)}>删除</button>
-                        </div>
-                      </div>
-                    ))}
-                    <div className="editor-field-label">上传场景背景</div>
+              {stylePane === "backgrounds" ? (
+                <div className="wed-panel">
+                  <div className="wed-panel-head">
+                    <div>
+                      <div className="wed-panel-title">通用背景</div>
+                      <div className="wed-panel-sub">不绑定场景的全局背景，第一张作为默认主背景</div>
+                    </div>
                     <label className="action-btn action-btn--accent" style={{ cursor: uploadingBackground ? "wait" : "pointer" }}>
-                      {uploadingBackground ? "上传中..." : "选择文件"}
-                      <input type="file" accept="image/*,video/*" onChange={(e) => void handleUploadBackground(e.target.files?.[0] ?? null, scene)} disabled={uploadingBackground} style={{ display: "none" }} />
+                      {uploadingBackground ? "上传中..." : "上传背景"}
+                      <input type="file" accept="image/*,video/*" onChange={(e) => void handleUploadBackground(e.target.files?.[0] ?? null)} disabled={uploadingBackground} style={{ display: "none" }} />
                     </label>
                   </div>
-                ))}
-              </FoldableEditorSection>
+                  <div className="wed-panel-body">
+                    {renderBackgroundTiles(uiThemeConfig.local_background_assets)}
+                    <p className="wed-help">上传的素材会随世界包一起导出；视频素材在游戏内按循环播放处理。</p>
+                  </div>
+                </div>
+              ) : null}
 
-              <FoldableEditorSection title="UI 文档">
-                {renderGameUiDocumentEditor("desktop", parsedDesktopGameUi)}
-                {renderGameUiDocumentEditor("mobile", parsedMobileGameUi)}
-              </FoldableEditorSection>
+              {stylePane === "scenes" ? (
+                <div className="wed-scene-grid">
+                  <div className="wed-panel">
+                    <div className="wed-panel-head">
+                      <div>
+                        <div className="wed-panel-title">场景列表</div>
+                        <div className="wed-panel-sub">先选场景，再管理它的背景</div>
+                      </div>
+                    </div>
+                    <div className="wed-panel-body">
+                      {sceneNames.length === 0 ? (
+                        <div className="wed-empty">世界还没有场景。</div>
+                      ) : (
+                        <div className="wed-scene-items">
+                          {sceneNames.map((scene) => {
+                            const count = (uiThemeConfig.local_scene_backgrounds[scene] ?? []).length;
+                            return (
+                              <button
+                                key={scene}
+                                type="button"
+                                className="wed-scene-item"
+                                aria-current={activeStyleScene === scene ? "true" : "false"}
+                                onClick={() => setStyleScene(scene)}
+                              >
+                                <span className="t">{scene}</span>
+                                <span className="s">{count} 张背景</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="wed-panel">
+                    <div className="wed-panel-head">
+                      <div>
+                        <div className="wed-panel-title">{activeStyleScene || "场景背景"}</div>
+                        <div className="wed-panel-sub">该场景优先使用自己的背景，缺失时回退通用背景</div>
+                      </div>
+                      {activeStyleScene ? (
+                        <label className="action-btn action-btn--accent" style={{ cursor: uploadingBackground ? "wait" : "pointer" }}>
+                          {uploadingBackground ? "上传中..." : "上传背景"}
+                          <input type="file" accept="image/*,video/*" onChange={(e) => void handleUploadBackground(e.target.files?.[0] ?? null, activeStyleScene)} disabled={uploadingBackground} style={{ display: "none" }} />
+                        </label>
+                      ) : null}
+                    </div>
+                    <div className="wed-panel-body">
+                      {activeStyleScene ? (
+                        renderBackgroundTiles(uiThemeConfig.local_scene_backgrounds[activeStyleScene] ?? [], activeStyleScene)
+                      ) : (
+                        <div className="wed-empty">先在左侧选择一个场景。</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
 
-              {renderGameUiPreviewSection()}
-              {renderGameUiGovernanceSection()}
+              {stylePane === "ui" ? (
+                <div className="wed-doc-grid">
+                  <div className="wed-panel">
+                    <div className="wed-panel-head">
+                      <div>
+                        <div className="wed-panel-title">桌面端 UI 文档</div>
+                        <div className="wed-panel-sub">HTML / CSS / JavaScript，隔离页面 + world SDK</div>
+                      </div>
+                    </div>
+                    <div className="wed-panel-body">{renderGameUiDocumentEditor("desktop", parsedDesktopGameUi)}</div>
+                  </div>
+                  <div className="wed-panel">
+                    <div className="wed-panel-head">
+                      <div>
+                        <div className="wed-panel-title">移动端 UI 文档</div>
+                        <div className="wed-panel-sub">移动端会独立编译与校验，不共用桌面端文档</div>
+                      </div>
+                    </div>
+                    <div className="wed-panel-body">{renderGameUiDocumentEditor("mobile", parsedMobileGameUi)}</div>
+                  </div>
+                </div>
+              ) : null}
+
+              {stylePane === "preview" ? (
+                <div className="wed-preview-grid">
+                  {renderGameUiPreviewSection()}
+                  {renderGameUiGovernanceSection()}
+                </div>
+              ) : null}
             </div>
           </SurfacePanel>
         ) : null}
@@ -1945,7 +2755,7 @@ export function WorldEditorPage() {
     if (!world) return null;
 
     return (
-      <div className="editor-content">
+      <div className={`editor-content${activeTab === "director" ? " editor-content--fill" : ""}`}>
         <div className="editor-tabs">
           {fixedTabs.map((tab) => (
             <button key={tab.id} type="button" onClick={() => setActiveTab(tab.id)} className={`editor-tab${activeTab === tab.id ? " editor-tab--active" : ""}`}>
@@ -1961,22 +2771,22 @@ export function WorldEditorPage() {
   // ==================== Main render ====================
   return (
     <ScreenLayout
-      title={isMobile && activeSection ? fixedTabs.find((tab) => tab.id === activeSection)?.label ?? "世界编辑" : world?.name ?? "世界编辑"}
+      title={isMobile ? "" : world?.name ?? "世界编辑"}
       subtitle=""
-      toolbar={
+      toolbar={isMobile ? undefined : (
         <div className="world-editor-toolbar">
-          {isMobile ? (
-            <button type="button" onClick={handleDetailBack} className="action-btn">
-              <ArrowLeft size={14} /> 返回
-            </button>
-          ) : (
-            <button type="button" onClick={() => navigate(-1)} className="action-btn">
-              <ArrowLeft size={14} /> 返回
-            </button>
-          )}
-          {isMobile ? (
-            <button type="button" onClick={() => void handleSave()} disabled={saving || deleting || exporting} className="action-btn action-btn--accent">
-              <Save size={14} /> {saving ? "保存中..." : "保存"}
+          <button type="button" onClick={() => navigate("/worlds")} className="action-btn">
+            <ArrowLeft size={14} /> 返回
+          </button>
+          {isDirty ? <span className="wed-dirty">有未保存修改</span> : null}
+          {isDirty && !isNew ? (
+            <button
+              type="button"
+              onClick={() => void handleRevert()}
+              disabled={reverting || saving || deleting || exporting}
+              className="action-btn"
+            >
+              <RotateCcw size={14} /> {reverting ? "还原中..." : "还原"}
             </button>
           ) : null}
           {!isNew ? (
@@ -1994,14 +2804,99 @@ export function WorldEditorPage() {
               {deleting ? "删除中..." : "删除世界"}
             </button>
           ) : null}
-          {!isMobile ? (
-            <button type="button" onClick={() => void handleSave()} disabled={saving || deleting || exporting} className="action-btn action-btn--accent">
-              {saving ? "保存中..." : "保存世界"}
-            </button>
+          <button type="button" onClick={() => void handleSave()} disabled={saving || deleting || exporting} className="action-btn action-btn--accent">
+            {saving ? "保存中..." : "保存世界"}
+          </button>
+        </div>
+      )}
+    >
+      {isMobile ? (
+        <div className="mobile-editor-topbar">
+          <button
+            type="button"
+            className="mobile-editor-back"
+            onClick={requestMobileBack}
+            aria-label={activeSection ? "返回分区列表" : "返回世界工坊"}
+          >
+            <ArrowLeft size={18} />
+          </button>
+          <div className="mobile-editor-heading">
+            <strong className="mobile-editor-title">
+              {activeSection
+                ? mobileSectionLabel
+                : world?.name?.trim() || (isNew ? "未命名世界" : "世界编辑")}
+              {isDirty ? <i className="mobile-editor-dirty-dot" aria-label="有未保存修改" /> : null}
+            </strong>
+            <span className="mobile-editor-kicker">
+              {activeSection ? "世界编辑" : isNew ? "新建世界" : "世界工坊"}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="mobile-editor-more"
+            onClick={() => setMobileMenuOpen((open) => !open)}
+            aria-label="更多操作"
+            aria-expanded={mobileMenuOpen}
+          >
+            <MoreHorizontal size={18} />
+          </button>
+          {mobileMenuOpen ? (
+            <div className="mobile-editor-menu" role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                className="mobile-editor-menu-item"
+                disabled={saving || deleting || exporting}
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  void handleSave();
+                }}
+              >
+                <Save size={15} /> 保存修改
+              </button>
+              {!isNew ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="mobile-editor-menu-item"
+                  disabled={exporting || deleting || saving}
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    void handleExport();
+                  }}
+                >
+                  导出世界包
+                </button>
+              ) : null}
+              {!isNew ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="mobile-editor-menu-item mobile-editor-menu-item--danger"
+                  disabled={deleting || saving || exporting}
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    setShowDeleteDialog(true);
+                  }}
+                >
+                  删除世界
+                </button>
+              ) : null}
+              <button
+                type="button"
+                role="menuitem"
+                className="mobile-editor-menu-item"
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  window.dispatchEvent(new Event("od-mobile-nav-open"));
+                }}
+              >
+                主菜单
+              </button>
+            </div>
           ) : null}
         </div>
-      }
-    >
+      ) : null}
       {loading ? <SurfacePanel className="surface-panel--pad-lg">正在加载世界详情...</SurfacePanel> : null}
       {error ? <SurfacePanel className="surface-panel--pad-lg text-error">错误：{error}</SurfacePanel> : null}
       {!loading && world ? (
@@ -2028,6 +2923,20 @@ export function WorldEditorPage() {
         }}
         onConfirm={() => {
           void handleDelete();
+        }}
+      />
+
+      <ConfirmDialog
+        open={showLeaveDialog}
+        title="放弃未保存的修改？"
+        description="当前世界的修改尚未保存，离开后这些修改会丢失。"
+        confirmLabel="放弃修改"
+        cancelLabel="继续编辑"
+        confirmVariant="danger"
+        onClose={() => setShowLeaveDialog(false)}
+        onConfirm={() => {
+          setShowLeaveDialog(false);
+          performMobileBack();
         }}
       />
     </ScreenLayout>

@@ -68,6 +68,10 @@ impl SessionOrchestrator {
                 )
             };
 
+        // 开场消息的观众 = 开局名册 + 玩家；后续历史过滤靠这份 witnesses。
+        let opening_witnesses = std::iter::once(player_character_name.clone())
+            .chain(visible_chars.iter().cloned())
+            .collect::<Vec<_>>();
         let mut messages = Vec::new();
         for msg in &world.opening_messages {
             messages.push(ChatMessage {
@@ -77,12 +81,14 @@ impl SessionOrchestrator {
                 role: msg.role.clone(),
                 content: MessageContent::Text(msg.content.clone()),
                 speaker: msg.speaker.clone(),
-                metadata: None,
+                metadata: Some(serde_json::json!({
+                    "witnesses": opening_witnesses.clone(),
+                    "scene_id": "opening",
+                    "message_kind": "opening",
+                })),
             });
         }
-        let present_characters = std::iter::once(player_character_name.clone())
-            .chain(visible_chars.iter().cloned())
-            .collect::<Vec<_>>();
+        let present_characters = opening_witnesses;
 
         let opening_scene = resolve_map_label(&world.map_nodes, &world.opening_scene)
             .unwrap_or_else(|| world.opening_scene.trim().to_string());

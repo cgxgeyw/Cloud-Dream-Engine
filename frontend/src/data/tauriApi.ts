@@ -29,6 +29,7 @@ import type {
   MemoryEntry,
   MemoryEntity,
   MemoryRelation,
+  MemorySummaryPromptDefaults,
   ModelConfig,
   ModelDiscoverResponse,
   PlayerActionRequest,
@@ -395,6 +396,10 @@ export function fetchWorldOpeningPromptPreview(worldId: string, params?: { playe
 
 export function fetchDefaultDirectorResponseContract(): Promise<string> {
   return tauriCommand("get_default_director_response_contract");
+}
+
+export function fetchDefaultMemorySummaryPrompts(): Promise<MemorySummaryPromptDefaults> {
+  return tauriCommand("get_default_memory_summary_prompts");
 }
 
 export function validateWorldUiDocument(

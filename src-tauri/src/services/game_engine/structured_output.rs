@@ -93,7 +93,7 @@ pub fn validate_director_payload(
     parsed: &serde_json::Value,
     player_character_name: &str,
     visible_characters: &[String],
-    world_character_roster: &[String],
+    _world_character_roster: &[String],
     provider: &str,
     model_id: &str,
     turn_index: i32,
@@ -180,6 +180,14 @@ pub fn validate_director_payload(
         }
     }
 
+    if let Some(value) = object.get("event") {
+        match value.as_str() {
+            Some(text) if !text.trim().is_empty() => {}
+            Some(_) => schema_errors.push("event must be a non-empty string".to_string()),
+            None => schema_errors.push("event must be a string".to_string()),
+        }
+    }
+
     if let Some(value) = object.get("scene_visible_characters") {
         match value.as_array() {
             Some(items) => {
@@ -239,11 +247,22 @@ pub fn validate_director_payload(
         }
     }
 
+    // 说话资格 = 当前场景名册 + 本回合显式新名册 + 本回合新生成角色；
+    // 不在场角色不能发言。电话/远程参与者必须先加入 visible_characters 才允许发言。
     let allowed_visible = visible_characters
         .iter()
-        .chain(world_character_roster.iter())
         .map(|item| item.trim().to_string())
         .filter(|item| !item.is_empty())
+        .chain(
+            object
+                .get("scene_visible_characters")
+                .and_then(|value| value.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|item| item.as_str())
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
+        )
         .chain(
             object
                 .get("generated_characters")
@@ -424,13 +443,15 @@ fn build_failure(
 }
 
 fn build_excerpt(raw_text: &str) -> String {
-    let normalized = raw_text.replace('\r', "").replace('\n', " ");
+    const EXCERPT_CHAR_LIMIT: usize = 4000;
+    let normalized = raw_text.replace("\r\n", "\n").replace('\r', "\n");
     let trimmed = normalized.trim();
-    if trimmed.len() <= 280 {
-        trimmed.to_string()
-    } else {
-        format!("{}...", &trimmed[..280])
+    let total_chars = trimmed.chars().count();
+    let mut excerpt: String = trimmed.chars().take(EXCERPT_CHAR_LIMIT).collect();
+    if total_chars > EXCERPT_CHAR_LIMIT {
+        excerpt.push_str("\n...");
     }
+    excerpt
 }
 
 #[cfg(test)]

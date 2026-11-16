@@ -33,7 +33,7 @@ pub(crate) fn build_character_turn_payload(
         public_scene_state_lines,
     );
     let memory_context =
-        build_character_memory_context(world, session, recalled_memories, memory_pool);
+        build_character_memory_context(world, session, recalled_memories, memory_pool, speaker_name);
     let mut recent_dialogue = build_recent_dialogue_payload(recent_messages, player_name);
     // The turn runner appends the current input after the persisted session history.
     // Keep earlier identical inputs and replies from NPCs that already spoke this turn.
@@ -75,17 +75,44 @@ pub(crate) fn build_recent_dialogue_payload(
     recent_messages: &[ChatMessage],
     player_character_name: &str,
 ) -> Vec<serde_json::Value> {
+    // 角色看到的历史统一成一行带标签的原文，读起来就是：
+    //   [玩家发言：...] [事件：...] [韩立：...] [张铁：...]
+    // 不再下发 role/speaker 这类结构化字段，避免模型把 JSON 键名当正文引用。
     recent_messages
         .iter()
         .map(|message| {
-            serde_json::json!({
-                "role": message.role,
-                "speaker": resolve_history_speaker(message, Some(player_character_name)),
-                // 第 10 项：历史消息中的媒体渲染为占位文本，不重复下发 base64。
-                "content": message.content.as_prompt_text(),
-            })
+            let label =
+                history_line_label(message, Some(player_character_name));
+            let content = message.content.as_prompt_text();
+            serde_json::json!(format!("[{label}：{}]", content.trim()))
         })
         .collect()
+}
+
+/// 事件消息：导演每回合写出的剧情推进旁白。role 为 narration，
+/// 或 metadata.message_kind 明确标成 event。
+pub(crate) fn is_event_message(message: &ChatMessage) -> bool {
+    message.role == "narration"
+        || message
+            .metadata
+            .as_ref()
+            .and_then(|meta| meta.get("message_kind"))
+            .and_then(|value| value.as_str())
+            .map(|kind| matches!(kind, "event" | "narration_event"))
+            .unwrap_or(false)
+}
+
+fn history_line_label(
+    message: &ChatMessage,
+    player_character_name: Option<&str>,
+) -> String {
+    if is_event_message(message) {
+        return "事件".to_string();
+    }
+    if message.role == "player" || is_player_message(message, player_character_name) {
+        return "玩家发言".to_string();
+    }
+    resolve_history_speaker(message, player_character_name)
 }
 
 pub(crate) fn build_memory_entry_payload(memories: &[MemoryEntry]) -> Vec<serde_json::Value> {
@@ -193,6 +220,7 @@ pub(crate) fn build_character_memory_context(
     session: &SessionSnapshot,
     recalled_memories: &[MemoryEntry],
     memory_pool: &[MemoryEntry],
+    viewer: &str,
 ) -> CharacterMemoryContext {
     let hit_turn_limit = resolve_character_memory_hit_turns(world);
     let event_window_rounds = resolve_character_memory_event_window_rounds(world);
@@ -213,8 +241,12 @@ pub(crate) fn build_character_memory_context(
 
     let event_timeline =
         collect_windowed_event_memories(memory_pool, &hit_turns, event_window_rounds);
-    let dialogue_focus =
-        collect_windowed_dialogue_messages(&session.messages, &hit_turns, dialogue_window_rounds);
+    let dialogue_focus = collect_windowed_dialogue_messages(
+        &session.messages,
+        &hit_turns,
+        dialogue_window_rounds,
+        Some(viewer),
+    );
 
     CharacterMemoryContext {
         hit_turns,
@@ -269,6 +301,7 @@ pub(crate) fn collect_windowed_dialogue_messages(
     messages: &[ChatMessage],
     hit_turns: &[i32],
     window_rounds: i32,
+    viewer: Option<&str>,
 ) -> Vec<ChatMessage> {
     if hit_turns.is_empty() {
         return Vec::new();
@@ -277,6 +310,7 @@ pub(crate) fn collect_windowed_dialogue_messages(
     messages
         .iter()
         .filter(|message| matches!(message.role.as_str(), "player" | "agent"))
+        .filter(|message| message_visible_to(message, viewer))
         .filter_map(|message| {
             let turn_index = extract_message_turn_index(message)?;
             if !memory_matches_turn_windows(turn_index, hit_turns, window_rounds) {
@@ -285,6 +319,26 @@ pub(crate) fn collect_windowed_dialogue_messages(
             Some(message.clone())
         })
         .collect()
+}
+
+/// 这条消息的观众里是否包含 viewer。
+/// 没有 witnesses 元数据时按“可见”处理，兼容旧存档；新消息都会写入 witnesses。
+pub(crate) fn message_visible_to(message: &ChatMessage, viewer: Option<&str>) -> bool {
+    let Some(viewer) = viewer.map(str::trim).filter(|value| !value.is_empty()) else {
+        return true;
+    };
+    let Some(witnesses) = message
+        .metadata
+        .as_ref()
+        .and_then(|meta| meta.get("witnesses"))
+        .and_then(|value| value.as_array())
+    else {
+        return true;
+    };
+    witnesses
+        .iter()
+        .filter_map(|value| value.as_str())
+        .any(|name| name.trim() == viewer)
 }
 
 pub(crate) fn memory_matches_turn_windows(
@@ -535,13 +589,17 @@ pub(crate) fn slice_character_history(
     messages: &[ChatMessage],
     previous_rounds: i32,
     current_player_name: Option<&str>,
+    viewer: Option<&str>,
 ) -> Vec<ChatMessage> {
     let max_previous_rounds = previous_rounds.max(0);
     let dialogue_messages = annotate_player_message_speakers(messages, current_player_name)
         .into_iter()
         .filter(|message| {
             !message.content.trim().is_empty()
-                && (message.role == "player" || message.role == "agent")
+                && (message.role == "player"
+                    || message.role == "agent"
+                    || is_event_message(message))
+                && message_visible_to(message, viewer)
         })
         .collect::<Vec<_>>();
     if dialogue_messages.is_empty() {
@@ -748,7 +806,8 @@ pub(crate) fn load_character_memory_pool(
         session_id: Some(session_id.to_string()),
         character_id: Some(character_id.to_string()),
         layer: None,
-        limit: Some(200),
+        // 事件时间线也要覆盖本存档该角色的全部记忆，不能只取最近 200 条。
+        limit: None,
     })
 }
 
@@ -913,6 +972,72 @@ mod tests {
         assert_eq!(
             resolve_character_memory_recall_limit(Some(&profile_with_strategy("无记忆"))),
             0
+        );
+    }
+
+    fn history_message(
+        role: &str,
+        speaker: &str,
+        content: &str,
+        turn_index: i32,
+        witnesses: Option<Vec<&str>>,
+    ) -> ChatMessage {
+        let metadata = match witnesses {
+            Some(witnesses) => serde_json::json!({
+                "turn_index": turn_index,
+                "witnesses": witnesses,
+            }),
+            None => serde_json::json!({ "turn_index": turn_index }),
+        };
+        ChatMessage {
+            message_id: ChatMessage::generate_id(),
+            role: role.to_string(),
+            content: MessageContent::Text(content.to_string()),
+            speaker: Some(speaker.to_string()),
+            metadata: Some(metadata),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            parent_message_id: None,
+        }
+    }
+
+    #[test]
+    fn character_history_is_filtered_by_message_witnesses() {
+        let messages = vec![
+            history_message("player", "Player", "secret", 1, Some(vec!["Player", "Alice"])),
+            history_message("agent", "Alice", "ack", 1, Some(vec!["Player", "Alice"])),
+            history_message("player", "Player", "other scene", 2, Some(vec!["Player", "Bob"])),
+            history_message("agent", "Bob", "bob reply", 2, Some(vec!["Player", "Bob"])),
+            // 旧消息没有 witnesses：按可见处理，兼容旧存档。
+            history_message("agent", "Carol", "legacy", 3, None),
+        ];
+
+        let alice = slice_character_history(&messages, 10, Some("Player"), Some("Alice"));
+        assert_eq!(
+            alice
+                .iter()
+                .map(|message| message.content.as_str())
+                .collect::<Vec<_>>(),
+            vec!["secret", "ack", "legacy"]
+        );
+
+        let bob = slice_character_history(&messages, 10, Some("Player"), Some("Bob"));
+        assert_eq!(
+            bob.iter()
+                .map(|message| message.content.as_str())
+                .collect::<Vec<_>>(),
+            vec!["other scene", "bob reply", "legacy"]
+        );
+
+        let director_view = slice_character_history(&messages, 10, Some("Player"), None);
+        assert_eq!(director_view.len(), 5);
+
+        let focus = collect_windowed_dialogue_messages(&messages, &[1], 0, Some("Alice"));
+        assert_eq!(
+            focus
+                .iter()
+                .map(|message| message.content.as_str())
+                .collect::<Vec<_>>(),
+            vec!["secret", "ack"]
         );
     }
 }

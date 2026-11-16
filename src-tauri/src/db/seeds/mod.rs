@@ -1,3 +1,4 @@
+pub mod bundled_worlds;
 pub mod feihualing_world;
 pub mod schedule_assistant_world;
 

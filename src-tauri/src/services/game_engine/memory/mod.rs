@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -21,6 +21,17 @@ use crate::models::memory::{FactUpdate, MemoryEntry, MemoryQueryParams, MemoryRe
 use crate::models::model_config::{EmbeddingModelFileStatus, EmbeddingModelStatus, ModelConfig};
 use crate::models::session::{ChatMessage, SessionSnapshot};
 use crate::models::world::WorldDefinition;
+
+mod summarizer;
+
+pub(crate) use summarizer::{
+    align_history_rounds_to_summary_bucket, bucket_has_any_messages,
+    character_has_visible_messages, default_character_memory_summary_prompt,
+    default_director_memory_summary_prompt, generate_bucket_summaries,
+    generate_director_bucket_summary, load_director_summary_text, persist_summary,
+    resolve_character_memory_summary_prompt, resolve_director_memory_summary_prompt,
+    resolve_memory_summary_interval, summary_bucket_bounds,
+};
 
 const BUILTIN_LOCAL_EMBEDDING_PROVIDER: &str = "builtin-local";
 const BUILTIN_LOCAL_EMBEDDING_MODEL_ID: &str = "BAAI/bge-small-zh-v1.5";
@@ -53,6 +64,15 @@ type LocalEmbeddingCache = Mutex<Option<LocalEmbeddingInstance>>;
 
 #[cfg(not(feature = "local-embedding"))]
 type LocalEmbeddingCache = Mutex<()>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RecallCutoff {
+    /// 当前回合号。
+    pub current_turn: i32,
+    /// 当前角色原文历史覆盖的回合数；总结桶结束回合必须严格小于
+    /// `current_turn - raw_rounds` 才允许召回。
+    pub raw_rounds: i32,
+}
 
 /// 角色记忆召回的分阶段计划。
 ///
@@ -165,6 +185,7 @@ impl MemoryService {
 
     /// 阶段 1(同步,持锁):读取候选记忆 + 词法打分 + 已存向量,收集待嵌入输入。
     /// 不做任何 HTTP。返回的 plan 交给 `embed_recall_plan`(锁外)继续。
+    /// 兼容旧调用：不启用总结 cutoff（测试/手动召回仍可看旧对话记忆）。
     pub fn prepare_character_recall(
         &self,
         conn: &Connection,
@@ -178,6 +199,39 @@ impl MemoryService {
         participants: &[String],
         limit: i32,
         memory_strategy: Option<&str>,
+    ) -> Result<CharacterRecallPlan, String> {
+        self.prepare_character_recall_with_cutoff(
+            conn,
+            world,
+            world_id,
+            session_id,
+            character_id,
+            query_text,
+            location,
+            scene_id,
+            participants,
+            limit,
+            memory_strategy,
+            None,
+        )
+    }
+
+    /// 生产路径：只召回 `memory_type = summary`，并要求总结桶已经完全离开
+    /// 当前角色的原文窗口；最近对话原文由 chat_history 单独发送。
+    pub fn prepare_character_recall_with_cutoff(
+        &self,
+        conn: &Connection,
+        world: &WorldDefinition,
+        world_id: &str,
+        session_id: &str,
+        character_id: Option<&str>,
+        query_text: &str,
+        location: &str,
+        scene_id: Option<&str>,
+        participants: &[String],
+        limit: i32,
+        memory_strategy: Option<&str>,
+        cutoff: Option<RecallCutoff>,
     ) -> Result<CharacterRecallPlan, String> {
         let Some(character_id) = character_id
             .map(|value| value.trim())
@@ -194,14 +248,48 @@ impl MemoryService {
             importance_bias: strategy.importance_bias,
         };
         let repo = crate::db::repositories::memory_repo::MemoryRepository::new(conn);
-        let candidate_limit = resolve_character_memory_candidate_limit(world).max(limit.max(1) * 4);
-        let candidates = repo.list(&MemoryQueryParams {
+        // 候选池必须是本存档该角色的全部总结记忆，而不是最近 N 条：
+        // 先全量取出，再由词法/语义分数和层配额排序，否则旧总结永远召回不到。
+        let all_candidates = repo.list(&MemoryQueryParams {
             world_id: Some(world_id.to_string()),
             session_id: Some(session_id.to_string()),
             character_id: Some(character_id.to_string()),
             layer: None,
-            limit: Some(candidate_limit),
+            limit: None,
         })?;
+        // 迁移兜底：总结机制上线前的老存档还没有 summary。此时先沿用旧的
+        // 对话记忆（只取已经离开原文窗口、且所在桶还没有 summary 的部分），
+        // 避免老存档突然失忆；一旦某个桶有 summary，就只走总结，不再插入原文。
+        let summary_interval = resolve_memory_summary_interval(world).max(1);
+        let summary_keys = crate::db::repositories::memory_summary_repo::MemorySummaryRepository::new(
+            conn,
+        )
+        .list_by_character(session_id, character_id)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|range| (range.bucket_index, range.scene_id))
+        .collect::<HashSet<_>>();
+        let candidates = all_candidates
+            .into_iter()
+            .filter(|entry| match cutoff {
+                Some(cutoff) => {
+                    let outside_raw =
+                        entry.turn_index < cutoff.current_turn - cutoff.raw_rounds;
+                    if !outside_raw {
+                        return false;
+                    }
+                    if entry.memory_type == summarizer::MEMORY_TYPE_SUMMARY {
+                        true
+                    } else {
+                        let bucket_index =
+                            (entry.turn_index.max(1) - 1).div_euclid(summary_interval);
+                        let scene_id = entry.scene_id.clone().unwrap_or_default();
+                        !summary_keys.contains(&(bucket_index, scene_id))
+                    }
+                }
+                None => true,
+            })
+            .collect::<Vec<_>>();
 
         let newest_turn = candidates
             .iter()
@@ -328,17 +416,34 @@ impl MemoryService {
         if plan.pending_inputs.is_empty() {
             return;
         }
-        let inputs = plan
-            .pending_inputs
-            .iter()
-            .map(|(_, input)| input.clone())
-            .collect::<Vec<_>>();
-        if let Ok(vectors) = self.embed_texts(&model, &inputs) {
-            for ((id, _), vector) in plan.pending_inputs.iter().zip(vectors.into_iter()) {
-                if !vector.is_empty() {
-                    plan.computed_vectors.push((id.clone(), vector));
+        // 全量历史第一次召回时可能有一大批未缓存向量；分批嵌入，避免单次
+        // embedding 请求过大，也避免本地模型一次吃下整段历史。
+        const EMBEDDING_BATCH_SIZE: usize = 64;
+        let pending_len = plan.pending_inputs.len();
+        let mut offset = 0;
+        while offset < pending_len {
+            let end = (offset + EMBEDDING_BATCH_SIZE).min(pending_len);
+            let inputs = plan.pending_inputs[offset..end]
+                .iter()
+                .map(|(_, input)| input.clone())
+                .collect::<Vec<_>>();
+            match self.embed_texts(&model, &inputs) {
+                Ok(vectors) => {
+                    for (index, vector) in vectors.into_iter().enumerate() {
+                        if vector.is_empty() {
+                            continue;
+                        }
+                        let Some((id, _)) = plan.pending_inputs.get(offset + index) else {
+                            break;
+                        };
+                        let id = id.clone();
+                        plan.computed_vectors.push((id, vector));
+                    }
                 }
+                // 某一批失败就停止继续请求；已缓存的向量仍可参与语义排序。
+                Err(_) => break,
             }
+            offset = end;
         }
     }
 
@@ -1168,7 +1273,7 @@ fn rank_memories_by_scores(
     });
 
     let mut balanced = Vec::new();
-    let mut selected_ids = Vec::new();
+    let mut selected_ids = std::collections::HashSet::new();
     for (layer, quota) in [
         ("working", 2usize),
         ("short_term", 2usize),
@@ -1181,20 +1286,23 @@ fn rank_memories_by_scores(
                 .get(&entry.id)
                 .map(String::as_str)
                 .unwrap_or(entry.layer.as_str());
-            if effective_layer != layer || selected_ids.contains(&entry.id) || used >= quota {
+            if effective_layer != layer
+                || selected_ids.contains(entry.id.as_str())
+                || used >= quota
+            {
                 continue;
             }
             balanced.push(entry.clone());
-            selected_ids.push(entry.id.clone());
+            selected_ids.insert(entry.id.clone());
             used += 1;
         }
     }
     for entry in memories {
-        if selected_ids.contains(&entry.id) {
+        if selected_ids.contains(entry.id.as_str()) {
             continue;
         }
         balanced.push(entry.clone());
-        selected_ids.push(entry.id.clone());
+        selected_ids.insert(entry.id.clone());
     }
     balanced
 }
@@ -1233,15 +1341,6 @@ fn resolve_character_memory_retrieval_mode(world: &WorldDefinition) -> String {
         .unwrap_or_else(|| "hybrid".to_string())
 }
 
-fn resolve_character_memory_candidate_limit(world: &WorldDefinition) -> i32 {
-    world
-        .director_config
-        .get("character_memory_candidate_limit")
-        .and_then(|value| value.as_i64())
-        .map(|value| value.clamp(20, 600) as i32)
-        .unwrap_or(200)
-}
-
 fn resolve_character_memory_semantic_weight(world: &WorldDefinition) -> f64 {
     world
         .director_config
@@ -1251,14 +1350,59 @@ fn resolve_character_memory_semantic_weight(world: &WorldDefinition) -> f64 {
         .unwrap_or(0.65)
 }
 
-/// 事实卡片提取开关(director_config.fact_extraction_enabled,默认开)。
-/// 关闭时:提示词不注入提取契约、回合结束不落事实卡片,行为完全回到旧状。
-pub(crate) fn resolve_fact_extraction_enabled(world: &WorldDefinition) -> bool {
-    world
+/// 记忆模式：历史 + Embedding 召回 / 历史 + OAG。
+/// 对话历史是两种模式共同的底座，始终发送；切换只决定额外注入哪一层：
+/// Embedding 加语义/词法记忆召回，OAG 再加结构化事实/关系。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MemoryMode {
+    Embedding,
+    Oag,
+}
+
+/// 读取世界级记忆模式（director_config.memory_mode）。
+/// 缺省 embedding；旧值 history 也迁移为 embedding，因为对话历史现在始终发送，
+/// 不再存在“只发历史、不注入”的模式。旧字段 oag_enabled=true 迁移为 oag。
+pub(crate) fn resolve_memory_mode(world: &WorldDefinition) -> MemoryMode {
+    match world
         .director_config
-        .get("fact_extraction_enabled")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(true)
+        .get("memory_mode")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .unwrap_or_default()
+    {
+        "oag" => MemoryMode::Oag,
+        "embedding" | "history" => MemoryMode::Embedding,
+        _ => {
+            if world
+                .director_config
+                .get("oag_enabled")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
+            {
+                MemoryMode::Oag
+            } else {
+                MemoryMode::Embedding
+            }
+        }
+    }
+}
+
+/// OAG 模式（结构化事实/关系/知识边界）是否启用。
+pub(crate) fn resolve_oag_enabled(world: &WorldDefinition) -> bool {
+    resolve_memory_mode(world) == MemoryMode::Oag
+}
+
+/// 事实卡片提取开关(director_config.fact_extraction_enabled,默认关)。
+/// 事实抽取不应和角色扮演同一次生成——那会把扮演变成结构化抽取，影响入戏。
+/// 这里只保留显式实验开关：OAG 开启后应由独立的后置抽取任务完成，而不是
+/// 让角色模型在回复 JSON 里附带 fact_extractions。
+pub(crate) fn resolve_fact_extraction_enabled(world: &WorldDefinition) -> bool {
+    resolve_oag_enabled(world)
+        && world
+            .director_config
+            .get("fact_extraction_enabled")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
 }
 
 fn resolve_character_memory_working_window_turns(world: &WorldDefinition) -> i32 {

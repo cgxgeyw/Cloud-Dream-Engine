@@ -21,6 +21,7 @@ import type { GameUiPlatform } from "../data/gameUi";
 import type { GameSessionStateBag } from "../game/useGameSession";
 import { compressImagesForChat } from "../game/imageCompress";
 import type { WorldFrameAction } from "../worldFrame/protocol";
+import { readNativeSafeAreaInsets } from "../lib/nativeInsets";
 import { formatInteractionAnswer } from "../gameUiRuntime/interactions";
 import {
   createGameUiRuntimeSnapshot,
@@ -446,6 +447,7 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
         onAction={handleAction}
         title={platform === "mobile" ? "\u79fb\u52a8\u7aef\u4e16\u754c\u754c\u9762" : "\u684c\u9762\u7aef\u4e16\u754c\u754c\u9762"}
         className="world-ui-sandbox-runtime"
+        showDebugToggle={false}
       />
     </div>
   );
@@ -593,21 +595,13 @@ function measureSafeAreaInsets(platform: GameUiPlatform) {
   // 安卓 WebView 里 env(safe-area-inset-*) 恒为 0；MainActivity 会经 evaluateJavascript
   // 把真实 statusBars/displayCutout/navigationBars inset（CSS px）注入 __nativeSafeAreaInsets，
   // 顶部与底部都优先采用原生值（底部在键盘弹出时由原生侧归零）。
-  const nativeInsets = (window as { __nativeSafeAreaInsets?: { top?: unknown; bottom?: unknown } }).__nativeSafeAreaInsets;
-  const parseNative = (value: unknown): number | null => {
-    const parsed = typeof value === "number" ? value : Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  };
-  const nativeTop = parseNative(nativeInsets?.top);
-  if (nativeTop != null) {
-    result.top = Math.round(Math.max(0, nativeTop));
+  const nativeInsets = readNativeSafeAreaInsets();
+  if (nativeInsets) {
+    result.top = Math.round(Math.max(0, nativeInsets.top));
+    result.bottom = Math.round(Math.max(0, nativeInsets.bottom));
   } else if (result.top < 72) {
-    // 取不到原生值（如浏览器调试）时退回保守猜测：全面屏状态栏/挖孔仍挡住顶部 UI。
-    result.top = 88;
-  }
-  const nativeBottom = parseNative(nativeInsets?.bottom);
-  if (nativeBottom != null) {
-    result.bottom = Math.round(Math.max(0, nativeBottom));
+    // 取不到原生值且无缓存（如浏览器调试）时只留状态栏高度，避免顶部让出过大空白。
+    result.top = 28;
   }
   return result;
 }

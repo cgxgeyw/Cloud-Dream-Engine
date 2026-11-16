@@ -810,11 +810,14 @@ export function useGameSession(
       }
 
       const speaker =
-        message.role === "agent"
-          ? message.speaker?.trim() || "角色"
-          : message.role === "player"
-            ? message.speaker?.trim() || "玩家"
-            : "系统";
+        message.role === "narration" ||
+        message.metadata?.message_kind === "event"
+          ? "事件"
+          : message.role === "agent"
+            ? message.speaker?.trim() || "角色"
+            : message.role === "player"
+              ? message.speaker?.trim() || "玩家"
+              : "系统";
       lines.push(`${speaker}: ${content}`);
     }
     return lines.join("\n\n");

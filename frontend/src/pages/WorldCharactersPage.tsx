@@ -17,7 +17,8 @@ import {
 } from "../data/apiAdapter";
 import { ConfirmDialog, ModalDialog } from "../components/ModalDialog";
 import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
-import { X, Users } from "lucide-react";
+import { useIsMobile } from "../components/ResponsiveLayout";
+import { X, Users, ArrowLeft, ChevronRight, Plus } from "lucide-react";
 import { AttributePanel } from "../components/AttributePanel";
 
 type CreateMode = "same_world" | "other_world";
@@ -25,6 +26,7 @@ type CreateMode = "same_world" | "other_world";
 export function WorldCharactersPage() {
   const navigate = useNavigate();
   const { worldId } = useParams();
+  const isMobile = useIsMobile();
   const [world, setWorld] = useState<WorldResponse | null>(null);
   const [worldOptions, setWorldOptions] = useState<WorldResponse[]>([]);
   const [characters, setCharacters] = useState<CharacterResponse[]>([]);
@@ -39,6 +41,7 @@ export function WorldCharactersPage() {
   const [targetWorldId, setTargetWorldId] = useState("");
   const [newCharacterName, setNewCharacterName] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [mobilePane, setMobilePane] = useState<"list" | "shared">("list");
 
   useEffect(() => {
     if (!worldId) {
@@ -250,11 +253,20 @@ export function WorldCharactersPage() {
     }
   }
 
+  function handleMobileBack() {
+    if (mobilePane === "shared") {
+      setMobilePane("list");
+      return;
+    }
+    navigate(worldId ? `/worlds/${worldId}/edit` : "/worlds");
+  }
+
   return (
     <ScreenLayout
-      title={world ? `${world.name} / 角色池` : "角色池"}
-      subtitle="管理该世界中的角色实例。跨世界复用基于角色模板创建，不带入原有记忆和运行状态。"
+      title={isMobile ? "" : world ? `${world.name} / 角色池` : "角色池"}
+      subtitle={isMobile ? undefined : "管理该世界中的角色实例。跨世界复用基于角色模板创建，不带入原有记忆和运行状态。"}
       toolbar={
+        isMobile ? undefined : (
         <>
           <button type="button" onClick={() => navigate("/worlds")} className="action-btn">
             返回世界列表
@@ -274,43 +286,71 @@ export function WorldCharactersPage() {
             </>
           ) : null}
         </>
+        )
       }
       maxWidth={980}
     >
-      {worldId ? (
-        <div className="character-pool-mobile-header show-mobile">
-          <div className="character-pool-mobile-copy">
-            <strong>{world ? `${world.name} / \u89d2\u8272\u6c60` : "\u89d2\u8272\u6c60"}</strong>
-          </div>
+      {isMobile ? (
+        <div className="mobile-editor-topbar">
           <button
             type="button"
-            onClick={() => navigate(`/characters/new?worldId=${worldId}`)}
-            className="action-btn action-btn--accent"
+            className="mobile-editor-back"
+            onClick={handleMobileBack}
+            aria-label={mobilePane === "shared" ? "返回角色池" : "返回世界编辑"}
           >
-            {"\u002b \u65b0\u5efa\u89d2\u8272"}
+            <ArrowLeft size={18} />
           </button>
+          <div className="mobile-editor-heading">
+            <strong className="mobile-editor-title">
+              {mobilePane === "shared" ? "角色共享属性" : "角色池"}
+            </strong>
+            <span className="mobile-editor-kicker">{world?.name?.trim() || "角色池"}</span>
+          </div>
+          {mobilePane === "list" && worldId ? (
+            <button
+              type="button"
+              className="mobile-editor-more"
+              onClick={() => navigate(`/characters/new?worldId=${worldId}`)}
+              aria-label="新建角色"
+            >
+              <Plus size={18} />
+            </button>
+          ) : (
+            <span className="mobile-editor-more-spacer" aria-hidden="true" />
+          )}
         </div>
       ) : null}
 
       {loading ? <SurfacePanel className="surface-panel--pad-lg">正在加载角色池...</SurfacePanel> : null}
       {error ? <SurfacePanel className="surface-panel--pad-lg text-error">错误：{error}</SurfacePanel> : null}
 
-      {!loading && !error && world ? (
+      {!loading && !error && world && (!isMobile || mobilePane === "shared") ? (
         <SurfacePanel className="surface-panel--pad-lg">
           <div className="editor-content">
-            <div className="editor-field-label">角色共享属性</div>
-            <AttributePanel scope="character" ownerType="character" worldId={world.id} />
+            <AttributePanel scope="character" ownerType="character" worldId={world.id} hideTitle={isMobile} />
           </div>
         </SurfacePanel>
       ) : null}
 
-      {!loading && !error && world && sortedCharacters.length === 0 ? (
+      {!loading && !error && world && isMobile && mobilePane === "list" ? (
+        <div className="wed-m-list" style={{ marginBottom: 16 }}>
+          <button type="button" className="wed-m-card" onClick={() => setMobilePane("shared")}>
+            <span className="wed-m-card-copy">
+              <span className="t">角色共享属性</span>
+              <span className="s">统一维护该世界所有角色的公共属性</span>
+            </span>
+            <ChevronRight size={16} aria-hidden="true" />
+          </button>
+        </div>
+      ) : null}
+
+      {!loading && !error && world && sortedCharacters.length === 0 && (!isMobile || mobilePane === "list") ? (
         <SurfacePanel className="surface-panel--pad-lg">
           <div className="empty-text">当前世界还没有角色。先创建角色，再继续做导出模板和跨世界创建。</div>
         </SurfacePanel>
       ) : null}
 
-      {!loading && !error && world && sortedCharacters.length > 0 ? (
+      {!loading && !error && world && sortedCharacters.length > 0 && (!isMobile || mobilePane === "list") ? (
         <div className="card-grid character-pool-grid">
           {sortedCharacters.map((character) => {
             const isDeleting = deleting === character.id;
