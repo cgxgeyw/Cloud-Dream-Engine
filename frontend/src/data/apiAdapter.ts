@@ -197,6 +197,8 @@ export type {
   WorldUiDocumentValidationResult,
   WorldRecord,
   WorldRecordWriteRequest,
+  KnowledgeBase,
+  KnowledgeDocument,
 } from "./types";
 
 // 仅 SessionDebugResponse 从 tauriApi 导入（tauriApi 特有）
@@ -781,12 +783,24 @@ export function assetUrl(path: string | null | undefined): string {
   }
   return isTauri ? getTauriSync().assetUrl(path) : getHttpSync().assetUrl(path ?? "");
 }
-export async function fetchKnowledgeBases() { return (await getTauri()).fetchKnowledgeBases(); }
+export async function fetchKnowledgeBases(worldId?: string | null) { return (await getTauri()).fetchKnowledgeBases(worldId); }
 export async function createKnowledgeBase(name: string, description: string, worldId: string | null) { return (await getTauri()).createKnowledgeBase(name, description, worldId); }
 export async function deleteKnowledgeBase(id: string) { return (await getTauri()).deleteKnowledgeBase(id); }
+export async function updateKnowledgeChunking(id: string, strategy: string, maxChars: number, overlapChars: number, delimiter: string) { return (await getTauri()).updateKnowledgeChunking(id, strategy, maxChars, overlapChars, delimiter); }
 export async function fetchKnowledgeDocuments(id: string) { return (await getTauri()).fetchKnowledgeDocuments(id); }
 export async function addKnowledgeDocument(id: string, file: File) { return (await getTauri()).addKnowledgeDocument(id, file); }
 export async function deleteKnowledgeDocument(id: string) { return (await getTauri()).deleteKnowledgeDocument(id); }
 export async function updateKnowledgeDocument(id: string, title: string, content: string) { return (await getTauri()).updateKnowledgeDocument(id, title, content); }
-export async function getKnowledgeBindings(id: string) { return (await getTauri()).getKnowledgeBindings(id); }
-export async function setKnowledgeBinding(id: string, worldId: string, enabled: boolean) { return (await getTauri()).setKnowledgeBinding(id, worldId, enabled); }
+export async function listWorldKnowledgeCandidates(worldId?: string | null) { return (await getTauri()).listWorldKnowledgeCandidates(worldId); }
+export async function listWorldKnowledgeScope(worldId: string) { return (await getTauri()).listWorldKnowledgeScope(worldId); }
+export async function fetchStickerPacks() { return (await getTauri()).fetchStickerPacks(); }
+export async function createStickerPack(name: string, description: string, worldId: string | null) { return (await getTauri()).createStickerPack(name, description, worldId); }
+export async function updateStickerPack(id: string, name: string, description: string, enabled: boolean) { return (await getTauri()).updateStickerPack(id, name, description, enabled); }
+export async function deleteStickerPack(id: string) { return (await getTauri()).deleteStickerPack(id); }
+export async function fetchStickers(packId: string) { return (await getTauri()).fetchStickers(packId); }
+export async function createSticker(packId: string, key: string, label: string, description: string, assetPath: string) { return (await getTauri()).createSticker(packId, key, label, description, assetPath); }
+export async function updateSticker(id: string, key: string, label: string, description: string, assetPath: string, enabled: boolean) { return (await getTauri()).updateSticker(id, key, label, description, assetPath, enabled); }
+export async function deleteSticker(id: string) { return (await getTauri()).deleteSticker(id); }
+export async function reorderStickers(packId: string, stickerIds: string[]) { return (await getTauri()).reorderStickers(packId, stickerIds); }
+export async function getStickerWorldBindings(packId: string) { return (await getTauri()).getStickerWorldBindings(packId); }
+export async function setStickerWorldBinding(packId: string, worldId: string, enabled: boolean) { return (await getTauri()).setStickerWorldBinding(packId, worldId, enabled); }

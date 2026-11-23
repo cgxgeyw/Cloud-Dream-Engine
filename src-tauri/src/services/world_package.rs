@@ -324,7 +324,16 @@ impl WorldPackageService {
         if !bundled_tools.is_empty() {
             manifest.mcp_tools_file = Some(WORLD_PACKAGE_MCP_TOOLS_FILE.to_string());
         }
-        let world_data = to_world_package_data(world, characters);
+        let mut world_data = to_world_package_data(world, characters);
+        for sticker in &mut world_data.stickers {
+            if let Some(entry) = manifest
+                .assets
+                .iter()
+                .find(|entry| entry.source_path == sticker.asset_path)
+            {
+                sticker.asset_path = entry.archive_path.clone();
+            }
+        }
         let character_data: Vec<(WorldPackageCharacterFileEntry, CharacterPackageData)> =
             characters
                 .iter()
@@ -352,6 +361,9 @@ impl WorldPackageService {
                             response_contract_prompt: character.response_contract_prompt.clone(),
                             narration_prompt: character.narration_prompt.clone(),
                             runtime_system_prompt: character.runtime_system_prompt.clone(),
+                            // 包里的知识库导入后会换成新 id，角色级收窄无法跨包保留；
+                            // 留空表示沿用目标世界主控范围（世界自带库本就自动可用）。
+                            knowledge_base_ids: Vec::new(),
                         },
                     )
                 })
@@ -518,9 +530,7 @@ impl WorldPackageService {
         validate_archive_limits(&mut archive)?;
         let manifest: WorldPackageManifest = read_json_from_zip(&mut archive, "manifest.json")
             .map_err(|e| format!("Invalid manifest: {e}"))?;
-        if manifest.format != WORLD_PACKAGE_FORMAT
-            || manifest.version != WORLD_PACKAGE_VERSION
-        {
+        if manifest.format != WORLD_PACKAGE_FORMAT || manifest.version != WORLD_PACKAGE_VERSION {
             return Err("不支持的世界包格式".to_string());
         }
 
@@ -667,6 +677,7 @@ impl WorldPackageService {
         }
 
         validate_world_package_director_config(&package_world.director_config)?;
+        validate_world_package_stickers(&package_world.stickers, &manifest.assets)?;
         validate_declared_asset_references(
             &package_world.ui_assets_config,
             &package_characters,
@@ -775,6 +786,39 @@ fn validate_world_package_director_config(config: &serde_json::Value) -> Result<
         }
     }
 
+    Ok(())
+}
+
+fn validate_world_package_stickers(
+    stickers: &[crate::models::world::WorldPackageSticker],
+    manifest_assets: &[WorldPackageAssetEntry],
+) -> Result<(), String> {
+    if stickers.is_empty() {
+        return Ok(());
+    }
+    let declared = manifest_assets
+        .iter()
+        .flat_map(|asset| [asset.source_path.as_str(), asset.archive_path.as_str()])
+        .collect::<HashSet<_>>();
+    let mut keys = HashSet::new();
+    for (index, sticker) in stickers.iter().enumerate() {
+        let key = sticker.key.trim();
+        if key.is_empty() {
+            return Err(format!("stickers[{index}].key 不能为空"));
+        }
+        if !keys.insert(key.to_string()) {
+            return Err(format!("stickers[{index}].key 重复：{key}"));
+        }
+        let asset_path = sticker.asset_path.trim();
+        if !asset_path.starts_with("assets/") {
+            return Err(format!(
+                "stickers[{index}].asset_path 必须以 assets/ 开头：{asset_path}"
+            ));
+        }
+        if !declared.contains(asset_path) {
+            return Err(format!("贴纸资源未在 manifest.assets 声明：{asset_path}"));
+        }
+    }
     Ok(())
 }
 
@@ -1027,6 +1071,17 @@ fn collect_asset_descriptors(
             );
         }
     }
+    if let Some(stickers) = world
+        .ui_theme_config
+        .get("stickers")
+        .and_then(|value| value.as_array())
+    {
+        for sticker in stickers {
+            if let Some(path) = sticker.get("asset_path").and_then(|value| value.as_str()) {
+                push_asset(&mut assets, path, "world_sticker", "global".to_string());
+            }
+        }
+    }
     assets
 }
 
@@ -1148,6 +1203,14 @@ fn to_world_package_data(
             .get("assets")
             .cloned()
             .unwrap_or_else(|| serde_json::json!({})),
+        stickers: serde_json::from_value(
+            world
+                .ui_theme_config
+                .get("stickers")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([])),
+        )
+        .unwrap_or_default(),
         attribute_schemas: world
             .ui_theme_config
             .get("attribute_schemas")
@@ -1440,5 +1503,103 @@ fn slugify(value: &str, fallback: &str) -> String {
         fallback.to_string()
     } else {
         slug
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn sticker_world() -> WorldDefinition {
+        serde_json::from_value(json!({
+            "id": "sticker-test",
+            "name": "贴纸测试",
+            "genre": "测试",
+            "background_prompt": "",
+            "opening_scene": "",
+            "summary": "",
+            "time_system": "",
+            "map_nodes": {},
+            "time_config": {},
+            "director_config": {},
+            "ui_theme_config": {
+                "stickers": [
+                    {
+                        "key": "feast",
+                        "label": "开饭",
+                        "description": "端碗开吃",
+                        "asset_path": "stickers/feast.webp"
+                    }
+                ]
+            },
+            "director_system_prompt_base": "",
+            "director_runtime_system_prompt": "",
+            "opening_messages": [],
+            "opening_character_ids": [],
+            "player_character_id": null
+        }))
+        .expect("world json")
+    }
+
+    #[test]
+    fn exported_package_rewrites_sticker_assets_to_archive_paths() {
+        let data_dir = std::env::temp_dir().join(format!(
+            "dream-sticker-export-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let assets_dir = data_dir.join("assets").join("stickers");
+        fs::create_dir_all(&assets_dir).expect("assets dir");
+        fs::write(assets_dir.join("feast.webp"), b"sticker-bytes").expect("sticker file");
+
+        let world = sticker_world();
+        let package =
+            WorldPackageService::build_package(&data_dir, &world, &[], &[]).expect("build package");
+
+        let mut archive = zip::ZipArchive::new(Cursor::new(package.bytes)).expect("zip");
+        let manifest: WorldPackageManifest =
+            read_json_from_zip(&mut archive, "manifest.json").expect("manifest");
+        assert_eq!(manifest.assets.len(), 1);
+        assert_eq!(manifest.assets[0].source_path, "stickers/feast.webp");
+        assert_eq!(
+            manifest.assets[0].archive_path,
+            "assets/stickers/feast.webp"
+        );
+
+        let world_data: WorldPackageWorldData =
+            read_json_from_zip(&mut archive, WORLD_PACKAGE_FILE).expect("world");
+        assert_eq!(world_data.stickers.len(), 1);
+        assert_eq!(
+            world_data.stickers[0].asset_path,
+            "assets/stickers/feast.webp"
+        );
+        validate_world_package_stickers(&world_data.stickers, &manifest.assets)
+            .expect("sticker validation");
+
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn sticker_validation_rejects_undeclared_or_unprefixed_assets() {
+        let assets = vec![WorldPackageAssetEntry {
+            source_path: "stickers/feast.webp".to_string(),
+            archive_path: "assets/stickers/feast.webp".to_string(),
+            owner_type: Some("world_sticker".to_string()),
+            owner_id: Some("global".to_string()),
+        }];
+        let mut sticker: crate::models::world::WorldPackageSticker = serde_json::from_value(
+            json!({ "key": "feast", "asset_path": "assets/stickers/feast.webp" }),
+        )
+        .expect("sticker");
+        validate_world_package_stickers(std::slice::from_ref(&sticker), &assets).expect("valid");
+
+        sticker.asset_path = "stickers/feast.webp".to_string();
+        assert!(validate_world_package_stickers(std::slice::from_ref(&sticker), &assets).is_err());
+
+        sticker.asset_path = "assets/stickers/missing.webp".to_string();
+        assert!(validate_world_package_stickers(std::slice::from_ref(&sticker), &assets).is_err());
     }
 }

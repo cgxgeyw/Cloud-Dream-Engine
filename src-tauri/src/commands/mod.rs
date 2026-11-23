@@ -13,6 +13,7 @@ pub mod plugins;
 pub mod saves;
 pub mod sessions;
 pub mod settings;
+pub mod stickers;
 pub mod uploads;
 pub mod world_kv;
 pub mod world_records;

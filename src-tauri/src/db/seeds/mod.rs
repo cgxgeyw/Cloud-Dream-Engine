@@ -1,44 +1,18 @@
 pub mod bundled_worlds;
-pub mod feihualing_world;
 pub mod schedule_assistant_world;
 
 use rusqlite::{params, Connection};
 
 use crate::models::mcp_tool::MCP_TOOL_SCHEDULE_NOTIFICATION_ID;
 
-use feihualing_world::*;
 use schedule_assistant_world::*;
 
-fn default_seed_world_director_config_json() -> String {
-    serde_json::json!({
-        "allow_scene_transition": true,
-        "allow_npc_spawn": true,
-        "history_dialogue_rounds": 6,
-        "director_tool_loop_limit": 6,
-        "runtime_context_prompt": "",
-        "world_director_prompt": "",
-        "return_processing_rules": [],
-        "allowed_mcp_tool_ids": [
-            "mcp-tool-list-scenes",
-            "mcp-tool-list-characters",
-            "mcp-tool-change-scene",
-            "mcp-tool-switch-player-character",
-            "mcp-tool-image-generation"
-        ]
-    })
-    .to_string()
-}
-
-const POETRY_LING_WORD_SCHEMA_ID: &str = "attr-seed-poetry-ling-word";
 const SCHEDULE_TODO_SCHEMA_ID: &str = "attr-schedule-assistant-todo-items";
 const SCHEDULE_COMPLETED_SCHEMA_ID: &str = "attr-schedule-assistant-completed-items";
-fn sample_world_seeding_enabled() -> bool {
-    true
-}
 
 /// 内置（播种）世界的 id 列表，用于墓碑判定，避免误伤用户自建世界。
-fn seed_world_ids() -> [&'static str; 2] {
-    [SEED_WORLD_POETRY_ID, SEED_WORLD_SCHEDULE_ASSISTANT_ID]
+fn seed_world_ids() -> [&'static str; 1] {
+    [SEED_WORLD_SCHEDULE_ASSISTANT_ID]
 }
 
 /// 内置世界被用户删除后记一笔墓碑，避免每次启动重新播种把它"复活"。
@@ -436,89 +410,6 @@ fn ensure_builtin_mcp_tools(conn: &Connection) -> Result<(), rusqlite::Error> {
 }
 
 fn ensure_core_seed_data(conn: &Connection) -> Result<(), rusqlite::Error> {
-    if sample_world_seeding_enabled() {
-        let world_count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM worlds", [], |row| row.get(0))?;
-        if world_count == 0 {
-            insert_seed_world(
-                conn,
-                SEED_WORLD_POETRY_ID,
-                SEED_WORLD_POETRY_NAME,
-                SEED_WORLD_POETRY_GENRE,
-                SEED_WORLD_POETRY_BACKGROUND_PROMPT,
-                SEED_WORLD_POETRY_OPENING_SCENE,
-                SEED_WORLD_POETRY_SUMMARY,
-                SEED_WORLD_POETRY_TIME_SYSTEM,
-                poetry_world_map_nodes_json(),
-                poetry_world_time_config_json(),
-                default_seed_world_director_config_json(),
-                poetry_world_ui_theme_config_json(),
-                poetry_world_opening_messages_json(),
-                poetry_world_opening_character_ids_json(),
-                Some(SEED_CHARACTER_GUEST_ID),
-            )?;
-            insert_seed_character(
-                conn,
-                SEED_CHARACTER_GUEST_ID,
-                SEED_CHARACTER_GUEST_NAME,
-                SEED_WORLD_POETRY_ID,
-                SEED_CHARACTER_GUEST_ROLE,
-                SEED_CHARACTER_GUEST_BACKGROUND,
-                SEED_CHARACTER_GUEST_MEMORY,
-                poetry_guest_attributes_json(),
-            )?;
-            insert_seed_character(
-                conn,
-                SEED_CHARACTER_LIBAI_ID,
-                SEED_CHARACTER_LIBAI_NAME,
-                SEED_WORLD_POETRY_ID,
-                SEED_CHARACTER_LIBAI_ROLE,
-                SEED_CHARACTER_LIBAI_BACKGROUND,
-                SEED_CHARACTER_LIBAI_MEMORY,
-                libai_attributes_json(),
-            )?;
-            insert_seed_character(
-                conn,
-                SEED_CHARACTER_DUFU_ID,
-                SEED_CHARACTER_DUFU_NAME,
-                SEED_WORLD_POETRY_ID,
-                SEED_CHARACTER_DUFU_ROLE,
-                SEED_CHARACTER_DUFU_BACKGROUND,
-                SEED_CHARACTER_DUFU_MEMORY,
-                dufu_attributes_json(),
-            )?;
-            insert_seed_character(
-                conn,
-                SEED_CHARACTER_WANGWEI_ID,
-                SEED_CHARACTER_WANGWEI_NAME,
-                SEED_WORLD_POETRY_ID,
-                SEED_CHARACTER_WANGWEI_ROLE,
-                SEED_CHARACTER_WANGWEI_BACKGROUND,
-                SEED_CHARACTER_WANGWEI_MEMORY,
-                wangwei_attributes_json(),
-            )?;
-            insert_seed_character(
-                conn,
-                SEED_CHARACTER_LIQINGZHAO_ID,
-                SEED_CHARACTER_LIQINGZHAO_NAME,
-                SEED_WORLD_POETRY_ID,
-                SEED_CHARACTER_LIQINGZHAO_ROLE,
-                SEED_CHARACTER_LIQINGZHAO_BACKGROUND,
-                SEED_CHARACTER_LIQINGZHAO_MEMORY,
-                liqingzhao_attributes_json(),
-            )?;
-            insert_seed_character(
-                conn,
-                SEED_CHARACTER_SUSHI_ID,
-                SEED_CHARACTER_SUSHI_NAME,
-                SEED_WORLD_POETRY_ID,
-                SEED_CHARACTER_SUSHI_ROLE,
-                SEED_CHARACTER_SUSHI_BACKGROUND,
-                SEED_CHARACTER_SUSHI_MEMORY,
-                sushi_attributes_json(),
-            )?;
-        }
-    }
     conn.execute(
         "DELETE FROM model_configs WHERE id IN (?1, ?2)",
         params!["model-seed-openai-text", "model-seed-a1111-image"],
@@ -546,7 +437,6 @@ fn ensure_core_seed_data(conn: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 fn ensure_localized_builtin_content(conn: &Connection) -> Result<(), rusqlite::Error> {
-    ensure_poetry_ling_word_attribute_schema(conn)?;
     ensure_schedule_assistant_task_attribute_schemas(conn)?;
     update_seed_world(
         conn,
@@ -583,77 +473,6 @@ fn ensure_localized_builtin_content(conn: &Connection) -> Result<(), rusqlite::E
         SEED_CHARACTER_SCHEDULE_ASSISTANT_BACKGROUND,
         SEED_CHARACTER_SCHEDULE_ASSISTANT_MEMORY,
         schedule_assistant_attributes_json(),
-    )?;
-    update_seed_world(
-        conn,
-        SEED_WORLD_POETRY_ID,
-        SEED_WORLD_POETRY_NAME,
-        SEED_WORLD_POETRY_GENRE,
-        SEED_WORLD_POETRY_BACKGROUND_PROMPT,
-        SEED_WORLD_POETRY_OPENING_SCENE,
-        SEED_WORLD_POETRY_SUMMARY,
-        SEED_WORLD_POETRY_TIME_SYSTEM,
-        poetry_world_map_nodes_json(),
-        poetry_world_time_config_json(),
-        default_seed_world_director_config_json(),
-        poetry_world_ui_theme_config_json(),
-        poetry_world_opening_messages_json(),
-        poetry_world_opening_character_ids_json(),
-        Some(SEED_CHARACTER_GUEST_ID),
-    )?;
-    update_seed_character(
-        conn,
-        SEED_CHARACTER_GUEST_ID,
-        SEED_CHARACTER_GUEST_NAME,
-        SEED_CHARACTER_GUEST_ROLE,
-        SEED_CHARACTER_GUEST_BACKGROUND,
-        SEED_CHARACTER_GUEST_MEMORY,
-        poetry_guest_attributes_json(),
-    )?;
-    update_seed_character(
-        conn,
-        SEED_CHARACTER_LIBAI_ID,
-        SEED_CHARACTER_LIBAI_NAME,
-        SEED_CHARACTER_LIBAI_ROLE,
-        SEED_CHARACTER_LIBAI_BACKGROUND,
-        SEED_CHARACTER_LIBAI_MEMORY,
-        libai_attributes_json(),
-    )?;
-    update_seed_character(
-        conn,
-        SEED_CHARACTER_DUFU_ID,
-        SEED_CHARACTER_DUFU_NAME,
-        SEED_CHARACTER_DUFU_ROLE,
-        SEED_CHARACTER_DUFU_BACKGROUND,
-        SEED_CHARACTER_DUFU_MEMORY,
-        dufu_attributes_json(),
-    )?;
-    update_seed_character(
-        conn,
-        SEED_CHARACTER_WANGWEI_ID,
-        SEED_CHARACTER_WANGWEI_NAME,
-        SEED_CHARACTER_WANGWEI_ROLE,
-        SEED_CHARACTER_WANGWEI_BACKGROUND,
-        SEED_CHARACTER_WANGWEI_MEMORY,
-        wangwei_attributes_json(),
-    )?;
-    update_seed_character(
-        conn,
-        SEED_CHARACTER_LIQINGZHAO_ID,
-        SEED_CHARACTER_LIQINGZHAO_NAME,
-        SEED_CHARACTER_LIQINGZHAO_ROLE,
-        SEED_CHARACTER_LIQINGZHAO_BACKGROUND,
-        SEED_CHARACTER_LIQINGZHAO_MEMORY,
-        liqingzhao_attributes_json(),
-    )?;
-    update_seed_character(
-        conn,
-        SEED_CHARACTER_SUSHI_ID,
-        SEED_CHARACTER_SUSHI_NAME,
-        SEED_CHARACTER_SUSHI_ROLE,
-        SEED_CHARACTER_SUSHI_BACKGROUND,
-        SEED_CHARACTER_SUSHI_MEMORY,
-        sushi_attributes_json(),
     )?;
     Ok(())
 }
@@ -709,57 +528,6 @@ fn ensure_schedule_assistant_task_attribute_schemas(
     Ok(())
 }
 
-fn ensure_poetry_ling_word_attribute_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
-    conn.execute(
-        "INSERT INTO attribute_schemas (
-            id, scope, key, label, value_type, description, default_value_json, enum_options_json,
-            display_policy_json, access_policy_json, mutation_policy_json, influence_policy_json, projection_policy_json
-        )
-        VALUES (?1, 'world', 'ling_word', ?2, 'text', ?3, ?4, '[]', ?5, ?6, ?7, ?8, ?9)
-        ON CONFLICT(id) DO UPDATE SET
-            scope = 'world',
-            key = 'ling_word',
-            label = excluded.label,
-            value_type = 'text',
-            description = excluded.description,
-            default_value_json = excluded.default_value_json,
-            enum_options_json = excluded.enum_options_json,
-            display_policy_json = excluded.display_policy_json,
-            access_policy_json = excluded.access_policy_json,
-            mutation_policy_json = excluded.mutation_policy_json,
-            influence_policy_json = excluded.influence_policy_json,
-            projection_policy_json = excluded.projection_policy_json",
-        params![
-            POETRY_LING_WORD_SCHEMA_ID,
-            "\u{4ee4}\u{5b57}",
-            "\u{98de}\u{82b1}\u{4ee4}\u{4e16}\u{754c}\u{5f53}\u{524d}\u{4f7f}\u{7528}\u{7684}\u{4ee4}\u{5b57}\u{3002}",
-            serde_json::json!("\u{6708}").to_string(),
-            format!(
-                r#"{{"editor_visible":true,"game_visible":true,"debug_visible":true,"applicable_world_ids":["{}"]}}"#,
-                SEED_WORLD_POETRY_ID
-            ),
-            r#"{"creator_read":true,"player_read":true,"director_read":true,"plugin_read":true}"#,
-            r#"{"creator_write":true,"rule_write":true,"trigger_write":true,"player_action_write":true,"allowed_ops":["set"]}"#,
-            r#"{"prompt.director":{"enabled":true,"mode":"raw"},"ui.status_panel":{"enabled":true,"mode":"text"}}"#,
-            r#"{"inherit_to_session":true,"session_owner_type":"session","mutable_in_session":true}"#,
-        ],
-    )?;
-    conn.execute(
-        "INSERT INTO attribute_values (id, schema_id, owner_type, owner_id, value_json, source)
-         VALUES (?1, ?2, 'world', ?3, ?4, 'seed')
-         ON CONFLICT(schema_id, owner_type, owner_id) DO UPDATE SET
-            value_json = excluded.value_json,
-            source = excluded.source",
-        params![
-            "attr-value-seed-poetry-ling-word",
-            POETRY_LING_WORD_SCHEMA_ID,
-            SEED_WORLD_POETRY_ID,
-            serde_json::json!("\u{6708}").to_string(),
-        ],
-    )?;
-    Ok(())
-}
-
 pub(crate) fn ensure_all(conn: &Connection) -> Result<(), rusqlite::Error> {
     ensure_default_plugins(conn)?;
     ensure_builtin_mcp_tools(conn)?;
@@ -770,82 +538,9 @@ pub(crate) fn ensure_all(conn: &Connection) -> Result<(), rusqlite::Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::feihualing_world;
     use super::schedule_assistant_world;
     use crate::models::mcp_tool::MCP_TOOL_SCHEDULE_NOTIFICATION_ID;
     use serde_json::Value;
-
-    #[test]
-    fn tombstoned_seed_world_is_not_reseeded() {
-        use super::SEED_WORLD_POETRY_ID;
-        use rusqlite::params;
-
-        let conn = rusqlite::Connection::open_in_memory().expect("open db");
-        crate::db::schema::create_tables(&conn).expect("create schema + seed");
-
-        let poetry_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM worlds WHERE id = ?1",
-                params![SEED_WORLD_POETRY_ID],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(poetry_count, 1, "poetry world should be seeded initially");
-
-        // 模拟用户在世界列表里删除飞花令（poetry）世界。
-        conn.execute(
-            "DELETE FROM worlds WHERE id = ?1",
-            params![SEED_WORLD_POETRY_ID],
-        )
-        .unwrap();
-        super::mark_seed_world_tombstoned(&conn, SEED_WORLD_POETRY_ID).unwrap();
-
-        // 再次触发播种（等价于下次启动）。
-        super::ensure_all(&conn).expect("reseed");
-
-        let poetry_count_after: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM worlds WHERE id = ?1",
-                params![SEED_WORLD_POETRY_ID],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(
-            poetry_count_after, 0,
-            "deleted seed world must stay deleted after reseed"
-        );
-    }
-
-    #[test]
-    fn poetry_seed_ui_config_keeps_world_owned_ui_files() {
-        let config =
-            serde_json::from_str::<Value>(&feihualing_world::poetry_world_ui_theme_config_json())
-                .unwrap();
-        let desktop_source = config
-            .get("desktop_file")
-            .and_then(Value::as_str)
-            .expect("poetry desktop UI source");
-        let mobile_source = config
-            .get("mobile_file")
-            .and_then(Value::as_str)
-            .expect("poetry mobile UI source");
-        let desktop_file = serde_json::from_str::<Value>(desktop_source).unwrap();
-        let mobile_file = serde_json::from_str::<Value>(mobile_source).unwrap();
-
-        assert!(
-            !desktop_source.contains("\"component\": \"narration_card\""),
-            "poetry chat must render narration inline after character messages"
-        );
-
-        assert_eq!(
-            desktop_file.pointer("/meta/name").and_then(Value::as_str),
-            Some("诗词世界桌面界面")
-        );
-        assert_eq!(
-            mobile_file.pointer("/meta/name").and_then(Value::as_str),
-            Some("诗词世界移动界面")
-        );
-    }
 
     #[test]
     fn schedule_assistant_seed_uses_agent_chat_notification_tool() {
@@ -874,29 +569,37 @@ mod tests {
     }
 
     #[test]
-    fn schedule_assistant_seed_owns_dedicated_ui_files() {
+    fn schedule_assistant_seed_owns_dedicated_html_ui_files() {
         let config = serde_json::from_str::<Value>(
             &schedule_assistant_world::schedule_assistant_world_ui_theme_config_json(),
         )
         .unwrap();
+        assert_eq!(
+            config.get("runtime_version").and_then(Value::as_u64),
+            Some(3)
+        );
         let desktop_source = config
-            .get("desktop_file")
+            .pointer("/entries/desktop/document")
             .and_then(Value::as_str)
-            .expect("schedule assistant desktop UI source");
+            .expect("schedule assistant desktop UI document");
         let mobile_source = config
-            .get("mobile_file")
+            .pointer("/entries/mobile/document")
             .and_then(Value::as_str)
-            .expect("schedule assistant mobile UI source");
-        let desktop_file = serde_json::from_str::<Value>(desktop_source).unwrap();
-        let mobile_file = serde_json::from_str::<Value>(mobile_source).unwrap();
+            .expect("schedule assistant mobile UI document");
 
-        assert_eq!(
-            desktop_file.pointer("/meta/name").and_then(Value::as_str),
-            Some("行程助手桌面界面")
-        );
-        assert_eq!(
-            mobile_file.pointer("/meta/name").and_then(Value::as_str),
-            Some("行程助手移动界面")
-        );
+        assert!(desktop_source.trim_start().starts_with("<!doctype html>"));
+        assert!(mobile_source.trim_start().starts_with("<!doctype html>"));
+        assert!(desktop_source.contains(r#"data-platform="desktop""#));
+        assert!(mobile_source.contains(r#"data-platform="mobile""#));
+        assert!(desktop_source.contains("id=\"messages\""));
+        assert!(desktop_source.contains("id=\"todo-list\""));
+        assert!(desktop_source.contains("id=\"confirm-done\""));
+        assert!(mobile_source.contains("id=\"messages\""));
+        assert!(mobile_source.contains("id=\"todo-list\""));
+        assert!(mobile_source.contains("data-tab=\"tasks\""));
+        assert!(desktop_source.contains("<script data-world-script>"));
+        assert!(mobile_source.contains("<script data-world-script>"));
+        assert!(!desktop_source.contains("\"schema_version\""));
+        assert!(!mobile_source.contains("\"schema_version\""));
     }
 }

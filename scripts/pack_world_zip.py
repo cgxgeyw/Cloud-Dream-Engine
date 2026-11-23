@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SKIP_PARTS = {"__pycache__", ".DS_Store", "Thumbs.db"}
+BUNDLED_WORLDS = {"accounting-assistant", "healthy-life", "mortal-cultivation-journey"}
 
 def pack(name: str) -> None:
     src = ROOT / "examples" / "world-packages" / name
@@ -22,6 +23,10 @@ def pack(name: str) -> None:
             z.write(path, path.relative_to(src).as_posix())
             count += 1
     print(f"ok {name}: {count} files -> {out.name} ({out.stat().st_size} bytes)")
+    if name in BUNDLED_WORLDS:
+        bundled = ROOT / "src-tauri" / "src" / "db" / "seeds" / "assets" / out.name
+        bundled.write_bytes(out.read_bytes())
+        print(f"synced bundled asset -> {bundled.relative_to(ROOT)}")
 
 if __name__ == "__main__":
     names = sys.argv[1:] or [

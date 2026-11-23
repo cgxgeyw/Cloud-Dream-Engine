@@ -66,6 +66,54 @@ class FileManager(private val context: Context) {
     }
   }
 
+  /**
+   * 把 APK assets 下的整个目录复制到应用私有目录。
+   * 内置向量模型（model.safetensors 等）必须落到真实文件路径才能被 mmap 加载，
+   * 而 assets 只能以流读取，因此首次启动（或应用升级）后解包一次。
+   * 用 `.asset-version` 记录已解包的应用版本，命中就直接跳过。
+   */
+  fun copyAssetDir(assetPath: String, targetDir: String): JSObject {
+    return try {
+      val assets = context.assets
+      val root = File(targetDir)
+      val version = appVersionName()
+      val marker = File(root, ".asset-version")
+      if (marker.isFile && marker.readText().trim() == version) {
+        return JSObject().put("ok", true).put("copied", 0).put("skipped", 1)
+      }
+
+      var copied = 0
+      val queue = ArrayDeque<Pair<String, File>>()
+      queue.addLast(assetPath.trimEnd('/') to root)
+      while (queue.isNotEmpty()) {
+        val (assetDir, dir) = queue.removeFirst()
+        dir.mkdirs()
+        for (name in assets.list(assetDir).orEmpty()) {
+          val childAsset = "$assetDir/$name"
+          val childFile = File(dir, name)
+          if (assets.list(childAsset).orEmpty().isEmpty()) {
+            childFile.parentFile?.mkdirs()
+            assets.open(childAsset).use { input ->
+              childFile.outputStream().use { output -> input.copyTo(output) }
+            }
+            copied++
+          } else {
+            queue.addLast(childAsset to childFile)
+          }
+        }
+      }
+      marker.writeText(version)
+      JSObject().put("ok", true).put("copied", copied).put("skipped", 0)
+    } catch (error: Exception) {
+      errorResult("io: 复制内置资源失败：${error.message}")
+    }
+  }
+
+  private fun appVersionName(): String = runCatching {
+    val info = context.packageManager.getPackageInfo(context.packageName, 0)
+    info.versionName ?: ""
+  }.getOrDefault("")
+
   private fun guessMimeType(name: String): String {
     val ext = name.substringAfterLast('.', "").lowercase()
     return when (ext) {

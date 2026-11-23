@@ -12,6 +12,7 @@ pub mod save;
 pub mod scheduled_notification;
 pub mod session;
 pub mod settings;
+pub mod sticker;
 pub mod world;
 pub mod world_kv;
 pub mod world_record;

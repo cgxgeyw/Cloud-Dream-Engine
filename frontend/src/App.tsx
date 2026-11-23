@@ -19,6 +19,7 @@ const DebugPage = lazy(() => import("./pages/DebugPage").then((module) => ({ def
 const SettingsPage = lazy(() => import("./pages/SettingsPage").then((module) => ({ default: module.SettingsPage })));
 const McpToolsPage = lazy(() => import("./pages/McpToolsPage").then((module) => ({ default: module.McpToolsPage })));
 const KnowledgePage = lazy(() => import("./pages/KnowledgePage").then((module) => ({ default: module.KnowledgePage })));
+const StickerPage = lazy(() => import("./pages/StickerPage").then((module) => ({ default: module.StickerPage })));
 
 function AppRoutes() {
   return (
@@ -39,6 +40,7 @@ function AppRoutes() {
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/mcp-tools" element={<McpToolsPage />} />
         <Route path="/knowledge" element={<KnowledgePage />} />
+        <Route path="/stickers" element={<StickerPage />} />
         <Route path="*" element={<HomePage />} />
       </Routes>
     </Suspense>

@@ -405,6 +405,7 @@ fn persist_world_draft(
                 response_contract_prompt: clean(&character.response_contract_prompt),
                 narration_prompt: clean(&character.narration_prompt),
                 runtime_system_prompt: clean(&character.runtime_system_prompt),
+                knowledge_base_ids: Vec::new(),
             },
         )?);
     }

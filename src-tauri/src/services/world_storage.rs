@@ -21,7 +21,8 @@ mod tests {
             "UPDATE worlds SET ui_theme_config_json = ?1 WHERE id = 'storage-test'",
             params![serde_json::json!({
                 "storage": { "collections": { "entries": { "schema": { "type": "object" } } } }
-            }).to_string()],
+            })
+            .to_string()],
         )
         .expect("declare collection");
         assert_eq!(

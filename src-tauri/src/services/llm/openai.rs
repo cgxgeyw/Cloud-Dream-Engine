@@ -1089,10 +1089,7 @@ mod tests {
             native_tool_calling: Some(true),
         };
 
-        let serialized = build_openai_request(
-            &request,
-            StructuredOutputMode::JsonSchema,
-        );
+        let serialized = build_openai_request(&request, StructuredOutputMode::JsonSchema);
 
         assert!(serialized.response_format.is_none());
         assert!(serialized.tools.is_some());

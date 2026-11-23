@@ -1116,6 +1116,11 @@ impl WorldDirectorService {
             // H7: schedule_notification 工具需要 DB。统一在此 async 层向主 AppState 加锁取连接,
             // 传入(同步的)效果处理函数,避免其内部 Database::new() 另开独立连接。
             use tauri::Manager;
+            // 知识库检索要分三阶段（持锁准备 → 锁外嵌入 → 持锁写回），必须在拿
+            // notification_db_guard 之前完成，否则会自己和自己抢同一把 DB 锁。
+            let knowledge_results = self
+                .execute_pending_knowledge_searches(&parsed, world, notification_runtime.as_ref())
+                .await;
             let notification_state = notification_runtime
                 .as_ref()
                 .map(|runtime| runtime.app.state::<crate::state::AppState>());
@@ -1143,6 +1148,7 @@ impl WorldDirectorService {
                 notification_db_guard.as_ref().map(|guard| guard.conn()),
                 turn_index,
                 &mcp_results,
+                &knowledge_results,
             );
             drop(notification_db_guard);
             let iteration = traces.len() + 1;
@@ -1209,6 +1215,81 @@ impl WorldDirectorService {
         }
     }
 
+    /// 知识库检索的异步预执行：`search_knowledge` 需要分三阶段（持锁准备 → 锁外嵌入
+    /// → 持锁写回排序）。同步的效果处理函数拿不到锁外的 async 间隙，因此在进入效果函数
+    /// 之前先把结果算好，按 tool_calls 下标回填。
+    pub async fn execute_pending_knowledge_searches(
+        &self,
+        parsed: &serde_json::Value,
+        world: &WorldDefinition,
+        notification_runtime: Option<&NotificationToolRuntime<'_>>,
+    ) -> std::collections::HashMap<usize, serde_json::Value> {
+        let mut results = std::collections::HashMap::new();
+        let tool_calls = self.extract_tool_calls(parsed, Some(self.resolve_tool_call_limit(world)));
+        if tool_calls.is_empty() {
+            return results;
+        }
+        use tauri::Manager;
+        let Some(state) =
+            notification_runtime.map(|runtime| runtime.app.state::<crate::state::AppState>())
+        else {
+            return results;
+        };
+        for (index, tool_call) in tool_calls.iter().enumerate() {
+            let tool_name = tool_call
+                .get("tool_name")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .unwrap_or_default();
+            if tool_name != "search_knowledge" {
+                continue;
+            }
+            if world.director_config["knowledge_access"] != true {
+                results.insert(
+                    index,
+                    serde_json::json!({"ok": false, "error": "Knowledge access is disabled"}),
+                );
+                continue;
+            }
+            let arguments = tool_call
+                .get("arguments")
+                .or_else(|| tool_call.get("args"))
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            let plan = {
+                let guard = state.db.lock().await;
+                crate::commands::knowledge::prepare_search(
+                    guard.conn(),
+                    &world.id,
+                    None,
+                    &arguments,
+                )
+            };
+            let outcome = match plan {
+                Ok(mut plan) => {
+                    let memory = &state.services.runtime.memory;
+                    tokio::task::block_in_place(|| {
+                        crate::commands::knowledge::embed_search_plan(memory, &mut plan)
+                    });
+                    let guard = state.db.lock().await;
+                    Ok(crate::commands::knowledge::finalize_search(
+                        guard.conn(),
+                        plan,
+                    ))
+                }
+                Err(error) => Err(error),
+            };
+            results.insert(
+                index,
+                match outcome {
+                    Ok(value) => serde_json::json!({"ok": true, "result": value}),
+                    Err(error) => serde_json::json!({"ok": false, "error": error}),
+                },
+            );
+        }
+        results
+    }
+
     pub fn apply_tool_call_effects(
         &self,
         parsed: &serde_json::Value,
@@ -1224,6 +1305,7 @@ impl WorldDirectorService {
             None,
             None,
             0,
+            &std::collections::HashMap::new(),
             &std::collections::HashMap::new(),
         )
     }
@@ -1334,6 +1416,8 @@ impl WorldDirectorService {
         turn_index: i32,
         // execute_pending_mcp_tool_calls 的产物，按 tool_calls 下标对齐。
         mcp_results: &std::collections::HashMap<usize, serde_json::Value>,
+        // execute_pending_knowledge_searches 的产物，同样按下标对齐。
+        knowledge_results: &std::collections::HashMap<usize, serde_json::Value>,
     ) -> serde_json::Value {
         let tool_calls = self.extract_tool_calls(parsed, Some(self.resolve_tool_call_limit(world)));
         if tool_calls.is_empty() {
@@ -1380,6 +1464,8 @@ impl WorldDirectorService {
                 "search_knowledge" => {
                     let result = if world.director_config["knowledge_access"] != true {
                         Err("Knowledge access is disabled".into())
+                    } else if let Some(precomputed) = knowledge_results.get(&tool_call_index) {
+                        Ok(precomputed.clone())
                     } else {
                         notification_conn
                             .ok_or("Knowledge database is unavailable".to_string())
@@ -1390,6 +1476,17 @@ impl WorldDirectorService {
                                     &serde_json::Value::Object(arguments.clone()),
                                 )
                             })
+                    };
+                    let result = match result {
+                        Ok(precomputed) => {
+                            // 预执行结果是 {ok, result|error} 包装，这里拆开以保持回执形状一致。
+                            if let Some(error) = precomputed.get("error").and_then(|v| v.as_str()) {
+                                Err(error.to_string())
+                            } else {
+                                Ok(precomputed.get("result").cloned().unwrap_or(precomputed))
+                            }
+                        }
+                        Err(error) => Err(error),
                     };
                     tool_results.push(match result { Ok(value) => serde_json::json!({"id":call_id,"tool_name":tool_name,"ok":true,"result":value}), Err(error) => serde_json::json!({"id":call_id,"tool_name":tool_name,"ok":false,"error":error}) });
                 }
@@ -2307,6 +2404,8 @@ impl WorldDirectorService {
             response_contract_prompt: String::new(),
             narration_prompt: String::new(),
             runtime_system_prompt: String::new(),
+            // AI 生成的新 NPC 默认沿用世界主控的可查询范围。
+            knowledge_base_ids: Vec::new(),
         };
         let created = crate::db::repositories::character_repo::CharacterRepository::new(conn)
             .create(&world.id, &request)?;
@@ -2400,6 +2499,7 @@ impl WorldDirectorService {
                     response_contract_prompt: String::new(),
                     narration_prompt: String::new(),
                     runtime_system_prompt: String::new(),
+                    knowledge_base_ids: Vec::new(),
                 },
             )?;
             let enriched = created;

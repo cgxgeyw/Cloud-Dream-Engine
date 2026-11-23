@@ -3,9 +3,9 @@ use serde_json::json;
 use crate::models::mcp_tool::MCP_TOOL_SCHEDULE_NOTIFICATION_ID;
 
 const SCHEDULE_ASSISTANT_DESKTOP_UI_FILE: &str =
-    include_str!("assets/schedule-assistant-desktop-ui.jsonc");
+    include_str!("assets/schedule-assistant-desktop-ui.html");
 const SCHEDULE_ASSISTANT_MOBILE_UI_FILE: &str =
-    include_str!("assets/schedule-assistant-mobile-ui.jsonc");
+    include_str!("assets/schedule-assistant-mobile-ui.html");
 
 pub(crate) const SEED_WORLD_SCHEDULE_ASSISTANT_ID: &str = "schedule-assistant";
 pub(crate) const SEED_WORLD_SCHEDULE_ASSISTANT_NAME: &str = "行程助手";
@@ -81,7 +81,10 @@ pub(crate) fn schedule_assistant_world_director_config_json() -> String {
 }
 
 pub(crate) fn schedule_assistant_world_ui_theme_config_json() -> String {
+    let desktop = schedule_assistant_desktop_ui_file();
+    let mobile = schedule_assistant_mobile_ui_file();
     json!({
+        "runtime_version": 3,
         "assets": {
             "background_source_mode": "local-first",
             "portrait_source_mode": "local-first",
@@ -89,8 +92,12 @@ pub(crate) fn schedule_assistant_world_ui_theme_config_json() -> String {
             "local_background_assets": [],
             "local_scene_backgrounds": {}
         },
-        "desktop_file": schedule_assistant_desktop_ui_file(),
-        "mobile_file": schedule_assistant_mobile_ui_file()
+        "entries": {
+            "desktop": { "document": desktop, "stylesheet": "" },
+            "mobile": { "document": mobile, "stylesheet": "" }
+        },
+        "desktop_file": desktop,
+        "mobile_file": mobile
     })
     .to_string()
 }

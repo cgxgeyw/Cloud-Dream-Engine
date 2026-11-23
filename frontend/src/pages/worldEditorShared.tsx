@@ -61,6 +61,8 @@ export type DirectorConfig = {
   };
   allow_scene_transition: boolean;
   knowledge_access: boolean;
+  /** 世界主控可查询的公共知识库 id（世界自带的库自动可用，不需要列在这里）。 */
+  knowledge_base_ids: string[];
   /** 记忆模式：历史 + Embedding 召回 / 历史 + OAG（结构化层尚未接入）。对话历史始终注入。 */
   memory_mode: MemoryMode;
   allow_npc_spawn: boolean;
@@ -177,6 +179,7 @@ export const defaultDirectorConfig: DirectorConfig = {
   },
   allow_scene_transition: true,
   knowledge_access: false,
+  knowledge_base_ids: [],
   memory_mode: "embedding",
   allow_npc_spawn: true,
   allow_player_character_switch: true,
@@ -414,6 +417,11 @@ export function normalizeDirectorConfig(raw: Record<string, unknown> | undefined
           : defaultDirectorConfig.runtime_policy.memory_write_mode,
     },
     knowledge_access: raw?.knowledge_access === true,
+    knowledge_base_ids: Array.isArray(raw?.knowledge_base_ids)
+      ? raw.knowledge_base_ids.filter(
+          (item): item is string => typeof item === "string" && item.trim().length > 0,
+        )
+      : [],
     memory_mode:
       raw?.memory_mode === "oag"
         ? "oag"

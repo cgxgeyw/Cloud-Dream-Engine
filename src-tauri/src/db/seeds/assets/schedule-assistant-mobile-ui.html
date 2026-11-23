@@ -1,0 +1,671 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>行程助手</title>
+<style>
+html{height:100%;color-scheme:light}body{height:100%;margin:0}*,*::before,*::after{box-sizing:border-box}
+</style>
+<style data-world-css>
+/* 行程助手 · 潮汐调度台 — mobile. */
+:root {
+  --bg: #edf1f2;
+  --bg-2: #e2e9ea;
+  --panel: #fbfcfc;
+  --panel-2: #f2f6f6;
+  --ink: #162a33;
+  --ink-soft: #455f68;
+  --muted: #778b92;
+  --line: #d2dcdf;
+  --line-strong: #b6c6ca;
+  --navy: #122a36;
+  --navy-deep: #0b1d26;
+  --aqua: #1d8d82;
+  --aqua-soft: #dceeea;
+  --gold: #b88a3e;
+  --gold-soft: #f2e7d3;
+  --danger: #a3493a;
+  --sans: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  --numbers: "DIN Alternate", "Bahnschrift", "Roboto Condensed", var(--sans);
+}
+
+html, body { height: 100%; }
+body { overflow: hidden; color: var(--ink); background: var(--bg); font: 14px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
+button, textarea, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+[hidden] { display: none !important; }
+
+.schedule-app { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; height: 100%; min-height: 0; }
+.mobile-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px 10px; border-bottom: 1px solid var(--line); }
+.mobile-brand { display: flex; align-items: center; gap: 9px; }
+.brand-mark { display: flex; align-items: flex-end; gap: 2px; width: 26px; height: 26px; padding: 4px; border: 1px solid var(--line-strong); }
+.brand-mark i { display: block; width: 3px; background: var(--aqua); }
+.brand-mark i:nth-child(1) { height: 7px; }
+.brand-mark i:nth-child(2) { height: 13px; background: var(--gold); }
+.brand-mark i:nth-child(3) { height: 9px; }
+.mobile-brand strong { display: block; font-size: 15px; letter-spacing: 0.04em; }
+.mobile-brand small { display: block; color: var(--muted); font-size: 8px; }
+.clock { text-align: right; }
+.clock span { display: block; color: var(--muted); font-size: 7px; letter-spacing: 0.12em; }
+.clock strong { display: block; font: 12px/1.3 var(--numbers); }
+.page-error { margin: 8px 16px 0; padding: 7px 10px; border-left: 3px solid var(--danger); background: #f3e3df; color: #7d3328; font-size: 10px; }
+
+.mobile-main { display: flex; flex-direction: column; min-height: 0; }
+.view { flex: 1; min-height: 0; }
+.view--chat { display: flex; padding: 8px 10px 8px; }
+.chat-shell { display: grid; grid-template-rows: minmax(0, 1fr) auto; width: 100%; min-height: 0; border: 1px solid var(--line); background: var(--panel); }
+.messages { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 14px 12px 6px; }
+.message { max-width: 88%; margin-bottom: 15px; padding-left: 9px; border-left: 2px solid transparent; }
+.message--agent { border-left-color: var(--aqua); }
+.message--player { margin-left: auto; padding: 9px 11px; border: 1px solid #c4dcd7; background: #eef7f5; }
+.message--system { max-width: 100%; font-size: 10.5px; }
+.speaker { margin-bottom: 3px; color: var(--muted); font-size: 8px; font-weight: 600; letter-spacing: 0.06em; }
+.message--player .speaker { color: var(--aqua); }
+.message-content { font-size: 13px; line-height: 1.78; white-space: pre-wrap; overflow-wrap: anywhere; }
+.message-actions { display: flex; gap: 9px; margin-top: 5px; }
+.message-actions button { padding: 0; border: 0; background: transparent; color: var(--muted); font-size: 9px; text-decoration: underline; }
+.message-image { display: block; max-width: 100%; max-height: 210px; margin-top: 7px; border: 1px solid var(--line); object-fit: cover; }
+.message-audio { display: block; width: 100%; margin-top: 7px; }
+.event { margin: 0 0 15px; padding: 6px 9px; border-left: 2px solid var(--gold); background: var(--gold-soft); color: #6e552b; font-size: 10px; }
+.tool { display: inline-block; margin-bottom: 4px; padding: 2px 5px; border: 1px solid var(--line); color: var(--muted); font-size: 7.5px; }
+.tool.streaming { border-color: var(--aqua); color: var(--aqua); }
+.game-cot { margin: 0 0 6px; padding: 6px 8px; border: 1px dashed var(--line-strong); background: var(--panel-2); }
+.game-cot-label { color: var(--aqua); font-size: 7.5px; font-weight: 700; letter-spacing: 0.08em; }
+.game-cot-content { margin-top: 3px; color: var(--ink-soft); font-size: 10px; line-height: 1.65; white-space: pre-wrap; }
+.cot-toggle { margin-top: 3px; padding: 0; border: 0; background: transparent; color: var(--aqua); font-size: 8.5px; text-decoration: underline; }
+.empty { margin: 16px 0; color: var(--muted); font-size: 11px; line-height: 1.8; }
+.thinking-indicator { display: inline-flex; align-items: center; gap: 6px; margin-top: 7px; color: var(--muted); font-size: 9px; }
+.thinking-indicator::before { content: ""; width: 5px; height: 5px; background: var(--aqua); animation: blink 800ms steps(2) infinite; }
+@keyframes blink { 50% { opacity: 0.2; } }
+
+.message--interaction { max-width: 96%; padding: 11px; border: 1px solid #c4dcd7; background: var(--panel-2); }
+.interaction-prompt { margin-bottom: 7px; font-size: 12px; font-weight: 600; }
+.interaction-controls { display: flex; flex-wrap: wrap; gap: 6px; }
+.interaction-option { padding: 7px 10px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--aqua); font-size: 11px; }
+.interaction-option:disabled { opacity: 0.5; }
+.interaction-slider { width: 140px; accent-color: var(--aqua); }
+.interaction-slider-value { min-width: 25px; color: var(--aqua); font-size: 10px; }
+.interaction-answer { color: var(--aqua); font-size: 10px; }
+
+.composer { padding: 8px 9px 7px; border-top: 1px solid var(--line); background: var(--panel); }
+.attachments { display: flex; flex-wrap: wrap; gap: 5px; }
+.attachments:not(:empty) { margin-bottom: 6px; }
+.attachment { padding: 4px 6px; border: 1px solid var(--line-strong); background: var(--panel-2); color: var(--ink-soft); font-size: 9px; }
+.composer-tools { display: flex; gap: 6px; margin-bottom: 6px; }
+.composer-tools .icon-button { width: auto; min-width: 58px; padding: 0 9px; font-size: 10px; }
+.composer-row { display: flex; align-items: flex-end; gap: 5px; padding: 4px 4px 4px 7px; border: 1px solid var(--line-strong); background: #fff; }
+.composer-row:focus-within { border-color: var(--aqua); }
+.icon-button { flex: 0 0 auto; width: 30px; height: 30px; border: 1px solid var(--line); background: var(--panel-2); color: var(--aqua); font-size: 10px; }
+.icon-button.recording { background: var(--danger); border-color: var(--danger); color: #fff; }
+#input { flex: 1; min-height: 30px; max-height: 110px; padding: 5px 2px; border: 0; outline: 0; background: transparent; resize: none; font-size: 16px; line-height: 1.4; }
+.send-button { flex: 0 0 auto; min-height: 32px; padding: 6px 12px; border: 1px solid var(--navy); background: var(--navy); color: #f3f8f8; font-size: 11px; font-weight: 600; }
+.send-button:disabled { opacity: 0.5; }
+.composer-foot { display: flex; justify-content: space-between; gap: 8px; min-height: 13px; margin-top: 3px; }
+#status { color: var(--muted); font-size: 8.5px; }
+#status.has-error { color: var(--danger); }
+.text-button { padding: 0; border: 0; background: transparent; color: var(--aqua); font-size: 8.5px; text-decoration: underline; }
+
+.view--scroll { overflow-y: auto; overscroll-behavior: contain; padding: 10px 16px 26px; }
+.tasks-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding-bottom: 12px; border-bottom: 1px solid var(--line-strong); }
+.eyebrow { margin: 0 0 4px; color: var(--muted); font-size: 8px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; }
+.tasks-top h1 { margin: 0; font-size: 23px; letter-spacing: 0.03em; }
+.counts { display: flex; gap: 8px; }
+.counts span { display: flex; align-items: baseline; gap: 3px; color: var(--muted); font-size: 8px; }
+.counts b { color: var(--ink); font: 16px/1 var(--numbers); }
+.task-section { margin-top: 14px; padding: 14px; border: 1px solid var(--line); background: var(--panel); }
+.section-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding-bottom: 7px; border-bottom: 1px solid var(--line); }
+.section-title h2 { margin: 0; font-size: 11px; letter-spacing: 0.08em; }
+.section-title span { color: var(--muted); font-size: 8px; }
+.task-list { display: flex; flex-direction: column; }
+.task-row { display: flex; align-items: flex-start; gap: 9px; padding: 10px 2px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.task-row input { width: 17px; height: 17px; margin-top: 1px; accent-color: var(--aqua); }
+.task-text { font-size: 12px; line-height: 1.65; }
+.task-row.is-checked .task-text { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--aqua); }
+.task-row--done { cursor: default; color: var(--muted); }
+.task-check { width: 17px; color: var(--aqua); font-size: 11px; text-align: center; }
+.task-row--done .task-text { font-size: 11px; text-decoration: line-through; text-decoration-color: var(--line-strong); }
+.empty-copy { margin: 9px 0 0; color: var(--muted); font-size: 10px; line-height: 1.7; }
+.tasks-actions { margin-top: 14px; }
+.primary-button, .ghost-button { width: 100%; padding: 10px 12px; border: 1px solid transparent; font-size: 12px; font-weight: 600; }
+.primary-button { margin-top: 7px; background: var(--navy); border-color: var(--navy); color: #f3f8f8; }
+.primary-button:disabled { opacity: 0.4; }
+.ghost-button { background: transparent; border-color: var(--line-strong); color: var(--ink-soft); }
+.tasks-actions p { margin: 7px 0 0; color: var(--muted); font-size: 9px; line-height: 1.6; }
+
+.tabbar { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--line-strong); background: rgba(251,252,252,0.97); padding-bottom: var(--world-inset-bottom, 0px); }
+.tab { position: relative; min-height: 54px; border: 0; background: transparent; color: var(--muted); font-size: 11px; letter-spacing: 0.05em; }
+.tab.is-active { color: var(--aqua); font-weight: 700; }
+.tab.is-active::before { content: ""; position: absolute; top: -1px; left: 34%; right: 34%; height: 2px; background: var(--aqua); }
+.tab-count { display: inline-grid; place-items: center; min-width: 16px; height: 16px; margin-left: 4px; padding: 0 4px; border-radius: 8px; background: var(--aqua-soft); color: var(--aqua); font: 9px/1 var(--numbers); }
+.tab-count:empty { display: none; }
+.tab:focus-visible { outline: 2px solid var(--gold); outline-offset: -4px; }
+
+.toast { position: fixed; left: 16px; right: 16px; bottom: calc(66px + var(--world-inset-bottom, 0px)); z-index: 20; padding: 9px 13px; background: var(--navy-deep); color: #f1f7f7; font-size: 10px; text-align: center; opacity: 0; transform: translateY(6px); pointer-events: none; transition: opacity 180ms ease, transform 180ms ease; }
+.toast.show { opacity: 1; transform: translateY(0); }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
+
+</style>
+</head>
+<body data-platform="mobile">
+<div class="schedule-app">
+  <header class="mobile-top">
+    <div class="mobile-brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><div><strong id="world-name">行程助手</strong><small>把下一步排在眼前</small></div></div>
+    <div class="clock"><span>现在</span><strong id="time-label">实时</strong></div>
+  </header>
+  <div id="page-error" class="page-error" role="alert" hidden></div>
+
+  <main class="mobile-main">
+    <section class="view view--chat" data-tab-panel="chat">
+      <div class="chat-shell">
+        <div id="messages" class="messages" role="log" aria-live="polite"></div>
+        <div class="composer">
+          <div id="attachments" class="attachments"></div>
+          <div class="composer-tools">
+            <button type="button" id="voice" class="icon-button" aria-label="开始录音">语音输入</button>
+          </div>
+          <div class="composer-row composer-main">
+            <textarea id="input" rows="1" placeholder="要做的事、时间、想提前多久提醒…" maxlength="4000"></textarea>
+            <button type="button" id="send" class="send-button">发送</button>
+          </div>
+          <div class="composer-foot"><span id="status" role="status" aria-live="polite"></span><button type="button" id="cancel-edit" class="text-button" hidden>取消编辑</button></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="view view--scroll" data-tab-panel="tasks" hidden>
+      <header class="tasks-top">
+        <div><p class="eyebrow">BOARD / 待办板</p><h1>下一步</h1></div>
+        <div class="counts"><span><b id="todo-count">0</b>待办</span><span><b id="done-count">0</b>完成</span></div>
+      </header>
+      <section class="task-section">
+        <header class="section-title"><h2>进行中</h2><span>由助手维护</span></header>
+        <div id="todo-list" class="task-list"></div>
+        <p id="todo-empty" class="empty-copy">还没有待办。去对话里告诉助手你要做什么。</p>
+      </section>
+      <section class="task-section">
+        <header class="section-title"><h2>已完成</h2><span>最近确认</span></header>
+        <div id="done-list" class="task-list"></div>
+        <p id="done-empty" class="empty-copy">完成的待办会出现在这里。</p>
+      </section>
+      <div class="tasks-actions">
+        <button type="button" id="new-task" class="ghost-button">＋ 新建待办</button>
+        <button type="button" id="confirm-done" class="primary-button" disabled>勾选已完成的待办</button>
+        <p>勾选后会发回对话，由助手更新列表。</p>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabbar" aria-label="行程助手导航">
+    <button type="button" data-tab="chat" class="tab is-active" aria-current="page">对话</button>
+    <button type="button" data-tab="tasks" class="tab">待办<span id="tab-todo-count" class="tab-count"></span></button>
+  </nav>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script data-world-script>
+(() => {
+"use strict";
+const world = window.world;
+const $ = (id) => document.getElementById(id);
+const qsa = (selector) => Array.from(document.querySelectorAll(selector));
+const el = (tag, className = '', text = '') => {
+    const node = document.createElement(tag);
+    if (className)
+        node.className = className;
+    if (text)
+        node.textContent = text;
+    return node;
+};
+const valueText = (value) => typeof value === 'string' ? value : value == null ? '' : JSON.stringify(value);
+const input = $('input');
+const messages = $('messages');
+const statusNode = $('status');
+const send = $('send');
+let state = {};
+let tab = 'chat';
+let sending = false;
+let localError = '';
+let draftDirty = false;
+let forceFollow = false;
+let messagesKey = '';
+let editingTurn;
+const expanded = new Set();
+const answering = new Set();
+const checkedItems = new Set();
+function errorText(error) { return error instanceof Error ? error.message : String(error); }
+function showError(error) {
+    localError = errorText(error);
+    const banner = $('page-error');
+    if (banner) {
+        banner.textContent = localError;
+        banner.hidden = false;
+    }
+    updateStatus();
+}
+function run(work) { void work().catch(showError); }
+function setText(id, text) { const node = $(id); if (node)
+    node.textContent = text; }
+function clearError() {
+    localError = '';
+    const banner = $('page-error');
+    if (banner)
+        banner.hidden = true;
+    updateStatus();
+}
+function attribute(key) { return state.attributes?.[key]; }
+function listAttribute(key) {
+    const value = attribute(key);
+    if (Array.isArray(value))
+        return value.map((item) => valueText(item)).filter(Boolean);
+    if (typeof value === 'string' && value) {
+        try {
+            const parsed = JSON.parse(value);
+            if (Array.isArray(parsed))
+                return parsed.map((item) => valueText(item)).filter(Boolean);
+        }
+        catch {
+            return value.split('\n').map((item) => item.trim()).filter(Boolean);
+        }
+    }
+    return [];
+}
+function messageText(message) {
+    if (typeof message.content === 'string')
+        return message.content;
+    return message.content.filter((part) => part.type === 'text').map((part) => part.text || '').join('\n');
+}
+function messageParts(message) { return typeof message.content === 'string' ? [] : message.content; }
+function updateStatus() {
+    const error = localError || state.errors?.action_error || state.errors?.page_error || state.ui_state?.page_error;
+    statusNode.textContent = error || (sending || state.ui_state?.submitting ? '行程助手正在安排…' : '');
+    statusNode.setAttribute('role', error ? 'alert' : 'status');
+    statusNode.classList.toggle('has-error', Boolean(error));
+    send.disabled = sending || !!state.ui_state?.submitting;
+    send.textContent = sending || state.ui_state?.submitting ? '发送中' : state.editing ? '保存并重发' : '发送';
+}
+async function submit(options) {
+    if (sending || state.ui_state?.submitting) {
+        showError('上一条消息仍在处理，请稍候。');
+        return false;
+    }
+    const content = options?.content ?? input.value.trim();
+    if (!content && !state.draft_input?.audios?.length) {
+        showError('先写下要安排的事情，或录一段语音。');
+        return false;
+    }
+    sending = true;
+    localError = '';
+    forceFollow = true;
+    updateStatus();
+    try {
+        await world.actions.clearError();
+        await world.actions.submitMessage({ content, mode: options?.mode ?? (state.editing ? 'edit' : 'submit'), turnIndex: options?.turnIndex ?? state.editing?.turnIndex });
+        if (!options && input.value.trim() === content) {
+            input.value = '';
+            draftDirty = false;
+        }
+        return true;
+    }
+    catch (error) {
+        showError(error);
+        return false;
+    }
+    finally {
+        sending = false;
+        updateStatus();
+    }
+}
+send.type = 'button';
+send.onclick = () => void submit();
+input.oninput = () => { draftDirty = true; };
+input.onkeydown = (event) => {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && document.body.dataset.platform !== 'mobile') {
+        event.preventDefault();
+        void submit();
+    }
+};
+window.addEventListener('world-error', (event) => showError(event.detail.message));
+$('voice')?.addEventListener('click', () => run(() => state.draft_input?.is_recording ? world.actions.stopRecording() : world.actions.startRecording()));
+$('cancel-edit')?.addEventListener('click', () => run(() => world.actions.cancelEdit()));
+function cot(text, title, key, streaming) {
+    const root = el('section', 'game-cot');
+    root.dataset.streaming = String(streaming);
+    root.append(el('div', 'game-cot-label', title), el('div', 'game-cot-content', expanded.has(key) ? text : text.slice(0, 200)));
+    if (text.length > 200) {
+        const toggle = el('button', 'cot-toggle', expanded.has(key) ? '收起' : '展开全部');
+        toggle.type = 'button';
+        toggle.onclick = () => { if (expanded.has(key))
+            expanded.delete(key);
+        else
+            expanded.add(key); messagesKey = ''; renderMessages(state); };
+        root.append(toggle);
+    }
+    return root;
+}
+function interactionFrom(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+        return null;
+    const item = value;
+    if (typeof item.interaction_id !== 'string' || typeof item.kind !== 'string')
+        return null;
+    return {
+        interaction_id: item.interaction_id,
+        kind: item.kind,
+        prompt: typeof item.prompt === 'string' ? item.prompt : '',
+        config: item.config && typeof item.config === 'object' && !Array.isArray(item.config) ? item.config : {},
+        status: typeof item.status === 'string' ? item.status : 'pending',
+        answer: item.answer,
+    };
+}
+function renderInteraction(messageId, interaction, submitting) {
+    const root = el('article', 'message message--interaction');
+    root.append(el('div', 'speaker', '需要你决定'), el('div', 'interaction-prompt', interaction.prompt));
+    const answerKey = `${messageId}:${interaction.interaction_id}`;
+    const disabled = interaction.status !== 'pending' || submitting || answering.has(answerKey) || !messageId;
+    const options = Array.isArray(interaction.config.options) ? interaction.config.options.filter((item) => !!item && typeof item === 'object' && typeof item.id === 'string') : [];
+    const answer = (value) => {
+        if (disabled)
+            return;
+        answering.add(answerKey);
+        messagesKey = '';
+        renderMessages(state);
+        void world.actions.answerInteraction(messageId, interaction.interaction_id, value)
+            .catch(showError)
+            .finally(() => { answering.delete(answerKey); messagesKey = ''; renderMessages(state); });
+    };
+    if (interaction.status !== 'pending') {
+        root.append(el('div', 'interaction-answer', '已提交'));
+        return root;
+    }
+    const controls = el('div', 'interaction-controls');
+    if (interaction.kind === 'choice') {
+        for (const option of options) {
+            const button = el('button', 'interaction-option', valueText(option.label || option.id));
+            button.type = 'button';
+            button.disabled = disabled;
+            button.onclick = () => answer(option.id);
+            controls.append(button);
+        }
+    }
+    else if (interaction.kind === 'confirm') {
+        for (const [value, label] of [[true, interaction.config.confirm_label || '确认'], [false, interaction.config.cancel_label || '取消']]) {
+            const button = el('button', 'interaction-option', valueText(label));
+            button.type = 'button';
+            button.disabled = disabled;
+            button.onclick = () => answer(value);
+            controls.append(button);
+        }
+    }
+    else if (interaction.kind === 'slider') {
+        const min = Number(interaction.config.min), max = Number(interaction.config.max);
+        if (Number.isFinite(min) && Number.isFinite(max) && max > min) {
+            const step = Number(interaction.config.step) > 0 ? Number(interaction.config.step) : 1;
+            const range = el('input', 'interaction-slider');
+            range.type = 'range';
+            range.min = String(min);
+            range.max = String(max);
+            range.step = String(step);
+            range.value = String(Math.max(min, Math.min(max, Number(interaction.config.default ?? min))));
+            range.disabled = disabled;
+            const output = el('output', 'interaction-slider-value', range.value);
+            range.oninput = () => { output.value = range.value; output.textContent = range.value; };
+            const submitRange = el('button', 'interaction-option', '确认');
+            submitRange.type = 'button';
+            submitRange.disabled = disabled;
+            submitRange.onclick = () => answer(Number(range.value));
+            controls.append(range, output, submitRange);
+        }
+    }
+    if (controls.childElementCount)
+        root.append(controls);
+    return root;
+}
+function renderMessages(snapshot) {
+    const signature = JSON.stringify([snapshot.messages, snapshot.ui_state?.submitting, snapshot.editing]);
+    if (signature === messagesKey)
+        return;
+    messagesKey = signature;
+    const follow = forceFollow || messages.scrollHeight - messages.scrollTop - messages.clientHeight < 80;
+    const oldTop = messages.scrollTop;
+    messages.replaceChildren();
+    for (const [index, message] of (snapshot.messages || []).entries()) {
+        const meta = message.metadata || {};
+        const key = message.message_id || `${message.role}:${index}`;
+        if (meta.message_kind === 'world_interaction') {
+            const interaction = interactionFrom(meta.interaction);
+            if (interaction)
+                messages.append(renderInteraction(message.message_id || '', interaction, !!snapshot.ui_state?.submitting));
+            continue;
+        }
+        if (['character_creation', 'switch_proposal'].includes(String(meta.message_kind)))
+            continue;
+        const isDirector = meta.action_type === 'director_trace';
+        const streaming = meta.streaming === true;
+        if (isDirector) {
+            const text = valueText(meta.reasoning || meta.trace_text || messageText(message));
+            if (text)
+                messages.append(cot(text, '行程助手思考', key, streaming));
+            continue;
+        }
+        const isPlayer = ['player', 'user'].includes(message.role);
+        const isSystem = ['system', 'narration'].includes(message.role);
+        const text = messageText(message);
+        if (message.role === 'narration' || ['event', 'narration_event'].includes(String(meta.message_kind))) {
+            if (text)
+                messages.append(el('article', 'event', text));
+            continue;
+        }
+        if (!text && !meta.reasoning && !meta.tool_activity && !messageParts(message).length)
+            continue;
+        const row = el('article', `message message--${isPlayer ? 'player' : isSystem ? 'system' : 'agent'}`);
+        row.append(el('div', 'speaker', message.speaker || (isPlayer ? snapshot.player?.name || '我' : isSystem ? '提示' : '行程助手')));
+        if (meta.reasoning)
+            row.append(cot(valueText(meta.reasoning), '行程助手思考', key, streaming));
+        const activity = meta.tool_activity;
+        if (activity)
+            row.append(el('div', 'tool' + (activity.status === 'calling' ? ' streaming' : ''), (activity.status === 'calling' ? '正在调用：' : '已调用：') + (activity.tools || []).map((tool) => tool.name).join('、')));
+        if (text)
+            row.append(el('div', 'message-content', text));
+        for (const part of messageParts(message)) {
+            if (part.type === 'image_url' && part.image_url?.url) {
+                const image = el('img', 'message-image');
+                image.src = part.image_url.url;
+                image.alt = '图片附件';
+                row.append(image);
+            }
+            else if (part.type === 'input_audio' && part.input_audio?.data) {
+                const audio = el('audio', 'message-audio');
+                audio.controls = true;
+                audio.src = `data:audio/${part.input_audio.format || 'wav'};base64,${part.input_audio.data}`;
+                row.append(audio);
+            }
+        }
+        if (!isSystem && !message.pending) {
+            const actions = el('div', 'message-actions');
+            const button = (label, work) => {
+                const node = el('button', '', label);
+                node.type = 'button';
+                node.disabled = !!snapshot.ui_state?.submitting;
+                node.onclick = () => { const result = work(); if (result)
+                    void result.catch(showError); };
+                actions.append(node);
+            };
+            if (isPlayer) {
+                const turn = Number(meta.turn_index);
+                if (Number.isInteger(turn) && turn > 0) {
+                    button('编辑', async () => { await world.actions.editTurn(text, turn); input.value = text; draftDirty = true; input.focus(); });
+                    button('重发', () => submit({ content: text, mode: 'resend', turnIndex: turn }));
+                }
+            }
+            else {
+                button('复制', () => world.actions.copyText(text));
+                button('分支', () => world.actions.branch());
+            }
+            if (actions.childElementCount)
+                row.append(actions);
+        }
+        messages.append(row);
+        if (meta.narration)
+            messages.append(el('article', 'message message--system', valueText(meta.narration)));
+    }
+    if (!(snapshot.messages || []).length)
+        messages.append(el('p', 'empty', '告诉行程助手接下来要做什么、什么时候做，以及希望提前多久收到提醒。'));
+    if (snapshot.ui_state?.submitting)
+        messages.append(el('div', 'thinking-indicator', '行程助手正在拆解和安排…'));
+    messages.scrollTop = follow ? messages.scrollHeight : oldTop;
+    forceFollow = false;
+}
+function switchTab(next) {
+    tab = next;
+    for (const panel of qsa('[data-tab-panel]'))
+        panel.hidden = panel.dataset.tabPanel !== next;
+    for (const button of qsa('[data-tab]')) {
+        const active = button.dataset.tab === next;
+        button.classList.toggle('is-active', active);
+        button.setAttribute('aria-current', active ? 'page' : 'false');
+    }
+    if (next === 'tasks')
+        renderTasks(state);
+}
+function renderTasks(snapshot) {
+    const todo = listAttribute('todo_items');
+    const done = listAttribute('completed_items');
+    const valid = new Set(todo);
+    for (const item of Array.from(checkedItems))
+        if (!valid.has(item))
+            checkedItems.delete(item);
+    setText('todo-count', String(todo.length));
+    setText('done-count', String(done.length));
+    setText('tab-todo-count', todo.length ? String(todo.length) : '');
+    const todoRoot = $('todo-list');
+    if (todoRoot) {
+        todoRoot.replaceChildren();
+        const empty = $('todo-empty');
+        if (empty)
+            empty.hidden = todo.length > 0;
+        for (const item of todo) {
+            const label = el('label', `task-row${checkedItems.has(item) ? ' is-checked' : ''}`);
+            const box = el('input');
+            box.type = 'checkbox';
+            box.checked = checkedItems.has(item);
+            box.onchange = () => {
+                if (box.checked)
+                    checkedItems.add(item);
+                else
+                    checkedItems.delete(item);
+                label.classList.toggle('is-checked', box.checked);
+                renderConfirm();
+            };
+            const copy = el('span', 'task-text');
+            copy.append(el('strong', '', item));
+            label.append(box, copy);
+            todoRoot.append(label);
+        }
+    }
+    const doneRoot = $('done-list');
+    if (doneRoot) {
+        doneRoot.replaceChildren();
+        const empty = $('done-empty');
+        if (empty)
+            empty.hidden = done.length > 0;
+        for (const item of done) {
+            const row = el('div', 'task-row task-row--done');
+            row.append(el('span', 'task-check', '✓'), el('span', 'task-text', item));
+            doneRoot.append(row);
+        }
+    }
+    renderConfirm();
+}
+function renderConfirm() {
+    const button = $('confirm-done');
+    if (!button)
+        return;
+    button.disabled = checkedItems.size === 0;
+    button.textContent = checkedItems.size ? `确认完成 ${checkedItems.size} 项` : '勾选已完成的待办';
+}
+function render(snapshot) {
+    state = snapshot;
+    if (snapshot.draft_input?.microphone_error)
+        localError = snapshot.draft_input.microphone_error;
+    setText('world-name', snapshot.world?.name || '行程助手');
+    setText('time-label', snapshot.session?.time_label || '实时');
+    renderMessages(snapshot);
+    renderTasks(snapshot);
+    if (snapshot.editing?.turnIndex !== editingTurn) {
+        editingTurn = snapshot.editing?.turnIndex;
+        if (snapshot.editing) {
+            input.value = snapshot.draft_input?.value || snapshot.editing.originalContent;
+            draftDirty = true;
+        }
+    }
+    if (!draftDirty && !sending && document.activeElement !== input)
+        input.value = snapshot.draft_input?.value || '';
+    const cancel = $('cancel-edit');
+    if (cancel)
+        cancel.hidden = !snapshot.editing;
+    const voice = $('voice');
+    if (voice) {
+        voice.setAttribute('aria-label', snapshot.draft_input?.is_recording ? '结束录音' : '开始录音');
+        voice.classList.toggle('recording', !!snapshot.draft_input?.is_recording);
+    }
+    const attachments = $('attachments');
+    if (attachments) {
+        attachments.replaceChildren();
+        for (const [index, file] of (snapshot.draft_input?.audios || []).entries()) {
+            const chip = el('button', 'attachment', `${file.name || '语音'} ×`);
+            chip.type = 'button';
+            chip.onclick = () => run(() => world.actions.removeAudio(index));
+            attachments.append(chip);
+        }
+    }
+    updateStatus();
+}
+let toastTimer = 0;
+function toast(message) {
+    const node = $('toast');
+    if (!node)
+        return;
+    node.textContent = message;
+    node.classList.add('show');
+    window.clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(() => node.classList.remove('show'), 2200);
+}
+function hydrate() {
+    for (const button of qsa('[data-tab]'))
+        button.addEventListener('click', () => switchTab(button.dataset.tab || 'chat'));
+    $('new-task')?.addEventListener('click', () => {
+        switchTab('chat');
+        if (!input.value)
+            input.value = '帮我安排：';
+        draftDirty = true;
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+    });
+    $('confirm-done')?.addEventListener('click', () => {
+        if (!checkedItems.size)
+            return;
+        const items = Array.from(checkedItems);
+        void submit({ content: `我已完成以下待办事项：${items.join('；')}` }).then((ok) => {
+            if (!ok)
+                return;
+            checkedItems.clear();
+            renderTasks(state);
+            toast('已告诉行程助手');
+        });
+    });
+    switchTab('chat');
+}
+function boot() {
+    hydrate();
+    world.subscribe((next) => {
+        state = next;
+        render(next);
+    });
+}
+boot();
+
+})();
+</script>
+</body>
+</html>

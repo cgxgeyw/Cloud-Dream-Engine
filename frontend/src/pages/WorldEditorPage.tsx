@@ -13,11 +13,13 @@ import {
   fetchWorld,
   fetchWorldCharacters,
   isTauriEnvironment,
+  listWorldKnowledgeCandidates,
   uploadFile,
   updateWorld,
   validateWorldUiBundle,
   verifyWorldPackageUiCompatibility,
   type CharacterResponse,
+  type KnowledgeBase,
   type ModelConfigResponse,
   type McpToolResponse,
   type MemorySummaryPromptDefaults,
@@ -172,6 +174,7 @@ export function WorldEditorPage() {
   const [openingEditSpeaker, setOpeningEditSpeaker] = useState("");
   const [openingEditContent, setOpeningEditContent] = useState("");
   const [mcpToolSearch, setMcpToolSearch] = useState("");
+  const [knowledgeCandidates, setKnowledgeCandidates] = useState<KnowledgeBase[]>([]);
   const [directorPane, setDirectorPane] = useState<DirectorPaneId>("mode");
   const [stylePane, setStylePane] = useState<StylePaneId>("backgrounds");
   const [styleScene, setStyleScene] = useState("");
@@ -228,7 +231,12 @@ export function WorldEditorPage() {
         setLoading(true);
         setError(null);
         if (isNew) {
-          const [toolData, modelData] = await Promise.all([fetchMcpTools(), fetchModels("text")]);
+          const [toolData, modelData, knowledgeData] = await Promise.all([
+            fetchMcpTools(),
+            fetchModels("text"),
+            // 新世界还没有 id：只能选公共库，世界自带的库保存后再回来勾选。
+            listWorldKnowledgeCandidates().catch(() => []),
+          ]);
           if (cancelled) {
             return;
           }
@@ -239,6 +247,7 @@ export function WorldEditorPage() {
           setCharacters([]);
           setMcpTools(toolData);
           setTextModels(modelData);
+          setKnowledgeCandidates(knowledgeData);
           return;
         }
         const [worldData, characterData, toolData, modelData] = await Promise.all([
@@ -247,7 +256,9 @@ export function WorldEditorPage() {
           fetchMcpTools(),
           fetchModels("text"),
         ]);
+        const knowledgeData = await listWorldKnowledgeCandidates(id as string).catch(() => []);
         if (!cancelled) {
+          setKnowledgeCandidates(knowledgeData);
           const normalizedWorld = {
             ...worldData,
             time_config: normalizeTimeConfig(worldData.time_config as Record<string, unknown>),
@@ -2194,9 +2205,9 @@ export function WorldEditorPage() {
                       </span>
                     </label>
                     <label className="editor-field">
-                      <span className="editor-field-label">允许主控和角色查询知识库</span>
+                      <span className="editor-field-label">允许主控查询知识库</span>
                       <div className="settings-inline-toggle"><input type="checkbox" checked={directorConfig.knowledge_access} onChange={e => updateDirectorPatch({ knowledge_access: e.target.checked })} /></div>
-                      <span>仅可查询此世界自带及在知识库页面关联的公共资料，通过 search_knowledge 工具按需读取。</span>
+                      <span>通过 search_knowledge 工具按需读取。可在下方逐个勾选可查的知识库（世界自带的库也在其中）；角色可在「角色编辑 → 记忆」里进一步收窄。</span>
                     </label>
                     <label className="editor-field">
                       <span className="editor-field-label">允许切换场景</span>
@@ -2218,6 +2229,42 @@ export function WorldEditorPage() {
                     </label>
                   </div>
                         </div>
+              ) : null}
+
+              {directorConfig.service_mode === "world_sim" && directorPane === "permissions" ? (
+                <div className="wed-block">
+                  <div className="wed-block-title">可查询的知识库</div>
+                  {knowledgeCandidates.length === 0 ? (
+                    <div className="text-muted">还没有可用知识库。可在「图库和知识库」新建后回到这里勾选。</div>
+                  ) : (
+                    <div className="editor-interaction-options">
+                      {knowledgeCandidates.map((item) => (
+                        <label key={item.id} className="editor-interaction-option">
+                          <input
+                            type="checkbox"
+                            checked={directorConfig.knowledge_base_ids.includes(item.id)}
+                            onChange={() => {
+                              const current = new Set(directorConfig.knowledge_base_ids);
+                              if (current.has(item.id)) {
+                                current.delete(item.id);
+                              } else {
+                                current.add(item.id);
+                              }
+                              updateDirectorPatch({ knowledge_base_ids: Array.from(current) });
+                            }}
+                          />
+                          <span>
+                            {item.name}
+                            {item.world_id ? "（世界自带）" : "（公共）"}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                  <div className="text-muted">
+                    这里勾选的是主控自己可查的范围。世界自带的库也只属于本世界，不会出现在其他世界里；角色可以在「角色编辑 → 记忆」里按角色再收窄。
+                  </div>
+                </div>
               ) : null}
 
               {directorConfig.service_mode === "world_sim" ? (

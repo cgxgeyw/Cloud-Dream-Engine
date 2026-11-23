@@ -1,6 +1,6 @@
 import type { KvScope } from "../data/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Copy } from "lucide-react";
 
 import {
@@ -22,6 +22,7 @@ import type { GameSessionStateBag } from "../game/useGameSession";
 import { compressImagesForChat } from "../game/imageCompress";
 import type { WorldFrameAction } from "../worldFrame/protocol";
 import { readNativeSafeAreaInsets } from "../lib/nativeInsets";
+import { resolveParentPath } from "../lib/routeBack";
 import { formatInteractionAnswer } from "../gameUiRuntime/interactions";
 import {
   createGameUiRuntimeSnapshot,
@@ -33,6 +34,7 @@ import { invokeWorldLogic } from "../worldFrame/WorldLogicRuntime";
 
 export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateBag; platform: GameUiPlatform }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const worldLogicBusyRef = useRef(false);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -253,6 +255,10 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
         if (worldLogicBusyRef.current) throw new Error("牌局正在结算，请稍候。");
         worldLogicBusyRef.current = true;
         try {
+          const logic = bag.worldUiEnvelope.logic;
+          if (logic.execution !== "host") {
+            return await invokeWorldLogic(logic, action.handler, action.input ?? {}, handleAction);
+          }
           const worldId = requireWorldId(bag);
           const sessionId = bag.session?.id;
           if (!sessionId) throw new Error("请先创建会话。");
@@ -352,12 +358,14 @@ export function GameUiSandboxRuntime({ bag, platform }: { bag: GameSessionStateB
         return invokeWorldPlatformFeature(requireWorldId(bag), action.feature, action.params ?? {});
       }
       case "navigate":
-        if (action.target === "back") navigate(-1);
+        // 返回固定遵循路由层级（上一级），不使用浏览器历史：
+        // 从存档/调试等入口进入游戏后，返回也应落到首页而不是上一个页面。
+        if (action.target === "back") navigate(resolveParentPath(location.pathname, location.search));
         else if (action.target === "home") navigate("/");
         else if (action.target === "settings") navigate("/settings");
         else if (bag.session?.id) navigate(`/debug/${bag.session.id}`);
     }
-  }, [bag, navigate, startRecording, stopRecording]);
+  }, [bag, location.pathname, location.search, navigate, startRecording, stopRecording]);
 
   // ---- 世界包事件派发（第 4 项）----
   // 世界包在 logic.events 中声明 "事件 → logic.js 处理函数"，

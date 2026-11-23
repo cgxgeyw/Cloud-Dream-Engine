@@ -8,12 +8,14 @@ import {
   fetchAttributeSchemas,
   fetchModels,
   fetchWorlds,
+  listWorldKnowledgeScope,
   updateWorld,
   updateWorldCharacter,
   uploadFile,
   type CharacterResponse,
   type AttributeSchemaResponse,
   type ModelConfigResponse,
+  type KnowledgeBase,
   type WorldResponse,
 } from "../data/apiAdapter";
 import { AttributePanel } from "../components/AttributePanel";
@@ -66,6 +68,7 @@ const newCharacterDraft: CharacterResponse = {
   response_contract_prompt: "",
   narration_prompt: "",
   runtime_system_prompt: "",
+  knowledge_base_ids: [],
 };
 
 function appendUniqueAsset(items: string[], nextItem: string): string[] {
@@ -99,6 +102,7 @@ export function CharacterEditorPage() {
   const [character, setCharacter] = useState<CharacterResponse | null>(isNew ? newCharacterDraft : null);
   const [attributeSchemas, setAttributeSchemas] = useState<AttributeSchemaResponse[]>([]);
   const [worlds, setWorlds] = useState<WorldResponse[]>([]);
+  const [knowledgeScope, setKnowledgeScope] = useState<KnowledgeBase[]>([]);
   const [textModels, setTextModels] = useState<ModelConfigResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -211,11 +215,15 @@ export function CharacterEditorPage() {
     let cancelled = false;
     if (!character?.world_id) {
       setAttributeSchemas([]);
+      setKnowledgeScope([]);
       return;
     }
     void fetchAttributeSchemas("character", character.world_id)
       .then((schemas) => { if (!cancelled) setAttributeSchemas(schemas); })
       .catch(() => { if (!cancelled) setAttributeSchemas([]); });
+    void listWorldKnowledgeScope(character.world_id)
+      .then((bases) => { if (!cancelled) setKnowledgeScope(bases); })
+      .catch(() => { if (!cancelled) setKnowledgeScope([]); });
     return () => { cancelled = true; };
   }, [character?.world_id]);
   const attributesText = useMemo(() => (character?.attributes ?? []).join("\n"), [character]);
@@ -260,6 +268,7 @@ export function CharacterEditorPage() {
                 response_contract_prompt: character.response_contract_prompt,
                 narration_prompt: character.narration_prompt,
                 runtime_system_prompt: character.runtime_system_prompt,
+                knowledge_base_ids: character.knowledge_base_ids,
               }
             : null,
           world: selectedWorld
@@ -353,6 +362,7 @@ export function CharacterEditorPage() {
         response_contract_prompt: character.response_contract_prompt,
         narration_prompt: character.narration_prompt,
         runtime_system_prompt: character.runtime_system_prompt,
+        knowledge_base_ids: character.knowledge_base_ids,
       };
 
       const saved = isNew
@@ -842,6 +852,39 @@ export function CharacterEditorPage() {
                     className="editor-field-input"
                   />
                 </label>
+                <div className="editor-field">
+                  <span className="editor-field-label">可查询的知识库</span>
+                  <div className="text-muted" style={{ fontSize: 12 }}>
+                    可选范围来自所属世界：世界自带的知识库自动可用，公共知识库需先在世界主控权限里勾选。这里全不选＝沿用世界主控范围。
+                  </div>
+                  {knowledgeScope.length === 0 ? (
+                    <div className="text-muted">该世界当前没有可查询的知识库。</div>
+                  ) : (
+                    <div className="editor-interaction-options">
+                      {knowledgeScope.map((item) => (
+                        <label key={item.id} className="editor-interaction-option">
+                          <input
+                            type="checkbox"
+                            checked={character.knowledge_base_ids.includes(item.id)}
+                            onChange={() => {
+                              const current = new Set(character.knowledge_base_ids);
+                              if (current.has(item.id)) {
+                                current.delete(item.id);
+                              } else {
+                                current.add(item.id);
+                              }
+                              updateDraft({ knowledge_base_ids: Array.from(current) });
+                            }}
+                          />
+                          <span>
+                            {item.name}
+                            {item.world_id ? "（世界自带）" : "（公共）"}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             ) : null}
 

@@ -255,6 +255,8 @@ impl CharacterService {
                 response_contract_prompt: request.response_contract_prompt,
                 narration_prompt: request.narration_prompt,
                 runtime_system_prompt: request.runtime_system_prompt,
+                // 模板来自其他世界时，知识库 id 不一定存在，留空沿用目标世界范围。
+                knowledge_base_ids: Vec::new(),
             },
         )
         .map(Self::enrich_character)

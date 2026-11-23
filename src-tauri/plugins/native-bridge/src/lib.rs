@@ -104,6 +104,24 @@ struct WriteFileArgs {
 #[cfg(not(target_os = "android"))]
 const UNSUPPORTED: &str = "该平台能力仅在安卓可用（unsupported）";
 
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CopyAssetDirArgs {
+    asset_path: String,
+    target_dir: String,
+}
+
+/// 把 APK assets 下的目录复制到应用私有目录的结果。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AndroidCopyAssetResult {
+    pub ok: bool,
+    pub copied: Option<usize>,
+    pub skipped: Option<usize>,
+    pub error: Option<String>,
+}
+
 /// 托管在 AppState 中的中间件句柄。安卓上持有 Kotlin 插件引用；桌面为空壳。
 pub struct NativeBridge<R: Runtime> {
     #[cfg(target_os = "android")]
@@ -251,6 +269,36 @@ impl<R: Runtime> NativeBridge<R> {
         #[cfg(not(target_os = "android"))]
         {
             let _ = path;
+            Err(UNSUPPORTED.to_string())
+        }
+    }
+
+    /// 把 APK assets 下的目录复制到应用私有目录（内置向量模型首次解包用）。
+    /// `asset_path` 是相对 assets 根的路径，`target_dir` 是应用私有目录的绝对路径。
+    pub fn copy_asset_dir(&self, asset_path: &str, target_dir: &str) -> Result<(), String> {
+        #[cfg(target_os = "android")]
+        {
+            let result: AndroidCopyAssetResult = self
+                .handle
+                .run_mobile_plugin(
+                    "copyAssetDir",
+                    CopyAssetDirArgs {
+                        asset_path: asset_path.to_string(),
+                        target_dir: target_dir.to_string(),
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+            if result.ok {
+                Ok(())
+            } else {
+                Err(result
+                    .error
+                    .unwrap_or_else(|| "io: 安卓资源复制失败".to_string()))
+            }
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            let _ = (asset_path, target_dir);
             Err(UNSUPPORTED.to_string())
         }
     }

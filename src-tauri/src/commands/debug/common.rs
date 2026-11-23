@@ -31,14 +31,19 @@ pub fn query_world_for_session(
 ) -> Result<Option<WorldDefinition>, String> {
     let world_repo = crate::db::repositories::world_repo::WorldRepository::new(db);
     if let Some(world_id) = query_session_world_id(db, &session.id)? {
-        if let Some(world) = world_repo.get(&world_id)? {
+        if let Some(mut world) = world_repo.get(&world_id)? {
+            crate::services::sticker_library::attach_world_stickers(db, &mut world)?;
             return Ok(Some(world));
         }
     }
-    Ok(world_repo
+    let mut world = world_repo
         .list()?
         .into_iter()
-        .find(|item| item.name == session.world_name))
+        .find(|item| item.name == session.world_name);
+    if let Some(world) = world.as_mut() {
+        crate::services::sticker_library::attach_world_stickers(db, world)?;
+    }
+    Ok(world)
 }
 
 fn query_session_world_id(

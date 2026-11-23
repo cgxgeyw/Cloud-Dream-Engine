@@ -40,7 +40,7 @@ const navItems = [
   { path: "/worlds", label: "世界设定", Icon: Globe },
   { path: "/settings", label: "设置", Icon: Settings },
   { path: "/mcp-tools", label: "MCP 工具", Icon: Wrench },
-  { path: '/knowledge', label: '知识库', Icon: BookOpen },
+  { path: '/knowledge', label: '图库和知识库', Icon: BookOpen },
 ];
 
 const DRAG_CLOSE_THRESHOLD = 40;
@@ -83,7 +83,7 @@ function fabMaxTop(bottomInset: number) {
 }
 
 /** 编辑器页面自带返回按钮，不再叠加全局悬浮返回，避免同一高度出现两个返回。 */
-const SELF_MANAGED_BACK_PATTERN = /^\/(characters\/(new|[^/]+\/edit)|worlds\/(new|[^/]+\/edit)|worlds\/[^/]+\/characters|mcp-tools|new-game|new-game\/setup\/[^/]+|knowledge)\/?$/;
+const SELF_MANAGED_BACK_PATTERN = /^\/(characters\/(new|[^/]+\/edit)|worlds\/(new|[^/]+\/edit)|worlds\/[^/]+\/characters|mcp-tools|new-game|new-game\/setup\/[^/]+|knowledge|stickers)\/?$/;
 
 
 

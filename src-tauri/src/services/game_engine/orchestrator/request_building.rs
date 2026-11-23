@@ -256,6 +256,7 @@ mod tests {
             response_contract_prompt: "".to_string(),
             narration_prompt: "".to_string(),
             runtime_system_prompt: "".to_string(),
+            knowledge_base_ids: Vec::new(),
         }
     }
 

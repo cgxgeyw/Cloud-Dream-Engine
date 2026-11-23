@@ -169,6 +169,10 @@ pub struct WorldPackageWorldData {
     pub time_config: serde_json::Value,
     pub director_config: serde_json::Value,
     pub ui_assets_config: serde_json::Value,
+    /// 世界包声明的图库图片集。存在时角色的 `search_sticker` / `send_sticker`
+    /// 工具自动可用，图片以 `assets/` 内的文件随包导入导出。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stickers: Vec<WorldPackageSticker>,
     /// 世界包声明的持久化运行时属性。导入后注册为通用属性 schema，
     /// 创建存档时按 scope 把默认值写入当前会话或玩家角色。
     #[serde(default)]
@@ -192,6 +196,20 @@ pub struct WorldPackageWorldData {
     pub player_character_name: Option<String>,
     pub opening_character_source_ids: Vec<String>,
     pub player_character_source_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorldPackageSticker {
+    /// 查找与发送图片时使用的稳定键，包内唯一。
+    pub key: String,
+    /// 展示名，例如「开饭」。
+    #[serde(default)]
+    pub label: String,
+    /// 给人看的一句话说明，作为查找图片的匹配依据。
+    #[serde(default)]
+    pub description: String,
+    /// ZIP 内路径，必须以 `assets/` 开头并出现在 manifest.assets。
+    pub asset_path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

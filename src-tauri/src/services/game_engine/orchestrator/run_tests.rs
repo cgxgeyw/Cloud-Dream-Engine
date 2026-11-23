@@ -579,6 +579,7 @@ fn sample_character(id: &str, name: &str) -> CharacterDefinition {
         response_contract_prompt: String::new(),
         narration_prompt: String::new(),
         runtime_system_prompt: String::new(),
+        knowledge_base_ids: Vec::new(),
     }
 }
 

@@ -1353,11 +1353,17 @@ fn schedule_memory_summaries(
                 Err(_) => return,
             };
             let summary_repo =
-                crate::db::repositories::memory_summary_repo::MemorySummaryRepository::new(db.conn());
+                crate::db::repositories::memory_summary_repo::MemorySummaryRepository::new(
+                    db.conn(),
+                );
             let character_summary_prompt =
-                crate::services::game_engine::memory::resolve_character_memory_summary_prompt(&world);
+                crate::services::game_engine::memory::resolve_character_memory_summary_prompt(
+                    &world,
+                );
             let director_summary_prompt =
-                crate::services::game_engine::memory::resolve_director_memory_summary_prompt(&world);
+                crate::services::game_engine::memory::resolve_director_memory_summary_prompt(
+                    &world,
+                );
             let mut work = Vec::new();
             // 一次最多回填最近 12 个桶（默认 120 回合），避免老存档升级时
             // 一次打出上百个总结请求；更早的桶继续走原文兜底，不会失忆。

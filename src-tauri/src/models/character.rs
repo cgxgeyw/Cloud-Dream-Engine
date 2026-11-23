@@ -39,6 +39,9 @@ pub struct CharacterDefinition {
     pub narration_prompt: String,
     #[serde(default)]
     pub runtime_system_prompt: String,
+    /// 该角色可查询的知识库 id。空表示沿用世界主控的可查询范围。
+    #[serde(default)]
+    pub knowledge_base_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,6 +61,8 @@ pub struct CharacterCreateRequest {
     pub narration_prompt: String,
     #[serde(default)]
     pub runtime_system_prompt: String,
+    #[serde(default)]
+    pub knowledge_base_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,6 +80,7 @@ pub struct CharacterUpdateRequest {
     pub response_contract_prompt: Option<String>,
     pub narration_prompt: Option<String>,
     pub runtime_system_prompt: Option<String>,
+    pub knowledge_base_ids: Option<Vec<String>>,
 }
 
 /// 整包覆盖式更新：世界包导入走「同名角色就地 update」，字段一个不落全带上。
@@ -94,6 +100,7 @@ impl From<&CharacterCreateRequest> for CharacterUpdateRequest {
             response_contract_prompt: Some(request.response_contract_prompt.clone()),
             narration_prompt: Some(request.narration_prompt.clone()),
             runtime_system_prompt: Some(request.runtime_system_prompt.clone()),
+            knowledge_base_ids: Some(request.knowledge_base_ids.clone()),
         }
     }
 }
@@ -158,4 +165,7 @@ pub struct CharacterPackageData {
     pub response_contract_prompt: String,
     pub narration_prompt: String,
     pub runtime_system_prompt: String,
+    /// 角色可查询的知识库 id；空表示沿用世界主控的可查询范围。
+    #[serde(default)]
+    pub knowledge_base_ids: Vec<String>,
 }

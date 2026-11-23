@@ -40,8 +40,8 @@ const desktopMenuItems: MenuItem[] = [
     icon: <Wrench size={18} />,
   },
   {
-    titleKey: "home.menuKnowledgeTitle",
-    descKey: "home.menuKnowledgeDesc",
+    titleKey: "home.menuLibraryTitle",
+    descKey: "home.menuLibraryDesc",
     to: "/knowledge",
     icon: <BookOpen size={18} />,
   },

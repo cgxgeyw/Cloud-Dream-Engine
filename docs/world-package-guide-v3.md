@@ -16,6 +16,10 @@
     {
       "name": "游戏规则",
       "description": "道具与结算说明",
+      "chunk_strategy": "length",
+      "chunk_max_chars": 800,
+      "chunk_overlap_chars": 120,
+      "chunk_delimiter": "",
       "documents": [{ "title": "毒酒", "content": "毒酒造成伤害。", "source_filename": "rules.md" }]
     }
   ]
@@ -24,9 +28,49 @@
 
 同名世界升级时，显式提供的 `knowledge_bases` 替换该世界专属资料；空数组清空资料，省略字段保留现有资料，兼容旧包。公共资料不受影响。
 
-`director_config.knowledge_access` 控制是否向主控和角色提供 `search_knowledge` 原生工具。创建世界专属知识库、关联公共知识库或导入非空专属资料会启用它，可在世界编辑器“基础权限”关闭。工具参数为 `{ "query": "查询内容" }`，只能查询该世界获准访问的资料，返回至多六个带来源的正文片段。工具结果进入已有工具循环和模型调用记录；正文作为工具资料，不自动拼入系统提示词。
+分块设置存在每个知识库上，检索时才切分，改设置立即生效、不用重新上传资料。两种方式：
 
-第一版知识查询复用现有记忆的文本归一化和关键词切分，只做词法匹配；角色记忆原有的词法/向量/混合检索不变。知识库向量检索和 OAG 尚未接入。
+- `chunk_strategy = "length"`（默认）：`chunk_max_chars` 是单块字数上限（100–8000，默认 800），`chunk_overlap_chars` 是相邻块重叠字数（0–2000 且必须小于上限，默认 120）。接近上限时优先在段落、换行、句末标点等语义边界切开，找不到分隔符才按字数硬切。
+- `chunk_strategy = "delimiter"`：`chunk_delimiter` 是文档里自带的切分符号（非空、最多 16 个字符，如 `###`、`---`）。先按该符号分段，仍然超长的分段再按 `chunk_max_chars` / `chunk_overlap_chars` 走字数切分。
+
+应用内「图库和知识库 → 知识库」详情页可以改这两个设置；旧库和旧包缺少这些字段时按默认 `length` / 800 / 120 读取。
+
+`director_config.knowledge_access` 控制是否向主控和角色提供 `search_knowledge` 原生工具。创建世界专属知识库、关联公共知识库或导入非空专属资料会启用它，可在世界编辑器“基础权限”关闭。工具参数为 `{ "query": "查询内容" }`，返回至多六个带来源的正文片段。工具结果进入已有工具循环和模型调用记录；正文作为工具资料，不自动拼入系统提示词。
+
+可查询范围分两层：
+
+- 世界层：包内的 `knowledge_bases` 导入后成为该世界的自带库，需要在「世界编辑器 → 世界主控 → 权限 → 可查询的知识库」勾选；公共库也在同一个列表里，可以混选。一个世界可以带多个库分给不同角色。包里公共库的 id 属于作者机器，导入时会过滤掉。
+- 角色层：角色编辑页「记忆」可以勾选该角色可查的知识库，取值是世界范围的子集，留空表示沿用世界范围。角色不能越出所属世界。
+
+世界自带的知识库永远不能被其他世界使用：它的 `world_id` 是硬边界，其他世界即使把 id 写进 `knowledge_base_ids` 也读不到。
+
+检索采用「关键词 + 向量」混合排序，复用记忆召回的内置本地向量模型（`BAAI/bge-small-zh-v1.5`，构建时启用 `local-embedding`，模型文件随安装包分发并在首次启动时自动就位，用户无需任何操作）。关键词分和语义分按 0.4 / 0.6 混合，关键词零命中时语义相似度需 ≥ 0.35 才入选；向量缓存在 `knowledge_chunk_embeddings`，改文档或改分块设置后自动失效重算。未启用 embedding、模型未就位或构建没开 `local-embedding` 时自动退回纯关键词匹配。OAG 尚未接入。
+
+### 图库图片（search_sticker / send_sticker）
+
+世界包可以在 `world/world.json` 声明一套图库图片，声明后角色的原生工具表里会自动出现两个工具：`search_sticker` 负责按情绪、画面或用途查找图片，返回最相关的 `key`、名称和描述；`send_sticker` 负责把选中的 `key` 作为图片发出去。模型不确定用哪张时先查再发。
+
+日常维护优先在应用内「图库和知识库 → 图库」完成：公共图库需要在世界侧勾选，世界专属图库自动生效，改完下一回合生效。世界包里的 `stickers` 仍然兼容：导入时自动迁移成该世界的专属图库（默认命名为「世界名 + 表情包库」），导出时把当前生效的图片快照回包里；同一个世界生效集合内的 `key` 必须唯一，冲突会在绑定或编辑时被拦下。
+
+```json
+{
+  "stickers": [
+    {
+      "key": "happy",
+      "label": "开心",
+      "description": "被夸奖或收到礼物",
+      "asset_path": "assets/stickers/happy.webp"
+    }
+  ]
+}
+```
+
+- `key` 是稳定的内部键，包内必须唯一；`label` 与 `description` 是查找依据，模型会按这些文字匹配画面。
+- `asset_path` 必须以 `assets/` 开头，并在 `manifest.json` 的 `assets` 里声明，导入时缺文件或漏声明会直接报错。
+- 查找参数为 `{ "query": "开心庆祝", "limit": 5 }`，返回至多 8 条候选；没有明显匹配时会退回图库中的部分图片，并提示模型只在贴切时使用。
+- 发送参数为 `{ "key": "...", "caption": "..." }`；一次回复最多生效一张，非法 key 会返回错误并提示重新查找。
+- 图片不会单独成一条消息：它写进该条角色消息的 `metadata.sticker`（`key` / `label` / `asset_path`），世界 UI 的快照里会额外补一个解析好的 `url`。
+- 世界 UI 用 `metadata.sticker.url` 渲染图片即可；没有配置图库的世界不会看到这两个工具，旧包不受影响。
 
 如果目标是模型驱动的剧情、冒险或角色扮演世界，请先按[叙事 RPG 世界包制作手册](world-package-rpg-cookbook.md)完成玩法闭环，再回到本文查字段。
 
@@ -1181,7 +1225,7 @@ Props：
 | `dismiss_retry_card` | `card_key` | 关闭重试卡片 |
 | `copy_text` | `text` | 请求父页面复制文本 |
 | `switch_side_tab` | `tab_key` | 切换地图/属性标签 |
-| `navigate_back` | 无 | 返回上一应用页面 |
+| `navigate_back` | 无 | 返回上一级应用页面 |
 | `navigate_home` | 无 | 返回首页 |
 | `navigate_settings` | 无 | 打开设置 |
 | `navigate_debug` | 无 | 打开当前会话调试页 |
@@ -2027,23 +2071,24 @@ v2 数据不会被删除。当前迁移层会：
 5. 为关键节点补充作者自己的 `class_name`。
 6. 在桌面和 Android 真机分别检查 safe area、键盘、滚动和消息动作。
 
-应用内置两个世界，可作为 v3 写法与迁移基线的参照：
-
-### 飞花令夜宴
-
-多智能体古典诗词雅集。它没有显式声明 `service_mode`，因此按默认值走 `world_sim`。
-
-- `src-tauri/src/db/seeds/assets/poetry-desktop-ui.jsonc`
-- `src-tauri/src/db/seeds/assets/poetry-mobile-ui.jsonc`
-- `src-tauri/src/db/seeds/feihualing_world.rs`
+安装包默认自带四个世界，可作为 v3 写法与迁移基线的参照：
 
 ### 行程助手
 
-单助手提醒向，显式声明 `service_mode: agent_chat`，示范纯角色链路与世界记录的分工。
+单助手提醒向，显式声明 `service_mode: agent_chat`，示范纯角色链路与世界记录的分工；内置界面已迁移到 HTML 双端入口。
 
-- `src-tauri/src/db/seeds/assets/schedule-assistant-desktop-ui.jsonc`
-- `src-tauri/src/db/seeds/assets/schedule-assistant-mobile-ui.jsonc`
+- `src-tauri/src/db/seeds/assets/schedule-assistant-desktop-ui.html`
+- `src-tauri/src/db/seeds/assets/schedule-assistant-mobile-ui.html`
+- `src-tauri/src/db/seeds/assets/schedule-assistant-ui.ts`（构建源）
 - `src-tauri/src/db/seeds/schedule_assistant_world.rs`
+
+### 健康生活、记账助手
+
+两个 HTML 双端入口的补充包，随安装包内置并通过 `src-tauri/src/db/seeds/bundled_worlds.rs` 首次启动导入：
+
+- `src-tauri/src/db/seeds/assets/healthy-life-world.zip`
+- `src-tauri/src/db/seeds/assets/accounting-assistant-world.zip`
+- 源工程与打包脚本：`examples/world-packages/healthy-life/`、`examples/world-packages/accounting-assistant/`
 
 ### 教程参考世界包
 
@@ -2069,8 +2114,8 @@ v2 数据不会被删除。当前迁移层会：
 | 目录 | 世界名（应用内显示） | 对应可导入包 | 侧重 |
 |---|---|---|---|
 | `mortal-cultivation-journey/` | **凡人修仙：小石村问道** | `output/mortal-cultivation-journey-world.zip` | 多智能体叙事 RPG，本教程的主参考 |
-| `accounting-assistant/` | **记账助手** | `output/accounting-assistant-world.zip` | 无模型记账：`ledger_book` + world records |
-| `healthy-life/` | **健康生活** | `output/healthy-life-world.zip` | `logic.js` 沙箱逻辑、`logic.events` |
+| `accounting-assistant/` | **记账助手** | `output/accounting-assistant-world.zip` | 无模型记账：HTML 双端界面 + world records/KV |
+| `healthy-life/` | **健康生活** | `output/healthy-life-world.zip` | HTML 双端界面 + `logic.js` 沙箱统计 |
 | `stock-analyst/` | **A股投研助手** | `output/stock-analyst-world.zip` | v8 内嵌 MCP 工具包 |
 | `stock-council/` | **A股投研议事厅** | `output/stock-council-world.zip` | 多角色议事 + MCP 工具 |
 
@@ -2079,9 +2124,7 @@ v2 数据不会被删除。当前迁移层会：
 - **这 5 个目录不在 GitHub 上**。`.gitignore` 里排除了 `/examples/`，对外只发布 `output/*.zip`；两者内容逐字节一致，改了源码记得重新打包。
 - 想直接改的话，进入包目录后把 `manifest.json`、`world/`、`characters/` 压到 ZIP **根目录**（不要多套一层文件夹），否则导入会报 `Invalid manifest: specified file not found in archive`。用 `scripts/pack_world_zip.py` 可以避免出错。
 
-另有两个不覆盖主控交互与世界属性的补充包：[记账助手](../output/accounting-assistant-world.zip)、[健康生活](../output/healthy-life-world.zip)。
-
-`frontend/src/data/gameUi/migration.test.ts` 会逐字验证四份文档在迁移后未改变，并验证桌面与移动入口保持独立。
+另有两个不覆盖主控交互与世界属性的补充包：[记账助手](../output/accounting-assistant-world.zip)、[健康生活](../output/healthy-life-world.zip)。两者均已使用 manifest v10 的 HTML 双端入口，可用 `node scripts/build-assistant-world-ui.mjs` 重新生成内嵌脚本与样式；打包时 `scripts/pack_world_zip.py` 会自动同步到 `src-tauri/src/db/seeds/assets/`，安装包首次启动即导入。
 
 ## 17. 最小完整示例
 

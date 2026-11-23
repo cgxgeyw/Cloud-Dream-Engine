@@ -626,6 +626,7 @@ fn build_runtime_turn_payload_uses_unambiguous_character_keys() {
             response_contract_prompt: String::new(),
             narration_prompt: String::new(),
             runtime_system_prompt: String::new(),
+            knowledge_base_ids: Vec::new(),
         },
         CharacterDefinition {
             id: "char-bob".to_string(),
@@ -643,6 +644,7 @@ fn build_runtime_turn_payload_uses_unambiguous_character_keys() {
             response_contract_prompt: String::new(),
             narration_prompt: String::new(),
             runtime_system_prompt: String::new(),
+            knowledge_base_ids: Vec::new(),
         },
     ];
 

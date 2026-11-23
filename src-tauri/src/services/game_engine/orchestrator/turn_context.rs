@@ -32,8 +32,13 @@ pub(crate) fn build_character_turn_payload(
         visible_attribute_lines,
         public_scene_state_lines,
     );
-    let memory_context =
-        build_character_memory_context(world, session, recalled_memories, memory_pool, speaker_name);
+    let memory_context = build_character_memory_context(
+        world,
+        session,
+        recalled_memories,
+        memory_pool,
+        speaker_name,
+    );
     let mut recent_dialogue = build_recent_dialogue_payload(recent_messages, player_name);
     // The turn runner appends the current input after the persisted session history.
     // Keep earlier identical inputs and replies from NPCs that already spoke this turn.
@@ -81,8 +86,7 @@ pub(crate) fn build_recent_dialogue_payload(
     recent_messages
         .iter()
         .map(|message| {
-            let label =
-                history_line_label(message, Some(player_character_name));
+            let label = history_line_label(message, Some(player_character_name));
             let content = message.content.as_prompt_text();
             serde_json::json!(format!("[{label}：{}]", content.trim()))
         })
@@ -102,10 +106,7 @@ pub(crate) fn is_event_message(message: &ChatMessage) -> bool {
             .unwrap_or(false)
 }
 
-fn history_line_label(
-    message: &ChatMessage,
-    player_character_name: Option<&str>,
-) -> String {
+fn history_line_label(message: &ChatMessage, player_character_name: Option<&str>) -> String {
     if is_event_message(message) {
         return "事件".to_string();
     }
@@ -826,11 +827,13 @@ pub(crate) fn resolve_world_for_session(
     session: &SessionSnapshot,
 ) -> Result<WorldDefinition, String> {
     let world_repo = crate::db::repositories::world_repo::WorldRepository::new(conn);
-    world_repo
+    let mut world = world_repo
         .list()?
         .into_iter()
         .find(|world| world.name == session.world_name)
-        .ok_or_else(|| "世界不存在".to_string())
+        .ok_or_else(|| "世界不存在".to_string())?;
+    crate::services::sticker_library::attach_world_stickers(conn, &mut world)?;
+    Ok(world)
 }
 
 #[cfg(test)]
@@ -867,6 +870,7 @@ mod tests {
             response_contract_prompt: "".to_string(),
             narration_prompt: "".to_string(),
             runtime_system_prompt: "".to_string(),
+            knowledge_base_ids: Vec::new(),
         }
     }
 
@@ -1003,9 +1007,21 @@ mod tests {
     #[test]
     fn character_history_is_filtered_by_message_witnesses() {
         let messages = vec![
-            history_message("player", "Player", "secret", 1, Some(vec!["Player", "Alice"])),
+            history_message(
+                "player",
+                "Player",
+                "secret",
+                1,
+                Some(vec!["Player", "Alice"]),
+            ),
             history_message("agent", "Alice", "ack", 1, Some(vec!["Player", "Alice"])),
-            history_message("player", "Player", "other scene", 2, Some(vec!["Player", "Bob"])),
+            history_message(
+                "player",
+                "Player",
+                "other scene",
+                2,
+                Some(vec!["Player", "Bob"]),
+            ),
             history_message("agent", "Bob", "bob reply", 2, Some(vec!["Player", "Bob"])),
             // 旧消息没有 witnesses：按可见处理，兼容旧存档。
             history_message("agent", "Carol", "legacy", 3, None),

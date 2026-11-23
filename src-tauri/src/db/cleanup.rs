@@ -231,7 +231,11 @@ mod tests {
             [],
         ).unwrap();
         for session_id in ["session_%", "session-other"] {
-            conn.execute("INSERT INTO sessions (id, world_name) VALUES (?1, 'Cleanup')", params![session_id]).unwrap();
+            conn.execute(
+                "INSERT INTO sessions (id, world_name) VALUES (?1, 'Cleanup')",
+                params![session_id],
+            )
+            .unwrap();
             conn.execute(
                 "INSERT INTO memory_entities (id, world_id, session_id, name, name_normalized) VALUES (?1, 'cleanup-world', ?1, 'Entity', 'entity')",
                 params![session_id],
@@ -253,20 +257,30 @@ mod tests {
         purge_session_data(&tx, "session_%").unwrap();
         tx.commit().unwrap();
         for table in ["sessions", "memory_entities", "memory_relations"] {
-            let ids: Vec<String> = conn.prepare(&format!("SELECT id FROM {table}"))
-                .unwrap().query_map([], |row| row.get(0)).unwrap()
-                .collect::<Result<_, _>>().unwrap();
+            let ids: Vec<String> = conn
+                .prepare(&format!("SELECT id FROM {table}"))
+                .unwrap()
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
             assert_eq!(ids, ["session-other"], "{table}");
         }
         for table in ["attribute_values", "scoped_kv"] {
-            let remaining: i64 = conn.query_row(
-                &format!("SELECT COUNT(*) FROM {table} WHERE owner_id = 'session-other:npc'"),
-                [], |row| row.get(0),
-            ).unwrap();
-            let removed: i64 = conn.query_row(
-                &format!("SELECT COUNT(*) FROM {table} WHERE owner_id = 'session_%:npc'"),
-                [], |row| row.get(0),
-            ).unwrap();
+            let remaining: i64 = conn
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE owner_id = 'session-other:npc'"),
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let removed: i64 = conn
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE owner_id = 'session_%:npc'"),
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
             assert_eq!(remaining, 1, "{table}");
             assert_eq!(removed, 0, "{table}");
         }

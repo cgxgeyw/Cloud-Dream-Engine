@@ -5,6 +5,7 @@
   "scripts": {
     "tauri": "tauri",
     "tauri:dev": "node ./scripts/tauri-dev.js",
+    "build:assistant-world-ui": "node ./scripts/build-assistant-world-ui.mjs",
     "frontend:install": "cd frontend && npm install"
   },
   "devDependencies": {

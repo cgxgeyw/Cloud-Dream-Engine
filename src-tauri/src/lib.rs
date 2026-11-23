@@ -30,6 +30,19 @@ pub fn run() {
         .plugin(tauri_plugin_native_bridge::init())
         .setup(|app| {
             let data_dir = get_data_dir(app)?;
+            // 随包分发的内置向量模型先就位，记忆召回与知识库检索才能用上本地推理。
+            // 首次启动需要把 ~92MB 权重从资源目录搬到数据目录，放到后台线程避免卡住界面；
+            // 模型本身是懒加载的，即使首回合抢在拷贝完成前也只会退回关键词检索。
+            {
+                let handle = app.handle().clone();
+                let install_dir = data_dir.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    crate::services::embedding_install::ensure_bundled_embedding_model(
+                        &handle,
+                        &install_dir,
+                    );
+                });
+            }
             let db = Database::new(&data_dir)?;
             let services = BackendServices::new(data_dir.clone());
             let notification_app = app.handle().clone();
@@ -167,9 +180,21 @@ pub fn run() {
             commands::knowledge::list_knowledge_documents,
             commands::knowledge::add_knowledge_document,
             commands::knowledge::delete_knowledge_document,
+            commands::knowledge::update_knowledge_chunking,
             commands::knowledge::update_knowledge_document,
-            commands::knowledge::get_knowledge_bindings,
-            commands::knowledge::set_knowledge_binding,
+            commands::knowledge::list_world_knowledge_candidates,
+            commands::knowledge::list_world_knowledge_scope,
+            commands::stickers::list_sticker_packs,
+            commands::stickers::create_sticker_pack,
+            commands::stickers::update_sticker_pack,
+            commands::stickers::delete_sticker_pack,
+            commands::stickers::list_stickers,
+            commands::stickers::create_sticker,
+            commands::stickers::update_sticker,
+            commands::stickers::delete_sticker,
+            commands::stickers::reorder_stickers,
+            commands::stickers::get_sticker_world_bindings,
+            commands::stickers::set_sticker_world_binding,
             commands::uploads::delete_asset,
             commands::permissions::request_world_permissions,
         ])

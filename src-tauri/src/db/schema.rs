@@ -39,7 +39,11 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             world_id TEXT REFERENCES worlds(id) ON DELETE CASCADE,
             name TEXT NOT NULL,
             description TEXT NOT NULL DEFAULT '',
-            enabled INTEGER NOT NULL DEFAULT 1
+            enabled INTEGER NOT NULL DEFAULT 1,
+            chunk_strategy TEXT NOT NULL DEFAULT 'length',
+            chunk_max_chars INTEGER NOT NULL DEFAULT 800,
+            chunk_overlap_chars INTEGER NOT NULL DEFAULT 120,
+            chunk_delimiter TEXT NOT NULL DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS knowledge_documents (
             id TEXT PRIMARY KEY,
@@ -50,10 +54,47 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             updated_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_knowledge_documents_base ON knowledge_documents(knowledge_base_id);
+        CREATE TABLE IF NOT EXISTS knowledge_chunk_embeddings (
+            document_id TEXT NOT NULL REFERENCES knowledge_documents(id) ON DELETE CASCADE,
+            chunk_index INTEGER NOT NULL,
+            model_key TEXT NOT NULL,
+            vector_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (document_id, chunk_index, model_key)
+        );
         CREATE TABLE IF NOT EXISTS world_knowledge_bindings (
             world_id TEXT NOT NULL REFERENCES worlds(id) ON DELETE CASCADE,
             knowledge_base_id TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
             PRIMARY KEY (world_id, knowledge_base_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS sticker_packs (
+            id TEXT PRIMARY KEY,
+            world_id TEXT REFERENCES worlds(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS stickers (
+            id TEXT PRIMARY KEY,
+            pack_id TEXT NOT NULL REFERENCES sticker_packs(id) ON DELETE CASCADE,
+            key TEXT NOT NULL,
+            label TEXT NOT NULL DEFAULT '',
+            description TEXT NOT NULL DEFAULT '',
+            asset_path TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT '',
+            UNIQUE (pack_id, key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_stickers_pack ON stickers(pack_id, sort_order, id);
+        CREATE TABLE IF NOT EXISTS world_sticker_bindings (
+            world_id TEXT NOT NULL REFERENCES worlds(id) ON DELETE CASCADE,
+            pack_id TEXT NOT NULL REFERENCES sticker_packs(id) ON DELETE CASCADE,
+            PRIMARY KEY (world_id, pack_id)
         );
 
         CREATE INDEX IF NOT EXISTS idx_world_records_scope
@@ -96,6 +137,7 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             response_contract_prompt TEXT NOT NULL DEFAULT '',
             narration_prompt TEXT NOT NULL DEFAULT '',
             runtime_system_prompt TEXT NOT NULL DEFAULT '',
+            knowledge_base_ids_json TEXT NOT NULL DEFAULT '[]',
             FOREIGN KEY (world_id) REFERENCES worlds(id) ON DELETE CASCADE
         );
 
@@ -488,7 +530,110 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     )?;
 
     conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_attribute_schemas_world ON attribute_schemas(scope, world_id, sort_order, key);")?;
+    ensure_column(
+        conn,
+        "knowledge_bases",
+        "chunk_strategy",
+        "TEXT NOT NULL DEFAULT 'length'",
+    )?;
+    ensure_column(
+        conn,
+        "knowledge_bases",
+        "chunk_max_chars",
+        "INTEGER NOT NULL DEFAULT 800",
+    )?;
+    ensure_column(
+        conn,
+        "knowledge_bases",
+        "chunk_overlap_chars",
+        "INTEGER NOT NULL DEFAULT 120",
+    )?;
+    ensure_column(
+        conn,
+        "knowledge_bases",
+        "chunk_delimiter",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+    ensure_column(
+        conn,
+        "characters",
+        "knowledge_base_ids_json",
+        "TEXT NOT NULL DEFAULT '[]'",
+    )?;
+    migrate_world_knowledge_bindings(conn)?;
     seeds::ensure_all(conn)?;
 
+    Ok(())
+}
+
+fn ensure_column(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<(), rusqlite::Error> {
+    let exists: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = ?2",
+        [table, column],
+        |row| row.get(0),
+    )?;
+    if exists == 0 {
+        conn.execute_batch(&format!(
+            "ALTER TABLE {table} ADD COLUMN {column} {definition};"
+        ))?;
+    }
+    Ok(())
+}
+
+/// 把旧配置迁到 `director_config.knowledge_base_ids`。
+///
+/// 旧版里世界自带的库自动可用、公共库靠 `world_knowledge_bindings` 绑定；
+/// 新版两者都要在世界主控编辑页勾选。为了不让老存档「升级后突然查不到资料」，
+/// 迁移时把「世界自带的全部库 + 旧绑定表里的公共库」一起写进选择列表。
+/// 只在世界还没有该字段时执行，避免覆盖用户后来在编辑器里的选择。
+fn migrate_world_knowledge_bindings(conn: &Connection) -> Result<(), rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT id, director_config_json FROM worlds WHERE json_type(director_config_json, '$.knowledge_base_ids') IS NULL",
+    )?;
+    let worlds = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(stmt);
+    if worlds.is_empty() {
+        return Ok(());
+    }
+
+    // 世界自带的库：迁移后默认全部勾选，保持升级前「自动可用」的行为。
+    let mut owned_stmt = conn.prepare(
+        "SELECT id FROM knowledge_bases WHERE world_id = ?1 AND enabled = 1 ORDER BY id",
+    )?;
+    let mut binding_stmt = conn.prepare(
+        "SELECT b.knowledge_base_id FROM world_knowledge_bindings b JOIN knowledge_bases k ON k.id = b.knowledge_base_id WHERE b.world_id = ?1 AND k.world_id IS NULL AND k.enabled = 1 ORDER BY b.knowledge_base_id",
+    )?;
+    for (world_id, config_json) in worlds {
+        let mut ids = owned_stmt
+            .query_map([&world_id], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        for id in binding_stmt
+            .query_map([&world_id], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<String>, _>>()?
+        {
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+        let mut config: serde_json::Value =
+            serde_json::from_str(&config_json).unwrap_or_else(|_| serde_json::json!({}));
+        if !config.is_object() {
+            config = serde_json::json!({});
+        }
+        config["knowledge_base_ids"] = serde_json::json!(ids);
+        conn.execute(
+            "UPDATE worlds SET director_config_json = ?2 WHERE id = ?1",
+            rusqlite::params![world_id, serde_json::to_string(&config).unwrap_or_default()],
+        )?;
+    }
     Ok(())
 }

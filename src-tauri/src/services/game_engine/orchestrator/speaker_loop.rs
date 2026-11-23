@@ -352,7 +352,9 @@ impl SessionOrchestrator {
                     let mut tool_loop_limit =
                         crate::services::game_engine::director::WorldDirectorService::new()
                             .resolve_tool_loop_limit(world);
-                    if !crate::services::world_logic::tool_definitions(world).is_empty() {
+                    if !crate::services::world_logic::tool_definitions(world).is_empty()
+                        || !crate::services::game_engine::stickers::world_stickers(world).is_empty()
+                    {
                         tool_loop_limit = tool_loop_limit.max(32);
                     }
                     let notification_allowed =
@@ -360,6 +362,9 @@ impl SessionOrchestrator {
                     let mut response = response;
                     let mut active_request = speaker_request.clone();
                     let mut all_tool_results: Vec<SpeakerNotificationToolResult> = Vec::new();
+                    let mut pending_sticker: Option<
+                        crate::services::game_engine::stickers::WorldSticker,
+                    > = None;
                     for _ in 0..tool_loop_limit {
                         // Recover before dispatch: a retry may return a tool call rather than dialogue.
                         // Keeping recovery inside the loop ensures that call is actually executed.
@@ -384,11 +389,20 @@ impl SessionOrchestrator {
                         }
                         // 工具执行前先广播一次「谁在调用什么工具」的占位进度，
                         // 让前端在（非流式的）工具决策阶段也有可见反馈。
-                        if let Some(calls) = response
-                            .tool_calls
-                            .as_deref()
-                            .filter(|calls| !calls.is_empty())
-                        {
+                        if let Some(calls) = response.tool_calls.as_deref().filter(|calls| {
+                            calls.iter().any(|call| {
+                                !crate::services::game_engine::stickers::is_tool(&call.tool_name)
+                            })
+                        }) {
+                            let calls = calls
+                                .iter()
+                                .filter(|call| {
+                                    !crate::services::game_engine::stickers::is_tool(
+                                        &call.tool_name,
+                                    )
+                                })
+                                .cloned()
+                                .collect::<Vec<_>>();
                             if let Some(callback) = progress_callback.as_deref_mut() {
                                 let mut tool_messages = messages.clone();
                                 tool_messages.push(ChatMessage {
@@ -402,7 +416,7 @@ impl SessionOrchestrator {
                                         "turn_index": turn_index,
                                         "message_kind": "agent_response",
                                         "tool_activity": build_tool_activity_value(
-                                            calls,
+                                            &calls,
                                             mcp_tools,
                                             "calling",
                                         ),
@@ -420,15 +434,61 @@ impl SessionOrchestrator {
                         }
                         let mut round_results = Vec::new();
                         for call in response.tool_calls.as_deref().unwrap_or(&[]) {
+                            if call.tool_name.trim()
+                                == crate::services::game_engine::stickers::SEARCH_STICKER_TOOL
+                            {
+                                let result = crate::services::game_engine::stickers::search(
+                                    world,
+                                    &call.arguments,
+                                );
+                                round_results.push(SpeakerNotificationToolResult {
+                                    call: call.clone(),
+                                    result,
+                                });
+                            }
+                            if call.tool_name.trim()
+                                == crate::services::game_engine::stickers::SEND_STICKER_TOOL
+                            {
+                                let (result, sticker) =
+                                    crate::services::game_engine::stickers::execute(world, call);
+                                if pending_sticker.is_none() {
+                                    pending_sticker = sticker;
+                                }
+                                round_results.push(SpeakerNotificationToolResult {
+                                    call: call.clone(),
+                                    result,
+                                });
+                            }
                             if call.tool_name == "search_knowledge"
                                 && world.director_config["knowledge_access"] == true
                             {
-                                let guard = db.lock().await;
-                                let result = crate::commands::knowledge::search(
-                                    guard.conn(),
-                                    &world.id,
-                                    &call.arguments,
-                                );
+                                // 分三阶段：持锁准备 → 锁外嵌入 → 持锁写回排序，
+                                // 与角色记忆召回一致，本地/远程向量模型都不占 DB 锁。
+                                let plan = {
+                                    let guard = db.lock().await;
+                                    crate::commands::knowledge::prepare_search(
+                                        guard.conn(),
+                                        &world.id,
+                                        speaker_char.map(|character| character.id.as_str()),
+                                        &call.arguments,
+                                    )
+                                };
+                                let result = match plan {
+                                    Ok(mut plan) => {
+                                        tokio::task::block_in_place(|| {
+                                            crate::commands::knowledge::embed_search_plan(
+                                                memory_service,
+                                                &mut plan,
+                                            )
+                                        });
+                                        let guard = db.lock().await;
+                                        Ok(crate::commands::knowledge::finalize_search(
+                                            guard.conn(),
+                                            plan,
+                                        ))
+                                    }
+                                    Err(error) => Err(error),
+                                };
                                 round_results.push(SpeakerNotificationToolResult {
                                     call: call.clone(),
                                     result: match result {
@@ -761,14 +821,19 @@ impl SessionOrchestrator {
                                 "scene_name".to_string(),
                                 serde_json::json!(next_scene_name),
                             );
-                            object.insert(
-                                "witnesses".to_string(),
-                                serde_json::json!(witnesses),
-                            );
+                            object.insert("witnesses".to_string(), serde_json::json!(witnesses));
                             if let Some(character) = speaker_char {
                                 object.insert(
                                     "speaker_character_id".to_string(),
                                     serde_json::json!(character.id),
+                                );
+                            }
+                            if let Some(sticker) = pending_sticker.as_ref() {
+                                object.insert(
+                                    "sticker".to_string(),
+                                    crate::services::game_engine::stickers::message_metadata(
+                                        sticker,
+                                    ),
                                 );
                             }
                         }
@@ -778,11 +843,18 @@ impl SessionOrchestrator {
                             let done_calls = notification_tool_results
                                 .iter()
                                 .map(|item| item.call.clone())
+                                .filter(|call| {
+                                    !crate::services::game_engine::stickers::is_tool(
+                                        &call.tool_name,
+                                    )
+                                })
                                 .collect::<Vec<_>>();
-                            message_metadata.as_object_mut().unwrap().insert(
-                                "tool_activity".to_string(),
-                                build_tool_activity_value(&done_calls, mcp_tools, "done"),
-                            );
+                            if !done_calls.is_empty() {
+                                message_metadata.as_object_mut().unwrap().insert(
+                                    "tool_activity".to_string(),
+                                    build_tool_activity_value(&done_calls, mcp_tools, "done"),
+                                );
+                            }
                         }
                         messages.push(ChatMessage {
                             message_id: ChatMessage::generate_id(),
@@ -1074,6 +1146,7 @@ async fn execute_speaker_custom_tool_calls(
         .filter(|call| {
             call.tool_name.trim() != "schedule_notification"
                 && call.tool_name.trim() != "search_knowledge"
+                && !crate::services::game_engine::stickers::is_tool(&call.tool_name)
                 && !crate::services::world_logic::tool_definitions(world)
                     .iter()
                     .any(|tool| tool.name == call.tool_name)

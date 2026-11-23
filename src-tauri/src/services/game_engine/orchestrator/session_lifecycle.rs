@@ -125,18 +125,17 @@ impl SessionOrchestrator {
         let session_repo = crate::db::repositories::session_repo::SessionRepository::new(conn);
         session_repo.upsert(&session)?;
 
-        let package_attribute_schemas =
-            world
-                .ui_theme_config
-                .get("attribute_schemas")
-                .cloned()
-                .and_then(|value| {
-                    serde_json::from_value::<
+        let package_attribute_schemas = world
+            .ui_theme_config
+            .get("attribute_schemas")
+            .cloned()
+            .and_then(|value| {
+                serde_json::from_value::<
                         Vec<crate::models::attribute::AttributeSchemaCreateRequest>,
                     >(value)
                     .ok()
-                })
-                .unwrap_or_default();
+            })
+            .unwrap_or_default();
         if !package_attribute_schemas.is_empty() {
             let attribute_repo =
                 crate::db::repositories::attribute_repo::AttributeRepository::new(conn);
@@ -439,6 +438,7 @@ mod tests {
                     response_contract_prompt: String::new(),
                     narration_prompt: String::new(),
                     runtime_system_prompt: String::new(),
+                    knowledge_base_ids: Vec::new(),
                 },
             )
             .expect("create character");

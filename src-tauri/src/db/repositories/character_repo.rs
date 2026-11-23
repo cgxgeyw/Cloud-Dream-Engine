@@ -6,7 +6,7 @@ pub struct CharacterRepository<'a> {
     conn: &'a Connection,
 }
 
-const CHARACTER_SELECT_COLUMNS: &str = "id, name, world_id, role, background_prompt, model, memory_strategy, recent_dialogue_rounds, attributes_json, portrait_assets_json, avatar_asset, system_prompt_template, response_contract_prompt, narration_prompt, runtime_system_prompt";
+const CHARACTER_SELECT_COLUMNS: &str = "id, name, world_id, role, background_prompt, model, memory_strategy, recent_dialogue_rounds, attributes_json, portrait_assets_json, avatar_asset, system_prompt_template, response_contract_prompt, narration_prompt, runtime_system_prompt, knowledge_base_ids_json";
 
 impl<'a> CharacterRepository<'a> {
     pub fn new(conn: &'a Connection) -> Self {
@@ -85,8 +85,9 @@ impl<'a> CharacterRepository<'a> {
             resolve_character_narration_prompt(Some(req.narration_prompt.as_str()));
         let runtime_system_prompt =
             resolve_character_runtime_system_prompt(Some(req.runtime_system_prompt.as_str()));
+        let knowledge_base_ids = normalize_list(&req.knowledge_base_ids);
         self.conn.execute(
-            "INSERT INTO characters (id, name, world_id, role, background_prompt, model, memory_strategy, recent_dialogue_rounds, attributes_json, portrait_assets_json, avatar_asset, system_prompt_template, response_contract_prompt, narration_prompt, runtime_system_prompt) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            "INSERT INTO characters (id, name, world_id, role, background_prompt, model, memory_strategy, recent_dialogue_rounds, attributes_json, portrait_assets_json, avatar_asset, system_prompt_template, response_contract_prompt, narration_prompt, runtime_system_prompt, knowledge_base_ids_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 id,
                 name,
@@ -103,6 +104,7 @@ impl<'a> CharacterRepository<'a> {
                 response_contract_prompt,
                 narration_prompt,
                 runtime_system_prompt,
+                serde_json::to_string(&knowledge_base_ids).unwrap_or_default(),
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -180,9 +182,14 @@ impl<'a> CharacterRepository<'a> {
             .as_ref()
             .map(|value| resolve_character_runtime_system_prompt(Some(value.as_str())))
             .unwrap_or(existing.runtime_system_prompt);
+        let knowledge_base_ids = req
+            .knowledge_base_ids
+            .as_ref()
+            .map(|items| normalize_list(items))
+            .unwrap_or(existing.knowledge_base_ids);
 
         self.conn.execute(
-            "UPDATE characters SET name = ?1, role = ?2, background_prompt = ?3, model = ?4, memory_strategy = ?5, recent_dialogue_rounds = ?6, attributes_json = ?7, portrait_assets_json = ?8, avatar_asset = ?9, system_prompt_template = ?10, response_contract_prompt = ?11, narration_prompt = ?12, runtime_system_prompt = ?13 WHERE id = ?14",
+            "UPDATE characters SET name = ?1, role = ?2, background_prompt = ?3, model = ?4, memory_strategy = ?5, recent_dialogue_rounds = ?6, attributes_json = ?7, portrait_assets_json = ?8, avatar_asset = ?9, system_prompt_template = ?10, response_contract_prompt = ?11, narration_prompt = ?12, runtime_system_prompt = ?13, knowledge_base_ids_json = ?14 WHERE id = ?15",
             params![
                 name,
                 role,
@@ -197,6 +204,7 @@ impl<'a> CharacterRepository<'a> {
                 response_contract_prompt,
                 narration_prompt,
                 runtime_system_prompt,
+                serde_json::to_string(&knowledge_base_ids).unwrap_or_default(),
                 id,
             ],
         )
@@ -254,6 +262,8 @@ impl<'a> CharacterRepository<'a> {
             response_contract_prompt: source.response_contract_prompt,
             narration_prompt: source.narration_prompt,
             runtime_system_prompt: source.runtime_system_prompt,
+            // 跨世界复制时不带知识库选择：源世界的库 id 在目标世界无效。
+            knowledge_base_ids: Vec::new(),
         };
         self.create(target_world_id, &request)
     }
@@ -283,6 +293,7 @@ fn map_character_definition(row: &Row<'_>) -> rusqlite::Result<CharacterDefiniti
         )),
         narration_prompt: resolve_character_narration_prompt(Some(narration_prompt.as_str())),
         runtime_system_prompt: row.get(14)?,
+        knowledge_base_ids: serde_json::from_str(&row.get::<_, String>(15)?).unwrap_or_default(),
     })
 }
 

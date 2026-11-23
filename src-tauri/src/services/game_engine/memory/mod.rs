@@ -34,7 +34,7 @@ pub(crate) use summarizer::{
 };
 
 const BUILTIN_LOCAL_EMBEDDING_PROVIDER: &str = "builtin-local";
-const BUILTIN_LOCAL_EMBEDDING_MODEL_ID: &str = "BAAI/bge-small-zh-v1.5";
+pub(crate) const BUILTIN_LOCAL_EMBEDDING_MODEL_ID: &str = "BAAI/bge-small-zh-v1.5";
 const BUILTIN_LOCAL_EMBEDDING_DISPLAY_NAME: &str = "内置本地 Embedding / bge-small-zh-v1.5";
 #[cfg(feature = "local-embedding")]
 const BUILTIN_LOCAL_EMBEDDING_MAX_LENGTH: usize = 512;
@@ -42,13 +42,70 @@ const BUILTIN_LOCAL_EMBEDDING_DOWNLOAD_BASES: &[&str] = &[
     "https://hf-mirror.com/BAAI/bge-small-zh-v1.5/resolve/main",
     "https://huggingface.co/BAAI/bge-small-zh-v1.5/resolve/main",
 ];
-const BUILTIN_LOCAL_EMBEDDING_FILES: &[(&str, &str)] = &[
+/// 内置模型必需的文件清单（本地相对路径，远端文件名）。
+pub(crate) const BUILTIN_LOCAL_EMBEDDING_FILES: &[(&str, &str)] = &[
     ("model.safetensors", "model.safetensors"),
     ("tokenizer.json", "tokenizer.json"),
     ("config.json", "config.json"),
     ("special_tokens_map.json", "special_tokens_map.json"),
     ("tokenizer_config.json", "tokenizer_config.json"),
 ];
+
+/// 内置模型在数据目录下的落地路径。桌面与安卓共用同一套布局。
+pub(crate) fn builtin_local_model_dir(data_dir: &Path, model_id: &str) -> PathBuf {
+    data_dir
+        .join("embedding-models")
+        .join(sanitize_embedding_model_id(model_id))
+}
+
+/// 判断内置模型文件是否齐全（存在且非空）。
+#[cfg_attr(not(feature = "local-embedding"), allow(dead_code))]
+pub(crate) fn builtin_local_model_ready(dir: &Path) -> bool {
+    BUILTIN_LOCAL_EMBEDDING_FILES
+        .iter()
+        .all(|(relative_path, _)| {
+            fs::metadata(dir.join(relative_path))
+                .map(|item| item.len() > 0)
+                .unwrap_or(false)
+        })
+}
+
+/// 把内置模型的源目录同步到目标目录。已存在且大小一致的文件跳过。
+/// 返回实际复制的文件数。任一步失败都会返回错误，调用方可据此决定是否降级。
+/// 安卓侧由 Kotlin 直接解包 assets，不走这个函数。
+#[cfg_attr(
+    any(not(feature = "local-embedding"), target_os = "android"),
+    allow(dead_code)
+)]
+pub(crate) fn install_builtin_model_files(source: &Path, target: &Path) -> Result<usize, String> {
+    let mut copied = 0usize;
+    for (relative_path, _) in BUILTIN_LOCAL_EMBEDDING_FILES {
+        let from = source.join(relative_path);
+        let metadata = fs::metadata(&from)
+            .map_err(|error| format!("缺少内置向量模型文件 {}：{error}", from.display()))?;
+        if metadata.len() == 0 {
+            return Err(format!("内置向量模型文件为空：{}", from.display()));
+        }
+        let to = target.join(relative_path);
+        if let Ok(existing) = fs::metadata(&to) {
+            if existing.len() == metadata.len() {
+                continue;
+            }
+        }
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        fs::copy(&from, &to).map_err(|error| {
+            format!(
+                "复制内置向量模型失败 {} -> {}：{error}",
+                from.display(),
+                to.display()
+            )
+        })?;
+        copied += 1;
+    }
+    Ok(copied)
+}
 
 #[cfg(feature = "local-embedding")]
 struct LocalEmbeddingInstance {
@@ -261,20 +318,18 @@ impl MemoryService {
         // 对话记忆（只取已经离开原文窗口、且所在桶还没有 summary 的部分），
         // 避免老存档突然失忆；一旦某个桶有 summary，就只走总结，不再插入原文。
         let summary_interval = resolve_memory_summary_interval(world).max(1);
-        let summary_keys = crate::db::repositories::memory_summary_repo::MemorySummaryRepository::new(
-            conn,
-        )
-        .list_by_character(session_id, character_id)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|range| (range.bucket_index, range.scene_id))
-        .collect::<HashSet<_>>();
+        let summary_keys =
+            crate::db::repositories::memory_summary_repo::MemorySummaryRepository::new(conn)
+                .list_by_character(session_id, character_id)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|range| (range.bucket_index, range.scene_id))
+                .collect::<HashSet<_>>();
         let candidates = all_candidates
             .into_iter()
             .filter(|entry| match cutoff {
                 Some(cutoff) => {
-                    let outside_raw =
-                        entry.turn_index < cutoff.current_turn - cutoff.raw_rounds;
+                    let outside_raw = entry.turn_index < cutoff.current_turn - cutoff.raw_rounds;
                     if !outside_raw {
                         return false;
                     }
@@ -915,9 +970,7 @@ impl MemoryService {
         })
     }
     fn builtin_model_dir(&self, model_id: &str) -> PathBuf {
-        self.data_dir
-            .join("embedding-models")
-            .join(sanitize_embedding_model_id(model_id))
+        builtin_local_model_dir(&self.data_dir, model_id)
     }
 
     fn download_builtin_model_file(
@@ -978,58 +1031,16 @@ impl MemoryService {
     }
 
     fn resolve_embedding_model(&self, conn: &Connection) -> Result<Option<ModelConfig>, String> {
-        let mut stmt = conn
-            .prepare("SELECT embedding_enabled, default_embedding_model FROM settings WHERE id = 1")
-            .map_err(|e| e.to_string())?;
-        let (enabled, default_embedding_model): (bool, String) = stmt
-            .query_row([], |row| {
-                Ok((row.get::<_, i64>(0)? != 0, row.get::<_, String>(1)?))
-            })
-            .map_err(|e| e.to_string())?;
-        if !enabled {
-            return Ok(None);
-        }
+        Ok(resolve_embedding_model_config(conn))
+    }
 
-        let repo = crate::db::repositories::model_repo::ModelRepository::new(conn);
-        let models = repo.list(Some("embedding"))?;
-        if let Some(model) = models
-            .iter()
-            .find(|model| {
-                model
-                    .id
-                    .eq_ignore_ascii_case(default_embedding_model.trim())
-                    || model
-                        .model_id
-                        .eq_ignore_ascii_case(default_embedding_model.trim())
-                    || model
-                        .name
-                        .eq_ignore_ascii_case(default_embedding_model.trim())
-            })
-            .cloned()
-            .or_else(|| models.iter().find(|model| model.is_default).cloned())
-            .or_else(|| models.into_iter().next())
-        {
-            return Ok(Some(model));
-        }
-
-        if default_embedding_model.trim() == BUILTIN_LOCAL_EMBEDDING_MODEL_ID {
-            return Ok(Some(ModelConfig {
-                id: "model-seed-bge-small-embedding".to_string(),
-                name: BUILTIN_LOCAL_EMBEDDING_DISPLAY_NAME.to_string(),
-                model_type: "embedding".to_string(),
-                provider: BUILTIN_LOCAL_EMBEDDING_PROVIDER.to_string(),
-                model_id: BUILTIN_LOCAL_EMBEDDING_MODEL_ID.to_string(),
-                base_url: String::new(),
-                api_key: String::new(),
-                max_tokens: 512,
-                streaming_enabled: false,
-                is_default: true,
-                input_modalities: Vec::new(),
-                json_mode_disabled: false,
-            }));
-        }
-
-        Ok(None)
+    /// 知识库检索用：对已解析的模型批量嵌入。调用方应确保不持有 DB 锁。
+    pub(crate) fn embed_with_resolved_model(
+        &self,
+        model: &ModelConfig,
+        texts: &[String],
+    ) -> Result<Vec<Vec<f32>>, String> {
+        self.embed_texts(model, texts)
     }
 
     fn embed_texts(&self, model: &ModelConfig, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
@@ -1225,6 +1236,61 @@ impl MemoryService {
     }
 }
 
+/// 知识库检索用：解析当前默认向量模型。未启用向量或没有可用模型时返回 `None`。
+pub(crate) fn resolve_embedding_model_config(conn: &Connection) -> Option<ModelConfig> {
+    let (enabled, default_embedding_model): (bool, String) = conn
+        .query_row(
+            "SELECT embedding_enabled, default_embedding_model FROM settings WHERE id = 1",
+            [],
+            |row| Ok((row.get::<_, i64>(0)? != 0, row.get::<_, String>(1)?)),
+        )
+        .ok()?;
+    if !enabled {
+        return None;
+    }
+
+    let repo = crate::db::repositories::model_repo::ModelRepository::new(conn);
+    let models = repo.list(Some("embedding")).ok()?;
+    if let Some(model) = models
+        .iter()
+        .find(|model| {
+            model
+                .id
+                .eq_ignore_ascii_case(default_embedding_model.trim())
+                || model
+                    .model_id
+                    .eq_ignore_ascii_case(default_embedding_model.trim())
+                || model
+                    .name
+                    .eq_ignore_ascii_case(default_embedding_model.trim())
+        })
+        .cloned()
+        .or_else(|| models.iter().find(|model| model.is_default).cloned())
+        .or_else(|| models.into_iter().next())
+    {
+        return Some(model);
+    }
+
+    if default_embedding_model.trim() == BUILTIN_LOCAL_EMBEDDING_MODEL_ID {
+        return Some(ModelConfig {
+            id: "model-seed-bge-small-embedding".to_string(),
+            name: BUILTIN_LOCAL_EMBEDDING_DISPLAY_NAME.to_string(),
+            model_type: "embedding".to_string(),
+            provider: BUILTIN_LOCAL_EMBEDDING_PROVIDER.to_string(),
+            model_id: BUILTIN_LOCAL_EMBEDDING_MODEL_ID.to_string(),
+            base_url: String::new(),
+            api_key: String::new(),
+            max_tokens: 512,
+            streaming_enabled: false,
+            is_default: true,
+            input_modalities: Vec::new(),
+            json_mode_disabled: false,
+        });
+    }
+
+    None
+}
+
 /// 纯排序+分层配额选择:给定词法分与语义分,产出最终顺序。
 /// 与任何 DB / 网络 IO 无关,可在锁内或锁外随意调用(C1/H9 分阶段共用)。
 /// 层配额比较用 effective_layers(查询时按回合年龄推算),查不到时回退存储层。
@@ -1286,9 +1352,7 @@ fn rank_memories_by_scores(
                 .get(&entry.id)
                 .map(String::as_str)
                 .unwrap_or(entry.layer.as_str());
-            if effective_layer != layer
-                || selected_ids.contains(entry.id.as_str())
-                || used >= quota
+            if effective_layer != layer || selected_ids.contains(entry.id.as_str()) || used >= quota
             {
                 continue;
             }

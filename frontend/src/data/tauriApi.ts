@@ -44,6 +44,8 @@ import type {
   SessionSnapshot,
   SwitchPlayerCharacterRequest,
   UploadResponse,
+  StickerItem,
+  StickerPack,
   VerifyWorldPackageUiCompatibilityRequest,
   WorldCreateRequest,
   WorldOpeningPromptPreviewResponse,
@@ -742,12 +744,24 @@ function normalizeAssetReference(path: string | null | undefined): string {
   }
   return `assets/${unix.replace(/^\/+/, "")}`;
 }
-export function fetchKnowledgeBases(): Promise<import('./types').KnowledgeBase[]> { return tauriCommand('list_knowledge_bases'); }
+export function fetchKnowledgeBases(worldId?: string | null): Promise<import('./types').KnowledgeBase[]> { return tauriCommand('list_knowledge_bases', { worldId: worldId ?? null }); }
 export function createKnowledgeBase(name: string, description: string, worldId: string | null): Promise<import('./types').KnowledgeBase> { return tauriCommand('create_knowledge_base', { name, description, worldId }); }
 export function deleteKnowledgeBase(id: string): Promise<void> { return tauriCommand('delete_knowledge_base', { id }); }
+export function updateKnowledgeChunking(id: string, strategy: string, maxChars: number, overlapChars: number, delimiter: string): Promise<import('./types').KnowledgeBase> { return tauriCommand('update_knowledge_chunking', { id, strategy, maxChars, overlapChars, delimiter }); }
 export function fetchKnowledgeDocuments(knowledgeBaseId: string): Promise<import('./types').KnowledgeDocument[]> { return tauriCommand('list_knowledge_documents', { knowledgeBaseId }); }
 export async function addKnowledgeDocument(knowledgeBaseId: string, file: File): Promise<import('./types').KnowledgeDocument> { return tauriCommand('add_knowledge_document', { knowledgeBaseId, filename: file.name, data: Array.from(new Uint8Array(await file.arrayBuffer())) }); }
 export function deleteKnowledgeDocument(id: string): Promise<void> { return tauriCommand('delete_knowledge_document', { id }); }
 export function updateKnowledgeDocument(id: string, title: string, content: string): Promise<void> { return tauriCommand('update_knowledge_document', { id, title, content }); }
-export function getKnowledgeBindings(knowledgeBaseId: string): Promise<string[]> { return tauriCommand('get_knowledge_bindings', { knowledgeBaseId }); }
-export function setKnowledgeBinding(knowledgeBaseId: string, worldId: string, enabled: boolean): Promise<void> { return tauriCommand('set_knowledge_binding', { knowledgeBaseId, worldId, enabled }); }
+export function listWorldKnowledgeCandidates(worldId?: string | null): Promise<import('./types').KnowledgeBase[]> { return tauriCommand('list_world_knowledge_candidates', { worldId: worldId ?? null }); }
+export function listWorldKnowledgeScope(worldId: string): Promise<import('./types').KnowledgeBase[]> { return tauriCommand('list_world_knowledge_scope', { worldId }); }
+export function fetchStickerPacks(): Promise<StickerPack[]> { return tauriCommand('list_sticker_packs'); }
+export function createStickerPack(name: string, description: string, worldId: string | null): Promise<StickerPack> { return tauriCommand('create_sticker_pack', { request: { name, description, worldId } }); }
+export function updateStickerPack(id: string, name: string, description: string, enabled: boolean): Promise<StickerPack> { return tauriCommand('update_sticker_pack', { id, request: { name, description, enabled } }); }
+export function deleteStickerPack(id: string): Promise<void> { return tauriCommand('delete_sticker_pack', { id }); }
+export function fetchStickers(packId: string): Promise<StickerItem[]> { return tauriCommand('list_stickers', { packId }); }
+export function createSticker(packId: string, key: string, label: string, description: string, assetPath: string): Promise<StickerItem> { return tauriCommand('create_sticker', { packId, key, label, description, assetPath }); }
+export function updateSticker(id: string, key: string, label: string, description: string, assetPath: string, enabled: boolean): Promise<StickerItem> { return tauriCommand('update_sticker', { id, key, label, description, assetPath, enabled }); }
+export function deleteSticker(id: string): Promise<void> { return tauriCommand('delete_sticker', { id }); }
+export function reorderStickers(packId: string, stickerIds: string[]): Promise<void> { return tauriCommand('reorder_stickers', { packId, stickerIds }); }
+export function getStickerWorldBindings(packId: string): Promise<string[]> { return tauriCommand('get_sticker_world_bindings', { packId }); }
+export function setStickerWorldBinding(packId: string, worldId: string, enabled: boolean): Promise<void> { return tauriCommand('set_sticker_world_binding', { packId, worldId, enabled }); }

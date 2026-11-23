@@ -1,6 +1,7 @@
 pub mod assets;
 pub mod backend;
 pub mod catalog;
+pub mod embedding_install;
 pub mod game_engine;
 pub mod game_ui;
 pub mod game_ui_catalog;
@@ -9,6 +10,7 @@ pub mod map_topology;
 pub mod mcp;
 pub mod notifications;
 pub mod platform_features;
+pub mod sticker_library;
 pub mod workflow;
 pub mod world_builder;
 pub mod world_logic;

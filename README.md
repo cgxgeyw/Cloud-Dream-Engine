@@ -42,10 +42,11 @@ World packs are portable, declarative content bundles rather than native plugins
 - MCP tool integration — call external MCP servers from a world, with per-world tool whitelists
 - Platform file capabilities (`file.pick` / `file.read` / `file.write` / `file.share`) granted per world from **Settings → World permissions**
 - World pack import/export
+- Installer ships four default worlds: 健康生活, 记账助手, 行程助手, and 凡人修仙：小石村问道; 飞花令 is no longer seeded
 - World package version 8: declared `records` / `kv` storage, embedded MCP tool definitions, optional `sandbox-js-v1` logic with event handlers (`logic.events`)
 - Registered world UI components including `ledger_book` (a model-free ledger with entry editing and day/month/year reports)
 - The tutorial's reference world package: [凡人修仙：小石村问道](output/mortal-cultivation-journey-world.zip) — a multi-agent narrative RPG demonstrating director interactions (`choice` / `confirm` / `slider`), 17 world attribute schemas and an opening inventory
-- Two supplementary packages: [记账助手](output/accounting-assistant-world.zip) (model-free ledger over world records) and [健康生活](output/healthy-life-world.zip) (the only reference for `logic.js` sandbox logic)
+- Two supplementary packages bundled with the installer: [记账助手](output/accounting-assistant-world.zip) (model-free ledger over world records) and [健康生活](output/healthy-life-world.zip) (the only reference for `logic.js` sandbox logic)
 - A task-oriented [narrative RPG authoring cookbook](docs/world-package-rpg-cookbook.md)
 - Light/dark mode, multiple visual styles, and a platform language toggle (中文 / English)
 
@@ -141,10 +142,11 @@ Early and actively developed. Expect rapid changes. Issues and feedback are welc
 - MCP 工具集成：世界可调用外部 MCP 服务，按世界配置工具白名单
 - 平台文件能力（`file.pick` / `file.read` / `file.write` / `file.share`），按世界在**设置 → 世界权限**中授权
 - 世界包导入/导出
+- 安装包默认自带四个世界：健康生活、记账助手、行程助手、凡人修仙：小石村问道；飞花令不再播种
 - 世界包 version 8：声明式 `records` / `kv` 存储、内嵌 MCP 工具定义、可选 `sandbox-js-v1` 逻辑及事件处理（`logic.events`）
 - 注册世界 UI 组件，含 `ledger_book`（无模型记账账本，支持录入编辑与日/月/年统计）
 - 教程参考世界包：[凡人修仙：小石村问道](output/mortal-cultivation-journey-world.zip)——多智能体叙事 RPG，演示主控交互（`choice` / `confirm` / `slider`）、17 条世界属性与开局道具
-- 两个补充示例包：[记账助手](output/accounting-assistant-world.zip)（无模型账本，走世界记录）与[健康生活](output/healthy-life-world.zip)（`logic.js` 沙箱逻辑的唯一参考实现）
+- 两个默认内置补充包：[记账助手](output/accounting-assistant-world.zip)（无模型账本，走世界记录）与[健康生活](output/healthy-life-world.zip)（`logic.js` 沙箱逻辑的唯一参考实现）
 - 面向剧情世界的[叙事 RPG 制作手册](docs/world-package-rpg-cookbook.md)
 - 明暗模式、多种视觉风格、平台语言切换（中文 / English）
 

@@ -97,6 +97,12 @@ Thumbs.db
 # 可导入的打包产物仍跟踪在 output/*.zip，文档里只链接那些 zip。
 /examples/
 
+# Local photo scratch (phone screenshots, unreferenced by code)
+/pic/
+
+# Oversized world package kept locally only; other output/*.zip stay tracked.
+/output/blue-fat-fish-world.zip
+
 # Large embedding weights: keep on disk for local-embedding builds, do not track in git.
 # Download/copy into these paths when enabling the local-embedding feature.
 **/embedding-models/**/model.safetensors

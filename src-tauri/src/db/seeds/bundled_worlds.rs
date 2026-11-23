@@ -7,8 +7,38 @@ use crate::services::catalog::world_service::WorldService;
 const BUNDLED_MORTAL_WORLD_ZIP: &[u8] =
     include_bytes!("assets/mortal-cultivation-journey-world.zip");
 const BUNDLED_MORTAL_WORLD_NAME: &str = "凡人修仙：小石村问道";
-const BUNDLED_WORLD_NAMESPACE: &str = "seed.bundled_world";
 const BUNDLED_MORTAL_WORLD_KEY: &str = "mortal-cultivation-journey";
+const BUNDLED_HEALTHY_LIFE_WORLD_ZIP: &[u8] = include_bytes!("assets/healthy-life-world.zip");
+const BUNDLED_HEALTHY_LIFE_WORLD_NAME: &str = "健康生活";
+const BUNDLED_HEALTHY_LIFE_WORLD_KEY: &str = "healthy-life";
+const BUNDLED_ACCOUNTING_WORLD_ZIP: &[u8] = include_bytes!("assets/accounting-assistant-world.zip");
+const BUNDLED_ACCOUNTING_WORLD_NAME: &str = "记账助手";
+const BUNDLED_ACCOUNTING_WORLD_KEY: &str = "accounting-assistant";
+const BUNDLED_WORLD_NAMESPACE: &str = "seed.bundled_world";
+
+struct BundledWorld {
+    key: &'static str,
+    name: &'static str,
+    zip: &'static [u8],
+}
+
+const BUNDLED_WORLDS: &[BundledWorld] = &[
+    BundledWorld {
+        key: BUNDLED_MORTAL_WORLD_KEY,
+        name: BUNDLED_MORTAL_WORLD_NAME,
+        zip: BUNDLED_MORTAL_WORLD_ZIP,
+    },
+    BundledWorld {
+        key: BUNDLED_HEALTHY_LIFE_WORLD_KEY,
+        name: BUNDLED_HEALTHY_LIFE_WORLD_NAME,
+        zip: BUNDLED_HEALTHY_LIFE_WORLD_ZIP,
+    },
+    BundledWorld {
+        key: BUNDLED_ACCOUNTING_WORLD_KEY,
+        name: BUNDLED_ACCOUNTING_WORLD_NAME,
+        zip: BUNDLED_ACCOUNTING_WORLD_ZIP,
+    },
+];
 
 /// 包内容指纹：随内置 zip 变化而变化。旧版只写 "true"，没有指纹，
 /// 因此老用户升级后会被视为「需要刷新」，从而把旧界面（JSONC 时代）换掉。
@@ -59,17 +89,19 @@ fn world_with_name_exists(conn: &Connection, name: &str) -> Result<bool, rusqlit
     Ok(count > 0)
 }
 
-/// 手机端首次启动时导入内置的凡人修仙世界包；桌面端仍由用户自行导入。
+/// 首次启动时导入内置世界包；桌面端与安卓端行为一致。
 pub(crate) fn ensure_bundled_worlds(conn: &Connection, data_dir: &Path) -> Result<(), String> {
-    if !cfg!(target_os = "android") {
-        return Ok(());
+    for world in BUNDLED_WORLDS {
+        import_bundled_world_once(
+            conn,
+            data_dir,
+            world.key,
+            world.name,
+            &package_fingerprint(world.zip),
+            world.zip,
+        )?;
     }
-    import_bundled_world_once(
-        conn,
-        data_dir,
-        &package_fingerprint(BUNDLED_MORTAL_WORLD_ZIP),
-        BUNDLED_MORTAL_WORLD_ZIP,
-    )
+    Ok(())
 }
 
 /// 同一个内置包只处理一次；包内容变了要重新导入（同名世界按「升级」处理，
@@ -77,30 +109,27 @@ pub(crate) fn ensure_bundled_worlds(conn: &Connection, data_dir: &Path) -> Resul
 fn import_bundled_world_once(
     conn: &Connection,
     data_dir: &Path,
+    key: &str,
+    name: &str,
     fingerprint: &str,
     zip: &[u8],
 ) -> Result<(), String> {
-    let marker = stored_bundled_marker(conn, BUNDLED_MORTAL_WORLD_KEY).map_err(|e| e.to_string())?;
+    let marker = stored_bundled_marker(conn, key).map_err(|e| e.to_string())?;
     if marker.as_deref() == Some(fingerprint) {
         return Ok(());
     }
 
-    let exists =
-        world_with_name_exists(conn, BUNDLED_MORTAL_WORLD_NAME).map_err(|e| e.to_string())?;
+    let exists = world_with_name_exists(conn, name).map_err(|e| e.to_string())?;
     if marker.is_some() && !exists {
         // 已播种过，但现在世界不在列表里：用户删掉了它，尊重这个选择。
-        return mark_bundled_world_seeded(conn, BUNDLED_MORTAL_WORLD_KEY, fingerprint)
-            .map_err(|e| e.to_string());
+        return mark_bundled_world_seeded(conn, key, fingerprint).map_err(|e| e.to_string());
     }
 
     let service = WorldService::new();
     let imported = service.unpack_world_package_archive(data_dir, zip.to_vec())?;
     service.persist_world_package(conn, imported)?;
-    eprintln!(
-        "[db] bundled world '{BUNDLED_MORTAL_WORLD_NAME}' imported/updated ({fingerprint})"
-    );
-    mark_bundled_world_seeded(conn, BUNDLED_MORTAL_WORLD_KEY, fingerprint)
-        .map_err(|e| e.to_string())
+    eprintln!("[db] bundled world '{name}' imported/updated ({fingerprint})");
+    mark_bundled_world_seeded(conn, key, fingerprint).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -117,11 +146,26 @@ mod tests {
         dir
     }
 
-    fn world_ui_config(conn: &rusqlite::Connection) -> Value {
+    fn import_mortal(
+        conn: &rusqlite::Connection,
+        data_dir: &std::path::Path,
+        fingerprint: &str,
+    ) -> Result<(), String> {
+        super::import_bundled_world_once(
+            conn,
+            data_dir,
+            super::BUNDLED_MORTAL_WORLD_KEY,
+            super::BUNDLED_MORTAL_WORLD_NAME,
+            fingerprint,
+            super::BUNDLED_MORTAL_WORLD_ZIP,
+        )
+    }
+
+    fn world_ui_config(conn: &rusqlite::Connection, name: &str) -> Value {
         let ui_config: String = conn
             .query_row(
                 "SELECT ui_theme_config_json FROM worlds WHERE TRIM(name) = ?1",
-                [super::BUNDLED_MORTAL_WORLD_NAME],
+                [name],
                 |row| row.get(0),
             )
             .expect("world row");
@@ -129,10 +173,15 @@ mod tests {
     }
 
     fn assert_packaged_ui(conn: &rusqlite::Connection) {
-        let ui_config = world_ui_config(conn);
+        assert_packaged_ui_for(conn, super::BUNDLED_MORTAL_WORLD_NAME);
+    }
+
+    fn assert_packaged_ui_for(conn: &rusqlite::Connection, name: &str) {
+        let ui_config = world_ui_config(conn, name);
         assert_eq!(
             ui_config.get("runtime_version").and_then(Value::as_u64),
-            Some(3)
+            Some(3),
+            "{name} should use the HTML world UI runtime"
         );
         for platform in ["desktop", "mobile"] {
             let document = ui_config
@@ -141,9 +190,49 @@ mod tests {
                 .unwrap_or_default();
             assert!(
                 document.contains("world-name") && document.len() > 4096,
-                "{platform} world UI document should be packaged inline"
+                "{platform} world UI document for {name} should be packaged inline"
             );
         }
+    }
+
+    #[test]
+    fn installer_bundles_four_default_worlds_without_poetry() {
+        let conn = rusqlite::Connection::open_in_memory().expect("open db");
+        crate::db::schema::create_tables(&conn).expect("create schema");
+        let data_dir = temp_data_dir("defaults");
+
+        super::ensure_bundled_worlds(&conn, &data_dir).expect("import bundled worlds");
+
+        let mut stmt = conn
+            .prepare("SELECT TRIM(name) FROM worlds ORDER BY TRIM(name)")
+            .expect("prepare world names");
+        let names: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("query world names")
+            .collect::<Result<_, _>>()
+            .expect("collect world names");
+
+        assert_eq!(names.len(), 4, "installer should ship four default worlds");
+        for expected in [
+            super::BUNDLED_MORTAL_WORLD_NAME,
+            super::BUNDLED_HEALTHY_LIFE_WORLD_NAME,
+            super::BUNDLED_ACCOUNTING_WORLD_NAME,
+            "行程助手",
+        ] {
+            assert!(
+                names.iter().any(|name| name == expected),
+                "missing default world: {expected}"
+            );
+            assert_packaged_ui_for(&conn, expected);
+        }
+        assert!(
+            !names
+                .iter()
+                .any(|name| name.contains("飞花令") || name == "poetry"),
+            "poetry world must not be bundled"
+        );
+
+        std::fs::remove_dir_all(&data_dir).ok();
     }
 
     #[test]
@@ -152,13 +241,7 @@ mod tests {
         crate::db::schema::create_tables(&conn).expect("create schema");
         let data_dir = temp_data_dir("fresh");
 
-        super::import_bundled_world_once(
-            &conn,
-            &data_dir,
-            "test-fingerprint",
-            super::BUNDLED_MORTAL_WORLD_ZIP,
-        )
-        .expect("import bundled world");
+        import_mortal(&conn, &data_dir, "test-fingerprint").expect("import bundled world");
 
         let character_count: i64 = conn
             .query_row(
@@ -170,13 +253,7 @@ mod tests {
         assert_eq!(character_count, 6, "bundled world keeps its six characters");
         assert_packaged_ui(&conn);
 
-        super::import_bundled_world_once(
-            &conn,
-            &data_dir,
-            "test-fingerprint",
-            super::BUNDLED_MORTAL_WORLD_ZIP,
-        )
-        .expect("repeat import is a no-op");
+        import_mortal(&conn, &data_dir, "test-fingerprint").expect("repeat import is a no-op");
         let world_count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM worlds WHERE TRIM(name) = ?1",
@@ -184,7 +261,10 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(world_count, 1, "repeated startup must not duplicate the world");
+        assert_eq!(
+            world_count, 1,
+            "repeated startup must not duplicate the world"
+        );
 
         std::fs::remove_dir_all(&data_dir).ok();
     }
@@ -211,13 +291,7 @@ mod tests {
         )
         .expect("insert legacy world");
 
-        super::import_bundled_world_once(
-            &conn,
-            &data_dir,
-            "test-fingerprint-2",
-            super::BUNDLED_MORTAL_WORLD_ZIP,
-        )
-        .expect("upgrade legacy world");
+        import_mortal(&conn, &data_dir, "test-fingerprint-2").expect("upgrade legacy world");
 
         let world_count: i64 = conn
             .query_row(
@@ -234,7 +308,10 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(world_id, "legacy-world-id", "saves stay attached to the same world");
+        assert_eq!(
+            world_id, "legacy-world-id",
+            "saves stay attached to the same world"
+        );
         assert_packaged_ui(&conn);
 
         std::fs::remove_dir_all(&data_dir).ok();
@@ -246,13 +323,7 @@ mod tests {
         crate::db::schema::create_tables(&conn).expect("create schema");
         let data_dir = temp_data_dir("deleted");
 
-        super::import_bundled_world_once(
-            &conn,
-            &data_dir,
-            "test-fingerprint-3",
-            super::BUNDLED_MORTAL_WORLD_ZIP,
-        )
-        .expect("first import");
+        import_mortal(&conn, &data_dir, "test-fingerprint-3").expect("first import");
         conn.execute(
             "DELETE FROM worlds WHERE TRIM(name) = ?1",
             [super::BUNDLED_MORTAL_WORLD_NAME],
@@ -260,13 +331,7 @@ mod tests {
         .expect("user deletes the world");
 
         // 包内容变了也不能把用户删掉的世界又塞回来。
-        super::import_bundled_world_once(
-            &conn,
-            &data_dir,
-            "test-fingerprint-4",
-            super::BUNDLED_MORTAL_WORLD_ZIP,
-        )
-        .expect("second import");
+        import_mortal(&conn, &data_dir, "test-fingerprint-4").expect("second import");
 
         let world_count: i64 = conn
             .query_row(

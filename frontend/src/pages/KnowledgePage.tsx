@@ -3,9 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { Plus, ChevronRight } from 'lucide-react';
 import { ScreenLayout, SurfacePanel } from '../components/ScreenLayout';
 import { MobilePageBar } from '../components/MobilePageBar';
-import { fetchKnowledgeBases, createKnowledgeBase, deleteKnowledgeBase, fetchKnowledgeDocuments, addKnowledgeDocument, deleteKnowledgeDocument, updateKnowledgeDocument, fetchWorlds, getKnowledgeBindings, setKnowledgeBinding } from '../data/apiAdapter';
+import { LibraryTabs } from '../components/LibraryTabs';
+import { fetchKnowledgeBases, createKnowledgeBase, deleteKnowledgeBase, fetchKnowledgeDocuments, addKnowledgeDocument, deleteKnowledgeDocument, updateKnowledgeDocument, fetchWorlds } from '../data/apiAdapter';
 import type { KnowledgeBase, KnowledgeDocument, WorldResponse } from '../data/types';
 import { useIsMobile } from '../components/ResponsiveLayout';
+import { KnowledgeChunkingForm } from '../components/KnowledgeChunkingForm';
 import { MenuButton } from '../components/ScreenLayout';
 import './KnowledgePage.css';
 
@@ -18,7 +20,6 @@ export function KnowledgePage() {
   const [worlds, setWorlds] = useState<WorldResponse[]>([]);
   const [selected, setSelected] = useState<string>('');
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
-  const [bindings, setBindings] = useState<string[]>([]);
   const [draft, setDraft] = useState<KnowledgeDocument | null>(null);
   const [name, setName] = useState(''); const [owner, setOwner] = useState('');
   const [busy, setBusy] = useState(false); const [error, setError] = useState('');
@@ -27,7 +28,7 @@ export function KnowledgePage() {
   const upload = useRef<HTMLInputElement>(null);
   const reload = async () => { const [b, w] = await Promise.all([fetchKnowledgeBases(), fetchWorlds()]); setBases(b); setWorlds(w); };
   useEffect(() => { void reload().catch(e => setError(String(e))).finally(() => setLoading(false)); }, []);
-  useEffect(() => { let active = true; setDocuments([]); setBindings([]); setDraft(null); if (selected) void Promise.all([fetchKnowledgeDocuments(selected), getKnowledgeBindings(selected)]).then(([d, b]) => { if (active) { setDocuments(d); setBindings(b); } }).catch(e => { if (active) setError(String(e)); }); return () => { active = false; }; }, [selected]);
+  useEffect(() => { let active = true; setDocuments([]); setDraft(null); if (selected) void fetchKnowledgeDocuments(selected).then((d) => { if (active) setDocuments(d); }).catch(e => { if (active) setError(String(e)); }); return () => { active = false; }; }, [selected]);
   const run = async (action: () => Promise<void>) => { setBusy(true); setError(''); try { await action(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); } };
   const base = bases.find(b => b.id === selected);
   const groups = [{ id: '', name: '公共知识库' }, ...worlds.map(w => ({ id: w.id, name: w.name }))];
@@ -46,10 +47,11 @@ export function KnowledgePage() {
     ? '新建知识库'
     : mobilePane === 'detail' && base
       ? base.name
-      : '知识库';
+      : '图库和知识库';
 
-  return <ScreenLayout title={isMobile ? '' : '知识库'} subtitle={isMobile ? undefined : '管理公共资料和世界自带资料'} compactHeader={isMobile} maxWidth={1120} toolbar={isMobile ? undefined : <button className="action-btn" onClick={() => navigate('/')}>返回首页</button>}>
+  return <ScreenLayout title={isMobile ? '' : '图库和知识库'} subtitle={isMobile ? undefined : '知识资料与智能体可发送的表情贴纸都在这里维护'} compactHeader={isMobile} maxWidth={1120} toolbar={isMobile ? undefined : <button className="action-btn" onClick={() => navigate('/')}>返回首页</button>}>
     {error && <p role="alert" className="error-text">{error}</p>}
+    <LibraryTabs active="knowledge" />
 
     {isMobile ? (
       <div className="knowledge-mobile">
@@ -111,19 +113,14 @@ export function KnowledgePage() {
 
             {!base.world_id ? (
               <div className="wed-block">
-                <div className="knowledge-mobile-block-title">允许使用此知识库的世界</div>
-                {worlds.length === 0 ? <div className="empty-text">导入世界后可在这里关联。</div> : (
-                  <div className="knowledge-bind-list">
-                    {worlds.map(w => (
-                      <label key={w.id} className="knowledge-bind-item">
-                        <input type="checkbox" checked={bindings.includes(w.id)} disabled={busy} onChange={e => { const enabled = e.target.checked; void run(async () => { await setKnowledgeBinding(base.id, w.id, enabled); setBindings(await getKnowledgeBindings(base.id)); }); }} />
-                        <span>{w.name}</span>
-                      </label>
-                    ))}
-                  </div>
-                )}
+                <div className="knowledge-mobile-block-title">使用范围</div>
+                <div className="empty-text">公共知识库默认不对任何世界开放。请到「世界编辑器 → 世界主控 → 权限」勾选允许使用的公共知识库，再到「角色编辑 → 记忆」为该角色单独收窄范围。</div>
               </div>
             ) : null}
+
+            <div className="wed-block">
+              <KnowledgeChunkingForm base={base} disabled={busy} onSaved={saved => { setBases(prev => prev.map(b => b.id === saved.id ? saved : b)); }} onError={setError} />
+            </div>
 
             <div className="wed-block">
               <div className="knowledge-mobile-actions">
@@ -191,7 +188,8 @@ export function KnowledgePage() {
           <section className="knowledge-detail">
             {!base ? <p>选择知识库，查看或上传资料。</p> : <>
               <h2 className="settings-section-title">{base.name}</h2>
-              {!base.world_id && <fieldset style={{ marginBottom: 16 }}><legend>允许使用此知识库的世界</legend>{worlds.length === 0 ? <p>导入世界后可在这里关联。</p> : worlds.map(w => <label key={w.id} style={{ display: 'block', padding: 6 }}><input type="checkbox" checked={bindings.includes(w.id)} disabled={busy} onChange={e => { const enabled = e.target.checked; void run(async () => { await setKnowledgeBinding(base.id, w.id, enabled); setBindings(await getKnowledgeBindings(base.id)); }); }} /> {w.name}</label>)}</fieldset>}
+              {!base.world_id && <div className="text-muted" style={{ marginBottom: 16 }}>公共知识库默认不对任何世界开放。允许哪些世界使用请到「世界编辑器 → 世界主控 → 权限」勾选，再在「角色编辑 → 记忆」按角色收窄。</div>}
+              <KnowledgeChunkingForm base={base} disabled={busy} onSaved={saved => { setBases(prev => prev.map(b => b.id === saved.id ? saved : b)); }} onError={setError} />
               <p style={{ color: 'var(--color-muted)' }}>支持 TXT、Markdown、CSV、JSON、YAML、XML、DOCX、文字 PDF，每个文件最多 20MB。</p>
               <div className="settings-form-actions">
                 <button className="action-btn action-btn--accent" disabled={busy} onClick={() => upload.current?.click()}>{busy ? '处理中…' : '上传文件'}</button>

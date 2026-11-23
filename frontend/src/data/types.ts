@@ -303,6 +303,7 @@ export type CharacterResponse = {
   response_contract_prompt: string;
   narration_prompt: string;
   runtime_system_prompt: string;
+  knowledge_base_ids: string[];
 };
 
 export type CharacterCreateRequest = {
@@ -319,6 +320,7 @@ export type CharacterCreateRequest = {
   response_contract_prompt: string;
   narration_prompt: string;
   runtime_system_prompt: string;
+  knowledge_base_ids: string[];
 };
 
 export type CharacterUpsertRequest = CharacterCreateRequest;
@@ -337,6 +339,7 @@ export type CharacterTemplateResponse = {
   response_contract_prompt: string;
   narration_prompt: string;
   runtime_system_prompt: string;
+  knowledge_base_ids: string[];
 };
 
 export type CharacterCreateFromTemplateRequest = {
@@ -885,5 +888,28 @@ export type UploadResponse = {
   asset_path?: string;
   url: string;
 };
-export interface KnowledgeBase { id: string; world_id: string | null; name: string; description: string; enabled: boolean }
+export type KnowledgeChunkStrategy = 'length' | 'delimiter';
+export interface KnowledgeBase { id: string; world_id: string | null; name: string; description: string; enabled: boolean; chunk_strategy: KnowledgeChunkStrategy; chunk_max_chars: number; chunk_overlap_chars: number; chunk_delimiter: string }
 export interface KnowledgeDocument { id: string; knowledge_base_id: string; title: string; content: string; source_filename: string; updated_at: string }
+export interface StickerPack {
+  id: string;
+  world_id: string | null;
+  name: string;
+  description: string;
+  enabled: boolean;
+  sticker_count: number;
+  created_at: string;
+  updated_at: string;
+}
+export interface StickerItem {
+  id: string;
+  pack_id: string;
+  key: string;
+  label: string;
+  description: string;
+  asset_path: string;
+  sort_order: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}

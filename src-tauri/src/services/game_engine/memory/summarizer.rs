@@ -1,13 +1,11 @@
 use crate::models::character::CharacterDefinition;
-use crate::models::generation_params::{
-    GenerationParams, GENERATION_ROLE_UTILITY,
-};
+use crate::models::generation_params::{GenerationParams, GENERATION_ROLE_UTILITY};
 use crate::models::memory::{MemoryEntry, MemorySummaryRange};
+use crate::models::model_config::ModelConfig;
 use crate::models::session::{ChatMessage, SessionSnapshot};
 use crate::models::world::WorldDefinition;
-use crate::services::llm::client::{ChatMessage as LlmChatMessage, ChatRequest, LlmClient};
 use crate::services::game_engine::scene::SceneManager;
-use crate::models::model_config::ModelConfig;
+use crate::services::llm::client::{ChatMessage as LlmChatMessage, ChatRequest, LlmClient};
 use std::collections::BTreeMap;
 
 pub(crate) const MEMORY_TYPE_SUMMARY: &str = "summary";
@@ -229,13 +227,8 @@ pub(crate) fn character_has_visible_messages(
     bucket_start: i32,
     bucket_end: i32,
 ) -> bool {
-    !messages_for_character_in_bucket(
-        &session.messages,
-        character_name,
-        bucket_start,
-        bucket_end,
-    )
-    .is_empty()
+    !messages_for_character_in_bucket(&session.messages, character_name, bucket_start, bucket_end)
+        .is_empty()
 }
 
 pub(crate) fn bucket_has_any_messages(
@@ -629,12 +622,7 @@ async fn request_summary(
         native_tool_calling: None,
     };
     let response = llm
-        .chat_completion(
-            &model.provider,
-            &model.base_url,
-            &model.api_key,
-            &request,
-        )
+        .chat_completion(&model.provider, &model.base_url, &model.api_key, &request)
         .await?;
     if response.is_truncated_by_token_limit() {
         return Err("summary response truncated by max_tokens".to_string());
@@ -699,8 +687,7 @@ pub(crate) fn persist_summary(
         participants: draft.participants.clone(),
         keywords,
     };
-    let memory_repo =
-        crate::db::repositories::memory_repo::MemoryRepository::new(conn);
+    let memory_repo = crate::db::repositories::memory_repo::MemoryRepository::new(conn);
     memory_repo.insert(&entry)?;
     let range = MemorySummaryRange {
         memory_id: entry.id.clone(),

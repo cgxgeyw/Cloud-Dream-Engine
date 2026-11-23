@@ -1,4 +1,5 @@
 import type { RefObject } from "react";
+import { assetUrl } from "../data/apiAdapter";
 import type {
   CharacterResponse,
   RuntimeAttributeItem,
@@ -172,6 +173,30 @@ export type GameUiRuntimeContext = {
   chat_messages_ref: RefObject<HTMLDivElement | null>;
 };
 
+function attachStickerUrls(messages: RenderChatMessage[]): RenderChatMessage[] {
+  return messages.map((message) => {
+    const metadata = message.metadata as Record<string, unknown> | null | undefined;
+    const raw = metadata?.sticker;
+    if (!raw || typeof raw !== "object") {
+      return message;
+    }
+    const sticker = raw as Record<string, unknown>;
+    const assetPath =
+      typeof sticker.asset_path === "string" ? sticker.asset_path.trim() : "";
+    if (!assetPath) {
+      return message;
+    }
+    const url = assetUrl(assetPath);
+    return {
+      ...message,
+      metadata: {
+        ...(metadata ?? {}),
+        sticker: { ...sticker, url },
+      },
+    };
+  });
+}
+
 export function createGameUiRuntimeContext(
   bag: GameSessionStateBag,
   platform: GameUiPlatform,
@@ -218,7 +243,7 @@ export function createGameUiRuntimeContext(
     attributes_by_owner: attributesByOwner,
     attribute_items: [...bag.runtimeAttributes.session_attributes, ...bag.runtimeAttributes.character_attributes]
       .flatMap((group) => group.items),
-    messages: bag.renderedDialogueMessages,
+    messages: attachStickerUrls(bag.renderedDialogueMessages),
     latest_narration: bag.latestNarration,
     copyable_dialogue_text: bag.copyableDialogueText,
     scene_focus: bag.showSceneFocus

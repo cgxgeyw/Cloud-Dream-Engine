@@ -1,0 +1,32 @@
+.library-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+}
+
+.library-tab {
+  padding: 6px 16px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.library-tab:hover {
+  color: inherit;
+}
+
+.library-tab--active {
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.library-tab--active:hover {
+  color: #fff;
+}

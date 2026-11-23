@@ -46,7 +46,7 @@
     { "id": "dismiss_retry_card", "description": "关闭重试卡片", "input": { "card_key": "string" } },
     { "id": "copy_text", "description": "复制任意文本", "input": { "text": "string" } },
     { "id": "switch_side_tab", "description": "切换侧边标签页", "input": { "tab_key": "string" } },
-    { "id": "navigate_back", "description": "返回上一个应用页面", "input": {} },
+    { "id": "navigate_back", "description": "返回上一级应用页面", "input": {} },
     { "id": "navigate_home", "description": "返回首页", "input": {} },
     { "id": "navigate_settings", "description": "前往设置页", "input": {} },
     { "id": "navigate_debug", "description": "前往当前会话调试页", "input": {} },

@@ -8,4 +8,5 @@ pub(crate) mod return_processing;
 pub mod runtime_effects;
 pub mod scene;
 pub mod service_mode;
+pub mod stickers;
 pub mod structured_output;

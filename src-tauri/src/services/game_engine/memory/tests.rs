@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::db::repositories::memory_repo::MemoryRepository;
 use crate::db::repositories::memory_summary_repo::MemorySummaryRepository;
@@ -75,6 +74,7 @@ fn sample_characters() -> Vec<CharacterDefinition> {
             response_contract_prompt: "".to_string(),
             narration_prompt: "".to_string(),
             runtime_system_prompt: "".to_string(),
+            knowledge_base_ids: Vec::new(),
         },
         CharacterDefinition {
             id: "char-b".to_string(),
@@ -92,6 +92,7 @@ fn sample_characters() -> Vec<CharacterDefinition> {
             response_contract_prompt: "".to_string(),
             narration_prompt: "".to_string(),
             runtime_system_prompt: "".to_string(),
+            knowledge_base_ids: Vec::new(),
         },
     ]
 }
@@ -1089,14 +1090,16 @@ fn recall_cutoff_uses_summary_and_suppresses_raw_in_summarized_bucket() {
         participants: vec!["Player".to_string(), "Alice".to_string()],
         keywords: vec!["银钥匙".to_string()],
     };
-    repo.insert(&raw_in_summarized_bucket).expect("insert raw 1");
+    repo.insert(&raw_in_summarized_bucket)
+        .expect("insert raw 1");
     let raw_in_unsummarized_bucket = MemoryEntry {
         id: "raw-2".to_string(),
         turn_index: 20,
         content: "原始台词：第二桶还没总结".to_string(),
         ..raw_in_summarized_bucket.clone()
     };
-    repo.insert(&raw_in_unsummarized_bucket).expect("insert raw 2");
+    repo.insert(&raw_in_unsummarized_bucket)
+        .expect("insert raw 2");
 
     let plan = service
         .prepare_character_recall_with_cutoff(

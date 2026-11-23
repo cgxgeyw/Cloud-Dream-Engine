@@ -579,6 +579,9 @@ pub(crate) fn build_character_tool_capabilities(
     if let Some(tool) = crate::commands::knowledge::tool_capability(world) {
         tools.push(tool);
     }
+    tools.extend(crate::services::game_engine::stickers::tool_capabilities(
+        world,
+    ));
     if allowed.contains(MCP_TOOL_SCHEDULE_NOTIFICATION_ID) {
         tools.push(notification_tool_definition());
     }
@@ -671,6 +674,8 @@ pub(crate) fn is_builtin_tool_name(tool_name: &str) -> bool {
             | "generate_image"
             | "request_player_interaction"
             | "schedule_notification"
+            | "search_sticker"
+            | "send_sticker"
     )
 }
 

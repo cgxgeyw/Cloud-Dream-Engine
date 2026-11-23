@@ -242,7 +242,7 @@ export function NewGameSetupPage() {
       title={t("newGame.setupTitle")}
       subtitle={t("newGame.setupSubtitle")}
       compactHeader
-      maxWidth={860}
+      maxWidth={980}
       toolbar={
         isMobile ? undefined : (
         <button type="button" onClick={() => navigate("/new-game")} className="action-btn">
@@ -274,7 +274,7 @@ export function NewGameSetupPage() {
                 <strong>{t("newGame.openingLocation")}</strong>
                 <span>{world.opening_scene || t("newGame.notSet")}</span>
               </div>
-              <div className="newgame-info-row newgame-info-row--wide">
+              <div className="newgame-info-row">
                 <strong>{t("newGame.presentCharacters")}</strong>
                 <span>{characters.length > 0 ? characters.map((item) => item.name).join(" / ") : t("newGame.noCharacters")}</span>
               </div>

@@ -160,6 +160,8 @@ impl WorldService {
                     response_contract_prompt: source_character.response_contract_prompt.clone(),
                     narration_prompt: source_character.narration_prompt.clone(),
                     runtime_system_prompt: source_character.runtime_system_prompt.clone(),
+                    // 复制世界时角色原来的知识库 id 在新世界无效，留空表示沿用新世界的范围。
+                    knowledge_base_ids: Vec::new(),
                 },
             )?;
             character_id_map.insert(source_character.id, duplicated_character.id);
@@ -253,6 +255,7 @@ impl WorldService {
             world.director_config = director_config.clone();
             world = Self::enrich_world(world);
         }
+        crate::services::sticker_library::attach_world_stickers(conn, &mut world)?;
         let all_mcp_tools =
             crate::db::repositories::mcp_tool_repo::McpToolRepository::new(conn).list()?;
         let mcp_servers =
@@ -357,6 +360,7 @@ impl WorldService {
                 .get(world_id)?
                 .ok_or_else(|| "世界不存在".to_string())?,
         );
+        crate::services::sticker_library::attach_world_stickers(conn, &mut world)?;
         let characters = char_repo.list_by_world(world_id)?;
         world.ui_theme_config["knowledge_bases"] =
             serde_json::to_value(crate::commands::knowledge::export_bundled(conn, world_id)?)
@@ -609,10 +613,24 @@ impl WorldService {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        let knowledge_base_ids = object
+            .get("knowledge_base_ids")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                let mut seen = BTreeSet::new();
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(|value| value.trim().to_string()))
+                    .filter(|value| !value.is_empty() && seen.insert(value.clone()))
+                    .map(serde_json::Value::String)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
 
         serde_json::json!({
             "service_mode": service_mode,
             "knowledge_access": object.get("knowledge_access").and_then(|v| v.as_bool()).unwrap_or(false),
+            "knowledge_base_ids": knowledge_base_ids,
             "default_agent_id": default_agent_id,
             "runtime_policy": {
                 "memory_write_mode": memory_write_mode,
@@ -835,6 +853,10 @@ impl WorldService {
                 Self::normalize_world_ui_assets_config(&imported_world.ui_assets_config),
                 &asset_map,
             ),
+            "stickers": WorldPackageService::remap_world_ui_theme_assets(
+                serde_json::to_value(&imported_world.stickers).unwrap_or_default(),
+                &asset_map,
+            ),
             "desktop_file": desktop_ui_source,
             "mobile_file": mobile_ui_source,
             "runtime_version": ui_runtime_version,
@@ -955,6 +977,8 @@ impl WorldService {
                 response_contract_prompt: character.response_contract_prompt.clone(),
                 narration_prompt: character.narration_prompt.clone(),
                 runtime_system_prompt: character.runtime_system_prompt.clone(),
+                // 世界包里的知识库会重新分配 id，角色级收窄不跨包保留。
+                knowledge_base_ids: Vec::new(),
             };
             // 同名角色就地更新：消息行的 character_id 指着老角色，换成新 id 就成孤儿了。
             // 包里少了的角色不删，同样是怕把历史消息的说话人带掉。
@@ -1033,7 +1057,39 @@ impl WorldService {
         {
             director_config["knowledge_access"] = serde_json::json!(true);
         }
-        let updated_world = world_repo.update(
+        // 包里的知识库 id 都是作者机器上的：自带的库导入后已重建为新 id，公共库本机也未必有。
+        // 因此这里重算：本世界自带的库全部勾选（等同升级前的「自动可用」），
+        // 公共库只保留本机确实存在的那几个。
+        if imported_world.knowledge_bases.is_some() {
+            let mut kept: Vec<String> = tx
+                .prepare("SELECT id FROM knowledge_bases WHERE world_id = ?1 AND enabled = 1 ORDER BY id")
+                .and_then(|mut stmt| {
+                    stmt.query_map(rusqlite::params![world_id], |row| row.get::<_, String>(0))?
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .unwrap_or_default();
+            for id in director_config
+                .get("knowledge_base_ids")
+                .and_then(|value| value.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|value| value.as_str())
+            {
+                let is_local_public: bool = tx
+                    .query_row(
+                        "SELECT COUNT(*) FROM knowledge_bases WHERE id = ?1 AND world_id IS NULL AND enabled = 1",
+                        rusqlite::params![id],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .map(|count| count > 0)
+                    .unwrap_or(false);
+                if is_local_public && !kept.iter().any(|existing| existing == id) {
+                    kept.push(id.to_string());
+                }
+            }
+            director_config["knowledge_base_ids"] = serde_json::json!(kept);
+        }
+        let mut updated_world = world_repo.update(
             &world_id,
             &WorldUpdateRequest {
                 name: Some(imported_world.name.clone()),
@@ -1051,6 +1107,7 @@ impl WorldService {
                 player_character_id: Some(player_character_id),
             },
         )?;
+        crate::services::sticker_library::attach_world_stickers(&tx, &mut updated_world)?;
 
         tx.commit().map_err(|e| e.to_string())?;
 
@@ -1600,6 +1657,7 @@ mod tests {
             response_contract_prompt: String::new(),
             narration_prompt: String::new(),
             runtime_system_prompt: String::new(),
+            knowledge_base_ids: Vec::new(),
         }
     }
 
@@ -1638,6 +1696,7 @@ mod tests {
                 time_config: serde_json::json!({}),
                 director_config: serde_json::json!({}),
                 ui_assets_config: serde_json::json!({}),
+                stickers: Vec::new(),
                 attribute_schemas: Vec::new(),
                 character_attribute_values: Vec::new(),
                 ui_runtime_version: Some(2),
@@ -1714,6 +1773,7 @@ mod tests {
                 time_config: serde_json::json!({}),
                 director_config: serde_json::json!({}),
                 ui_assets_config: serde_json::json!({}),
+                stickers: Vec::new(),
                 attribute_schemas: Vec::new(),
                 character_attribute_values: Vec::new(),
                 ui_runtime_version: Some(3),

@@ -47,6 +47,12 @@ class ShareFileArgs {
   lateinit var path: String
 }
 
+@InvokeArg
+class CopyAssetDirArgs {
+  lateinit var assetPath: String
+  lateinit var targetDir: String
+}
+
 /**
  * 安卓平台能力唯一入口。Rust 业务代码经 tauri 移动插件通道调用这里的 @Command，
  * 不再直接写 JNI；世界包/前端拿不到 Activity、Context 等原生对象。
@@ -123,6 +129,12 @@ class NativeBridgePlugin(private val activity: Activity) : Plugin(activity) {
   fun shareFile(invoke: Invoke) {
     val args = invoke.parseArgs(ShareFileArgs::class.java)
     invoke.resolve(fileManager.shareFile(args.path))
+  }
+
+  @Command
+  fun copyAssetDir(invoke: Invoke) {
+    val args = invoke.parseArgs(CopyAssetDirArgs::class.java)
+    invoke.resolve(fileManager.copyAssetDir(args.assetPath, args.targetDir))
   }
 
   @PermissionCallback
