@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"主窗口的默认权限配置","local":true,"windows":["main"],"permissions":["core:default","dialog:allow-open","notification:default"]}}
+{"default":{"identifier":"default","description":"主窗口的默认权限配置","local":true,"windows":["main"],"permissions":["core:default","core:window:allow-set-progress-bar","dialog:allow-open","notification:default"]}}

@@ -71,6 +71,8 @@
   --mondrian-dot-size: 7px 7px;
   --mondrian-panel-radius: 14px 12px 16px 13px;
   --mondrian-btn-radius: 12px 10px 13px 11px;
+  /* Yellow fields stay light in both modes, so their foreground is always dark. */
+  --mondrian-on-yellow: #1a1a1a;
 }
 
 :root[data-color-scheme="mondrian"][data-theme="dark"] {
@@ -157,7 +159,7 @@
 }
 
 :root[data-color-scheme="mondrian"] .layout-brand {
-  color: var(--mondrian-red);
+  color: var(--mondrian-ink);
   font-weight: 900;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -213,20 +215,28 @@
   background: var(--mondrian-paper);
   box-shadow: var(--mondrian-offset-sm);
   overflow: visible;
+  /* Accent fill + the only foreground that stays readable on that fill.
+     Red / blue / ink flip with the theme, so --mondrian-white works on them;
+     yellow never flips, so it always needs dark ink. */
   --mondrian-menu-accent: var(--mondrian-blue);
+  --mondrian-menu-fg: var(--mondrian-white);
 }
 
 :root[data-color-scheme="mondrian"] .menu-btn:nth-child(4n + 1) {
   --mondrian-menu-accent: var(--mondrian-red);
+  --mondrian-menu-fg: var(--mondrian-white);
 }
 :root[data-color-scheme="mondrian"] .menu-btn:nth-child(4n + 2) {
   --mondrian-menu-accent: var(--mondrian-blue);
+  --mondrian-menu-fg: var(--mondrian-white);
 }
 :root[data-color-scheme="mondrian"] .menu-btn:nth-child(4n + 3) {
   --mondrian-menu-accent: var(--mondrian-yellow);
+  --mondrian-menu-fg: var(--mondrian-on-yellow);
 }
 :root[data-color-scheme="mondrian"] .menu-btn:nth-child(4n + 4) {
   --mondrian-menu-accent: var(--mondrian-ink);
+  --mondrian-menu-fg: var(--mondrian-white);
 }
 
 :root[data-color-scheme="mondrian"] .menu-btn::after {
@@ -240,9 +250,13 @@
     var(--mondrian-dot),
     var(--mondrian-menu-accent);
   background-size: 7px 7px, auto;
-  color: var(--mondrian-white);
+  color: var(--mondrian-menu-fg);
   transform: translate(-1px, -1px);
   box-shadow: var(--mondrian-offset);
+}
+
+:root[data-color-scheme="mondrian"] .menu-btn:hover .menu-btn-title {
+  color: var(--mondrian-menu-fg);
 }
 
 :root[data-color-scheme="mondrian"] .menu-btn:hover .menu-btn-icon {
@@ -252,19 +266,21 @@
 }
 
 :root[data-color-scheme="mondrian"] .menu-btn:hover .menu-btn-desc {
-  color: color-mix(in srgb, var(--mondrian-white) 78%, transparent);
+  color: color-mix(in srgb, var(--mondrian-menu-fg) 78%, transparent);
+}
+
+:root[data-color-scheme="mondrian"] .menu-btn:hover .menu-btn-arrow {
+  color: color-mix(in srgb, var(--mondrian-menu-fg) 70%, transparent);
 }
 
 :root[data-color-scheme="mondrian"] .menu-btn-icon {
   border: var(--mondrian-line-thin);
   border-radius: 10px 8px 11px 9px;
   background: var(--mondrian-menu-accent, var(--mondrian-yellow));
-  color: var(--mondrian-ink);
-}
-
-:root[data-color-scheme="mondrian"] .menu-btn:nth-child(4n + 1) .menu-btn-icon,
-:root[data-color-scheme="mondrian"] .menu-btn:nth-child(4n + 4) .menu-btn-icon {
-  color: var(--mondrian-white);
+  /* The icon tile is filled with the same accent as the hover field, so it
+     reuses the same foreground instead of a fixed colour. A fixed white glyph
+     used to vanish once the tile turned paper on hover. */
+  color: var(--mondrian-menu-fg);
 }
 
 /* Primary CTA: blue field + yellow pop icon */
@@ -278,6 +294,9 @@
   border-radius: var(--mondrian-btn-radius);
   color: var(--mondrian-white);
   box-shadow: var(--mondrian-offset);
+  /* Blue and red fills always take the light foreground, including on hover. */
+  --mondrian-menu-accent: var(--mondrian-blue);
+  --mondrian-menu-fg: var(--mondrian-white);
 }
 
 :root[data-color-scheme="mondrian"] .menu-btn--primary .menu-btn-title,
@@ -288,7 +307,7 @@
 
 :root[data-color-scheme="mondrian"] .menu-btn--primary .menu-btn-icon {
   background: var(--mondrian-yellow) !important;
-  color: var(--mondrian-ink) !important;
+  color: var(--mondrian-on-yellow) !important;
   border-color: var(--mondrian-ink) !important;
 }
 
@@ -336,7 +355,7 @@
   background:
     var(--mondrian-dot),
     var(--mondrian-yellow);
-  color: var(--mondrian-ink);
+  color: var(--mondrian-on-yellow);
   transform: translate(-2px, -2px);
   box-shadow: 5px 5px 0 var(--mondrian-ink);
 }
@@ -351,8 +370,7 @@
 :root[data-color-scheme="mondrian"] .action-btn--accent,
 :root[data-color-scheme="mondrian"] .editor-tab--active,
 :root[data-color-scheme="mondrian"] .menu-btn--primary,
-:root[data-color-scheme="mondrian"] .home-mobile-btn--primary,
-:root[data-color-scheme="mondrian"] .mobile-nav-item--active {
+:root[data-color-scheme="mondrian"] .home-mobile-btn--primary {
   background:
     var(--mondrian-dot-strong),
     var(--mondrian-blue);
@@ -449,22 +467,63 @@
   box-shadow: var(--mondrian-offset);
 }
 
+/* Sidebar list tiles (mobile nav + mobile settings list).
+   Base = paper + ink. Hover/press = yellow + ink. Active = blue + light ink.
+   Every child (label, icon, arrow) has to follow the same foreground, otherwise
+   a filled tile ends up with dark text on a dark field. */
 :root[data-color-scheme="mondrian"] .settings-nav-item,
 :root[data-color-scheme="mondrian"] .mobile-nav-item {
   border: var(--mondrian-line);
   border-radius: var(--mondrian-btn-radius);
   background: var(--mondrian-paper);
   box-shadow: var(--mondrian-offset-sm);
+  color: var(--mondrian-ink);
+  --mondrian-nav-fg: var(--mondrian-ink);
+}
+
+:root[data-color-scheme="mondrian"] .settings-nav-item .mobile-nav-label,
+:root[data-color-scheme="mondrian"] .mobile-nav-item .mobile-nav-label,
+:root[data-color-scheme="mondrian"] .settings-nav-item .settings-nav-item-copy strong,
+:root[data-color-scheme="mondrian"] .settings-nav-item .settings-nav-item-arrow {
+  color: var(--mondrian-nav-fg);
 }
 
 :root[data-color-scheme="mondrian"] .settings-nav-item:hover,
-:root[data-color-scheme="mondrian"] .mobile-nav-item:hover {
+:root[data-color-scheme="mondrian"] .settings-nav-item:active,
+:root[data-color-scheme="mondrian"] .mobile-nav-item:hover,
+:root[data-color-scheme="mondrian"] .mobile-nav-item:active {
   border-color: var(--mondrian-ink);
   background:
     var(--mondrian-dot),
     var(--mondrian-yellow);
   background-size: 7px 7px, auto;
-  color: var(--mondrian-ink);
+  color: var(--mondrian-on-yellow);
+  --mondrian-nav-fg: var(--mondrian-on-yellow);
+}
+
+:root[data-color-scheme="mondrian"] .settings-nav-item--active,
+:root[data-color-scheme="mondrian"] .settings-nav-item--active:hover,
+:root[data-color-scheme="mondrian"] .settings-nav-item--active:active,
+:root[data-color-scheme="mondrian"] .mobile-nav-item--active,
+:root[data-color-scheme="mondrian"] .mobile-nav-item--active:hover,
+:root[data-color-scheme="mondrian"] .mobile-nav-item--active:active {
+  border-color: var(--mondrian-ink);
+  background:
+    var(--mondrian-dot-strong),
+    var(--mondrian-blue);
+  background-size: 8px 8px, auto;
+  color: var(--mondrian-white);
+  --mondrian-nav-fg: var(--mondrian-white);
+}
+
+:root[data-color-scheme="mondrian"] .mobile-nav-item .mobile-nav-icon,
+:root[data-color-scheme="mondrian"] .mobile-nav-item .mobile-nav-icon svg {
+  color: var(--mondrian-nav-fg);
+  stroke: currentColor;
+}
+
+:root[data-color-scheme="mondrian"] .settings-nav-item .settings-nav-item-copy span {
+  color: color-mix(in srgb, var(--mondrian-nav-fg) 78%, transparent);
 }
 
 :root[data-color-scheme="mondrian"] .modal-backdrop,

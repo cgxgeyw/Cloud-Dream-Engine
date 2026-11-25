@@ -891,6 +891,19 @@ export type UploadResponse = {
 export type KnowledgeChunkStrategy = 'length' | 'delimiter';
 export interface KnowledgeBase { id: string; world_id: string | null; name: string; description: string; enabled: boolean; chunk_strategy: KnowledgeChunkStrategy; chunk_max_chars: number; chunk_overlap_chars: number; chunk_delimiter: string }
 export interface KnowledgeDocument { id: string; knowledge_base_id: string; title: string; content: string; source_filename: string; updated_at: string }
+export type KnowledgeRebuildStatus = 'running' | 'completed' | 'failed';
+export interface KnowledgeRebuildSnapshot {
+  job_id: string;
+  base_id: string;
+  base_name: string;
+  total: number;
+  done: number;
+  failed: number;
+  status: KnowledgeRebuildStatus;
+  error: string | null;
+  started_at_ms: number;
+}
+export interface KnowledgeRebuildStart { job_id: string; base_id: string; base_name: string; status: KnowledgeRebuildStatus }
 export interface StickerPack {
   id: string;
   world_id: string | null;

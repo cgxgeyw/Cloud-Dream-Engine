@@ -52,6 +52,7 @@ pub fn run() {
                 services,
                 data_dir,
                 session_mutations: SessionMutationCoordinator::default(),
+                knowledge_rebuild: crate::state::KnowledgeRebuildTracker::default(),
             });
             tauri::async_runtime::spawn(async move {
                 let _ = crate::services::notifications::NotificationScheduler::restore_pending(
@@ -182,6 +183,10 @@ pub fn run() {
             commands::knowledge::delete_knowledge_document,
             commands::knowledge::update_knowledge_chunking,
             commands::knowledge::update_knowledge_document,
+            commands::knowledge::rebuild_knowledge_embeddings,
+            commands::knowledge::get_knowledge_rebuild_status,
+            commands::knowledge::get_knowledge_rebuild_for_base,
+            commands::knowledge::list_knowledge_rebuild_jobs,
             commands::knowledge::list_world_knowledge_candidates,
             commands::knowledge::list_world_knowledge_scope,
             commands::stickers::list_sticker_packs,

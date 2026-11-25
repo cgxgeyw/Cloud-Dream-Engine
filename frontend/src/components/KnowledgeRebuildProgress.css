@@ -1,0 +1,167 @@
+.knowledge-rebuild-stack {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 9000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.knowledge-rebuild-card {
+  position: relative;
+  pointer-events: auto;
+  padding: 14px 16px 12px;
+  border-radius: 14px;
+  background: var(--surface-panel, #1c1b22);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.42);
+  color: var(--text-primary, #f2f0f6);
+  animation: knowledge-rebuild-in 0.24s ease-out;
+}
+
+.knowledge-rebuild-card--done {
+  border-color: rgba(88, 196, 132, 0.55);
+}
+
+.knowledge-rebuild-card--failed {
+  border-color: rgba(224, 92, 92, 0.6);
+}
+
+@keyframes knowledge-rebuild-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.knowledge-rebuild-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.knowledge-rebuild-title {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.knowledge-rebuild-percent {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted, #a9a5b6);
+}
+
+.knowledge-rebuild-sub {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-muted, #a9a5b6);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.knowledge-rebuild-track {
+  margin-top: 10px;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.knowledge-rebuild-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #6b8cff, #9c6bff);
+  transition: width 0.35s ease;
+}
+
+.knowledge-rebuild-card--done .knowledge-rebuild-fill {
+  background: linear-gradient(90deg, #58c484, #6be0a0);
+}
+
+.knowledge-rebuild-card--failed .knowledge-rebuild-fill {
+  background: linear-gradient(90deg, #e05c5c, #ff8a8a);
+}
+
+/* 运行中给进度条加流动高光，强调"还在动" */
+.knowledge-rebuild-card:not(.knowledge-rebuild-card--done):not(.knowledge-rebuild-card--failed) .knowledge-rebuild-fill {
+  background: linear-gradient(90deg, #6b8cff, #9c6bff, #6b8cff);
+  background-size: 200% 100%;
+  animation: knowledge-rebuild-flow 1.6s linear infinite;
+}
+
+/* 准备阶段（还没拿到总片数）用不确定态条纹 */
+.knowledge-rebuild-fill--preparing {
+  background: repeating-linear-gradient(
+    90deg,
+    rgba(107, 140, 255, 0.35) 0,
+    rgba(107, 140, 255, 0.35) 12px,
+    rgba(156, 107, 255, 0.55) 12px,
+    rgba(156, 107, 255, 0.55) 24px
+  );
+  background-size: 48px 100%;
+  animation: knowledge-rebuild-prepare 0.8s linear infinite;
+}
+
+@keyframes knowledge-rebuild-prepare {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 48px 0;
+  }
+}
+
+@keyframes knowledge-rebuild-flow {
+  from {
+    background-position: 0% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+
+.knowledge-rebuild-meta {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted, #a9a5b6);
+}
+
+.knowledge-rebuild-close {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted, #a9a5b6);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.knowledge-rebuild-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary, #f2f0f6);
+}
+
+@media (max-width: 640px) {
+  .knowledge-rebuild-stack {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    max-width: none;
+  }
+}

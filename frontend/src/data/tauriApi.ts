@@ -748,6 +748,24 @@ export function fetchKnowledgeBases(worldId?: string | null): Promise<import('./
 export function createKnowledgeBase(name: string, description: string, worldId: string | null): Promise<import('./types').KnowledgeBase> { return tauriCommand('create_knowledge_base', { name, description, worldId }); }
 export function deleteKnowledgeBase(id: string): Promise<void> { return tauriCommand('delete_knowledge_base', { id }); }
 export function updateKnowledgeChunking(id: string, strategy: string, maxChars: number, overlapChars: number, delimiter: string): Promise<import('./types').KnowledgeBase> { return tauriCommand('update_knowledge_chunking', { id, strategy, maxChars, overlapChars, delimiter }); }
+export function rebuildKnowledgeEmbeddings(knowledgeBaseId: string): Promise<import('./types').KnowledgeRebuildStart> { return tauriCommand('rebuild_knowledge_embeddings', { knowledgeBaseId }); }
+export function getKnowledgeRebuildStatus(jobId: string): Promise<import('./types').KnowledgeRebuildSnapshot | null> { return tauriCommand('get_knowledge_rebuild_status', { jobId }); }
+export function getKnowledgeRebuildForBase(knowledgeBaseId: string): Promise<import('./types').KnowledgeRebuildSnapshot | null> { return tauriCommand('get_knowledge_rebuild_for_base', { knowledgeBaseId }); }
+export function listKnowledgeRebuildJobs(): Promise<import('./types').KnowledgeRebuildSnapshot[]> { return tauriCommand('list_knowledge_rebuild_jobs'); }
+export function onKnowledgeRebuildProgress(callback: (snapshot: import('./types').KnowledgeRebuildSnapshot) => void): () => void {
+  const unlistenPromise = listen<import('./types').KnowledgeRebuildSnapshot>('knowledge-rebuild:progress', (event) => {
+    if (event.payload) callback(event.payload);
+  });
+  let resolvedUnlisten: (() => void) | null = null;
+  unlistenPromise.then((fn) => { resolvedUnlisten = fn; });
+  let cancelled = false;
+  return () => {
+    if (cancelled) return;
+    cancelled = true;
+    if (resolvedUnlisten) resolvedUnlisten();
+    else unlistenPromise.then((fn) => fn());
+  };
+}
 export function fetchKnowledgeDocuments(knowledgeBaseId: string): Promise<import('./types').KnowledgeDocument[]> { return tauriCommand('list_knowledge_documents', { knowledgeBaseId }); }
 export async function addKnowledgeDocument(knowledgeBaseId: string, file: File): Promise<import('./types').KnowledgeDocument> { return tauriCommand('add_knowledge_document', { knowledgeBaseId, filename: file.name, data: Array.from(new Uint8Array(await file.arrayBuffer())) }); }
 export function deleteKnowledgeDocument(id: string): Promise<void> { return tauriCommand('delete_knowledge_document', { id }); }

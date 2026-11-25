@@ -787,6 +787,16 @@ export async function fetchKnowledgeBases(worldId?: string | null) { return (awa
 export async function createKnowledgeBase(name: string, description: string, worldId: string | null) { return (await getTauri()).createKnowledgeBase(name, description, worldId); }
 export async function deleteKnowledgeBase(id: string) { return (await getTauri()).deleteKnowledgeBase(id); }
 export async function updateKnowledgeChunking(id: string, strategy: string, maxChars: number, overlapChars: number, delimiter: string) { return (await getTauri()).updateKnowledgeChunking(id, strategy, maxChars, overlapChars, delimiter); }
+export async function rebuildKnowledgeEmbeddings(knowledgeBaseId: string) { return (await getTauri()).rebuildKnowledgeEmbeddings(knowledgeBaseId); }
+export async function getKnowledgeRebuildStatus(jobId: string) { return (await getTauri()).getKnowledgeRebuildStatus(jobId); }
+export async function getKnowledgeRebuildForBase(knowledgeBaseId: string) { return (await getTauri()).getKnowledgeRebuildForBase(knowledgeBaseId); }
+export async function listKnowledgeRebuildJobs() { return (await getTauri()).listKnowledgeRebuildJobs(); }
+export async function onKnowledgeRebuildProgress(callback: (snapshot: import('./types').KnowledgeRebuildSnapshot) => void): Promise<() => void> {
+  if (isTauri) {
+    return (await getTauri()).onKnowledgeRebuildProgress(callback);
+  }
+  return () => {};
+}
 export async function fetchKnowledgeDocuments(id: string) { return (await getTauri()).fetchKnowledgeDocuments(id); }
 export async function addKnowledgeDocument(id: string, file: File) { return (await getTauri()).addKnowledgeDocument(id, file); }
 export async function deleteKnowledgeDocument(id: string) { return (await getTauri()).deleteKnowledgeDocument(id); }

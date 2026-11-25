@@ -1959,6 +1959,17 @@ pub(crate) fn normalize_memory_text(text: &str) -> String {
         .collect()
 }
 
+/// 知识库 FTS5 词法索引用的文本形态：先归一化（去空白/标点、小写），再把每个字符
+/// 用单个空格隔开。这样 trigram 分词器能把任意 ≥2 字符的子串（中英文/混合）都切成
+/// 可命中的 3-gram，且不会产生非连续子串的假阳性。查询侧用同样方式转成引号短语去 MATCH。
+pub(crate) fn knowledge_fts_index_text(text: &str) -> String {
+    normalize_memory_text(text)
+        .chars()
+        .map(|ch| ch.to_string())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn extract_turn_index(message: &ChatMessage) -> Option<i32> {
     message
         .metadata

@@ -5,6 +5,7 @@ import { SettingsProvider } from "./data/SettingsContext";
 import { LanguageProvider } from "./data/i18n/context";
 import { isTauriEnvironment } from "./data/apiAdapter";
 import { ToastContainer } from "./components/Toast";
+import { KnowledgeRebuildProgress } from "./components/KnowledgeRebuildProgress";
 
 const HomePage = lazy(() => import("./pages/HomePage").then((module) => ({ default: module.HomePage })));
 const NewGamePage = lazy(() => import("./pages/NewGamePage").then((module) => ({ default: module.NewGamePage })));
@@ -64,6 +65,7 @@ export default function App() {
             <AppRoutes />
           </ResponsiveLayout>
           <ToastContainer />
+          <KnowledgeRebuildProgress />
         </SettingsProvider>
       </LanguageProvider>
     </Router>

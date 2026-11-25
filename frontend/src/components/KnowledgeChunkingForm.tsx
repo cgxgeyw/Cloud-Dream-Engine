@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { updateKnowledgeChunking } from '../data/apiAdapter';
+import { updateKnowledgeChunking, rebuildKnowledgeEmbeddings } from '../data/apiAdapter';
 import type { KnowledgeBase, KnowledgeChunkStrategy } from '../data/types';
 
 export const CHUNK_MAX_CHARS_MIN = 100;
@@ -20,6 +20,8 @@ export function KnowledgeChunkingForm({ base, disabled, onSaved, onError }: Prop
   const [overlapChars, setOverlapChars] = useState(String(base.chunk_overlap_chars));
   const [delimiter, setDelimiter] = useState(base.chunk_delimiter);
   const [saving, setSaving] = useState(false);
+  const [rebuilding, setRebuilding] = useState(false);
+  const [rebuildMessage, setRebuildMessage] = useState('');
 
   useEffect(() => {
     setStrategy(base.chunk_strategy);
@@ -58,6 +60,19 @@ export function KnowledgeChunkingForm({ base, disabled, onSaved, onError }: Prop
     }
   };
 
+  const rebuild = async () => {
+    setRebuilding(true);
+    setRebuildMessage('');
+    try {
+      const result = await rebuildKnowledgeEmbeddings(base.id);
+      setRebuildMessage(`已开始重建「${result.base_name}」的向量索引，可在右下角进度条查看进度，或切到其他页面后台继续。`);
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRebuilding(false);
+    }
+  };
+
   return (
     <form className="knowledge-chunking" onSubmit={e => { e.preventDefault(); void save(); }}>
       <div className="knowledge-chunking-title">分块方式</div>
@@ -87,8 +102,10 @@ export function KnowledgeChunkingForm({ base, disabled, onSaved, onError }: Prop
       {validationError ? <p role="alert" className="error-text">{validationError}</p> : null}
       <p className="text-muted">修改后立即对检索生效，无需重新上传资料。</p>
       <p className="text-muted">检索时会把切片和查询一起做向量比对，再与关键词命中混合排序；向量模型未启用或未下载时自动退回纯关键词匹配。</p>
+      {rebuildMessage ? <p className="text-muted" role="status">{rebuildMessage}</p> : null}
       <div className="knowledge-mobile-actions">
         <button className="action-btn action-btn--accent" disabled={disabled || saving || !dirty || Boolean(validationError)}>{saving ? '保存中…' : '保存分块设置'}</button>
+        <button className="action-btn" type="button" disabled={disabled || rebuilding} onClick={() => void rebuild()}>{rebuilding ? '启动中…' : '重建向量索引'}</button>
       </div>
     </form>
   );

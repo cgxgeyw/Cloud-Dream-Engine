@@ -54,6 +54,11 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             updated_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_knowledge_documents_base ON knowledge_documents(knowledge_base_id);
+        CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_documents_fts USING fts5(
+            document_id UNINDEXED,
+            content,
+            tokenize = 'trigram'
+        );
         CREATE TABLE IF NOT EXISTS knowledge_chunk_embeddings (
             document_id TEXT NOT NULL REFERENCES knowledge_documents(id) ON DELETE CASCADE,
             chunk_index INTEGER NOT NULL,
@@ -562,7 +567,43 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     )?;
     migrate_world_knowledge_bindings(conn)?;
     seeds::ensure_all(conn)?;
+    // 兜底补齐 FTS5 索引：放在 seeds 之后，覆盖内置世界带入的知识库文档。
+    backfill_knowledge_fts(conn)?;
 
+    Ok(())
+}
+
+/// 把 `knowledge_documents` 里缺失的行补进 FTS5 词法索引。
+/// 索引存的是 `normalize_memory_text` 归一化后的正文（去掉空白/标点），与检索时的
+/// 词法命中口径一致。正文靠文档增删改显式维护，这里只在启动时兜底补齐历史数据
+/// （例如首次引入 FTS5 前的文档）。
+fn backfill_knowledge_fts(conn: &Connection) -> Result<(), rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT id, title, content FROM knowledge_documents d
+         WHERE d.id NOT IN (SELECT document_id FROM knowledge_documents_fts)",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(stmt);
+    for (id, title, content) in rows {
+        let normalized = crate::services::game_engine::memory::knowledge_fts_index_text(&format!(
+            "{title} {content}"
+        ));
+        if normalized.is_empty() {
+            continue;
+        }
+        conn.execute(
+            "INSERT INTO knowledge_documents_fts (document_id, content) VALUES (?1, ?2)",
+            rusqlite::params![id, normalized],
+        )?;
+    }
     Ok(())
 }
 

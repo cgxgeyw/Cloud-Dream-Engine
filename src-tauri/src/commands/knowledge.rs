@@ -278,6 +278,169 @@ fn resolve_search_base_ids(
     character_knowledge_scope(conn, world_id, character_id)
 }
 
+/// FTS5 索引里的正文统一存「逐字符加空格」的归一化文本，这样 trigram 分词器
+/// 能把 2 个字符以上的任意子串（中英文/混合）都切成可命中的 3-gram，且不会产生
+/// 非连续子串的假阳性。查询侧用同样的方式把词条变成带引号的短语去 MATCH。
+fn fts_index_text(text: &str) -> String {
+    crate::services::game_engine::memory::knowledge_fts_index_text(text)
+}
+
+/// 把一个词法词条转成 FTS5 MATCH 短语（引号包裹 + 逐字符加空格）。
+/// 词条来自 `build_memory_search_terms`，只含字母数字与中文，不含 FTS 特殊字符，
+/// 因此直接放进引号内是安全的。
+fn fts_phrase(term: &str) -> String {
+    format!("\"{}\"", fts_index_text(term))
+}
+
+/// 维护单个文档的 FTS5 行：先删旧行再按最新正文写入。幂等，重复调用安全。
+fn upsert_document_fts(conn: &rusqlite::Connection, document_id: &str, text: &str) {
+    conn.execute(
+        "DELETE FROM knowledge_documents_fts WHERE rowid IN (SELECT rowid FROM knowledge_documents_fts WHERE document_id = ?1)",
+        params![document_id],
+    )
+    .ok();
+    let indexed = fts_index_text(text);
+    if indexed.is_empty() {
+        return;
+    }
+    conn.execute(
+        "INSERT INTO knowledge_documents_fts (document_id, content) VALUES (?1, ?2)",
+        params![document_id, indexed],
+    )
+    .ok();
+}
+
+/// 删除单个文档的 FTS5 行。
+fn delete_document_fts(conn: &rusqlite::Connection, document_id: &str) {
+    conn.execute(
+        "DELETE FROM knowledge_documents_fts WHERE rowid IN (SELECT rowid FROM knowledge_documents_fts WHERE document_id = ?1)",
+        params![document_id],
+    )
+    .ok();
+}
+
+/// 用 FTS5 词法索引预筛候选文档 id，取代「把所有正文捞出来再逐片切分」。
+///
+/// 逐字符加空格后，≥2 字符的词条（中英文/混合）都能精确命中。命中的文档按命中
+/// 词条数降序返回；没有可用的词条（查询过短）或索引为空时回退到全量扫描。
+fn fts_prefilter_document_ids(
+    conn: &rusqlite::Connection,
+    base_ids: &[String],
+    terms: &[String],
+) -> Vec<(String, i64)> {
+    let usable: Vec<String> = terms
+        .iter()
+        .filter(|term| term.chars().count() >= 2)
+        .map(|term| fts_phrase(term))
+        .collect();
+    if usable.is_empty() {
+        return Vec::new();
+    }
+    let placeholders = (0..base_ids.len())
+        .map(|index| format!("?{}", index + 2))
+        .collect::<Vec<_>>()
+        .join(", ");
+    // 先把候选限定在范围内，再让 FTS5 按命中打分；JOIN 用 document_id 与
+    // knowledge_documents 关联，确保只返回仍然存在的文档。
+    let sql = format!(
+        "SELECT d.id, COUNT(*) AS hits FROM knowledge_documents_fts f \
+         JOIN knowledge_documents d ON d.id = f.document_id \
+         WHERE knowledge_documents_fts MATCH ?1 AND d.knowledge_base_id IN ({placeholders}) \
+         GROUP BY d.id ORDER BY hits DESC, d.id"
+    );
+    let match_query = usable.join(" OR ");
+    let mut values: Vec<&dyn rusqlite::types::ToSql> = Vec::with_capacity(base_ids.len() + 1);
+    values.push(&match_query);
+    for id in base_ids {
+        values.push(id);
+    }
+    let Ok(mut stmt) = conn.prepare(&sql) else {
+        return Vec::new();
+    };
+    let rows = match stmt.query_map(values.as_slice(), |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    }) {
+        Ok(rows) => rows,
+        Err(_) => return Vec::new(),
+    };
+    rows.filter_map(|row| row.ok()).collect()
+}
+
+/// 把候选文档 id 展开成待切分的文档行。`prefiltered` 非空时只切这些文档；
+/// 为空表示回退全量扫描（查询过短或索引未命中）。
+fn load_candidate_rows(
+    conn: &rusqlite::Connection,
+    base_ids: &[String],
+    prefiltered: &[(String, i64)],
+) -> Result<Vec<(String, String, String, String, ChunkConfig)>, String> {
+    if prefiltered.is_empty() {
+        // 回退：全量扫描范围内文档（保持旧行为）。
+        let placeholders = (0..base_ids.len())
+            .map(|index| format!("?{}", index + 1))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT d.id, d.title, d.content, b.name, b.chunk_strategy, b.chunk_max_chars, b.chunk_overlap_chars, b.chunk_delimiter FROM knowledge_documents d JOIN knowledge_bases b ON b.id = d.knowledge_base_id WHERE b.enabled = 1 AND d.knowledge_base_id IN ({placeholders}) ORDER BY d.id"
+        );
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let mut values: Vec<&dyn rusqlite::types::ToSql> = Vec::with_capacity(base_ids.len());
+        for id in base_ids {
+            values.push(id);
+        }
+        return stmt
+            .query_map(values.as_slice(), row_to_document)
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string());
+    }
+    // 命中路径：只切命中文档，并按 FTS 打分顺序返回。
+    let mut ids: Vec<String> = prefiltered.iter().map(|(id, _)| id.clone()).collect();
+    ids.sort();
+    ids.dedup();
+    let placeholders = (0..ids.len())
+        .map(|index| format!("?{}", index + 1))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT d.id, d.title, d.content, b.name, b.chunk_strategy, b.chunk_max_chars, b.chunk_overlap_chars, b.chunk_delimiter FROM knowledge_documents d JOIN knowledge_bases b ON b.id = d.knowledge_base_id WHERE b.enabled = 1 AND d.id IN ({placeholders})"
+    );
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let mut values: Vec<&dyn rusqlite::types::ToSql> = Vec::with_capacity(ids.len());
+    for id in &ids {
+        values.push(id);
+    }
+    let mut rows = stmt
+        .query_map(values.as_slice(), row_to_document)
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    // 按预筛顺序稳定排序：命中文档在前，命中多的更靠前。
+    let order: std::collections::HashMap<&str, usize> = prefiltered
+        .iter()
+        .enumerate()
+        .map(|(index, (id, _))| (id.as_str(), index))
+        .collect();
+    rows.sort_by_key(|row| order.get(row.0.as_str()).copied().unwrap_or(usize::MAX));
+    Ok(rows)
+}
+
+fn row_to_document(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<(String, String, String, String, ChunkConfig)> {
+    Ok((
+        row.get::<_, String>(0)?,
+        row.get::<_, String>(1)?,
+        row.get::<_, String>(2)?,
+        row.get::<_, String>(3)?,
+        ChunkConfig {
+            strategy: row.get::<_, String>(4)?,
+            max_chars: row.get::<_, i64>(5)?,
+            overlap_chars: row.get::<_, i64>(6)?,
+            delimiter: row.get::<_, String>(7)?,
+        },
+    ))
+}
+
 /// 阶段 1（同步，持锁）：解析查询、切分文档、读已缓存的切片向量、算词法分、
 /// 收集待嵌入输入。不做任何嵌入推理。
 ///
@@ -310,37 +473,9 @@ pub fn prepare_search(
                 computed: Vec::new(),
             });
         }
-        let placeholders = (0..base_ids.len())
-            .map(|index| format!("?{}", index + 1))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let sql = format!(
-            "SELECT d.id, d.title, d.content, b.name, b.chunk_strategy, b.chunk_max_chars, b.chunk_overlap_chars, b.chunk_delimiter FROM knowledge_documents d JOIN knowledge_bases b ON b.id = d.knowledge_base_id WHERE b.enabled = 1 AND d.knowledge_base_id IN ({placeholders}) ORDER BY d.id"
-        );
-        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-        let mut values: Vec<&dyn rusqlite::types::ToSql> = Vec::with_capacity(base_ids.len());
-        for id in &base_ids {
-            values.push(id);
-        }
-        let mapped = stmt
-            .query_map(values.as_slice(), |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, String>(3)?,
-                    ChunkConfig {
-                        strategy: r.get::<_, String>(4)?,
-                        max_chars: r.get::<_, i64>(5)?,
-                        overlap_chars: r.get::<_, i64>(6)?,
-                        delimiter: r.get::<_, String>(7)?,
-                    },
-                ))
-            })
-            .map_err(|e| e.to_string())?;
-        mapped
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?
+        // FTS5 词法预筛：只切分命中的文档；预筛空则回退全量扫描。
+        let prefiltered = fts_prefilter_document_ids(conn, &base_ids, &terms);
+        load_candidate_rows(conn, &base_ids, &prefiltered)?
     };
 
     let mut plan = KnowledgeSearchPlan {
@@ -745,8 +880,114 @@ fn hard_split(text: &str, max: usize, overlap: usize) -> Vec<String> {
     chunks
 }
 
-fn enable_world_knowledge(conn: &rusqlite::Connection, world_id: &str) -> Result<(), String> {
-    conn.execute("UPDATE worlds SET director_config_json = json_set(director_config_json, '$.knowledge_access', json('true')) WHERE id = ?1", params![world_id]).map_err(|e| e.to_string()).map(|_| ())
+/// 新建世界自带知识库时：打开世界级 `knowledge_access`，并把新库加入世界主控的
+/// 可查询范围（`director_config.knowledge_base_ids`）。避免「刚建好的库主控查不到」。
+fn auto_select_owned_base(
+    conn: &rusqlite::Connection,
+    world_id: &str,
+    base_id: &str,
+) -> Result<(), String> {
+    let raw: Option<String> = conn
+        .query_row(
+            "SELECT director_config_json FROM worlds WHERE id = ?1",
+            params![world_id],
+            |row| row.get(0),
+        )
+        .ok();
+    let mut config: serde_json::Value = raw
+        .as_deref()
+        .and_then(|value| serde_json::from_str(value).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    if !config.is_object() {
+        config = serde_json::json!({});
+    }
+    {
+        let object = config
+            .as_object_mut()
+            .ok_or_else(|| "世界配置不是对象".to_string())?;
+        object.insert("knowledge_access".to_string(), serde_json::json!(true));
+        let ids = object
+            .entry("knowledge_base_ids".to_string())
+            .or_insert_with(|| serde_json::json!([]));
+        if let Some(array) = ids.as_array_mut() {
+            if !array.iter().any(|value| value.as_str() == Some(base_id)) {
+                array.push(serde_json::json!(base_id));
+            }
+        }
+    }
+    conn.execute(
+        "UPDATE worlds SET director_config_json = ?2 WHERE id = ?1",
+        params![world_id, serde_json::to_string(&config).unwrap_or_default()],
+    )
+    .map_err(|e| e.to_string())
+    .map(|_| ())
+}
+
+/// 删除知识库后，把遗留的 id 从世界主控勾选列表与角色勾选列表里清掉，
+/// 避免脏数据（检索时虽会用 `allowed_knowledge_ids` 再过滤一次，但保持数据干净）。
+fn strip_base_from_scopes(conn: &rusqlite::Connection, base_id: &str) -> Result<(), String> {
+    {
+        let mut stmt = conn
+            .prepare("SELECT id, director_config_json FROM worlds")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        drop(stmt);
+        for (world_id, raw) in rows {
+            let mut config: serde_json::Value =
+                serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}));
+            let changed = config
+                .get_mut("knowledge_base_ids")
+                .and_then(|value| value.as_array_mut())
+                .map(|array| {
+                    let before = array.len();
+                    array.retain(|value| value.as_str() != Some(base_id));
+                    array.len() != before
+                })
+                .unwrap_or(false);
+            if changed {
+                conn.execute(
+                    "UPDATE worlds SET director_config_json = ?2 WHERE id = ?1",
+                    params![world_id, serde_json::to_string(&config).unwrap_or_default()],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    {
+        let mut stmt = conn
+            .prepare("SELECT id, knowledge_base_ids_json FROM characters")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        drop(stmt);
+        for (character_id, raw) in rows {
+            let ids: Vec<String> = serde_json::from_str(&raw).unwrap_or_default();
+            if !ids.iter().any(|value| value == base_id) {
+                continue;
+            }
+            let filtered: Vec<String> = ids.into_iter().filter(|value| value != base_id).collect();
+            conn.execute(
+                "UPDATE characters SET knowledge_base_ids_json = ?2 WHERE id = ?1",
+                params![
+                    character_id,
+                    serde_json::to_string(&filtered).unwrap_or_default()
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 /// 世界主控编辑页可勾选的知识库列表：该世界自带的库 + 全部公共库。
@@ -908,7 +1149,13 @@ pub fn import_bundled(
             if doc.content.len() > 20 * 1024 * 1024 {
                 return Err("知识库正文最大 20MB".into());
             }
-            conn.execute("INSERT INTO knowledge_documents (id, knowledge_base_id, title, content, source_filename, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![uuid::Uuid::new_v4().to_string(), id, doc.title, doc.content, doc.source_filename, chrono::Utc::now().to_rfc3339()]).map_err(|e| e.to_string())?;
+            let document_id = uuid::Uuid::new_v4().to_string();
+            conn.execute("INSERT INTO knowledge_documents (id, knowledge_base_id, title, content, source_filename, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![document_id, id, doc.title, doc.content, doc.source_filename, chrono::Utc::now().to_rfc3339()]).map_err(|e| e.to_string())?;
+            upsert_document_fts(
+                conn,
+                &document_id,
+                &format!("{} {}", doc.title, doc.content),
+            );
         }
     }
     Ok(())
@@ -970,7 +1217,7 @@ pub async fn create_knowledge_base(
         )
         .map_err(|e| e.to_string())?;
     if let Some(owner) = &world_id {
-        enable_world_knowledge(db.conn(), owner)?;
+        auto_select_owned_base(db.conn(), owner, &id)?;
     }
     db.conn()
         .query_row(
@@ -1025,10 +1272,298 @@ pub async fn update_knowledge_chunking(
 #[tauri::command]
 pub async fn delete_knowledge_base(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let db = state.db.lock().await;
+    // 先清掉该库所有文档的 FTS5 行（虚拟表不跟随外键级联）。
+    db.conn()
+        .execute(
+            "DELETE FROM knowledge_documents_fts WHERE rowid IN (
+                SELECT f.rowid FROM knowledge_documents_fts f
+                JOIN knowledge_documents d ON d.id = f.document_id
+                WHERE d.knowledge_base_id = ?1
+            )",
+            params![id],
+        )
+        .ok();
     db.conn()
         .execute("DELETE FROM knowledge_bases WHERE id = ?1", params![id])
         .map_err(|e| e.to_string())
-        .map(|_| ())
+        .map(|_| ())?;
+    strip_base_from_scopes(db.conn(), &id)
+}
+
+/// 启动知识库向量索引重建（后台任务，立即返回 job id）。
+///
+/// 真正的嵌入在 `tauri::async_runtime::spawn` 的后台任务里跑，不占用调用线程；
+/// 进度写进 `KnowledgeRebuildTracker` 并通过 `knowledge-rebuild:progress` 事件推给前端。
+/// 页面切走 / 关闭前端的进度条都不会中断重建。
+#[tauri::command]
+pub async fn rebuild_knowledge_embeddings(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    knowledge_base_id: String,
+) -> Result<KnowledgeRebuildStart, String> {
+    let base_name = {
+        let db = state.db.lock().await;
+        db.conn()
+            .query_row(
+                "SELECT name FROM knowledge_bases WHERE id = ?1",
+                params![knowledge_base_id],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(|_| "知识库不存在".to_string())?
+    };
+    let job_id = uuid::Uuid::new_v4().to_string();
+    let (job_id, started) = state
+        .knowledge_rebuild
+        .start(&job_id, &knowledge_base_id, &base_name);
+    let snapshot = state
+        .knowledge_rebuild
+        .snapshot(&job_id)
+        .ok_or_else(|| "无法创建重建任务".to_string())?;
+
+    // 已有同库任务在跑：直接复用，不重复启动。
+    if !started {
+        return Ok(KnowledgeRebuildStart {
+            job_id: snapshot.job_id,
+            base_id: snapshot.base_id,
+            base_name: snapshot.base_name,
+            status: snapshot.status,
+        });
+    }
+
+    // 立刻推一次"已启动"快照，让全局进度条在准备切片阶段就出现（此时 total 还是 0）。
+    {
+        use tauri::Emitter;
+        let _ = app.emit("knowledge-rebuild:progress", &snapshot);
+    }
+
+    let app_handle = app.clone();
+    let tracker = state.knowledge_rebuild.clone();
+    let base_id = knowledge_base_id.clone();
+    tauri::async_runtime::spawn(async move {
+        run_knowledge_rebuild(app_handle, tracker, job_id, base_id).await;
+    });
+
+    Ok(KnowledgeRebuildStart {
+        job_id: snapshot.job_id,
+        base_id: snapshot.base_id,
+        base_name: snapshot.base_name,
+        status: snapshot.status,
+    })
+}
+
+/// 查询某个重建任务的当前进度（页面重新挂载时用它恢复）。
+#[tauri::command]
+pub async fn get_knowledge_rebuild_status(
+    state: State<'_, AppState>,
+    job_id: String,
+) -> Result<Option<crate::state::KnowledgeRebuildSnapshot>, String> {
+    Ok(state.knowledge_rebuild.snapshot(&job_id))
+}
+
+/// 查询某知识库最近一次重建任务（含已完成），用于列表/详情页展示。
+#[tauri::command]
+pub async fn get_knowledge_rebuild_for_base(
+    state: State<'_, AppState>,
+    knowledge_base_id: String,
+) -> Result<Option<crate::state::KnowledgeRebuildSnapshot>, String> {
+    Ok(state.knowledge_rebuild.latest_for_base(&knowledge_base_id))
+}
+
+/// 列出所有重建任务快照，供全局进度条在页面切换/重载后恢复。
+#[tauri::command]
+pub async fn list_knowledge_rebuild_jobs(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::state::KnowledgeRebuildSnapshot>, String> {
+    Ok(state.knowledge_rebuild.list())
+}
+
+/// 后台重建主体：分三阶段（持锁准备 → 锁外嵌入 → 持锁写回），每批汇报进度。
+async fn run_knowledge_rebuild(
+    app: tauri::AppHandle,
+    tracker: crate::state::KnowledgeRebuildTracker,
+    job_id: String,
+    knowledge_base_id: String,
+) {
+    use tauri::Emitter;
+    use tauri::Manager;
+
+    let state = app.state::<AppState>();
+
+    // 阶段 1：读配置、解析模型、切片。
+    let prepared = {
+        let db = state.db.lock().await;
+        let conn = db.conn();
+        let base_row: Result<(String, String, i64, i64, String), String> = conn
+            .query_row(
+                "SELECT name, chunk_strategy, chunk_max_chars, chunk_overlap_chars, chunk_delimiter FROM knowledge_bases WHERE id = ?1",
+                params![knowledge_base_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, String>(4)?,
+                    ))
+                },
+            )
+            .map_err(|e| e.to_string());
+        let base = match base_row {
+            Ok(value) => value,
+            Err(error) => {
+                fail_rebuild(&app, &tracker, &job_id, error);
+                return;
+            }
+        };
+        let (base_name, strategy, max_chars, overlap_chars, delimiter) = base;
+        let config = ChunkConfig {
+            strategy,
+            max_chars,
+            overlap_chars,
+            delimiter,
+        };
+        let model = match crate::services::game_engine::memory::resolve_embedding_model_config(conn)
+        {
+            Some(model) => model,
+            None => {
+                fail_rebuild(
+                    &app,
+                    &tracker,
+                    &job_id,
+                    "向量模型未启用，无需重建索引".to_string(),
+                );
+                return;
+            }
+        };
+        let model_key = model.id.trim().to_string();
+        let docs = match conn
+            .prepare("SELECT id, title, content FROM knowledge_documents WHERE knowledge_base_id = ?1 ORDER BY id")
+            .and_then(|mut stmt| {
+                stmt.query_map(params![knowledge_base_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()
+            })
+        {
+            Ok(docs) => docs,
+            Err(error) => {
+                fail_rebuild(&app, &tracker, &job_id, error.to_string());
+                return;
+            }
+        };
+        let mut chunks: Vec<(String, usize, String)> = Vec::new();
+        for (document_id, title, content) in docs {
+            for (chunk_index, excerpt) in split_knowledge_text(&content, &config)
+                .into_iter()
+                .enumerate()
+            {
+                chunks.push((
+                    document_id.clone(),
+                    chunk_index,
+                    format!("{title} {excerpt}"),
+                ));
+            }
+        }
+        let total = chunks.len();
+        tracker.set_total(&job_id, total);
+        if let Some(snapshot) = tracker.snapshot(&job_id) {
+            let _ = app.emit("knowledge-rebuild:progress", &snapshot);
+        }
+        (base_name, model, model_key, chunks)
+    };
+    let (_base_name, model, model_key, chunks) = prepared;
+
+    // 阶段 2：锁外分批嵌入，每批更新进度并推送事件。
+    // 嵌入是阻塞型 CPU/网络调用，用 block_in_place 把它从 async worker 上挪开，
+    // 避免拖住其它后台任务（与检索路径的 embed_search_plan 一致）。
+    let memory = &state.services.runtime.memory;
+    let (embedded, failed) = tokio::task::block_in_place(|| {
+        let mut embedded: Vec<(String, usize, Vec<f32>)> = Vec::new();
+        let mut failed = 0usize;
+        for batch in chunks.chunks(KNOWLEDGE_EMBED_BATCH) {
+            let inputs = batch
+                .iter()
+                .map(|(_, _, text)| {
+                    crate::services::game_engine::memory::normalize_memory_text(text)
+                })
+                .collect::<Vec<_>>();
+            let batch_failed = match memory.embed_with_resolved_model(&model, &inputs) {
+                Ok(vectors) => {
+                    for (position, vector) in vectors.into_iter().enumerate() {
+                        if vector.is_empty() {
+                            continue;
+                        }
+                        if let Some((document_id, chunk_index, _)) = batch.get(position) {
+                            embedded.push((document_id.clone(), *chunk_index, vector));
+                        }
+                    }
+                    0
+                }
+                Err(_) => batch.len(),
+            };
+            if batch_failed > 0 {
+                failed += batch_failed;
+            }
+            if let Some(snapshot) = tracker.advance(&job_id, batch.len(), batch_failed) {
+                let _ = app.emit("knowledge-rebuild:progress", &snapshot);
+            }
+        }
+        (embedded, failed)
+    });
+    let total = chunks.len();
+
+    // 阶段 3：持锁写回向量缓存。
+    let written = {
+        let db = state.db.lock().await;
+        let repo =
+            crate::db::repositories::knowledge_embedding_repo::KnowledgeEmbeddingRepository::new(
+                db.conn(),
+            );
+        let mut written = 0usize;
+        for (document_id, chunk_index, vector) in embedded {
+            if repo
+                .upsert(&document_id, chunk_index, &model_key, &vector)
+                .is_ok()
+            {
+                written += 1;
+            }
+        }
+        written
+    };
+    let _ = written;
+
+    let error = if failed >= total && total > 0 {
+        Some("向量模型调用失败，未能重建任何切片".to_string())
+    } else {
+        None
+    };
+    if let Some(snapshot) = tracker.finish(&job_id, error) {
+        let _ = app.emit("knowledge-rebuild:progress", &snapshot);
+    }
+}
+
+fn fail_rebuild(
+    app: &tauri::AppHandle,
+    tracker: &crate::state::KnowledgeRebuildTracker,
+    job_id: &str,
+    error: String,
+) {
+    use tauri::Emitter;
+    if let Some(snapshot) = tracker.finish(job_id, Some(error)) {
+        let _ = app.emit("knowledge-rebuild:progress", &snapshot);
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnowledgeRebuildStart {
+    pub job_id: String,
+    pub base_id: String,
+    pub base_name: String,
+    pub status: String,
 }
 
 #[tauri::command]
@@ -1128,6 +1663,8 @@ pub async fn update_knowledge_document(
         db.conn(),
     )
     .clear_document(&id);
+    // 同步词法索引（标题也计入可命中文本）。
+    upsert_document_fts(db.conn(), &id, &format!("{title} {content}"));
     Ok(())
 }
 
@@ -1161,6 +1698,7 @@ pub async fn add_knowledge_document(
         .to_string();
     let db = state.db.lock().await;
     db.conn().execute("INSERT INTO knowledge_documents (id, knowledge_base_id, title, content, source_filename, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![id, knowledge_base_id, title, content, filename, now]).map_err(|e| e.to_string())?;
+    upsert_document_fts(db.conn(), &id, &format!("{title} {content}"));
     Ok(KnowledgeDocument {
         id,
         knowledge_base_id,
@@ -1180,7 +1718,9 @@ pub async fn delete_knowledge_document(
     db.conn()
         .execute("DELETE FROM knowledge_documents WHERE id = ?1", params![id])
         .map_err(|e| e.to_string())
-        .map(|_| ())
+        .map(|_| ())?;
+    delete_document_fts(db.conn(), &id);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1188,7 +1728,7 @@ mod tests {
     use super::*;
     fn database() -> rusqlite::Connection {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE worlds(id TEXT PRIMARY KEY, director_config_json TEXT DEFAULT '{}'); CREATE TABLE knowledge_bases(id TEXT PRIMARY KEY, world_id TEXT REFERENCES worlds(id) ON DELETE CASCADE, name TEXT, description TEXT, enabled INTEGER DEFAULT 1, chunk_strategy TEXT NOT NULL DEFAULT 'length', chunk_max_chars INTEGER NOT NULL DEFAULT 800, chunk_overlap_chars INTEGER NOT NULL DEFAULT 120, chunk_delimiter TEXT NOT NULL DEFAULT ''); CREATE TABLE knowledge_documents(id TEXT PRIMARY KEY, knowledge_base_id TEXT REFERENCES knowledge_bases(id) ON DELETE CASCADE, title TEXT, content TEXT, source_filename TEXT, updated_at TEXT); CREATE TABLE knowledge_chunk_embeddings(document_id TEXT NOT NULL, chunk_index INTEGER NOT NULL, model_key TEXT NOT NULL, vector_json TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(document_id, chunk_index, model_key)); CREATE TABLE world_knowledge_bindings(world_id TEXT REFERENCES worlds(id) ON DELETE CASCADE, knowledge_base_id TEXT REFERENCES knowledge_bases(id) ON DELETE CASCADE, PRIMARY KEY(world_id,knowledge_base_id)); INSERT INTO worlds(id) VALUES('one'),('two');").unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE worlds(id TEXT PRIMARY KEY, director_config_json TEXT DEFAULT '{}'); CREATE TABLE knowledge_bases(id TEXT PRIMARY KEY, world_id TEXT REFERENCES worlds(id) ON DELETE CASCADE, name TEXT, description TEXT, enabled INTEGER DEFAULT 1, chunk_strategy TEXT NOT NULL DEFAULT 'length', chunk_max_chars INTEGER NOT NULL DEFAULT 800, chunk_overlap_chars INTEGER NOT NULL DEFAULT 120, chunk_delimiter TEXT NOT NULL DEFAULT ''); CREATE TABLE knowledge_documents(id TEXT PRIMARY KEY, knowledge_base_id TEXT REFERENCES knowledge_bases(id) ON DELETE CASCADE, title TEXT, content TEXT, source_filename TEXT, updated_at TEXT); CREATE VIRTUAL TABLE knowledge_documents_fts USING fts5(document_id UNINDEXED, content, tokenize='trigram'); CREATE TABLE knowledge_chunk_embeddings(document_id TEXT NOT NULL, chunk_index INTEGER NOT NULL, model_key TEXT NOT NULL, vector_json TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(document_id, chunk_index, model_key)); CREATE TABLE world_knowledge_bindings(world_id TEXT REFERENCES worlds(id) ON DELETE CASCADE, knowledge_base_id TEXT REFERENCES knowledge_bases(id) ON DELETE CASCADE, PRIMARY KEY(world_id,knowledge_base_id)); INSERT INTO worlds(id) VALUES('one'),('two');").unwrap();
         conn
     }
     #[test]
@@ -1551,5 +2091,111 @@ mod tests {
         assert_eq!(extract_text("test.docx", &bytes).unwrap(), "规则 & 毒酒\n");
         assert!(extract_text("bad.txt", &[0xff]).is_err());
         assert!(extract_text("bad.exe", b"text").is_err());
+    }
+    #[test]
+    fn fts_prefilter_narrows_documents_by_query() {
+        let conn = database();
+        conn.execute_batch(
+            "INSERT INTO knowledge_bases (id, world_id, name, description, enabled) VALUES('owned','one','专属','',1);\
+             INSERT INTO knowledge_documents (id, knowledge_base_id, title, content, source_filename, updated_at) VALUES\
+             ('d1','owned','毒酒','毒酒每次扣十点生命','a.md','now'),\
+             ('d2','owned','城墙','城门由两队轮值','b.md','now'),\
+             ('d3','owned','草药','止血草生长在北坡','c.md','now');",
+        )
+        .unwrap();
+        for (id, title, content) in [
+            ("d1", "毒酒", "毒酒每次扣十点生命"),
+            ("d2", "城墙", "城门由两队轮值"),
+            ("d3", "草药", "止血草生长在北坡"),
+        ] {
+            upsert_document_fts(&conn, id, &format!("{title} {content}"));
+        }
+
+        let terms = crate::services::game_engine::memory::build_memory_search_terms("城门守军口令");
+        let hits = fts_prefilter_document_ids(&conn, &["owned".to_string()], &terms);
+        let ids: Vec<&str> = hits.iter().map(|(id, _)| id.as_str()).collect();
+        assert!(
+            ids.contains(&"d2"),
+            "城门 term should hit d2, got {ids:?} (terms={terms:?})"
+        );
+        assert!(!ids.contains(&"d1"));
+        assert!(!ids.contains(&"d3"));
+
+        let terms = crate::services::game_engine::memory::build_memory_search_terms("毒酒");
+        let hits = fts_prefilter_document_ids(&conn, &["owned".to_string()], &terms);
+        let ids: Vec<&str> = hits.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["d1"],
+            "毒酒 term should hit d1, got {ids:?} (terms={terms:?})"
+        );
+
+        let terms = crate::services::game_engine::memory::build_memory_search_terms("zzzz不存在");
+        assert!(fts_prefilter_document_ids(&conn, &["owned".to_string()], &terms).is_empty());
+    }
+    #[test]
+    fn creating_owned_base_auto_selects_it_for_the_world() {
+        let conn = database();
+        auto_select_owned_base(&conn, "one", "owned-1").unwrap();
+        let raw: String = conn
+            .query_row(
+                "SELECT director_config_json FROM worlds WHERE id='one'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let config: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(config["knowledge_access"], serde_json::json!(true));
+        assert_eq!(config["knowledge_base_ids"], serde_json::json!(["owned-1"]));
+        // 重复调用不重复插入。
+        auto_select_owned_base(&conn, "one", "owned-1").unwrap();
+        let raw: String = conn
+            .query_row(
+                "SELECT director_config_json FROM worlds WHERE id='one'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let config: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(config["knowledge_base_ids"].as_array().unwrap().len(), 1);
+    }
+    #[test]
+    fn strip_base_from_scopes_removes_stale_ids() {
+        let conn = database();
+        conn.execute_batch(
+            "CREATE TABLE characters(id TEXT PRIMARY KEY, world_id TEXT, knowledge_base_ids_json TEXT NOT NULL DEFAULT '[]');\
+             UPDATE worlds SET director_config_json = '{\"knowledge_base_ids\":[\"kept\",\"gone\"]}' WHERE id='one';\
+             INSERT INTO characters (id, world_id, knowledge_base_ids_json) VALUES ('c1','one','[\"gone\",\"kept\"]'),('c2','one','[\"gone\"]');",
+        )
+        .unwrap();
+        strip_base_from_scopes(&conn, "gone").unwrap();
+        let world_raw: String = conn
+            .query_row(
+                "SELECT director_config_json FROM worlds WHERE id='one'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let world_config: serde_json::Value = serde_json::from_str(&world_raw).unwrap();
+        assert_eq!(
+            world_config["knowledge_base_ids"],
+            serde_json::json!(["kept"])
+        );
+        let c1: String = conn
+            .query_row(
+                "SELECT knowledge_base_ids_json FROM characters WHERE id='c1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let c2: String = conn
+            .query_row(
+                "SELECT knowledge_base_ids_json FROM characters WHERE id='c2'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(c1, serde_json::to_string(&vec!["kept"]).unwrap());
+        assert_eq!(c2, "[]");
     }
 }
