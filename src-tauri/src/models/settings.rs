@@ -11,7 +11,7 @@ pub struct AppSettings {
     pub default_embedding_model: String,
     pub home_background_strategy: String,
     pub export_directory: String,
-    /// 应用级生成参数（第 8 项三级覆盖的第一层）。字段留空表示不覆盖内置默认。
+    /// 应用级生成参数。字段留空表示不覆盖内置默认。
     #[serde(default)]
     pub generation_params: GenerationParams,
 }

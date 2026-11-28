@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   assetUrl,
@@ -28,7 +28,7 @@ import {
   type WorldResponse,
 } from "../data/apiAdapter";
 import { AttributePanel } from "../components/AttributePanel";
-import { GenerationParamsEditor } from "../components/GenerationParamsEditor";
+import { HelpTip } from "../components/HelpTip";
 import { ConfirmDialog } from "../components/ModalDialog";
 import { useIsMobile } from "../components/ResponsiveLayout";
 import { useSectionParam } from "../hooks/useSectionParam";
@@ -68,6 +68,14 @@ import {
   OpeningComposerRole,
   OpeningSpeakerOption,
   ReturnProcessingRule,
+  DIRECTOR_ONLY_MCP_TOOL_IDS,
+  MCP_TOOL_CHANGE_SCENE_ID,
+  MCP_TOOL_LIST_CHARACTERS_ID,
+  MCP_TOOL_LIST_SCENES_ID,
+  MCP_TOOL_SWITCH_PLAYER_CHARACTER_ID,
+  applyDirectorImageGenerationEnabled,
+  resolveDirectorImageGenerationEnabled,
+  isDirectorOnlyMcpToolId,
   characterPromptSections,
   directorPromptSections,
   UiGovernanceSnapshot,
@@ -99,45 +107,46 @@ type DirectorPaneId =
   | "mode"
   | "permissions"
   | "context"
-  | "memory"
+  | "summaries"
   | "prompt"
-  | "tools"
-  | "params"
-  | "summaries";
+  | "tools";
 
 type StylePaneId = "backgrounds" | "scenes" | "ui" | "preview";
 
-const DIRECTOR_NAV_GROUPS: Array<{ label: string; items: Array<{ id: DirectorPaneId; label: string }> }> = [
-  {
-    label: "基础",
-    items: [
-      { id: "mode", label: "运行方式" },
-      { id: "permissions", label: "权限与判定" },
-      { id: "context", label: "上下文轮数" },
-      { id: "memory", label: "角色记忆" },
-    ],
-  },
-  { label: "提示词", items: [{ id: "prompt", label: "主控预设" }] },
-  { label: "工具", items: [{ id: "tools", label: "MCP 工具授权" }] },
-  {
-    label: "高级",
-    items: [
-      { id: "params", label: "生成参数" },
-      { id: "summaries", label: "总结提示词" },
-    ],
-  },
+const DIRECTOR_NAV_ITEMS: Array<{ id: DirectorPaneId; label: string }> = [
+  { id: "mode", label: "运行方式" },
+  { id: "permissions", label: "权限与判定" },
+  { id: "context", label: "上下文轮数" },
+  { id: "summaries", label: "总结设置" },
+  { id: "prompt", label: "模型提示词设置" },
+  { id: "tools", label: "MCP 工具授权" },
 ];
 
-const DIRECTOR_PANE_META: Record<DirectorPaneId, { title: string; desc: string }> = {
-  mode: { title: "运行方式", desc: "决定主控怎么调度角色，以及使用哪个文本模型" },
-  permissions: { title: "权限与判定", desc: "控制主控能改动哪些内容、能否向玩家发起选择" },
-  context: { title: "上下文轮数", desc: "控制每回合带多少历史，以及工具循环的上限" },
-  memory: { title: "角色记忆", desc: "召回窗口、检索方式与固定桶总结间隔" },
-  prompt: { title: "主控预设", desc: "世界主控的系统提示词，留空时使用框架默认" },
-  tools: { title: "MCP 工具授权", desc: "授权给主控的自定义工具，按需开启" },
-  params: { title: "生成参数", desc: "留空即使用应用默认，存档还可以再覆盖" },
-  summaries: { title: "总结提示词", desc: "固定桶记忆总结使用的模板，留空使用内置默认" },
+const DIRECTOR_PANE_META: Record<DirectorPaneId, { help?: string }> = {
+  mode: { help: "世界模拟由主控调度多个角色；单智能体对话只回复默认角色。记忆模式逐级增加长期上下文。" },
+  permissions: { help: "主控专用工具不会下发给普通角色。知识库检索统一在「MCP 工具授权」里开启。" },
+  context: {},
+  summaries: { help: "统一设置长期记忆召回、自动总结频率，以及 NPC 和世界主控的总结提示词。「召回片段上限」不是总结频率；总结频率由「总结间隔」决定。" },
+  prompt: {},
+  tools: { help: "授权后工具会进入主控提示词；实际执行还取决于工具的全局状态和服务器配置。" },
 };
+
+const MEMORY_MODE_OPTIONS: Array<{ value: DirectorConfig["memory_mode"]; label: string; help: string }> = [
+  { value: "history", label: "历史对话", help: "只注入最近的可见对话，不自动召回长期记忆或 OAG 信息。" },
+  { value: "embedding", label: "Embedding 记忆", help: "在最近对话之外，按当前输入召回相关的历史对话、事件和总结。" },
+  { value: "oag", label: "OAG", help: "在语义召回之外，注入当前角色可见的事实、关系、事件和记忆，帮助理解世界格局。" },
+];
+
+const SERVICE_MODE_OPTIONS: Array<{ value: DirectorConfig["service_mode"]; label: string }> = [
+  { value: "world_sim", label: "世界模拟" },
+  { value: "agent_chat", label: "单智能体对话" },
+];
+
+const MEMORY_MODE_TRACK_POSITIONS = MEMORY_MODE_OPTIONS.map(
+  (_, index) => 3 + (index / (MEMORY_MODE_OPTIONS.length - 1)) * 94,
+);
+
+const SERVICE_MODE_TRACK_POSITIONS = [15, 85];
 
 export function WorldEditorPage() {
   const isMobile = useIsMobile();
@@ -299,9 +308,15 @@ export function WorldEditorPage() {
     () => normalizeDirectorConfig((world?.director_config ?? {}) as Record<string, unknown>),
     [world?.director_config],
   );
+  const memoryModeIndex = MEMORY_MODE_OPTIONS.findIndex((option) => option.value === directorConfig.memory_mode);
+  const serviceModeIndex = SERVICE_MODE_OPTIONS.findIndex((option) => option.value === directorConfig.service_mode);
   const uiThemeConfig = useMemo(
     () => normalizeUiThemeConfig((world?.ui_theme_config ?? {}) as Record<string, unknown>),
     [world?.ui_theme_config],
+  );
+  const directorImageGenerationEnabled = resolveDirectorImageGenerationEnabled(
+    directorConfig,
+    uiThemeConfig,
   );
   const openingMessages = useMemo(
     () => normalizeOpeningMessages(world?.opening_messages ?? []),
@@ -404,16 +419,20 @@ export function WorldEditorPage() {
     [previewPortraitPath],
   );
   const selectedMcpTools = useMemo(
-    () => mcpTools.filter((tool) => directorConfig.allowed_mcp_tool_ids.includes(tool.id)),
+    () => mcpTools.filter((tool) =>
+      directorConfig.allowed_mcp_tool_ids.includes(tool.id) && !isDirectorOnlyMcpToolId(tool.id),
+    ),
     [directorConfig.allowed_mcp_tool_ids, mcpTools],
   );
-  const selectedDefaultAgent = useMemo(
-    () => characters.find((character) => character.id === directorConfig.default_agent_id) ?? null,
-    [characters, directorConfig.default_agent_id],
-  );
+  const directorOnlyToolCount = DIRECTOR_ONLY_MCP_TOOL_IDS.filter((toolId) =>
+    directorConfig.allowed_mcp_tool_ids.includes(toolId),
+  ).length;
+  const authorizedToolCount = directorConfig.allowed_mcp_tool_ids.length;
   const filteredMcpTools = useMemo(() => {
     const selectedToolIds = new Set(directorConfig.allowed_mcp_tool_ids);
-    const availableTools = mcpTools.filter((tool) => !selectedToolIds.has(tool.id));
+    const availableTools = mcpTools.filter((tool) =>
+      !selectedToolIds.has(tool.id) && !isDirectorOnlyMcpToolId(tool.id),
+    );
     const keyword = mcpToolSearch.trim().toLowerCase();
     if (!keyword) {
       return availableTools;
@@ -1049,6 +1068,14 @@ export function WorldEditorPage() {
 
   function updateThemePatch(patch: Partial<UiThemeConfig>) {
     updateDraft({ ui_theme_config: buildUiThemeEnvelope({ ...uiThemeConfig, ...patch }) });
+  }
+
+  function toggleDirectorImageGeneration(enabled: boolean) {
+    const next = applyDirectorImageGenerationEnabled(directorConfig, uiThemeConfig, enabled);
+    updateDraft({
+      director_config: next.directorConfig,
+      ui_theme_config: buildUiThemeEnvelope(next.uiThemeConfig),
+    });
   }
 
   async function handleUploadBackground(file: File | null, sceneName?: string) {
@@ -2005,7 +2032,7 @@ export function WorldEditorPage() {
               <div className="editor-field">
                 <div className="editor-field-label">插值管理（自定义提示词变量）</div>
                 <div className="text-muted" style={{ fontSize: 12, marginBottom: 8 }}>
-                  在运行时上下文、返回格式、主控预设、系统提示词、背景、旁白等输入框里用 {"{{变量名}}"} 引用。自定义变量优先于内置变量，变量值里还可以再引用内置变量。内置变量：
+                  在运行时上下文、返回格式、模型提示词设置、系统提示词、背景、旁白等输入框里用 {"{{变量名}}"} 引用。自定义变量优先于内置变量，变量值里还可以再引用内置变量。内置变量：
                   {"{{time}}"}（当前时间）、{"{{date}}"}、{"{{user}}"} / {"{{player}}"}（玩家角色名）、
                   {"{{world_name}}"}、{"{{location}}"}、{"{{scene}}"}、{"{{random:选项1,选项2}}"}（随机选一）、
                   {"{{var:key}}"}（会话运行时变量）。
@@ -2084,10 +2111,10 @@ export function WorldEditorPage() {
               <div className="wed-summary" role="list" aria-label="主控配置摘要">
                 {[
                   { section: "mode" as DirectorPaneId, k: "运行模式", v: directorConfig.service_mode === "agent_chat" ? "单智能体对话" : "世界模拟" },
-                  { section: "permissions" as DirectorPaneId, k: "记忆模式", v: directorConfig.memory_mode === "oag" ? "OAG 召回" : "Embedding 召回" },
+                  { section: "mode" as DirectorPaneId, k: "记忆模式", v: directorConfig.memory_mode === "oag" ? "OAG" : directorConfig.memory_mode === "embedding" ? "Embedding 记忆" : "历史对话" },
                   { section: "context" as DirectorPaneId, k: "历史对话", v: `${directorConfig.history_dialogue_rounds} 轮 · 循环 ${directorConfig.director_tool_loop_limit}` },
-                  { section: "prompt" as DirectorPaneId, k: "主控预设", v: `${directorConfig.world_director_prompt.length} 字` },
-                  { section: "tools" as DirectorPaneId, k: "工具授权", v: `${selectedMcpTools.length} 个` },
+                  { section: "prompt" as DirectorPaneId, k: "模型提示词", v: `${directorConfig.world_director_prompt.length} 字` },
+                  { section: "tools" as DirectorPaneId, k: "工具授权", v: `${authorizedToolCount} 个` },
                 ].map((item) => (
                   <button key={item.k} type="button" role="listitem" className="wed-summary-item" onClick={() => setDirectorPane(item.section)}>
                     <span className="k">{item.k}</span>
@@ -2097,40 +2124,35 @@ export function WorldEditorPage() {
               </div>
               <div className="wed-grid">
                 <nav className="wed-nav" aria-label="主控配置分区">
-                  {DIRECTOR_NAV_GROUPS.map((group) => (
-                    <div key={group.label}>
-                      <div className="wed-nav-group">{group.label}</div>
-                      {group.items.map((item) => {
-                        const hint =
-                          item.id === "mode" ? (directorConfig.service_mode === "agent_chat" ? "单智能体对话" : "世界模拟")
-                            : item.id === "permissions" ? `${[directorConfig.knowledge_access, directorConfig.allow_scene_transition, directorConfig.allow_npc_spawn, directorConfig.allow_player_character_switch].filter(Boolean).length}/4 项开启`
-                              : item.id === "context" ? `历史 ${directorConfig.history_dialogue_rounds} 轮`
-                                : item.id === "memory" ? (directorConfig.character_memory_retrieval_mode === "lexical_only" ? "关键词检索" : directorConfig.character_memory_retrieval_mode === "semantic_only" ? "语义检索" : "混合检索")
-                                  : item.id === "prompt" ? `${directorConfig.world_director_prompt.length} 字`
-                                    : item.id === "tools" ? `${selectedMcpTools.length} 个已授权`
-                                      : item.id === "params" ? "温度 / 采样 / 上限"
-                                        : "记忆总结模板";
-                        return (
-                          <button
-                            key={item.id}
-                            type="button"
-                            className="wed-nav-item"
-                            aria-current={directorPane === item.id ? "true" : "false"}
-                            onClick={() => setDirectorPane(item.id)}
-                          >
-                            <span className="t">{item.label}</span>
-                            <span className="s">{hint}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ))}
+                  {DIRECTOR_NAV_ITEMS.map((item) => {
+                    const hint =
+                      item.id === "mode" ? (directorConfig.service_mode === "agent_chat" ? "单智能体对话" : "世界模拟")
+                        : item.id === "permissions" ? `${directorOnlyToolCount}/4 项工具开启`
+                          : item.id === "context" ? `历史 ${directorConfig.history_dialogue_rounds} 轮`
+                            : item.id === "summaries" ? `每 ${directorConfig.memory_summary_interval_rounds} 回合`
+                              : item.id === "prompt" ? `${directorConfig.world_director_prompt.length} 字`
+                                : `${authorizedToolCount} 个已授权`;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="wed-nav-item"
+                        aria-current={directorPane === item.id ? "true" : "false"}
+                        onClick={() => setDirectorPane(item.id)}
+                      >
+                        <span className="t">{item.label}</span>
+                        <span className="s">{hint}</span>
+                      </button>
+                    );
+                  })}
                 </nav>
                 <div className="wed-pane">
                   <div className="wed-pane-head">
-                    <div>
-                      <h2 className="wed-pane-title">{DIRECTOR_PANE_META[directorPane].title}</h2>
-                      <div className="wed-pane-sub">{DIRECTOR_PANE_META[directorPane].desc}</div>
+                    <div className="field-label-head">
+                      <h2 className="wed-pane-title">世界主控</h2>
+                      {DIRECTOR_PANE_META[directorPane].help ? (
+                        <HelpTip text={DIRECTOR_PANE_META[directorPane].help} />
+                      ) : null}
                     </div>
                     {directorPane === "prompt" ? (
                       <div className="wed-pane-actions">
@@ -2145,42 +2167,145 @@ export function WorldEditorPage() {
 
                   {directorPane === "mode" ? (
                     <div className="wed-block">
-                <div className="settings-form-grid">
-                  <label className="editor-field">
-                    <span className="editor-field-label">服务模式</span>
-                    <select
-                      value={directorConfig.service_mode}
-                      onChange={(e) => updateServiceMode(e.target.value as DirectorConfig["service_mode"])}
-                      className="editor-field-input editor-field-select"
-                    >
-                      <option value="world_sim">世界模拟</option>
-                      <option value="agent_chat">单智能体对话</option>
-                    </select>
-                  </label>
-                  {directorConfig.service_mode === "agent_chat" ? (
-                    <label className="editor-field">
-                      <span className="editor-field-label">默认回复角色</span>
-                      <select
-                        value={directorConfig.default_agent_id}
-                        onChange={(e) => updateDirectorPatch({ default_agent_id: e.target.value })}
-                        className="editor-field-input editor-field-select"
-                        disabled={characters.length === 0}
-                      >
-                        <option value="">自动选择</option>
-                        {characters.map((character) => (
-                          <option key={character.id} value={character.id}>
-                            {character.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  ) : null}
-                </div>
-                {directorConfig.service_mode === "agent_chat" ? (
-                  <div className="text-muted">
-                    当前默认回复者：{selectedDefaultAgent?.name ?? "自动选择第一个可用角色"}
-                  </div>
-                ) : null}
+                      <div className="wed-service-group">
+                        <div className="editor-field">
+                          <span className="editor-field-label">服务模式</span>
+                          <div
+                            className="wed-depth wed-depth--service"
+                            style={{
+                              "--depth-progress": `${SERVICE_MODE_TRACK_POSITIONS[serviceModeIndex]}%`,
+                            } as CSSProperties}
+                          >
+                            <div className="wed-depth-control">
+                              <button
+                                type="button"
+                                role="switch"
+                                className="wed-depth-range wed-depth-range--toggle"
+                                aria-label="服务模式"
+                                aria-checked={directorConfig.service_mode === "agent_chat"}
+                                onClick={() => updateServiceMode(
+                                  directorConfig.service_mode === "agent_chat" ? "world_sim" : "agent_chat",
+                                )}
+                              />
+                              <div className="wed-depth-visual" aria-hidden="true">
+                                <span className="wed-depth-line" />
+                                {SERVICE_MODE_OPTIONS.map((option, index) => (
+                                  <span
+                                    key={option.value}
+                                    className="wed-depth-tick"
+                                    style={{ left: `${SERVICE_MODE_TRACK_POSITIONS[index]}%` }}
+                                  />
+                                ))}
+                                {SERVICE_MODE_OPTIONS.map((option, index) => (
+                                  <span
+                                    key={option.value}
+                                    className={[
+                                      "wed-depth-stop",
+                                      index <= serviceModeIndex ? "is-reached" : "",
+                                      index === serviceModeIndex ? "is-current" : "",
+                                    ].filter(Boolean).join(" ")}
+                                    style={{ left: `${SERVICE_MODE_TRACK_POSITIONS[index]}%` }}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                            <div className="wed-depth-labels" aria-hidden="true">
+                              {SERVICE_MODE_OPTIONS.map((option, index) => (
+                                <span
+                                  key={option.value}
+                                  className={index === serviceModeIndex ? "is-current" : index < serviceModeIndex ? "is-passed" : ""}
+                                  style={{ left: `${SERVICE_MODE_TRACK_POSITIONS[index]}%` }}
+                                >
+                                  {option.label}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="wed-service-agent">
+                          <label className="editor-field">
+                            <span className="editor-field-label">默认回复角色</span>
+                            <select
+                              value={directorConfig.default_agent_id}
+                              onChange={(e) => updateDirectorPatch({ default_agent_id: e.target.value })}
+                              className="editor-field-input editor-field-select"
+                              disabled={characters.length === 0 || directorConfig.service_mode !== "agent_chat"}
+                            >
+                              <option value="">自动选择</option>
+                              {characters.map((character) => (
+                                <option key={character.id} value={character.id}>
+                                  {character.name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
+                      </div>
+                      <div className="editor-field wed-memory-field">
+                      <div className="field-label-head">
+                        <span className="editor-field-label">记忆模式</span>
+                        <HelpTip text={MEMORY_MODE_OPTIONS[memoryModeIndex].help} />
+                      </div>
+                        <div
+                          className="wed-depth wed-depth--memory"
+                          style={{
+                            "--depth-progress": `${MEMORY_MODE_TRACK_POSITIONS[memoryModeIndex]}%`,
+                          } as CSSProperties}
+                        >
+                          <div className="wed-depth-hints" aria-hidden="true">
+                            <span>Token 消耗低</span>
+                            <span>记忆强度高</span>
+                          </div>
+                          <div className="wed-depth-control">
+                            <input
+                              className="wed-depth-range"
+                              type="range"
+                              min={0}
+                              max={MEMORY_MODE_OPTIONS.length - 1}
+                              step={1}
+                              value={memoryModeIndex}
+                              aria-label="记忆模式"
+                              aria-valuetext={MEMORY_MODE_OPTIONS[memoryModeIndex].label}
+                              onChange={(event) => {
+                                const option = MEMORY_MODE_OPTIONS[Number(event.currentTarget.value)];
+                                if (option) updateDirectorPatch({ memory_mode: option.value });
+                              }}
+                            />
+                            <div className="wed-depth-visual" aria-hidden="true">
+                              <span className="wed-depth-line" />
+                              {MEMORY_MODE_OPTIONS.map((option, index) => (
+                                <span
+                                  key={option.value}
+                                  className="wed-depth-tick"
+                                  style={{ left: `${MEMORY_MODE_TRACK_POSITIONS[index]}%` }}
+                                />
+                              ))}
+                              {MEMORY_MODE_OPTIONS.map((option, index) => (
+                                <span
+                                  key={option.value}
+                                  className={[
+                                    "wed-depth-stop",
+                                    index <= memoryModeIndex ? "is-reached" : "",
+                                    index === memoryModeIndex ? "is-current" : "",
+                                  ].filter(Boolean).join(" ")}
+                                  style={{ left: `${MEMORY_MODE_TRACK_POSITIONS[index]}%` }}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                          <div className="wed-depth-labels" aria-hidden="true">
+                            {MEMORY_MODE_OPTIONS.map((option, index) => (
+                              <span
+                                key={option.value}
+                                className={index === memoryModeIndex ? "is-current" : index < memoryModeIndex ? "is-passed" : ""}
+                                style={{ left: `${MEMORY_MODE_TRACK_POSITIONS[index]}%` }}
+                              >
+                                {option.label}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   ) : null}
 
@@ -2188,52 +2313,57 @@ export function WorldEditorPage() {
                     <>
                       {directorConfig.service_mode === "world_sim" ? (
                         <div className="wed-block">
-                          <div className="wed-block-title">基础权限</div>
-                  <div className="settings-form-grid">
-                    <label className="editor-field">
-                      <span className="editor-field-label">记忆模式</span>
-                      <select
-                        value={directorConfig.memory_mode}
-                        onChange={(e) => updateDirectorPatch({ memory_mode: e.target.value as DirectorConfig["memory_mode"] })}
-                        className="editor-field-input editor-field-select"
-                      >
-                        <option value="embedding">历史对话 + Embedding 记忆</option>
-                        <option value="oag">历史对话 + OAG（开发中）</option>
-                      </select>
-                      <span>
-                        两种模式都会发送按 witnesses 过滤的最近 N 轮对话；Embedding 额外注入向量/词法记忆召回；OAG 额外注入结构化事实/关系，尚未接入，暂按 Embedding 运行。
-                      </span>
-                    </label>
-                    <label className="editor-field">
-                      <span className="editor-field-label">允许主控查询知识库</span>
-                      <div className="settings-inline-toggle"><input type="checkbox" checked={directorConfig.knowledge_access} onChange={e => updateDirectorPatch({ knowledge_access: e.target.checked })} /></div>
-                      <span>通过 search_knowledge 工具按需读取。可在下方逐个勾选可查的知识库（世界自带的库也在其中）；角色可在「角色编辑 → 记忆」里进一步收窄。</span>
-                    </label>
-                    <label className="editor-field">
-                      <span className="editor-field-label">允许切换场景</span>
-                      <div className="settings-inline-toggle">
-                        <input type="checkbox" checked={directorConfig.allow_scene_transition} onChange={(e) => updateDirectorPatch({ allow_scene_transition: e.target.checked })} />
-                      </div>
-                    </label>
-                    <label className="editor-field">
-                      <span className="editor-field-label">允许生成新 NPC</span>
-                      <div className="settings-inline-toggle">
-                        <input type="checkbox" checked={directorConfig.allow_npc_spawn} onChange={(e) => updateDirectorPatch({ allow_npc_spawn: e.target.checked })} />
-                      </div>
-                    </label>
-                    <label className="editor-field">
-                      <span className="editor-field-label">允许主控提议切换玩家角色</span>
-                      <div className="settings-inline-toggle">
-                        <input type="checkbox" checked={directorConfig.allow_player_character_switch} onChange={(e) => updateDirectorPatch({ allow_player_character_switch: e.target.checked })} />
-                      </div>
-                    </label>
-                  </div>
+                          <div className="wed-block-title">主控专用工具</div>
+                          <div className="settings-form-grid">
+                            {[
+                              { id: MCP_TOOL_LIST_SCENES_ID, label: "列出场景" },
+                              { id: MCP_TOOL_LIST_CHARACTERS_ID, label: "列出角色" },
+                              { id: MCP_TOOL_CHANGE_SCENE_ID, label: "切换场景" },
+                              { id: MCP_TOOL_SWITCH_PLAYER_CHARACTER_ID, label: "切换玩家角色" },
+                            ].map((tool) => (
+                              <label key={tool.id} className="editor-field">
+                                <span className="editor-field-label">{tool.label}</span>
+                                <div className="settings-inline-toggle">
+                                  <input
+                                    type="checkbox"
+                                    checked={directorConfig.allowed_mcp_tool_ids.includes(tool.id)}
+                                    onChange={() => toggleAllowedMcpTool(tool.id)}
+                                  />
+                                </div>
+                              </label>
+                            ))}
+                          </div>
+                          <div className="editor-field" style={{ marginTop: 16 }}>
+                            <div className="field-label-head">
+                              <span className="editor-field-label">允许世界主控 AI 生图</span>
+                              <HelpTip text="一个开关同时控制运行时生图和两个主控专用工具。开启后，世界主控可按剧情生成场景背景或为指定角色生成立绘；关闭后不会调用图像模型，已上传的本地素材仍可正常使用。" />
+                            </div>
+                            <div className="settings-inline-toggle">
+                              <input
+                                type="checkbox"
+                                aria-label="允许世界主控 AI 生图"
+                                checked={directorImageGenerationEnabled}
+                                onChange={(event) => toggleDirectorImageGeneration(event.target.checked)}
+                              />
+                            </div>
+                          </div>
+                          <div className="settings-form-grid">
+                            <label className="editor-field">
+                              <span className="editor-field-label">允许生成新 NPC</span>
+                              <div className="settings-inline-toggle">
+                                <input type="checkbox" checked={directorConfig.allow_npc_spawn} onChange={(e) => updateDirectorPatch({ allow_npc_spawn: e.target.checked })} />
+                              </div>
+                            </label>
+                          </div>
                         </div>
               ) : null}
 
               {directorConfig.service_mode === "world_sim" && directorPane === "permissions" ? (
                 <div className="wed-block">
-                  <div className="wed-block-title">可查询的知识库</div>
+                  <div className="wed-block-title field-label-head">
+                    <span>可查询的知识库</span>
+                    <HelpTip text="勾选主控可查的知识库范围。实际检索还需在「MCP 工具授权」中授予知识库检索工具；角色可在「角色编辑 → 记忆」里进一步收窄。" />
+                  </div>
                   {knowledgeCandidates.length === 0 ? (
                     <div className="text-muted">还没有可用知识库。可在「图库和知识库」新建后回到这里勾选。</div>
                   ) : (
@@ -2261,9 +2391,6 @@ export function WorldEditorPage() {
                       ))}
                     </div>
                   )}
-                  <div className="text-muted">
-                    这里勾选的是主控自己可查的范围。世界自带的库也只属于本世界，不会出现在其他世界里；角色可以在「角色编辑 → 记忆」里按角色再收窄。
-                  </div>
                 </div>
               ) : null}
 
@@ -2309,130 +2436,150 @@ export function WorldEditorPage() {
                     </>
                   ) : null}
 
-                  {directorPane === "params" ? (
-                    <div className="wed-block">
-                      <GenerationParamsEditor
-                        value={directorConfig.generation_params}
-                        onChange={(next) => updateDirectorPatch({ generation_params: next })}
-                      />
-                    </div>
-                  ) : null}
-
-                  {directorPane === "memory" ? (
-                    <div className="wed-block">
-                <div className="settings-form-grid">
-                  <label className="editor-field">
-                    <span className="editor-field-label">记忆触发轮数</span>
-                    <input type="number" min="1" max="6" value={directorConfig.character_memory_hit_turns} onChange={(e) => updateDirectorPatch({ character_memory_hit_turns: Number(e.target.value) })} className="editor-field-input" />
-                  </label>
-                  <label className="editor-field">
-                    <span className="editor-field-label">事件窗口轮数</span>
-                    <input type="number" min="0" max="20" value={directorConfig.character_memory_event_window_rounds} onChange={(e) => updateDirectorPatch({ character_memory_event_window_rounds: Number(e.target.value) })} className="editor-field-input" />
-                  </label>
-                  <label className="editor-field">
-                    <span className="editor-field-label">对话窗口轮数</span>
-                    <input type="number" min="0" max="6" value={directorConfig.character_memory_dialogue_window_rounds} onChange={(e) => updateDirectorPatch({ character_memory_dialogue_window_rounds: Number(e.target.value) })} className="editor-field-input" />
-                  </label>
-                  <label className="editor-field">
-                    <span className="editor-field-label">检索模式</span>
-                    <select
-                      value={directorConfig.character_memory_retrieval_mode}
-                      onChange={(event) => {
-                        const mode = event.target.value;
-                        if (mode === "lexical_only" || mode === "hybrid" || mode === "semantic_only") {
-                          updateDirectorPatch({ character_memory_retrieval_mode: mode });
-                        }
-                      }}
-                      className="editor-field-input editor-field-select"
-                    >
-                      <option value="lexical_only">仅关键词</option>
-                      <option value="hybrid">混合</option>
-                      <option value="semantic_only">仅语义</option>
-                    </select>
-                  </label>
-                  <label className="editor-field">
-                    <span className="editor-field-label">语义权重</span>
-                    <input type="number" min="0" max="1" step="0.05" value={directorConfig.character_memory_semantic_weight} onChange={(e) => updateDirectorPatch({ character_memory_semantic_weight: Number(e.target.value) })} className="editor-field-input" />
-                  </label>
-                  <label className="editor-field">
-                    <span className="editor-field-label">总结间隔（回合）</span>
-                    <input type="number" min="1" max="100" value={directorConfig.memory_summary_interval_rounds} onChange={(e) => updateDirectorPatch({ memory_summary_interval_rounds: Number(e.target.value) })} className="editor-field-input" />
-                    <span>按固定桶总结：每 N 回合一个桶（默认 1-10、11-20……），桶内按场景拆条；只召回已经离开原文窗口的总结。</span>
-                  </label>
-                  <label className="editor-field">
-                    <span className="editor-field-label">角色总结提示词</span>
-                    <textarea
-                      value={directorConfig.character_memory_summary_prompt || summaryPromptDefaults?.character || ""}
-                      onChange={(e) => updateDirectorPatch({ character_memory_summary_prompt: e.target.value })}
-                      className="editor-field-input editor-field-textarea"
-                      style={{ minHeight: 160 }}
-                      placeholder="留空使用内置默认。支持 {{character_name}}、{{scene_name}}、{{bucket_start}}、{{bucket_end}}、{{turn_start}}、{{turn_end}}、{{transcript}}。"
-                    />
-                    <span className="text-muted" style={{ fontSize: 12 }}>
-                      当前显示内置默认模板，可直接修改并保存；清空输入后恢复默认。角色总结按该角色 witnesses 可见的消息生成；模板忘了写 {"{{transcript}}"} 时，对话材料会自动附在末尾。
-                    </span>
-                  </label>
-                </div>
-                    </div>
+                  {directorPane === "summaries" ? (
+                    <>
+                      <div className="wed-block">
+                        <div className="wed-block-title">长期记忆召回</div>
+                        <div className="settings-form-grid">
+                          <label className="editor-field">
+                            <span className="editor-field-label">
+                              <span className="field-label-head">
+                                <span>召回片段上限</span>
+                                <HelpTip text="每次最多注入几个不同回合的长期记忆。数值越大，NPC 能联系到的旧情节越多，但提示词也更长；这不是总结间隔。推荐 2-3。" />
+                              </span>
+                            </span>
+                            <input type="number" min="1" max="6" value={directorConfig.character_memory_hit_turns} onChange={(e) => updateDirectorPatch({ character_memory_hit_turns: Number(e.target.value) })} className="editor-field-input" />
+                          </label>
+                          <label className="editor-field">
+                            <span className="editor-field-label">
+                              <span className="field-label-head">
+                                <span>关联事件范围（回合）</span>
+                                <HelpTip text="在召回的记忆回合前后各 N 回合补充相关事件。例如 N=10 会覆盖命中回合前后最多 21 回合；0 表示不补充事件。" />
+                              </span>
+                            </span>
+                            <input type="number" min="0" max="20" value={directorConfig.character_memory_event_window_rounds} onChange={(e) => updateDirectorPatch({ character_memory_event_window_rounds: Number(e.target.value) })} className="editor-field-input" />
+                          </label>
+                          <label className="editor-field">
+                            <span className="editor-field-label">
+                              <span className="field-label-head">
+                                <span>关联对话范围（回合）</span>
+                                <HelpTip text="在召回的记忆回合前后各 N 回合补充 NPC 当时可见的对话。只注入它有机会知道的内容；0 表示不补充对话。" />
+                              </span>
+                            </span>
+                            <input type="number" min="0" max="6" value={directorConfig.character_memory_dialogue_window_rounds} onChange={(e) => updateDirectorPatch({ character_memory_dialogue_window_rounds: Number(e.target.value) })} className="editor-field-input" />
+                          </label>
+                          <label className="editor-field">
+                            <span className="editor-field-label">
+                              <span className="field-label-head">
+                                <span>语义匹配权重</span>
+                                <HelpTip text="混合检索中语义匹配所占的权重。0 表示完全按关键词排序，1 表示完全按意思相似度排序；推荐 0.6-0.7。未配置可用向量模型时会自动退回关键词匹配。" />
+                              </span>
+                            </span>
+                            <input type="number" min="0" max="1" step="0.05" value={directorConfig.character_memory_semantic_weight} onChange={(e) => updateDirectorPatch({ character_memory_semantic_weight: Number(e.target.value) })} className="editor-field-input" />
+                          </label>
+                        </div>
+                      </div>
+                      <div className="wed-block">
+                        <div className="wed-block-title">自动总结</div>
+                        <div className="settings-form-grid">
+                          <label className="editor-field">
+                            <span className="editor-field-label">
+                              <span className="field-label-head">
+                                <span>总结间隔（回合）</span>
+                                <HelpTip text="每 N 回合结束后异步生成一次 NPC 和世界主控总结，默认 10 回合。数值越大，总结越少、单次内容越多，原始对话保留越久；推荐 10-20 回合。" />
+                              </span>
+                            </span>
+                            <input type="number" min="1" max="100" value={directorConfig.memory_summary_interval_rounds} onChange={(e) => updateDirectorPatch({ memory_summary_interval_rounds: Number(e.target.value) })} className="editor-field-input" />
+                          </label>
+                          <label className="editor-field">
+                            <span className="editor-field-label">
+                              <span className="field-label-head">
+                                <span>NPC 总结提示词</span>
+                                <HelpTip text="留空恢复内置默认。按每个 NPC 可见的消息生成；即使模板未写 {{transcript}}，对话材料也会自动附在末尾。支持 {{character_name}}、{{scene_name}}、{{bucket_start}}、{{bucket_end}}、{{turn_start}}、{{turn_end}}、{{transcript}}。" />
+                              </span>
+                            </span>
+                            <textarea
+                              value={directorConfig.character_memory_summary_prompt || summaryPromptDefaults?.character || ""}
+                              onChange={(e) => updateDirectorPatch({ character_memory_summary_prompt: e.target.value })}
+                              className="editor-field-input editor-field-textarea"
+                              style={{ minHeight: 160 }}
+                              placeholder="留空使用内置默认。支持 {{character_name}}、{{scene_name}}、{{bucket_start}}、{{bucket_end}}、{{turn_start}}、{{turn_end}}、{{transcript}}。"
+                            />
+                          </label>
+                        </div>
+                      </div>
+                      <div className="wed-block">
+                        <label className="editor-field">
+                          <span className="editor-field-label">
+                            <span className="field-label-head">
+                              <span>主控总结提示词</span>
+                              <HelpTip text="留空恢复内置默认。按固定桶汇总全部剧情并注入主控提示词，不按角色隔离。支持 {{bucket_start}}、{{bucket_end}}、{{turn_start}}、{{turn_end}}、{{transcript}}。" />
+                            </span>
+                          </span>
+                          <textarea
+                            value={directorConfig.director_memory_summary_prompt || summaryPromptDefaults?.director || ""}
+                            onChange={(e) => updateDirectorPatch({ director_memory_summary_prompt: e.target.value })}
+                            className="editor-field-input editor-field-textarea"
+                            style={{ minHeight: 240 }}
+                            placeholder="留空使用内置默认。支持 {{bucket_start}}、{{bucket_end}}、{{turn_start}}、{{turn_end}}、{{transcript}}。"
+                          />
+                        </label>
+                      </div>
+                    </>
                   ) : null}
 
                   {directorPane === "prompt" ? (
                     <>
                       {directorConfig.service_mode === "world_sim" ? (
-                        <div className="wed-block">
-                  <label className="editor-field">
-                    <span className="editor-field-label">世界主控提示词</span>
-                    <select
-                      value={directorModelSelectValue}
-                      onChange={(e) => updateDirectorPatch({ director_model: e.target.value })}
-                      className="editor-field-input editor-field-select"
-                      style={{ marginBottom: 12 }}
-                    >
-                      <option value="">使用默认文本模型</option>
-                      {textModels.map((model) => (
-                        <option key={model.id} value={model.id}>
-                          {model.name || model.model_id}
-                        </option>
-                      ))}
-                      {!resolvedDirectorModelOption && directorConfig.director_model.trim() ? (
-                        <option value={directorConfig.director_model.trim()}>
-                          {directorConfig.director_model.trim()}（当前未匹配）
-                        </option>
+                        <>
+                          <div className="wed-block">
+                            <label className="editor-field">
+                              <span className="editor-field-label">
+                                <span className="field-label-head">
+                                  <span>世界主控模型</span>
+                                  <HelpTip text="选择世界主控调度时使用的文本模型；留空使用应用默认文本模型。采样参数请在模型配置页面设置。" />
+                                </span>
+                              </span>
+                              <select
+                                value={directorModelSelectValue}
+                                onChange={(e) => updateDirectorPatch({ director_model: e.target.value })}
+                                className="editor-field-input editor-field-select"
+                              >
+                                <option value="">使用默认文本模型</option>
+                                {textModels.map((model) => (
+                                  <option key={model.id} value={model.id}>
+                                    {model.name || model.model_id}
+                                  </option>
+                                ))}
+                                {!resolvedDirectorModelOption && directorConfig.director_model.trim() ? (
+                                  <option value={directorConfig.director_model.trim()}>
+                                    {directorConfig.director_model.trim()}（当前未匹配）
+                                  </option>
+                                ) : null}
+                              </select>
+                            </label>
+                          </div>
+                          <div className="wed-block">
+                            <label className="editor-field">
+                              <span className="editor-field-label">
+                                <span className="field-label-head">
+                                  <span>世界主控提示词</span>
+                                  <HelpTip text="留空使用框架默认。支持 {{current_time}} 和 {{当前时间}}，运行时替换为当前时间。" />
+                                </span>
+                              </span>
+                              <textarea value={directorConfig.world_director_prompt} onChange={(e) => updateMergedDirectorPrompt(e.target.value)} className="editor-field-input editor-field-textarea" style={{ minHeight: 340 }} />
+                            </label>
+                            <div className="wed-prompt-bar">
+                              <div className="wed-chips">
+                                <button type="button" className="wed-chip" onClick={() => updateMergedDirectorPrompt(`${directorConfig.world_director_prompt}{{current_time}}`)}>+ {"{{current_time}}"}</button>
+                                <button type="button" className="wed-chip" onClick={() => updateMergedDirectorPrompt(`${directorConfig.world_director_prompt}{{当前时间}}`)}>+ {"{{当前时间}}"}</button>
+                              </div>
+                              <span className="wed-meta">{directorConfig.world_director_prompt.length} 字 · 留空使用框架默认</span>
+                            </div>
+                          </div>
+                        </>
                       ) : null}
-                    </select>
-                    <div className="text-muted" style={{ fontSize: 12 }}>
-                      当前支持的变量：{"{{current_time}}"}、{"{{当前时间}}"}
-                    </div>
-                    <textarea value={directorConfig.world_director_prompt} onChange={(e) => updateMergedDirectorPrompt(e.target.value)} className="editor-field-input editor-field-textarea" style={{ minHeight: 340 }} />
-                  </label>
-                  <div className="wed-prompt-bar">
-                    <div className="wed-chips">
-                      <button type="button" className="wed-chip" onClick={() => updateMergedDirectorPrompt(`${directorConfig.world_director_prompt}{{current_time}}`)}>+ {"{{current_time}}"}</button>
-                      <button type="button" className="wed-chip" onClick={() => updateMergedDirectorPrompt(`${directorConfig.world_director_prompt}{{当前时间}}`)}>+ {"{{当前时间}}"}</button>
-                    </div>
-                    <span className="wed-meta">{directorConfig.world_director_prompt.length} 字 · 留空使用框架默认</span>
-                  </div>
-                        </div>
-              ) : null}
                     </>
-                  ) : null}
-
-                  {directorPane === "summaries" ? (
-                    <div className="wed-block">
-                      <label className="editor-field">
-                        <span className="editor-field-label">主控总结提示词</span>
-                        <textarea
-                          value={directorConfig.director_memory_summary_prompt || summaryPromptDefaults?.director || ""}
-                          onChange={(e) => updateDirectorPatch({ director_memory_summary_prompt: e.target.value })}
-                          className="editor-field-input editor-field-textarea"
-                          style={{ minHeight: 240 }}
-                          placeholder="留空使用内置默认。支持 {{bucket_start}}、{{bucket_end}}、{{turn_start}}、{{turn_end}}、{{transcript}}。"
-                        />
-                        <span className="text-muted" style={{ fontSize: 12 }}>
-                          当前显示内置默认模板，可直接修改并保存；清空输入后恢复默认。主控总结按固定桶汇总全部剧情，并注入主控 prompt；不会按角色隔离。角色总结模板在「角色记忆」分区。
-                        </span>
-                      </label>
-                    </div>
                   ) : null}
 
                   {directorPane === "tools" ? (
@@ -2442,8 +2589,10 @@ export function WorldEditorPage() {
                 {selectedMcpTools.map((tool) => (
                   <div key={tool.id} className="settings-form-grid" style={{ padding: 12, border: "1px solid var(--color-border)", borderRadius: 12 }}>
                     <div>
-                      <div>{tool.name}</div>
-                      <div className="text-muted">{tool.description}</div>
+                      <div className="field-label-head">
+                        <div>{tool.name}</div>
+                        <HelpTip text={tool.description} />
+                      </div>
                     </div>
                     <div className="editor-field" style={{ alignSelf: "center" }}>
                       <button type="button" className="action-btn" onClick={() => toggleAllowedMcpTool(tool.id)}>移除</button>
@@ -2456,8 +2605,10 @@ export function WorldEditorPage() {
                   {filteredMcpTools.map((tool) => (
                     <div key={tool.id} className="settings-form-grid" style={{ padding: 12, border: "1px solid var(--color-border)", borderRadius: 12 }}>
                       <div>
-                        <div>{tool.name}</div>
-                        <div className="text-muted">{tool.description}</div>
+                        <div className="field-label-head">
+                          <div>{tool.name}</div>
+                          <HelpTip text={tool.description} />
+                        </div>
                       </div>
                       <div className="editor-field" style={{ alignSelf: "center" }}>
                         <button type="button" className="action-btn" onClick={() => toggleAllowedMcpTool(tool.id)}>添加</button>
@@ -2472,11 +2623,11 @@ export function WorldEditorPage() {
             </div>
 
             {directorPromptDraft !== null ? (
-              <div className="wed-modal" role="dialog" aria-modal="true" aria-label="主控预设全屏编辑">
+              <div className="wed-modal" role="dialog" aria-modal="true" aria-label="模型提示词设置全屏编辑">
                 <div className="wed-modal-card">
                   <div className="wed-modal-head">
                     <div>
-                      <div className="wed-panel-title">主控预设 · 全屏编辑</div>
+                      <div className="wed-panel-title">模型提示词设置 · 全屏编辑</div>
                       <div className="wed-panel-sub">{directorPromptDraft.length} 字 · 留空使用框架默认</div>
                     </div>
                   </div>

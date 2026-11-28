@@ -3,8 +3,10 @@ use crate::models::mcp_tool::{
 };
 use crate::models::session::SessionSnapshot;
 use crate::models::world::WorldDefinition;
+use crate::services::game_engine::memory::resolve_oag_enabled;
 use crate::services::llm::client::{ChatRequest, ChatToolDefinition};
 use crate::services::notifications::notification_tool_definition;
+use crate::services::oag::model_tool::{capability as oag_query_capability, OAG_QUERY_TOOL_NAME};
 use std::collections::BTreeSet;
 
 pub(crate) fn extract_first_balanced_json_segment(raw: &str) -> Option<String> {
@@ -394,10 +396,12 @@ pub(crate) fn parse_character_visual_directives(
         let portrait_hint = normalize_llm_text(object.get("portrait_hint"));
         let portrait_asset_name = normalize_llm_text(object.get("portrait_asset_name"));
         let portrait_asset_path = normalize_llm_text(object.get("portrait_asset_path"));
+        let generation_name = normalize_llm_text(object.get("generation_name"));
         let generation_prompt = normalize_llm_text(object.get("generation_prompt"));
         if portrait_hint.is_none()
             && portrait_asset_name.is_none()
             && portrait_asset_path.is_none()
+            && generation_name.is_none()
             && generation_prompt.is_none()
         {
             continue;
@@ -407,6 +411,7 @@ pub(crate) fn parse_character_visual_directives(
             "portrait_hint": portrait_hint.unwrap_or_default(),
             "portrait_asset_name": portrait_asset_name,
             "portrait_asset_path": portrait_asset_path,
+            "generation_name": generation_name,
             "generation_prompt": generation_prompt,
         }));
     }
@@ -565,9 +570,9 @@ pub(crate) fn arg_string_list(value: Option<&serde_json::Value>) -> Vec<String> 
 /// 角色（含 agent_chat 的唯一 agent）可用的工具能力表。
 ///
 /// 与主控表的区别：不含 list_scenes / list_characters / change_scene /
-/// switch_player_character / generate_image —— 这些是导演职权，其效果函数会写
+/// switch_player_character / generate_background / generate_portrait —— 这些是导演职权，其效果函数会写
 /// 场景切换、换玩家角色等字段，角色路没有对应的写回通道，下发了也执行不了。
-/// 角色能拿到的是 schedule_notification 与世界授权的自定义 MCP 工具。
+/// 角色能拿到的是 OAG 查询、知识检索、贴纸、通知与世界授权的自定义 MCP 工具。
 pub(crate) fn build_character_tool_capabilities(
     world: &WorldDefinition,
     mcp_tools: &[McpToolDefinition],
@@ -576,6 +581,9 @@ pub(crate) fn build_character_tool_capabilities(
         .into_iter()
         .collect::<BTreeSet<_>>();
     let mut tools = Vec::new();
+    if resolve_oag_enabled(world) {
+        tools.push(oag_query_capability());
+    }
     if let Some(tool) = crate::commands::knowledge::tool_capability(world) {
         tools.push(tool);
     }
@@ -671,12 +679,13 @@ pub(crate) fn is_builtin_tool_name(tool_name: &str) -> bool {
             | "list_characters"
             | "change_scene"
             | "switch_player_character"
-            | "generate_image"
+            | "generate_background"
+            | "generate_portrait"
             | "request_player_interaction"
             | "schedule_notification"
             | "search_sticker"
             | "send_sticker"
-    )
+    ) || tool_name == OAG_QUERY_TOOL_NAME
 }
 
 pub(crate) fn mcp_tool_exposure_mode(policy: &serde_json::Value) -> &str {

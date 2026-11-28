@@ -204,6 +204,7 @@ pub const DIRECTOR_PROMPT_SECTION_IDS: &[&str] = &[
     "director_rules",
     "world_runtime_context",
     "scene_characters",
+    "visual_capabilities",
     "chat_history",
     "player_input",
     "response_contract",
@@ -212,10 +213,10 @@ pub const DIRECTOR_PROMPT_SECTION_IDS: &[&str] = &[
 
 pub const CHARACTER_PROMPT_SECTION_IDS: &[&str] = &[
     "world_background",
-    "oag_context",
     "character_background",
     "character_rules",
     "character_attributes",
+    "oag_context",
     "world_runtime_context",
     "character_runtime_context",
     "visible_characters",

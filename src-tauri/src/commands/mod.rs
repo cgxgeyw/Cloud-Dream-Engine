@@ -7,6 +7,7 @@ pub mod mcp_servers;
 pub mod mcp_tools;
 pub mod memories;
 pub mod models;
+pub mod oag;
 pub mod permissions;
 pub mod platform_features;
 pub mod plugins;

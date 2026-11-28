@@ -1,4 +1,6 @@
 pub mod cleanup;
+pub mod oag_migration;
+pub mod oag_schema;
 pub mod repositories;
 pub mod schema;
 pub mod seeds;
@@ -27,7 +29,8 @@ impl Database {
     }
 
     fn initialize_schema(&self) -> Result<(), String> {
-        schema::create_tables(&self.conn).map_err(|e| e.to_string())
+        schema::create_tables(&self.conn).map_err(|e| e.to_string())?;
+        oag_migration::apply(&self.conn)
     }
 
     pub fn conn(&self) -> &Connection {

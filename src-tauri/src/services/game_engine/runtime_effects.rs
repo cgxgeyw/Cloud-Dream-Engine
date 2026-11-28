@@ -466,7 +466,7 @@ fn parse_memory_entries(
                 return Vec::new();
             };
             let character_targets =
-                parse_memory_target_characters(item.get("character_names"), characters, session);
+                parse_memory_target_characters(item.get("character_names"), characters);
             let participants =
                 parse_string_array(item.get("participants"), &session.scene.present_characters);
             let importance = item
@@ -574,6 +574,30 @@ fn parse_fact_extractions(value: Option<&serde_json::Value>) -> Vec<FactUpdate> 
                     .get("confidence")
                     .and_then(|value| value.as_f64())
                     .unwrap_or(0.7),
+                asserted_by: item
+                    .get("asserted_by")
+                    .and_then(|value| value.as_str())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or("director")
+                    .to_string(),
+                asserted_by_id: item
+                    .get("asserted_by_id")
+                    .and_then(|value| value.as_str())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string),
+                visibility: match item
+                    .get("visibility")
+                    .and_then(|value| value.as_str())
+                    .map(str::trim)
+                {
+                    Some("public") => "public".to_string(),
+                    Some("private") => "private".to_string(),
+                    _ => "scene".to_string(),
+                },
+                truth_status: "asserted".to_string(),
+                witnesses: parse_string_array(item.get("witnesses"), &[]),
             })
         })
         .collect()
@@ -582,8 +606,8 @@ fn parse_fact_extractions(value: Option<&serde_json::Value>) -> Vec<FactUpdate> 
 fn parse_memory_target_characters(
     value: Option<&serde_json::Value>,
     characters: &[CharacterDefinition],
-    session: &SessionSnapshot,
 ) -> Vec<String> {
+    // 受众缺失或无法解析时丢弃，不能把模型记忆广播给在场角色。
     let mut target_ids = Vec::new();
     for name in parse_string_array(value, &[]) {
         if let Some(character_id) = characters
@@ -591,26 +615,8 @@ fn parse_memory_target_characters(
             .find(|character| character.name == name)
             .map(|character| character.id.clone())
         {
-            target_ids.push(character_id);
-        }
-    }
-    if target_ids.is_empty() {
-        let participant_names = session
-            .scene
-            .present_characters
-            .iter()
-            .chain(std::iter::once(&session.player_character_name))
-            .cloned()
-            .collect::<Vec<_>>();
-        for name in participant_names {
-            if let Some(character_id) = characters
-                .iter()
-                .find(|character| character.name == name)
-                .map(|character| character.id.clone())
-            {
-                if !target_ids.contains(&character_id) {
-                    target_ids.push(character_id);
-                }
+            if !target_ids.contains(&character_id) {
+                target_ids.push(character_id);
             }
         }
     }
@@ -725,7 +731,52 @@ fn unique_strings(values: Vec<String>) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_fact_extractions;
+    use super::{parse_fact_extractions, parse_memory_target_characters};
+    use crate::models::character::CharacterDefinition;
+
+    fn memory_character(id: &str, name: &str) -> CharacterDefinition {
+        CharacterDefinition {
+            id: id.to_string(),
+            name: name.to_string(),
+            world_id: "world-1".to_string(),
+            role: String::new(),
+            background_prompt: String::new(),
+            model: String::new(),
+            memory_strategy: String::new(),
+            recent_dialogue_rounds: 8,
+            attributes: vec![],
+            portrait_assets: vec![],
+            avatar_asset: String::new(),
+            system_prompt_template: String::new(),
+            response_contract_prompt: String::new(),
+            narration_prompt: String::new(),
+            runtime_system_prompt: String::new(),
+            knowledge_base_ids: vec![],
+        }
+    }
+
+    #[test]
+    fn memory_targets_fail_closed_without_explicit_known_characters() {
+        let characters = vec![
+            memory_character("char-a", "Alice"),
+            memory_character("char-b", "Bob"),
+        ];
+        for value in [
+            None,
+            Some(serde_json::json!([])),
+            Some(serde_json::json!(["Unknown"])),
+            Some(serde_json::json!("Alice")),
+        ] {
+            assert!(parse_memory_target_characters(value.as_ref(), &characters).is_empty());
+        }
+        assert_eq!(
+            parse_memory_target_characters(
+                Some(&serde_json::json!(["Alice", "Bob", "Alice", "Unknown"])),
+                &characters,
+            ),
+            vec!["char-a".to_string(), "char-b".to_string()]
+        );
+    }
 
     #[test]
     fn parses_fact_extractions_with_defaults() {
@@ -738,7 +789,32 @@ mod tests {
         assert_eq!(facts[0].subject, "银钥匙");
         assert_eq!(facts[0].action, "upsert");
         assert_eq!(facts[0].confidence, 0.7);
+        assert_eq!(facts[0].asserted_by, "director");
+        assert_eq!(facts[0].visibility, "scene");
+        assert_eq!(facts[0].truth_status, "asserted");
+        assert!(facts[0].witnesses.is_empty());
         assert_eq!(facts[1].confidence, 0.9);
+    }
+
+    #[test]
+    fn fact_provenance_is_preserved_but_truth_remains_asserted() {
+        let payload = serde_json::json!([{
+            "subject": "银钥匙",
+            "predicate": "藏在",
+            "object": "12号柜",
+            "asserted_by": "爱丽丝",
+            "asserted_by_id": "char-alice",
+            "visibility": "private",
+            "truth_status": "confirmed",
+            "witnesses": ["玩家", "爱丽丝"]
+        }]);
+        let facts = parse_fact_extractions(Some(&payload));
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].asserted_by, "爱丽丝");
+        assert_eq!(facts[0].asserted_by_id.as_deref(), Some("char-alice"));
+        assert_eq!(facts[0].visibility, "private");
+        assert_eq!(facts[0].truth_status, "asserted");
+        assert_eq!(facts[0].witnesses, vec!["玩家", "爱丽丝"]);
     }
 
     #[test]

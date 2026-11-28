@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "云朵梦境",
+  "productName": "云梦引擎",
   "version": "0.2.0",
   "identifier": "com.dreamnarrativeengine.app",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "云朵梦境",
+        "title": "云梦引擎",
         "width": 1280,
         "height": 820,
         "minWidth": 960,

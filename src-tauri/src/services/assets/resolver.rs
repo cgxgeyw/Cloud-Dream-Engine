@@ -49,12 +49,21 @@ impl AssetResolver {
         let generation_enabled = asset_config
             .get("runtime_image_generation_enabled")
             .and_then(|value| value.as_bool())
-            .unwrap_or(true);
+            .unwrap_or(false);
         let generation_allowed = allow_generation && generation_enabled;
 
         let background_hint = scene.background_hint.trim().to_string();
         let background_generation_prompt =
             resolve_background_generation_prompt(session, director_decision);
+        let background_generation_name = director_decision
+            .and_then(|value| value.get("background_generation_name"))
+            .and_then(|value| value.as_str())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let background_generation_requested = director_decision
+            .and_then(|value| value.get("background_generation_prompt"))
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| !value.trim().is_empty());
         let local_background_assets =
             normalize_asset_list(asset_config.get("local_background_assets"));
         let scene_background_assets =
@@ -70,12 +79,21 @@ impl AssetResolver {
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
 
+        let background_selection_requested =
+            directed_background_name.is_some() || directed_background_path.is_some();
         let local_background = select_named_background_asset(
             &scene_background_assets,
             &local_background_assets,
             directed_background_name.as_deref(),
             directed_background_path.as_deref(),
         )
+        .or_else(|| {
+            if scene.name == session.scene.name {
+                session.assets.background_asset_path.clone()
+            } else {
+                None
+            }
+        })
         .or_else(|| {
             select_default_background_asset(
                 &scene.name,
@@ -85,21 +103,46 @@ impl AssetResolver {
             )
         });
 
-        let generated_background_asset_path = maybe_generate_asset_path(
-            data_dir,
-            &self.image_generator,
-            background_generation_prompt.as_deref(),
-            "background",
-            generation_allowed,
-            image_model,
-        )
-        .await;
-        let background_asset_path = match background_source_mode {
-            SourceMode::GeneratedOnly => {
-                generated_background_asset_path.clone().or(local_background)
-            }
-            SourceMode::GeneratedFirst => generated_background_asset_path
-                .clone()
+        let cached_background = if scene.name == session.scene.name
+            && session.assets.background_asset_path.as_deref().is_some_and(|path| path.starts_with("/assets/generated/"))
+        {
+            Some((
+                session.assets.background_generation_prompt.as_str(),
+                session.assets.background_asset_path.as_deref().unwrap_or_default(),
+            ))
+        } else {
+            None
+        };
+        let should_generate_background = !matches!(background_source_mode, SourceMode::LocalOnly)
+            && !(matches!(background_source_mode, SourceMode::LocalFirst)
+                && local_background.is_some()
+                && !background_generation_requested)
+            && !(cached_background.is_some() && !background_generation_requested);
+        let generated_background_asset_path = if should_generate_background {
+            maybe_generate_asset_path(
+                data_dir,
+                &self.image_generator,
+                background_generation_prompt.as_deref(),
+                "background",
+                background_generation_name.as_deref(),
+                generation_allowed,
+                image_model,
+                cached_background,
+            )
+            .await
+        } else {
+            cached_background.map(|(_, path)| path.to_string())
+        };
+        let background_asset_path = if background_selection_requested {
+            local_background.or(generated_background_asset_path).or_else(|| {
+                if scene.name == session.scene.name {
+                    session.assets.background_asset_path.clone()
+                } else {
+                    None
+                }
+            })
+        } else if background_generation_requested {
+            generated_background_asset_path
                 .or(local_background)
                 .or_else(|| {
                     if scene.name == session.scene.name {
@@ -107,17 +150,46 @@ impl AssetResolver {
                     } else {
                         None
                     }
-                }),
-            SourceMode::LocalOnly => local_background.or(generated_background_asset_path.clone()),
-            SourceMode::LocalFirst => local_background
-                .or(generated_background_asset_path.clone())
-                .or_else(|| {
+                })
+        } else {
+            match background_source_mode {
+                SourceMode::GeneratedOnly => generated_background_asset_path
+                    .clone()
+                    .or(local_background)
+                    .or_else(|| {
+                        if scene.name == session.scene.name {
+                            session.assets.background_asset_path.clone()
+                        } else {
+                            None
+                        }
+                    }),
+                SourceMode::GeneratedFirst => generated_background_asset_path
+                    .clone()
+                    .or(local_background)
+                    .or_else(|| {
+                        if scene.name == session.scene.name {
+                            session.assets.background_asset_path.clone()
+                        } else {
+                            None
+                        }
+                    }),
+                SourceMode::LocalOnly => local_background.or(generated_background_asset_path.clone()).or_else(|| {
                     if scene.name == session.scene.name {
                         session.assets.background_asset_path.clone()
                     } else {
                         None
                     }
                 }),
+                SourceMode::LocalFirst => local_background
+                    .or(generated_background_asset_path.clone())
+                    .or_else(|| {
+                        if scene.name == session.scene.name {
+                            session.assets.background_asset_path.clone()
+                        } else {
+                            None
+                        }
+                    }),
+            }
         };
 
         let character_visual_map = build_character_visual_map(session, director_decision);
@@ -130,6 +202,26 @@ impl AssetResolver {
             active_directive,
             director_decision,
         );
+        let active_generation_name = active_directive.and_then(|value| value.generation_name.clone());
+        let active_generation_requested = active_directive
+            .and_then(|value| value.generation_prompt.as_deref())
+            .is_some_and(|value| !value.trim().is_empty());
+        let active_selection_requested = active_directive.is_some_and(|value| {
+            value.asset_path.is_some() || value.asset_name.is_some()
+        });
+        let active_cached_portrait = if session
+            .assets
+            .active_speaker_portrait_path
+            .as_deref()
+            .is_some_and(|path| path.starts_with("/assets/generated/"))
+        {
+            Some((
+                session.assets.active_speaker_generation_prompt.as_str(),
+                session.assets.active_speaker_portrait_path.as_deref().unwrap_or_default(),
+            ))
+        } else {
+            None
+        };
         let active_local_asset = select_named_asset(
             portrait_map
                 .get(current_speaker)
@@ -150,9 +242,13 @@ impl AssetResolver {
             portrait_source_mode,
             generation_allowed,
             active_generation_prompt.as_deref(),
+            active_generation_name.as_deref(),
             active_local_asset,
             session.assets.active_speaker_portrait_path.clone(),
             image_model,
+            active_generation_requested,
+            active_selection_requested,
+            active_cached_portrait,
         )
         .await;
 
@@ -163,6 +259,12 @@ impl AssetResolver {
                 resolve_portrait_hint(name, session, name == current_speaker, directive);
             let generation_prompt =
                 resolve_generation_prompt(name, session, directive, director_decision);
+            let generation_name = directive.and_then(|value| value.generation_name.clone());
+            let generation_requested = directive
+                .and_then(|value| value.generation_prompt.as_deref())
+                .is_some_and(|value| !value.trim().is_empty());
+            let selection_requested = directive
+                .is_some_and(|value| value.asset_path.is_some() || value.asset_name.is_some());
             let local_asset = select_named_asset(
                 portrait_map
                     .get(name)
@@ -177,6 +279,17 @@ impl AssetResolver {
                     .and_then(|items| items.first().cloned())
             });
             let existing_path = existing_portrait_path(session, name);
+            let cached_portrait = if existing_path.as_deref().is_some_and(|path| path.starts_with("/assets/generated/")) {
+                Some((
+                    session.assets.visible_character_portraits.iter()
+                        .find(|item| item.character_name == *name)
+                        .map(|item| item.generation_prompt.as_str())
+                        .unwrap_or_default(),
+                    existing_path.as_deref().unwrap_or_default(),
+                ))
+            } else {
+                None
+            };
             let portrait_asset_path = if name == current_speaker {
                 active_speaker_portrait_path.clone()
             } else {
@@ -186,9 +299,13 @@ impl AssetResolver {
                     portrait_source_mode,
                     generation_allowed,
                     generation_prompt.as_deref(),
+                    generation_name.as_deref(),
                     local_asset,
                     existing_path,
                     image_model,
+                    generation_requested,
+                    selection_requested,
+                    cached_portrait,
                 )
                 .await
             };
@@ -223,6 +340,7 @@ enum SourceMode {
 #[derive(Clone)]
 struct CharacterVisualDirectiveView {
     hint: String,
+    generation_name: Option<String>,
     generation_prompt: Option<String>,
     asset_name: Option<String>,
     asset_path: Option<String>,
@@ -448,6 +566,11 @@ fn build_character_visual_map(
                 .unwrap_or_default()
                 .trim()
                 .to_string();
+            let generation_name = item
+                .get("generation_name")
+                .and_then(|value| value.as_str())
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
             let generation_prompt = item
                 .get("generation_prompt")
                 .and_then(|value| value.as_str())
@@ -467,6 +590,7 @@ fn build_character_visual_map(
                 character_name,
                 CharacterVisualDirectiveView {
                     hint,
+                    generation_name,
                     generation_prompt,
                     asset_name,
                     asset_path,
@@ -494,6 +618,7 @@ fn build_character_visual_map(
             name,
             CharacterVisualDirectiveView {
                 hint,
+                generation_name: None,
                 generation_prompt,
                 asset_name: None,
                 asset_path: None,
@@ -595,19 +720,37 @@ async fn select_portrait_path(
     mode: SourceMode,
     generation_allowed: bool,
     generation_prompt: Option<&str>,
+    generation_name: Option<&str>,
     local_asset: Option<String>,
     existing_path: Option<String>,
     image_model: Option<&ModelConfig>,
+    generation_requested: bool,
+    selection_requested: bool,
+    cached_portrait: Option<(&str, &str)>,
 ) -> Option<String> {
+    if selection_requested {
+        return local_asset.or(existing_path);
+    }
+    if !generation_requested
+        && (matches!(mode, SourceMode::LocalOnly)
+            || (matches!(mode, SourceMode::LocalFirst) && local_asset.is_some()))
+    {
+        return local_asset.or(existing_path);
+    }
     let generated = maybe_generate_asset_path(
         data_dir,
         image_generator,
         generation_prompt,
         "portrait",
+        generation_name,
         generation_allowed,
         image_model,
+        cached_portrait,
     )
     .await;
+    if generation_requested {
+        return generated.or(local_asset).or(existing_path);
+    }
     match mode {
         SourceMode::GeneratedOnly => generated.or(local_asset).or(existing_path),
         SourceMode::GeneratedFirst => generated.or(local_asset).or(existing_path),
@@ -621,15 +764,24 @@ async fn maybe_generate_asset_path(
     image_generator: &ImageGenerator,
     prompt: Option<&str>,
     kind: &str,
+    name: Option<&str>,
     generation_allowed: bool,
     image_model: Option<&ModelConfig>,
+    cached: Option<(&str, &str)>,
 ) -> Option<String> {
-    if !generation_allowed {
-        return None;
-    }
     let prompt = prompt
         .map(|item| item.trim())
         .filter(|item| !item.is_empty())?;
+    if name.is_none() {
+        if let Some((cached_prompt, cached_path)) = cached {
+            if cached_prompt == prompt && cached_path.starts_with("/assets/generated/") {
+                return Some(cached_path.to_string());
+            }
+        }
+    }
+    if !generation_allowed {
+        return None;
+    }
     let model = image_model?;
     if model.base_url.trim().is_empty() {
         return None;
@@ -658,12 +810,13 @@ async fn maybe_generate_asset_path(
         )
         .await
         .ok()?;
-    persist_generated_image(data_dir, kind, &image.image_data, &image.format).ok()
+    persist_generated_image(data_dir, kind, name, &image.image_data, &image.format).ok()
 }
 
 fn persist_generated_image(
     data_dir: &Path,
     kind: &str,
+    name: Option<&str>,
     bytes: &[u8],
     format: &str,
 ) -> Result<String, String> {
@@ -674,8 +827,132 @@ fn persist_generated_image(
     };
     let generated_dir: PathBuf = data_dir.join("assets").join("generated");
     fs::create_dir_all(&generated_dir).map_err(|e| e.to_string())?;
-    let filename = format!("{kind}-{}.{}", uuid::Uuid::new_v4().simple(), ext);
+    let name = sanitize_generated_name(name.unwrap_or_default(), 80);
+    let name = if name.is_empty() { kind } else { name.as_str() };
+    let filename = format!("{kind}-{name}-{}.{}", uuid::Uuid::new_v4().simple(), ext);
     let path = generated_dir.join(&filename);
     fs::write(&path, bytes).map_err(|e| e.to_string())?;
     Ok(format!("/assets/generated/{filename}"))
+}
+
+fn sanitize_generated_name(value: &str, max_bytes: usize) -> String {
+    let mut result = String::new();
+    let mut separator_pending = false;
+    for character in value.trim().chars() {
+        if character.is_alphanumeric() {
+            if separator_pending && !result.is_empty() {
+                if result.len() + 1 > max_bytes {
+                    break;
+                }
+                result.push('-');
+            }
+            separator_pending = false;
+            if result.len() + character.len_utf8() > max_bytes {
+                break;
+            }
+            result.push(character);
+        } else if !result.is_empty() {
+            separator_pending = true;
+        }
+    }
+    result.trim_matches('-').to_string()
+}
+
+pub fn register_generated_session_assets(
+    conn: &rusqlite::Connection,
+    session: &SessionSnapshot,
+) -> Result<(), String> {
+    let generated_path = |path: &str| path.starts_with("/assets/generated/");
+    let mut portrait_paths = std::collections::BTreeMap::<String, Vec<String>>::new();
+    if let Some(path) = session.assets.active_speaker_portrait_path.as_deref() {
+        if generated_path(path) {
+            portrait_paths
+                .entry(session.current_speaker.clone())
+                .or_default()
+                .push(path.to_string());
+        }
+    }
+    for item in &session.assets.visible_character_portraits {
+        if let Some(path) = item.portrait_asset_path.as_deref() {
+            if generated_path(path) {
+                portrait_paths
+                    .entry(item.character_name.clone())
+                    .or_default()
+                    .push(path.to_string());
+            }
+        }
+    }
+    let background_path = session
+        .assets
+        .background_asset_path
+        .as_deref()
+        .filter(|path| generated_path(path));
+    if background_path.is_none() && portrait_paths.is_empty() {
+        return Ok(());
+    }
+    if let Some(path) = background_path {
+        let mut stmt = conn
+            .prepare("SELECT ui_theme_config_json FROM worlds WHERE id = ?1")
+            .map_err(|e| e.to_string())?;
+        let raw = stmt
+            .query_row([&session.world_id], |row| row.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        drop(stmt);
+        let mut config = serde_json::from_str::<serde_json::Value>(&raw)
+            .unwrap_or_else(|_| serde_json::json!({}));
+        if !config.is_object() {
+            config = serde_json::json!({});
+        }
+        if config.get("assets").is_none() {
+            config["assets"] = serde_json::json!({});
+        }
+        let mut assets = config["assets"].as_object().cloned().unwrap_or_default();
+        let mut paths = normalize_asset_list(assets.get("local_background_assets"));
+        if !paths.iter().any(|item| item == path) {
+            paths.push(path.to_string());
+        }
+        assets.insert("local_background_assets".to_string(), serde_json::json!(paths));
+        config["assets"] = serde_json::Value::Object(assets);
+        conn.execute(
+            "UPDATE worlds SET ui_theme_config_json = ?1 WHERE id = ?2",
+            rusqlite::params![serde_json::to_string(&config).map_err(|e| e.to_string())?, session.world_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    let mut stmt = conn
+        .prepare("SELECT id, name, portrait_assets_json FROM characters WHERE world_id = ?1")
+        .map_err(|e| e.to_string())?;
+    let characters = stmt
+        .query_map([&session.world_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(stmt);
+    for (id, name, raw) in characters {
+        let Some(paths) = portrait_paths.get(&name) else {
+            continue;
+        };
+        let mut assets = serde_json::from_str::<Vec<String>>(&raw).unwrap_or_default();
+        let mut changed = false;
+        for path in paths {
+            if !assets.iter().any(|item| item == path) {
+                assets.push(path.clone());
+                changed = true;
+            }
+        }
+        if changed {
+            conn.execute(
+                "UPDATE characters SET portrait_assets_json = ?1 WHERE id = ?2",
+                rusqlite::params![serde_json::to_string(&assets).map_err(|e| e.to_string())?, id],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
 }

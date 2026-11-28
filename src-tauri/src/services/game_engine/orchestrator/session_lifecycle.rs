@@ -328,7 +328,7 @@ impl SessionOrchestrator {
                 characters,
                 image_model,
                 None,
-                world_allows_mcp_tool(world, "mcp-tool-image-generation"),
+                world.director_image_generation_enabled(),
             )
             .await;
         SessionSnapshot {
@@ -383,7 +383,7 @@ impl SessionOrchestrator {
                 characters,
                 image_model,
                 Some(parsed_runtime),
-                world_allows_mcp_tool(world, "mcp-tool-image-generation"),
+                world.director_image_generation_enabled(),
             )
             .await
     }

@@ -28,7 +28,7 @@ pub fn describe_params_for_trace(
     merge_extra(
         serde_json::json!({
             "provider": super::normalize_provider(provider),
-            // 三级覆盖解析后的期望值（含本层没被 provider 接受的项）。
+            // 覆盖解析后的期望值（含本层没被 provider 接受的项）。
             "requested": requested,
             // 真正进入请求体的参数。
             "effective": filtered.effective,

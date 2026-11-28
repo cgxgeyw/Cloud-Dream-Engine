@@ -9,6 +9,7 @@ pub mod memory_relation_repo;
 pub mod memory_repo;
 pub mod memory_summary_repo;
 pub mod model_repo;
+pub mod oag_repo;
 pub mod plugin_repo;
 pub mod save_repo;
 pub mod scheduled_notification_repo;

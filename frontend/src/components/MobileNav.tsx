@@ -739,8 +739,8 @@ export function MobileNav({ children }: MobileNavProps) {
                 <CloudIcon size={36} />
               </button>
               <div className="mobile-sidebar-brand-text">
-                <span className="mobile-sidebar-brand-title">云朵梦境</span>
-                <span className="mobile-sidebar-brand-subtitle">CLOUD DREAM ENGINE</span>
+                <span className="mobile-sidebar-brand-title">云梦引擎</span>
+                <span className="mobile-sidebar-brand-subtitle">YUNMENG ENGINE</span>
               </div>
             </div>
 

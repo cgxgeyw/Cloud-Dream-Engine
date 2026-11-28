@@ -299,6 +299,7 @@ pub fn build_streaming_director_trace_chat_message(
 mod tests;
 
 impl SessionOrchestrator {
+    #[cfg(test)]
     pub async fn run_director_turn(
         &self,
         llm_client: &LlmClient,
@@ -317,7 +318,51 @@ impl SessionOrchestrator {
         runtime_attributes: &crate::models::session::SessionRuntimeAttributesResponse,
         generation: &crate::models::generation_params::GenerationParams,
         notification_runtime: Option<NotificationToolRuntime<'_>>,
+        progress_callback: Option<&mut (dyn FnMut(DirectorLoopStreamProgress) + Send)>,
+    ) -> Result<DirectorTurnRun, StructuredOutputFailure> {
+        self.run_director_turn_with_oag(
+            llm_client,
+            world_director,
+            model,
+            recovery,
+            session,
+            world,
+            characters,
+            turn_index,
+            player_input,
+            player_media,
+            mcp_tools,
+            mcp_servers,
+            kv_vars,
+            runtime_attributes,
+            generation,
+            notification_runtime,
+            progress_callback,
+            None,
+        )
+        .await
+    }
+
+    pub async fn run_director_turn_with_oag(
+        &self,
+        llm_client: &LlmClient,
+        world_director: &WorldDirectorService,
+        model: ModelConfig,
+        recovery: DirectorTurnRecovery,
+        session: &SessionSnapshot,
+        world: &WorldDefinition,
+        characters: &[CharacterDefinition],
+        turn_index: i32,
+        player_input: &str,
+        player_media: &[crate::models::session::ContentPart],
+        mcp_tools: &[McpToolDefinition],
+        mcp_servers: &[crate::models::mcp_server::McpServerConfig],
+        kv_vars: &std::collections::HashMap<String, String>,
+        runtime_attributes: &crate::models::session::SessionRuntimeAttributesResponse,
+        generation: &crate::models::generation_params::GenerationParams,
+        notification_runtime: Option<NotificationToolRuntime<'_>>,
         mut progress_callback: Option<&mut (dyn FnMut(DirectorLoopStreamProgress) + Send)>,
+        oag_context: Option<&serde_json::Value>,
     ) -> Result<DirectorTurnRun, StructuredOutputFailure> {
         let provider = normalize_provider_name(&model.provider);
         let tool_loop_limit = world_director.resolve_tool_loop_limit(world);
@@ -329,7 +374,7 @@ impl SessionOrchestrator {
             if let Some(payload) = recovery.recovered_completed_payload {
                 payload
             } else {
-                let prompt_call = world_director.build_runtime_prompt_call_with_mcp_tools(
+                let prompt_call = world_director.build_runtime_prompt_call_with_oag(
                     world,
                     session,
                     characters,
@@ -340,6 +385,7 @@ impl SessionOrchestrator {
                     kv_vars,
                     Some(runtime_attributes),
                     player_media,
+                    oag_context,
                 );
                 let request = world_director.build_chat_request_from_prompt_call(
                     &prompt_call,
@@ -406,7 +452,7 @@ impl SessionOrchestrator {
                 loop_result.parsed
             }
         } else {
-            let prompt_call = world_director.build_runtime_prompt_call_with_mcp_tools(
+            let prompt_call = world_director.build_runtime_prompt_call_with_oag(
                 world,
                 session,
                 characters,
@@ -417,6 +463,7 @@ impl SessionOrchestrator {
                 kv_vars,
                 Some(runtime_attributes),
                 player_media,
+                oag_context,
             );
             let request = world_director.build_chat_request_from_prompt_call(
                 &prompt_call,
@@ -787,6 +834,12 @@ impl SessionOrchestrator {
                         "SELECT * FROM memory_relations WHERE session_id = ?1",
                         &[&session.id],
                     )?,
+                    "memory_summary_ranges": query_rows_json(
+                        conn,
+                        "SELECT * FROM memory_summary_ranges WHERE session_id = ?1",
+                        &[&session.id],
+                    )?,
+                    "oag_snapshot": crate::services::oag::lifecycle::snapshot_session(conn, &session.id)?,
                 }),
             )?;
         }
@@ -829,6 +882,12 @@ impl SessionOrchestrator {
             &session.visible_characters,
             &session.player_character_name,
         );
+        let player_witness_ids = super::session_materialization::build_witness_ids(
+            &player_witnesses,
+            &session.player_character_id,
+            &session.player_character_name,
+            &characters,
+        );
         messages.push(ChatMessage {
             message_id: ChatMessage::generate_id(),
             created_at: chrono::Utc::now().to_rfc3339(),
@@ -842,6 +901,9 @@ impl SessionOrchestrator {
                 "scene_id": session.scene.scene_id,
                 "scene_name": session.scene.name,
                 "witnesses": player_witnesses,
+                "witness_ids": player_witness_ids,
+                "recipient_ids": [],
+                "speaker_character_id": session.player_character_id,
             })),
         });
         let director_completed_payload = if resume_incomplete_turn
@@ -993,6 +1055,15 @@ impl SessionOrchestrator {
             if let Some(value) = director_runtime_payload.background_asset_path.clone() {
                 object.insert(
                     "background_asset_path".to_string(),
+                    serde_json::Value::String(value),
+                );
+            }
+            if let Some(value) = director_runtime_payload
+                .background_generation_name
+                .clone()
+            {
+                object.insert(
+                    "background_generation_name".to_string(),
                     serde_json::Value::String(value),
                 );
             }

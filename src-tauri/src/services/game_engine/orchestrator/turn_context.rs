@@ -328,18 +328,38 @@ pub(crate) fn message_visible_to(message: &ChatMessage, viewer: Option<&str>) ->
     let Some(viewer) = viewer.map(str::trim).filter(|value| !value.is_empty()) else {
         return true;
     };
-    let Some(witnesses) = message
+    let witnesses = message
         .metadata
         .as_ref()
         .and_then(|meta| meta.get("witnesses"))
+        .and_then(|value| value.as_array());
+    if let Some(witnesses) = witnesses {
+        let visible = witnesses
+            .iter()
+            .filter_map(|value| value.as_str())
+            .any(|name| name.trim() == viewer);
+        if !visible {
+            return false;
+        }
+    }
+    let recipients = message
+        .metadata
+        .as_ref()
+        .and_then(|meta| meta.get("recipients"))
         .and_then(|value| value.as_array())
-    else {
-        return true;
-    };
-    witnesses
-        .iter()
-        .filter_map(|value| value.as_str())
-        .any(|name| name.trim() == viewer)
+        .filter(|items| !items.is_empty());
+    if let Some(recipients) = recipients {
+        let speaker_sees_message = message
+            .speaker
+            .as_deref()
+            .is_some_and(|name| name.trim() == viewer);
+        let recipient_sees_message = recipients
+            .iter()
+            .filter_map(|value| value.as_str())
+            .any(|name| name.trim() == viewer);
+        return speaker_sees_message || recipient_sees_message;
+    }
+    true
 }
 
 pub(crate) fn memory_matches_turn_windows(
@@ -1001,6 +1021,40 @@ mod tests {
             metadata: Some(metadata),
             created_at: "2026-01-01T00:00:00Z".to_string(),
             parent_message_id: None,
+        }
+    }
+
+    #[test]
+    fn whisper_history_is_limited_to_speaker_and_recipients() {
+        let mut whisper = history_message(
+            "player",
+            "Player",
+            "whisper secret",
+            1,
+            Some(vec!["Player", "Alice", "Bob"]),
+        );
+        whisper
+            .metadata
+            .as_mut()
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .insert("recipients".to_string(), serde_json::json!(["Alice"]));
+
+        for (viewer, expected) in [
+            ("Player", vec!["whisper secret"]),
+            ("Alice", vec!["whisper secret"]),
+            ("Bob", vec![]),
+        ] {
+            let visible =
+                slice_character_history(&[whisper.clone()], 10, Some("Player"), Some(viewer));
+            assert_eq!(
+                visible
+                    .iter()
+                    .map(|message| message.content.as_str())
+                    .collect::<Vec<_>>(),
+                expected
+            );
         }
     }
 

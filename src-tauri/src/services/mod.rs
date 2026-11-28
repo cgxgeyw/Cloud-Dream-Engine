@@ -9,6 +9,7 @@ pub mod llm;
 pub mod map_topology;
 pub mod mcp;
 pub mod notifications;
+pub mod oag;
 pub mod platform_features;
 pub mod sticker_library;
 pub mod workflow;

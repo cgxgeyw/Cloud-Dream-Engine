@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 /// 生成参数（采样参数）。与「模型连接配置」（provider/地址/密钥/模型 id）分开：
 /// 连接配置回答「连哪」，本对象回答「怎么生成」。
 ///
-/// 每个字段都是 Option，`None` 表示「本层不覆盖」，交给下一层或应用默认值决定。
-/// 三级覆盖顺序：应用默认 → 世界 → 会话（`resolve` 逐层 merge）。
+/// 每个字段都是 Option，`None` 表示「本层不覆盖」，交给上一级或内置默认值决定。
+/// 覆盖顺序：应用默认 → 会话存档（`resolve` 逐层 merge）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct GenerationParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -27,7 +27,7 @@ pub struct GenerationParams {
 }
 
 /// 生成参数的调用角色。宿主对两类调用有不同的内置默认值（历史行为：导演 0.7、角色 0.8），
-/// 三级覆盖都在这个默认值之上叠加。
+/// 两级覆盖都在这个默认值之上叠加。
 pub const GENERATION_ROLE_DIRECTOR: &str = "director";
 pub const GENERATION_ROLE_CHARACTER: &str = "character";
 /// 世界生成器等宿主辅助调用，与游戏内回合无关，只吃应用默认。
@@ -35,7 +35,7 @@ pub const GENERATION_ROLE_UTILITY: &str = "utility";
 
 impl GenerationParams {
     /// 各角色的内置默认值。改造前这些值硬编码在 director.rs / turn_context.rs，
-    /// 现在收敛到一处，作为三级覆盖的最底层。
+    /// 现在收敛到一处，作为两级覆盖的最底层。
     pub fn builtin_default_for_role(role: &str) -> GenerationParams {
         let temperature = match role {
             GENERATION_ROLE_CHARACTER => 0.8,
@@ -47,7 +47,7 @@ impl GenerationParams {
         }
     }
 
-    /// 从 JSON（世界 director_config、DB 列）宽松解析：结构不对就当「本层没配」，
+    /// 从 JSON（应用设置、DB 列）宽松解析：结构不对就当「本层没配」，
     /// 不让一处手写坏了的配置阻断整局游戏。
     pub fn from_json(value: Option<&serde_json::Value>) -> Option<GenerationParams> {
         let value = value?;
@@ -90,17 +90,13 @@ impl GenerationParams {
         }
     }
 
-    /// 完整解析链：内置角色默认 → 应用 → 世界 → 会话。任一层缺省即跳过。
+    /// 完整解析链：内置角色默认 → 应用 → 会话。任一层缺省即跳过。
     pub fn resolve_for_role(
         role: &str,
         app: &GenerationParams,
-        world: Option<&GenerationParams>,
         session: Option<&GenerationParams>,
     ) -> GenerationParams {
         let mut result = Self::builtin_default_for_role(role).merge(app);
-        if let Some(world) = world {
-            result = result.merge(world);
-        }
         if let Some(session) = session {
             result = result.merge(session);
         }
@@ -167,15 +163,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn three_level_override_takes_the_innermost_value_per_field() {
+    fn two_level_override_takes_the_innermost_value_per_field() {
         let app = GenerationParams {
             temperature: Some(0.5),
             top_p: Some(0.9),
             max_tokens: Some(1000),
-            ..Default::default()
-        };
-        let world = GenerationParams {
-            temperature: Some(1.1),
             seed: Some(42),
             ..Default::default()
         };
@@ -184,32 +176,25 @@ mod tests {
             ..Default::default()
         };
 
-        let resolved = GenerationParams::resolve_for_role(
-            GENERATION_ROLE_CHARACTER,
-            &app,
-            Some(&world),
-            Some(&session),
-        );
+        let resolved =
+            GenerationParams::resolve_for_role(GENERATION_ROLE_CHARACTER, &app, Some(&session));
 
         assert_eq!(resolved.temperature, Some(0.2), "会话层优先级最高");
-        assert_eq!(resolved.seed, Some(42), "会话没配 seed 时沿用世界层");
-        assert_eq!(resolved.top_p, Some(0.9), "世界与会话都没配时沿用应用层");
+        assert_eq!(resolved.seed, Some(42), "会话没配 seed 时沿用应用层");
+        assert_eq!(resolved.top_p, Some(0.9), "会话没配时沿用应用层");
         assert_eq!(resolved.max_tokens, Some(1000));
     }
 
     #[test]
     fn builtin_role_defaults_survive_when_no_layer_configures_anything() {
-        // 改造前硬编码的 0.7 / 0.8 现在是内置默认：三层全空时行为必须与改造前一致。
         let director = GenerationParams::resolve_for_role(
             GENERATION_ROLE_DIRECTOR,
             &GenerationParams::default(),
-            None,
             None,
         );
         let character = GenerationParams::resolve_for_role(
             GENERATION_ROLE_CHARACTER,
             &GenerationParams::default(),
-            None,
             None,
         );
 
@@ -248,7 +233,7 @@ mod tests {
         assert!(
             GenerationParams::from_json(Some(&serde_json::json!({ "temperature": "热一点" })))
                 .is_none(),
-            "类型不对的世界包配置不该让整局游戏失败"
+            "类型不对的参数层不该让整局游戏失败"
         );
         assert_eq!(
             GenerationParams::from_json(Some(&serde_json::json!({ "temperature": 1.3 })))

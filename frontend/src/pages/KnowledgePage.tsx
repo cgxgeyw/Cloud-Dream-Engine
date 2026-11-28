@@ -4,14 +4,20 @@ import { Plus, ChevronRight } from 'lucide-react';
 import { ScreenLayout, SurfacePanel } from '../components/ScreenLayout';
 import { MobilePageBar } from '../components/MobilePageBar';
 import { LibraryTabs } from '../components/LibraryTabs';
-import { fetchKnowledgeBases, createKnowledgeBase, deleteKnowledgeBase, fetchKnowledgeDocuments, addKnowledgeDocument, deleteKnowledgeDocument, updateKnowledgeDocument, fetchWorlds } from '../data/apiAdapter';
-import type { KnowledgeBase, KnowledgeDocument, WorldResponse } from '../data/types';
+import { fetchKnowledgeBases, createKnowledgeBase, deleteKnowledgeBase, fetchKnowledgeDocuments, addKnowledgeDocument, deleteKnowledgeDocument, updateKnowledgeDocument, fetchWorlds, fetchWorldCharacters } from '../data/apiAdapter';
+import type { CharacterResponse, KnowledgeBase, KnowledgeDocument, KnowledgeDocumentAudience, WorldResponse } from '../data/types';
 import { useIsMobile } from '../components/ResponsiveLayout';
 import { KnowledgeChunkingForm } from '../components/KnowledgeChunkingForm';
 import { MenuButton } from '../components/ScreenLayout';
 import './KnowledgePage.css';
 
 type MobilePane = 'list' | 'detail' | 'create';
+
+const audienceLabels: Record<KnowledgeDocumentAudience, string> = {
+  public: '公开资料',
+  director: '仅主控',
+  character: '角色私有',
+};
 
 export function KnowledgePage() {
   const navigate = useNavigate();
@@ -20,6 +26,7 @@ export function KnowledgePage() {
   const [worlds, setWorlds] = useState<WorldResponse[]>([]);
   const [selected, setSelected] = useState<string>('');
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
+  const [characters, setCharacters] = useState<CharacterResponse[]>([]);
   const [draft, setDraft] = useState<KnowledgeDocument | null>(null);
   const [name, setName] = useState(''); const [owner, setOwner] = useState('');
   const [busy, setBusy] = useState(false); const [error, setError] = useState('');
@@ -31,6 +38,20 @@ export function KnowledgePage() {
   useEffect(() => { let active = true; setDocuments([]); setDraft(null); if (selected) void fetchKnowledgeDocuments(selected).then((d) => { if (active) setDocuments(d); }).catch(e => { if (active) setError(String(e)); }); return () => { active = false; }; }, [selected]);
   const run = async (action: () => Promise<void>) => { setBusy(true); setError(''); try { await action(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); } };
   const base = bases.find(b => b.id === selected);
+  const baseWorldId = base?.world_id ?? null;
+  useEffect(() => {
+    let active = true;
+    setCharacters([]);
+    if (baseWorldId) void fetchWorldCharacters(baseWorldId).then(items => { if (active) setCharacters(items); }).catch(e => { if (active) setError(String(e)); });
+    return () => { active = false; };
+  }, [baseWorldId]);
+  const changeDraftAudience = (audience: KnowledgeDocumentAudience) => setDraft(current => current ? {
+    ...current,
+    audience,
+    audience_character_id: audience === 'character'
+      ? (characters.some(c => c.id === current.audience_character_id) ? current.audience_character_id : characters[0]?.id ?? null)
+      : null,
+  } : current);
   const groups = [{ id: '', name: '公共知识库' }, ...worlds.map(w => ({ id: w.id, name: w.name }))];
   const visibleGroups = groups.filter(g => !g.id || bases.some(b => b.world_id === g.id));
 
@@ -134,7 +155,7 @@ export function KnowledgePage() {
                     <button key={d.id} type="button" className="wed-m-card" disabled={busy} onClick={() => setDraft({ ...d })}>
                       <span className="wed-m-card-copy">
                         <span className="t">{d.title}</span>
-                        <span className="s">{d.content.length.toLocaleString()} 字符</span>
+                        <span className="s">{d.content.length.toLocaleString()} 字符 · {audienceLabels[d.audience]}</span>
                       </span>
                       <ChevronRight size={16} aria-hidden="true" />
                     </button>
@@ -146,12 +167,14 @@ export function KnowledgePage() {
             {draft ? (
               <div className="wed-block">
                 <div className="knowledge-mobile-block-title">编辑资料</div>
-                <form onSubmit={e => { e.preventDefault(); void run(async () => { await updateKnowledgeDocument(draft.id, draft.title, draft.content); setDocuments(await fetchKnowledgeDocuments(base.id)); }); }}>
+                <form onSubmit={e => { e.preventDefault(); void run(async () => { await updateKnowledgeDocument(draft.id, draft.title, draft.content, draft.audience, draft.audience === 'character' ? draft.audience_character_id : null); setDocuments(await fetchKnowledgeDocuments(base.id)); }); }}>
                   <label className="editor-field"><span className="editor-field-label">标题</span><input className="editor-field-input" value={draft.title} onChange={e => setDraft({ ...draft, title: e.target.value })} required disabled={busy} /></label>
                   <label className="editor-field"><span className="editor-field-label">正文</span><textarea className="editor-field-input editor-field-textarea" value={draft.content} onChange={e => setDraft({ ...draft, content: e.target.value })} required rows={12} disabled={busy} /></label>
+                  <label className="editor-field"><span className="editor-field-label">可见范围</span><select className="editor-field-input" value={draft.audience} onChange={e => changeDraftAudience(e.target.value as KnowledgeDocumentAudience)} disabled={busy}><option value="public">公开资料</option><option value="director">仅主控</option><option value="character">角色私有</option></select></label>
+                  {draft.audience === 'character' ? <label className="editor-field"><span className="editor-field-label">可访问角色</span><select className="editor-field-input" value={draft.audience_character_id ?? ''} onChange={e => setDraft({ ...draft, audience_character_id: e.target.value })} required disabled={busy || !base.world_id}>{draft.audience_character_id && !characters.some(c => c.id === draft.audience_character_id) ? <option value={draft.audience_character_id}>当前绑定角色</option> : null}{characters.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>{!base.world_id ? <span className="text-muted">请先在角色所属世界的专属知识库中设置角色私有资料。</span> : null}</label> : null}
                   <p className="text-muted">来源：{draft.source_filename}</p>
                   <div className="knowledge-mobile-actions">
-                    <button className="action-btn action-btn--accent" disabled={busy}>保存正文</button>
+                    <button className="action-btn action-btn--accent" disabled={busy || (draft.audience === 'character' && !draft.audience_character_id)}>保存资料</button>
                     <button className="action-btn action-btn--danger" type="button" disabled={busy} onClick={() => { if (window.confirm(`删除资料“${draft.title}”？`)) void run(async () => { await deleteKnowledgeDocument(draft.id); setDraft(null); setDocuments(await fetchKnowledgeDocuments(base.id)); }); }}>删除资料</button>
                   </div>
                 </form>
@@ -196,14 +219,16 @@ export function KnowledgePage() {
                 <button className="action-btn action-btn--danger" disabled={busy} onClick={() => { if (window.confirm(`删除“${base.name}”及全部资料？`)) void run(async () => { await deleteKnowledgeBase(base.id); setSelected(''); await reload(); }); }}>删除知识库</button>
               </div>
               <input ref={upload} type="file" hidden multiple accept=".txt,.md,.markdown,.csv,.json,.jsonl,.yaml,.yml,.xml,.docx,.pdf" onChange={e => { const files = Array.from(e.target.files || []); e.target.value = ''; const id = base.id; void run(async () => { try { for (const f of files) { if (f.size > 20 * 1024 * 1024) throw new Error(`${f.name} 超过 20MB`); await addKnowledgeDocument(id, f); } } finally { setDocuments(await fetchKnowledgeDocuments(id)); } }); }} />
-              {documents.length === 0 ? <p className="empty-text">还没有资料。上传后可以检查、修改提取的正文。</p> : <ul className="knowledge-documents">{documents.map(d => <li key={d.id}><button className="action-btn" disabled={busy} onClick={() => setDraft({ ...d })}>{d.title}</button><span className="text-muted">{d.content.length.toLocaleString()} 字符</span></li>)}</ul>}
-              {draft && <form onSubmit={e => { e.preventDefault(); void run(async () => { await updateKnowledgeDocument(draft.id, draft.title, draft.content); setDocuments(await fetchKnowledgeDocuments(base.id)); }); }}>
+              {documents.length === 0 ? <p className="empty-text">还没有资料。上传后可以检查、修改提取的正文。</p> : <ul className="knowledge-documents">{documents.map(d => <li key={d.id}><button className="action-btn" disabled={busy} onClick={() => setDraft({ ...d })}>{d.title}</button><span className="text-muted">{d.content.length.toLocaleString()} 字符 · {audienceLabels[d.audience]}</span></li>)}</ul>}
+              {draft && <form onSubmit={e => { e.preventDefault(); void run(async () => { await updateKnowledgeDocument(draft.id, draft.title, draft.content, draft.audience, draft.audience === 'character' ? draft.audience_character_id : null); setDocuments(await fetchKnowledgeDocuments(base.id)); }); }}>
                 <div className="grid grid--gap-sm">
                 <label className="field-label"><span className="field-label-text">标题</span><input className="field-input" value={draft.title} onChange={e => setDraft({ ...draft, title: e.target.value })} required disabled={busy} /></label>
                 <label className="field-label"><span className="field-label-text">正文</span><textarea className="field-input" value={draft.content} onChange={e => setDraft({ ...draft, content: e.target.value })} required rows={16} disabled={busy} /></label>
+                <label className="field-label"><span className="field-label-text">可见范围</span><select className="field-input" value={draft.audience} onChange={e => changeDraftAudience(e.target.value as KnowledgeDocumentAudience)} disabled={busy}><option value="public">公开资料</option><option value="director">仅主控</option><option value="character">角色私有</option></select></label>
+                {draft.audience === 'character' ? <label className="field-label"><span className="field-label-text">可访问角色</span><select className="field-input" value={draft.audience_character_id ?? ''} onChange={e => setDraft({ ...draft, audience_character_id: e.target.value })} required disabled={busy || !base.world_id}>{draft.audience_character_id && !characters.some(c => c.id === draft.audience_character_id) ? <option value={draft.audience_character_id}>当前绑定角色</option> : null}{characters.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>{!base.world_id ? <span className="text-muted">请先在角色所属世界的专属知识库中设置角色私有资料。</span> : null}</label> : null}
                 </div>
                 <p className="text-muted">来源：{draft.source_filename}</p>
-                <div className="settings-form-actions"><button className="action-btn action-btn--accent" disabled={busy}>保存正文</button> <button className="action-btn action-btn--danger" type="button" disabled={busy} onClick={() => { if (window.confirm(`删除资料“${draft.title}”？`)) void run(async () => { await deleteKnowledgeDocument(draft.id); setDraft(null); setDocuments(await fetchKnowledgeDocuments(base.id)); }); }}>删除资料</button></div>
+                <div className="settings-form-actions"><button className="action-btn action-btn--accent" disabled={busy || (draft.audience === 'character' && !draft.audience_character_id)}>保存资料</button> <button className="action-btn action-btn--danger" type="button" disabled={busy} onClick={() => { if (window.confirm(`删除资料“${draft.title}”？`)) void run(async () => { await deleteKnowledgeDocument(draft.id); setDraft(null); setDocuments(await fetchKnowledgeDocuments(base.id)); }); }}>删除资料</button></div>
               </form>}
             </>}
           </section>

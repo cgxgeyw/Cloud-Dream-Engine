@@ -1,6 +1,7 @@
 use crate::models::attribute::{AttributeSchema, AttributeValue, AttributeValueUpsertRequest};
 use crate::models::session::*;
 use crate::models::world::WorldDefinition;
+use crate::services::game_engine::runtime_effects::DirectorRuntimeApplication;
 use chrono::Utc;
 use rusqlite::{params, Connection};
 use std::collections::HashMap;
@@ -11,6 +12,7 @@ use super::turn_context::*;
 
 pub(crate) use super::journal_trace::*;
 pub(crate) use super::session_materialization::*;
+pub(crate) use crate::services::oag::lifecycle::{insert_rows, query_rows_json};
 
 pub(crate) fn record_agent_checkpoint(
     conn: &Connection,
@@ -388,21 +390,42 @@ pub(crate) fn rollback_session_to_turn(
     .map_err(|e| e.to_string())?;
     // 采样参数是玩家当前偏好，不是回合状态：重新生成不该把它退回旧快照里的值。
     restored_session.generation_params = session.generation_params.clone();
-    restore_runtime_attribute_values(
-        conn,
-        &session.id,
-        snapshot_payload.get("attribute_values").cloned(),
-    )?;
-    restore_turn_memory_state(conn, &session.id, turn_index, &snapshot_payload)?;
-    for character_id in collect_created_character_ids_from_turns(conn, &session.id, turn_index)? {
-        crate::db::repositories::character_repo::CharacterRepository::new(conn)
-            .delete(&character_id)?;
+    conn.execute_batch("SAVEPOINT turn_rollback")
+        .map_err(|error| error.to_string())?;
+    let result = (|| {
+        restore_runtime_attribute_values(
+            conn,
+            &session.id,
+            snapshot_payload.get("attribute_values").cloned(),
+        )?;
+        restore_turn_memory_state(conn, &session.id, turn_index, &snapshot_payload)?;
+        for character_id in collect_created_character_ids_from_turns(conn, &session.id, turn_index)?
+        {
+            crate::db::repositories::character_repo::CharacterRepository::new(conn)
+                .delete(&character_id)?;
+        }
+        delete_turn_traces(conn, &session.id, turn_index)?;
+        if let Some(oag_snapshot) = snapshot_payload.get("oag_snapshot") {
+            crate::services::oag::lifecycle::restore_session(conn, &session.id, oag_snapshot)?;
+        }
+        crate::db::repositories::session_repo::SessionRepository::new(conn)
+            .upsert(&restored_session)?;
+        archive_replayed_turn_messages(conn, session, turn_index)?;
+        Ok(restored_session)
+    })();
+    match result {
+        Ok(restored) => match conn.execute_batch("RELEASE turn_rollback") {
+            Ok(()) => Ok(restored),
+            Err(error) => {
+                let _ = conn.execute_batch("ROLLBACK TO turn_rollback; RELEASE turn_rollback");
+                Err(error.to_string())
+            }
+        },
+        Err(error) => {
+            let _ = conn.execute_batch("ROLLBACK TO turn_rollback; RELEASE turn_rollback");
+            Err(error)
+        }
     }
-    delete_turn_traces(conn, &session.id, turn_index)?;
-    // 归档被覆盖回合的消息（必须在 delete_turn_traces 之后：journal >= turn_index
-    // 会被清空，先写归档会被一并删掉）。回滚后这些消息从会话消失，但保留在 journal 可追溯。
-    archive_replayed_turn_messages(conn, session, turn_index)?;
-    Ok(restored_session)
 }
 
 /// 归档 turn_index >= from_turn_index 的会话消息到 journal（turn_regenerated 步骤）。
@@ -439,13 +462,49 @@ fn archive_replayed_turn_messages(
 }
 
 /// 回滚记忆状态：删除 from_turn_index 起新增的记忆（含 embedding），
-/// 并把记忆实体/关系还原到快照内容（旧快照没有这两节时只删新增记忆）。
+/// 并按快照恢复总结区间与记忆实体/关系。旧快照缺少对应节时保留原有兼容行为。
 fn restore_turn_memory_state(
     conn: &Connection,
     session_id: &str,
     from_turn_index: i32,
     snapshot_payload: &serde_json::Value,
 ) -> Result<(), String> {
+    let summary_ranges = snapshot_payload
+        .get("memory_summary_ranges")
+        .and_then(|value| value.as_array());
+    if let Some(ranges) = summary_ranges {
+        let snapshot_memory_ids: std::collections::HashSet<&str> = ranges
+            .iter()
+            .filter_map(|range| range.get("memory_id").and_then(|value| value.as_str()))
+            .collect();
+        let mut stmt = conn
+            .prepare("SELECT id FROM memories WHERE session_id = ?1 AND memory_type = 'summary'")
+            .map_err(|e| e.to_string())?;
+        let summary_memory_ids = stmt
+            .query_map(params![session_id], |row| row.get::<_, String>(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        drop(stmt);
+        for memory_id in summary_memory_ids {
+            // 快照后才生成的旧桶总结，turn_index 可能小于本轮。
+            if snapshot_memory_ids.contains(memory_id.as_str()) {
+                continue;
+            }
+            conn.execute(
+                "DELETE FROM memory_embeddings WHERE memory_id = ?1",
+                params![memory_id],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute("DELETE FROM memories WHERE id = ?1", params![memory_id])
+                .map_err(|e| e.to_string())?;
+        }
+        conn.execute(
+            "DELETE FROM memory_summary_ranges WHERE session_id = ?1",
+            params![session_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
     conn.execute(
         "DELETE FROM memory_embeddings WHERE memory_id IN (SELECT id FROM memories WHERE session_id = ?1 AND turn_index >= ?2)",
         params![session_id, from_turn_index],
@@ -460,6 +519,9 @@ fn restore_turn_memory_state(
         .get("memory_entities")
         .and_then(|value| value.as_array())
     else {
+        if let Some(ranges) = summary_ranges {
+            insert_rows(conn, "memory_summary_ranges", ranges)?;
+        }
         return Ok(());
     };
     let empty: Vec<serde_json::Value> = Vec::new();
@@ -477,6 +539,9 @@ fn restore_turn_memory_state(
         params![session_id],
     )
     .map_err(|e| e.to_string())?;
+    if let Some(ranges) = summary_ranges {
+        insert_rows(conn, "memory_summary_ranges", ranges)?;
+    }
     insert_rows(conn, "memory_entities", entities)?;
     insert_rows(conn, "memory_relations", relations)?;
     Ok(())
@@ -522,85 +587,6 @@ pub(crate) fn turn_player_input(
             None
         }
     }))
-}
-
-/// 把查询结果按行转成 JSON 对象数组（列名 → 值），保证回滚时原样插回。
-pub(crate) fn query_rows_json(
-    conn: &Connection,
-    sql: &str,
-    sql_params: &[&dyn rusqlite::ToSql],
-) -> Result<Vec<serde_json::Value>, String> {
-    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
-    let column_names: Vec<String> = stmt
-        .column_names()
-        .iter()
-        .map(|name| name.to_string())
-        .collect();
-    let rows = stmt
-        .query_map(sql_params, |row| {
-            let mut object = serde_json::Map::new();
-            for (index, name) in column_names.iter().enumerate() {
-                let value = row.get_ref(index)?;
-                let json = match value {
-                    rusqlite::types::ValueRef::Null => serde_json::Value::Null,
-                    rusqlite::types::ValueRef::Integer(v) => serde_json::json!(v),
-                    rusqlite::types::ValueRef::Real(v) => serde_json::json!(v),
-                    rusqlite::types::ValueRef::Text(v) => {
-                        serde_json::Value::String(String::from_utf8_lossy(v).into_owned())
-                    }
-                    rusqlite::types::ValueRef::Blob(v) => {
-                        use base64::Engine as _;
-                        serde_json::Value::String(
-                            base64::engine::general_purpose::STANDARD.encode(v),
-                        )
-                    }
-                };
-                object.insert(name.clone(), json);
-            }
-            Ok(serde_json::Value::Object(object))
-        })
-        .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())
-}
-
-/// 把 JSON 行数组按原列名插回表。调用方负责先清空目标行。
-fn insert_rows(conn: &Connection, table: &str, rows: &[serde_json::Value]) -> Result<(), String> {
-    for row in rows {
-        let object = row
-            .as_object()
-            .ok_or_else(|| format!("快照行不是对象: {table}"))?;
-        let columns: Vec<&str> = object.keys().map(String::as_str).collect();
-        let placeholders: Vec<String> = (1..=columns.len()).map(|i| format!("?{i}")).collect();
-        let sql = format!(
-            "INSERT INTO {table} ({}) VALUES ({})",
-            columns.join(", "),
-            placeholders.join(", ")
-        );
-        let values: Vec<rusqlite::types::Value> = columns
-            .iter()
-            .map(|column| json_to_sql_value(&object[*column]))
-            .collect();
-        conn.execute(&sql, rusqlite::params_from_iter(values.iter()))
-            .map_err(|e| format!("快照还原失败 {table}: {e}"))?;
-    }
-    Ok(())
-}
-
-fn json_to_sql_value(value: &serde_json::Value) -> rusqlite::types::Value {
-    match value {
-        serde_json::Value::Null => rusqlite::types::Value::Null,
-        serde_json::Value::Bool(v) => rusqlite::types::Value::Integer(*v as i64),
-        serde_json::Value::Number(v) => {
-            if let Some(i) = v.as_i64() {
-                rusqlite::types::Value::Integer(i)
-            } else {
-                rusqlite::types::Value::Real(v.as_f64().unwrap_or(0.0))
-            }
-        }
-        serde_json::Value::String(v) => rusqlite::types::Value::Text(v.clone()),
-        other => rusqlite::types::Value::Text(other.to_string()),
-    }
 }
 
 pub(crate) fn ensure_agent_session(
@@ -860,7 +846,7 @@ impl SessionOrchestrator {
                 input.characters,
                 input.image_model,
                 None,
-                world_allows_mcp_tool(input.world, "mcp-tool-image-generation"),
+                input.world.director_image_generation_enabled(),
             )
             .await;
         Ok(session)
@@ -903,6 +889,7 @@ impl SessionOrchestrator {
         let recovery_journal = load_turn_journal(conn, &updated.id, latest_turn_index)?;
         let repo = crate::db::repositories::session_repo::SessionRepository::new(conn);
         repo.upsert(updated)?;
+        crate::services::assets::resolver::register_generated_session_assets(conn, updated)?;
         if !journal_has_completed_step(&recovery_journal, "switch_character_applied") {
             append_turn_journal(
                 conn,
@@ -948,6 +935,19 @@ impl SessionOrchestrator {
     pub fn writeback_turn_snapshot(&self, input: TurnWritebackInput<'_>) -> Result<(), String> {
         let repo = crate::db::repositories::session_repo::SessionRepository::new(input.conn);
         repo.upsert(input.updated)?;
+        crate::services::assets::resolver::register_generated_session_assets(
+            input.conn,
+            input.updated,
+        )?;
+        write_oag_turn(
+            input.conn,
+            &input.world,
+            input.session,
+            input.updated,
+            input.characters,
+            input.turn_index,
+            input.runtime_application,
+        );
         append_runtime_effects_journal(
             input.conn,
             input.recovery_journal,
@@ -1018,6 +1018,186 @@ impl SessionOrchestrator {
     }
 }
 
+fn write_oag_turn(
+    conn: &Connection,
+    world: &WorldDefinition,
+    previous: &SessionSnapshot,
+    updated: &SessionSnapshot,
+    characters: &[crate::models::character::CharacterDefinition],
+    turn_index: i32,
+    runtime_application: &DirectorRuntimeApplication,
+) {
+    if !crate::services::game_engine::memory::resolve_oag_enabled(world) {
+        return;
+    }
+    let already_written = load_turn_journal(conn, &updated.id, turn_index)
+        .map(|journal| journal_has_completed_step(&journal, "oag_turn_written"))
+        .unwrap_or(false);
+    if already_written {
+        return;
+    }
+    let oag_result = (|| {
+        let ontology = crate::services::oag::canon::load_active_ontology(conn, &world.id)?
+            .ok_or_else(|| "当前世界尚未导入 OAG 本体".to_string())?;
+        crate::services::oag::turn_writer::write_turn(
+            &crate::services::oag::turn_writer::OagTurnWriterInput {
+                conn,
+                world,
+                previous,
+                updated,
+                characters,
+                turn_index,
+                runtime_application,
+                resolved_ontology: &ontology,
+            },
+        )
+    })();
+    let (status, detail) = match oag_result {
+        Ok(()) => ("completed", serde_json::json!({})),
+        Err(error) => ("failed", serde_json::json!({ "error": error })),
+    };
+    let _ = crate::services::oag::turn_writer::record_trace(
+        conn,
+        &world.id,
+        &updated.id,
+        turn_index,
+        "turn_write",
+        status,
+        detail.clone(),
+    );
+    let _ = append_turn_journal(
+        conn,
+        &updated.id,
+        turn_index,
+        "oag_turn_written",
+        status,
+        detail,
+    );
+}
+
+#[cfg(test)]
+mod oag_writeback_tests {
+    use super::*;
+    use crate::db::{oag_schema, schema};
+    use crate::models::session::{AssetSelection, SceneRuntime, SessionState};
+
+    fn fixtures() -> (Connection, WorldDefinition, SessionSnapshot) {
+        let conn = Connection::open_in_memory().unwrap();
+        schema::create_tables(&conn).unwrap();
+        let world = WorldDefinition {
+            id: "world".to_string(),
+            name: "World".to_string(),
+            genre: String::new(),
+            background_prompt: String::new(),
+            opening_scene: String::new(),
+            summary: String::new(),
+            time_system: String::new(),
+            map_nodes: serde_json::Value::Null,
+            time_config: serde_json::Value::Null,
+            director_config: serde_json::json!({ "memory_mode": "oag" }),
+            ui_theme_config: serde_json::Value::Null,
+            director_system_prompt_base: String::new(),
+            director_runtime_system_prompt: String::new(),
+            opening_messages: Vec::new(),
+            opening_character_ids: Vec::new(),
+            player_character_id: None,
+        };
+        let session = SessionSnapshot {
+            id: "session".to_string(),
+            world_name: "World".to_string(),
+            location: "Dock".to_string(),
+            time_label: "Night".to_string(),
+            current_speaker: "Player".to_string(),
+            current_line: String::new(),
+            player_character_id: "player".to_string(),
+            player_character_name: "Player".to_string(),
+            visible_characters: Vec::new(),
+            messages: Vec::new(),
+            player_stats: Vec::new(),
+            map_graph_nodes: Vec::new(),
+            map_graph_edges: Vec::new(),
+            system_log: Vec::new(),
+            scene: SceneRuntime::default(),
+            assets: AssetSelection::default(),
+            state: SessionState::default(),
+            generation_params: Default::default(),
+        };
+        (conn, world, session)
+    }
+
+    #[test]
+    fn disabled_mode_does_not_attempt_oag_write() {
+        let (conn, mut world, session) = fixtures();
+        world.director_config = serde_json::json!({ "memory_mode": "embedding" });
+        write_oag_turn(
+            &conn,
+            &world,
+            &session,
+            &session,
+            &[],
+            1,
+            &DirectorRuntimeApplication::default(),
+        );
+        let journals: i64 = conn
+            .query_row("SELECT COUNT(*) FROM turn_journal", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(journals, 0);
+    }
+
+    #[test]
+    fn failure_is_traced_without_blocking_and_completed_turn_is_skipped() {
+        let (conn, world, session) = fixtures();
+        oag_schema::create(&conn).unwrap();
+        for _ in 0..2 {
+            write_oag_turn(
+                &conn,
+                &world,
+                &session,
+                &session,
+                &[],
+                1,
+                &DirectorRuntimeApplication::default(),
+            );
+        }
+        let failed_traces: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM oag_write_traces WHERE status = 'failed'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(failed_traces, 2);
+        let failed_journals: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM turn_journal WHERE step = 'oag_turn_written' AND status = 'failed'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(failed_journals, 2);
+        conn.execute(
+            "UPDATE turn_journal SET status = 'completed' WHERE step = 'oag_turn_written'",
+            [],
+        )
+        .unwrap();
+        write_oag_turn(
+            &conn,
+            &world,
+            &session,
+            &session,
+            &[],
+            1,
+            &DirectorRuntimeApplication::default(),
+        );
+        let traces: i64 = conn
+            .query_row("SELECT COUNT(*) FROM oag_write_traces", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(traces, 2);
+    }
+}
+
 #[cfg(test)]
 mod rollback_tests {
     //! 第 2 项（重新生成/重发）的回滚验收：snapshot_created + rollback_session_to_turn
@@ -1064,6 +1244,9 @@ mod rollback_tests {
     fn setup() -> (Connection, SessionSnapshot) {
         let conn = Connection::open_in_memory().expect("open sqlite");
         schema::create_tables(&conn).expect("create schema");
+        crate::db::oag_schema::create(&conn).expect("create OAG schema");
+        conn.pragma_update(None, "foreign_keys", true)
+            .expect("enable foreign keys");
         let session = sample_session("sess-1");
         crate::db::repositories::session_repo::SessionRepository::new(&conn)
             .upsert(&session)
@@ -1093,6 +1276,19 @@ mod rollback_tests {
             params![id, format!("记忆-{id}"), turn_index],
         )
         .expect("insert memory");
+    }
+
+    fn insert_summary(conn: &Connection, id: &str, turn_index: i64, scene_id: &str) {
+        conn.execute(
+            "INSERT INTO memories (id, world_id, session_id, character_id, content, turn_index, memory_type, scene_id) VALUES (?1, 'world-1', 'sess-1', 'char-a', ?2, ?3, 'summary', ?4)",
+            params![id, format!("总结-{id}"), turn_index, scene_id],
+        )
+        .expect("insert summary memory");
+        conn.execute(
+            "INSERT INTO memory_summary_ranges (memory_id, world_id, session_id, character_id, bucket_index, bucket_start, bucket_end, scene_id, scene_name, turn_start, turn_end, created_at) VALUES (?1, 'world-1', 'sess-1', 'char-a', 0, 1, 10, ?2, ?2, 1, 10, 'now')",
+            params![id, scene_id],
+        )
+        .expect("insert summary range");
     }
 
     fn upsert_attribute(conn: &Connection, id: &str, owner: &str, value: &str) {
@@ -1142,6 +1338,12 @@ mod rollback_tests {
                     "SELECT * FROM memory_relations WHERE session_id = ?1",
                     &[&session.id],
                 ).unwrap(),
+                "memory_summary_ranges": query_rows_json(
+                    conn,
+                    "SELECT * FROM memory_summary_ranges WHERE session_id = ?1",
+                    &[&session.id],
+                ).unwrap(),
+                "oag_snapshot": crate::services::oag::lifecycle::snapshot_session(conn, &session.id).unwrap(),
             }),
         )
         .expect("write snapshot");
@@ -1262,6 +1464,78 @@ mod rollback_tests {
     }
 
     #[test]
+    fn rollback_restores_summary_ranges_and_fact_provenance() {
+        let (conn, session) = setup();
+        insert_summary(&conn, "summary-before", 10, "scene-1");
+        insert_memory(&conn, "raw-before", 3);
+        insert_entity(&conn, "银钥匙", 1);
+        conn.execute(
+            "INSERT INTO memory_relations (id, world_id, session_id, subject_entity_id, predicate, object_text, valid_from_turn, created_at, asserted_by, asserted_by_id, visibility, truth_status, witnesses_json) VALUES ('rel-before', 'world-1', 'sess-1', '银钥匙', '藏在', '柜子', 3, 'now', 'Alice', 'char-a', 'private', 'asserted', '[\"Alice\",\"Player\"]')",
+            [],
+        )
+        .expect("insert private fact");
+        write_snapshot(&conn, &session, 11);
+
+        insert_summary(&conn, "summary-old-bucket-after-snapshot", 10, "scene-2");
+        insert_summary(&conn, "summary-current-turn", 11, "scene-3");
+        insert_memory(&conn, "raw-after", 11);
+        conn.execute("UPDATE memory_relations SET invalid_at_turn = 11, visibility = 'public', truth_status = 'confirmed' WHERE id = 'rel-before'", [])
+            .expect("mutate old fact");
+        insert_entity(&conn, "新钥匙", 1);
+        insert_relation(&conn, "rel-after", "新钥匙", None);
+
+        rollback_session_to_turn(&conn, &session, 11).expect("rollback");
+        let mut stmt = conn
+            .prepare("SELECT id FROM memories WHERE session_id = 'sess-1' ORDER BY id")
+            .unwrap();
+        let memory_ids: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(memory_ids, vec!["raw-before", "summary-before"]);
+        let ranges: Vec<(String, String)> = {
+            let mut stmt = conn
+                .prepare("SELECT memory_id, scene_id FROM memory_summary_ranges WHERE session_id = 'sess-1'")
+                .unwrap();
+            stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        assert_eq!(
+            ranges,
+            vec![("summary-before".to_string(), "scene-1".to_string())]
+        );
+        let fact: (Option<i64>, String, String, String, Option<String>, String) = conn
+            .query_row(
+                "SELECT invalid_at_turn, asserted_by, asserted_by_id, visibility, truth_status, witnesses_json FROM memory_relations WHERE id = 'rel-before'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+            )
+            .expect("restored fact");
+        assert_eq!(
+            fact,
+            (
+                None,
+                "Alice".to_string(),
+                "char-a".to_string(),
+                "private".to_string(),
+                Some("asserted".to_string()),
+                "[\"Alice\",\"Player\"]".to_string()
+            )
+        );
+        let relation_count: i64 = scalar(
+            &conn,
+            "SELECT COUNT(*) FROM memory_relations WHERE session_id = 'sess-1'",
+            &[],
+        );
+        assert_eq!(relation_count, 1);
+        let integrity: String = scalar(&conn, "PRAGMA integrity_check", &[]);
+        assert_eq!(integrity, "ok");
+    }
+
+    #[test]
     fn repeated_rollbacks_do_not_drift() {
         let (conn, session) = setup();
         upsert_attribute(&conn, "gold", "sess-1", "100");
@@ -1280,6 +1554,116 @@ mod rollback_tests {
             assert_eq!(gold, "\"100\"", "第 {value} 次回滚后属性漂移");
             write_snapshot(&conn, &session, 5);
         }
+    }
+
+    fn insert_oag_baseline(conn: &Connection) {
+        conn.execute_batch(
+            "INSERT INTO oag_objects (id, world_id, session_id, object_type, canonical_key, name, name_normalized, created_turn, updated_turn)
+             VALUES ('oag-baseline', 'world-1', 'sess-1', 'person', 'person-baseline', 'Alice', 'alice', 1, 1),
+                    ('oag-canon', 'world-1', '', 'person', 'person-canon', 'Canon', 'canon', 0, 0);
+             INSERT INTO oag_attributes (id, world_id, session_id, object_id, key, value_json, valid_from_turn, valid_to_turn)
+             VALUES ('oag-attr', 'world-1', 'sess-1', 'oag-baseline', 'health', '10', 1, 3);",
+        )
+        .expect("insert OAG baseline");
+    }
+
+    #[test]
+    fn rollback_restores_oag_intervals_and_preserves_canon() {
+        let (conn, mut session) = setup();
+        insert_oag_baseline(&conn);
+        write_snapshot(&conn, &session, 5);
+        conn.execute(
+            "UPDATE oag_attributes SET valid_to_turn = NULL WHERE id = 'oag-attr'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO oag_objects (id, world_id, session_id, object_type, canonical_key, name, name_normalized, created_turn, updated_turn)
+             VALUES ('oag-future', 'world-1', 'sess-1', 'person', 'person-future', 'Future', 'future', 5, 5)",
+            [],
+        )
+        .unwrap();
+        session.location = "Warehouse".to_string();
+        crate::db::repositories::session_repo::SessionRepository::new(&conn)
+            .upsert(&session)
+            .unwrap();
+
+        let restored = rollback_session_to_turn(&conn, &session, 5).unwrap();
+        assert_eq!(restored.location, "Dock");
+        let valid_to: Option<i64> = scalar(
+            &conn,
+            "SELECT valid_to_turn FROM oag_attributes WHERE id = 'oag-attr'",
+            &[],
+        );
+        assert_eq!(valid_to, Some(3));
+        let future: i64 = scalar(
+            &conn,
+            "SELECT COUNT(*) FROM oag_objects WHERE id = 'oag-future'",
+            &[],
+        );
+        assert_eq!(future, 0);
+        let canon: i64 = scalar(
+            &conn,
+            "SELECT COUNT(*) FROM oag_objects WHERE id = 'oag-canon'",
+            &[],
+        );
+        assert_eq!(canon, 1);
+        let persisted_location: String = scalar(
+            &conn,
+            "SELECT location FROM sessions WHERE id = 'sess-1'",
+            &[],
+        );
+        assert_eq!(persisted_location, "Dock");
+    }
+
+    #[test]
+    fn failed_oag_restore_rolls_back_session_and_memory_changes() {
+        let (conn, mut session) = setup();
+        insert_oag_baseline(&conn);
+        write_snapshot(&conn, &session, 5);
+        conn.execute(
+            "UPDATE oag_attributes SET valid_to_turn = NULL WHERE id = 'oag-attr'",
+            [],
+        )
+        .unwrap();
+        insert_memory(&conn, "mem-after", 5);
+        session.location = "Warehouse".to_string();
+        crate::db::repositories::session_repo::SessionRepository::new(&conn)
+            .upsert(&session)
+            .unwrap();
+        let payload: String = scalar(
+            &conn,
+            "SELECT payload_json FROM turn_journal WHERE step = 'snapshot_created'",
+            &[],
+        );
+        let mut payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        payload["oag_snapshot"]["version"] = serde_json::json!(99);
+        conn.execute(
+            "UPDATE turn_journal SET payload_json = ?1 WHERE step = 'snapshot_created'",
+            [payload.to_string()],
+        )
+        .unwrap();
+
+        let error = rollback_session_to_turn(&conn, &session, 5).expect_err("should fail");
+        assert!(error.contains("快照版本"), "unexpected: {error}");
+        let valid_to: Option<i64> = scalar(
+            &conn,
+            "SELECT valid_to_turn FROM oag_attributes WHERE id = 'oag-attr'",
+            &[],
+        );
+        assert_eq!(valid_to, None);
+        let memory: i64 = scalar(
+            &conn,
+            "SELECT COUNT(*) FROM memories WHERE id = 'mem-after'",
+            &[],
+        );
+        assert_eq!(memory, 1);
+        let persisted_location: String = scalar(
+            &conn,
+            "SELECT location FROM sessions WHERE id = 'sess-1'",
+            &[],
+        );
+        assert_eq!(persisted_location, "Warehouse");
     }
 
     #[test]

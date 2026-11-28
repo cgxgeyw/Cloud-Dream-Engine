@@ -63,7 +63,6 @@ pub(crate) fn schedule_assistant_world_director_config_json() -> String {
     json!({
         "service_mode": "agent_chat",
         "default_agent_id": SEED_CHARACTER_SCHEDULE_ASSISTANT_ID,
-        "allow_scene_transition": false,
         "allow_npc_spawn": false,
         "history_dialogue_rounds": 8,
         "director_tool_loop_limit": 4,

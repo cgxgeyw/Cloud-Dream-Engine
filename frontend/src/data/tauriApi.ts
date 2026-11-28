@@ -30,6 +30,9 @@ import type {
   MemoryEntity,
   MemoryRelation,
   MemorySummaryPromptDefaults,
+  OagActor,
+  OagQueryRequest,
+  OagQueryResponse,
   ModelConfig,
   ModelDiscoverResponse,
   PlayerActionRequest,
@@ -666,6 +669,22 @@ export function fetchSessionDebug(sessionId: string): Promise<SessionDebugRespon
   return tauriCommand("get_session_debug", { sessionId });
 }
 
+export function queryOagDebug(
+  sessionId: string,
+  actor: OagActor,
+  request: OagQueryRequest,
+  asOfTurn?: number,
+  maxNodes = 200,
+): Promise<OagQueryResponse> {
+  return tauriCommand("debug_oag_query", {
+    sessionId,
+    actor,
+    request,
+    asOfTurn,
+    maxNodes,
+  });
+}
+
 export function fetchSessionRuntimeAttributes(
   sessionId: string,
 ): Promise<SessionRuntimeAttributesResponse> {
@@ -767,9 +786,9 @@ export function onKnowledgeRebuildProgress(callback: (snapshot: import('./types'
   };
 }
 export function fetchKnowledgeDocuments(knowledgeBaseId: string): Promise<import('./types').KnowledgeDocument[]> { return tauriCommand('list_knowledge_documents', { knowledgeBaseId }); }
-export async function addKnowledgeDocument(knowledgeBaseId: string, file: File): Promise<import('./types').KnowledgeDocument> { return tauriCommand('add_knowledge_document', { knowledgeBaseId, filename: file.name, data: Array.from(new Uint8Array(await file.arrayBuffer())) }); }
+export async function addKnowledgeDocument(knowledgeBaseId: string, file: File, audience: import('./types').KnowledgeDocumentAudience = 'public', audienceCharacterId?: string | null): Promise<import('./types').KnowledgeDocument> { return tauriCommand('add_knowledge_document', { knowledgeBaseId, filename: file.name, data: Array.from(new Uint8Array(await file.arrayBuffer())), audience, audienceCharacterId: audienceCharacterId ?? null }); }
 export function deleteKnowledgeDocument(id: string): Promise<void> { return tauriCommand('delete_knowledge_document', { id }); }
-export function updateKnowledgeDocument(id: string, title: string, content: string): Promise<void> { return tauriCommand('update_knowledge_document', { id, title, content }); }
+export function updateKnowledgeDocument(id: string, title: string, content: string, audience?: import('./types').KnowledgeDocumentAudience, audienceCharacterId?: string | null): Promise<void> { return tauriCommand('update_knowledge_document', { id, title, content, audience: audience ?? null, audienceCharacterId: audienceCharacterId ?? null }); }
 export function listWorldKnowledgeCandidates(worldId?: string | null): Promise<import('./types').KnowledgeBase[]> { return tauriCommand('list_world_knowledge_candidates', { worldId: worldId ?? null }); }
 export function listWorldKnowledgeScope(worldId: string): Promise<import('./types').KnowledgeBase[]> { return tauriCommand('list_world_knowledge_scope', { worldId }); }
 export function fetchStickerPacks(): Promise<StickerPack[]> { return tauriCommand('list_sticker_packs'); }

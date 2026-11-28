@@ -6,11 +6,15 @@ use crate::models::interaction::{
     INTERACTION_STATUS_PENDING,
 };
 use crate::models::mcp_tool::{
-    is_builtin_mcp_tool_id, McpToolDefinition, MCP_TOOL_SCHEDULE_NOTIFICATION_ID,
+    config_allows_mcp_tool, is_builtin_mcp_tool_id, McpToolDefinition, MCP_TOOL_CHANGE_SCENE_ID,
+    MCP_TOOL_LIST_CHARACTERS_ID, MCP_TOOL_LIST_SCENES_ID, MCP_TOOL_SCHEDULE_NOTIFICATION_ID,
+    MCP_TOOL_SWITCH_PLAYER_CHARACTER_ID,
 };
 use crate::models::model_config::ModelConfig;
+use crate::models::oag::OagActor;
 use crate::models::session::{ChatMessage, MessageContent, SessionSnapshot};
 use crate::models::world::WorldDefinition;
+use crate::services::game_engine::memory::resolve_oag_enabled;
 use crate::services::game_engine::prompting::{
     build_prompt_call, llm_chat_messages_to_values, render_prompt_variables_with_context,
     resolve_prompt_section_order, resolve_runtime_context_prompt, DIRECTOR_PROMPT_SECTION_IDS,
@@ -22,6 +26,8 @@ use crate::services::notifications::{
     notification_tool_definition, pending_notification_from_tool_call, NotificationScheduler,
     NotificationToolContext, NotificationToolRuntime,
 };
+use crate::services::oag::model_tool::{capability as oag_query_capability, OAG_QUERY_TOOL_NAME};
+use crate::services::oag::projection;
 use std::collections::BTreeSet;
 
 mod speaker_selection;
@@ -42,7 +48,7 @@ pub fn default_director_response_contract() -> serde_json::Value {
         "return_policy": "每回合必须返回 planned_speakers 和 event；其它字段仅在本回合发生变化时返回",
         "core_fields": core_fields,
         "optional_fields_when_changed": optional_fields,
-        "how_to_fill": "只返回一个 JSON 对象。每回合都必须包含 planned_speakers（即使为空）和 event（本回合实际发生、推动剧情的新事件，用旁白写出，会直接展示给玩家）。只有其它字段在本回合确实适用或发生变化时才返回；未变化的字段必须省略，不要把当前状态原样回传。不要重复返回 basic_setting、current_state 或 chat_history。场景切换、在场角色名单、新建角色、切换玩家视角和背景图生成不要写成 JSON 字段，请通过 change_scene / switch_player_character / generate_image 工具调用完成；向玩家发起选择、确认等交互时使用 request_player_interaction 工具。各字段的含义和填写时机见 field_guide。",
+        "how_to_fill": "只返回一个 JSON 对象。每回合都必须包含 planned_speakers（即使为空）和 event（本回合实际发生、推动剧情的新事件，用旁白写出，会直接展示给玩家）。只有其它字段在本回合确实适用或发生变化时才返回；未变化的字段必须省略，不要把当前状态原样回传。不要重复返回 basic_setting、current_state 或 chat_history。场景切换、在场角色名单、新建角色、选择已有背景图或角色立绘用 change_scene 工具（只换图时 scene_name 填当前场景名）；切换玩家视角用 switch_player_character 工具；生成新背景图用 generate_background 工具，生成新立绘用 generate_portrait 工具，不要在 JSON 里返回对应字段。向玩家发起选择、确认等交互时使用 request_player_interaction 工具。各字段的含义和填写时机见 field_guide。",
         "field_guide": field_guide,
         "runtime_update_format": return_format::director_runtime_update_format(),
         "forbidden_fields": return_format::DIRECTOR_FORBIDDEN_FIELDS,
@@ -54,7 +60,7 @@ pub fn default_director_response_contract() -> serde_json::Value {
             "使用 session_attribute_updates 按属性键更新会话/世界自定义属性；时间等状态也按此方式处理。",
             "使用 character_attribute_updates 按角色名和准确属性键更新角色自定义属性。",
             "动作产生明确代价或后果时，在同一回合更新所有受影响的属性，不要只用文字描述。",
-            "场景切换、在场名单和新建角色用 change_scene 工具；切换玩家视角用 switch_player_character 工具；背景图用 generate_image 工具，不要在 JSON 里返回对应字段。",
+            "场景切换、在场名单、新建角色、选择已有背景图或角色立绘用 change_scene 工具；切换玩家视角用 switch_player_character 工具；生成新背景图用 generate_background 工具，生成新立绘用 generate_portrait 工具，不要在 JSON 里返回对应字段。",
             "需要玩家亲自选择或确认时调用 request_player_interaction 工具；调用后本回合立即结束，不要再安排角色发言。",
             "planned_speakers 不要包含玩家角色；玩家默认在场。"
         ]
@@ -75,14 +81,12 @@ pub fn default_director_response_contract_text() -> String {
 #[derive(Debug, Clone, Default)]
 pub struct WorldDirectorService;
 
-/// 统一读取 director_config.allow_player_character_switch;缺省按 true(允许换角)。
-/// 各处拿到 bool 后的处理语义不同(删 prompt 契约字段/解析忽略/工具效果忽略),保持不变。
 fn allow_player_character_switch(world: &WorldDefinition) -> bool {
-    world
-        .director_config
-        .get("allow_player_character_switch")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(true)
+    config_allows_mcp_tool(&world.director_config, MCP_TOOL_SWITCH_PLAYER_CHARACTER_ID)
+}
+
+fn allow_scene_transition(world: &WorldDefinition) -> bool {
+    config_allows_mcp_tool(&world.director_config, MCP_TOOL_CHANGE_SCENE_ID)
 }
 
 fn append_runtime_attributes(
@@ -193,6 +197,7 @@ pub struct ParsedDirectorRuntimePayload {
     pub background_asset_name: Option<String>,
     pub background_asset_path: Option<String>,
     pub background_generation_prompt: Option<String>,
+    pub background_generation_name: Option<String>,
     pub next_scene_tags: Vec<String>,
     pub next_time_label: String,
     pub scene_visible_characters: Option<Vec<String>>,
@@ -220,6 +225,35 @@ impl WorldDirectorService {
         kv_vars: &std::collections::HashMap<String, String>,
         runtime_attributes: Option<&crate::models::session::SessionRuntimeAttributesResponse>,
         player_media: &[crate::models::session::ContentPart],
+    ) -> serde_json::Value {
+        self.build_runtime_prompt_call_with_oag(
+            world,
+            session,
+            characters,
+            player_input,
+            stage,
+            tool_loop_messages,
+            mcp_tools,
+            kv_vars,
+            runtime_attributes,
+            player_media,
+            None,
+        )
+    }
+
+    pub fn build_runtime_prompt_call_with_oag(
+        &self,
+        world: &WorldDefinition,
+        session: &SessionSnapshot,
+        characters: &[CharacterDefinition],
+        player_input: &str,
+        stage: &str,
+        tool_loop_messages: Option<Vec<serde_json::Value>>,
+        mcp_tools: &[McpToolDefinition],
+        kv_vars: &std::collections::HashMap<String, String>,
+        runtime_attributes: Option<&crate::models::session::SessionRuntimeAttributesResponse>,
+        player_media: &[crate::models::session::ContentPart],
+        oag_context: Option<&serde_json::Value>,
     ) -> serde_json::Value {
         // 作者输入框的变量插值（内置 + 插值管理自定义 + 会话 KV）统一在此展开。
         let custom_vars = crate::services::game_engine::prompting::load_prompt_custom_vars(world);
@@ -250,6 +284,9 @@ impl WorldDirectorService {
         if let Some(attributes) = runtime_attributes {
             append_runtime_attributes(&mut payload, session, attributes);
         }
+        if let Some(context) = oag_context {
+            payload["oag_context"] = context.clone();
+        }
         let system_prompt = self.resolve_director_system_prompt(world, &prompt_ctx);
         let runtime_context_prompt = resolve_runtime_context_prompt(world, Some(&prompt_ctx));
         let payload_text =
@@ -263,6 +300,7 @@ impl WorldDirectorService {
             &tool_loop_messages,
             &session.state.director_summary,
             player_media,
+            oag_context,
         );
         let mut modules = ordered_messages
             .iter()
@@ -360,6 +398,7 @@ impl WorldDirectorService {
         tool_loop_messages: &[serde_json::Value],
         director_summary: &str,
         player_media: &[crate::models::session::ContentPart],
+        oag_context: Option<&serde_json::Value>,
     ) -> Vec<serde_json::Value> {
         let basic = &payload["basic_setting"];
         let state = &payload["current_state"];
@@ -384,14 +423,17 @@ impl WorldDirectorService {
         }
         let mut sections =
             std::collections::HashMap::<String, (String, String, serde_json::Value, bool)>::new();
-        let director_summary_value = {
-            let summary = director_summary.trim();
-            if summary.is_empty() {
-                serde_json::Value::Null
-            } else {
-                serde_json::Value::String(summary.to_string())
-            }
-        };
+        let director_summary_value = oag_context
+            .and_then(projection::model_context)
+            .map(|content| serde_json::Value::String(content.to_string()))
+            .unwrap_or_else(|| {
+                let summary = director_summary.trim();
+                if summary.is_empty() {
+                    serde_json::Value::Null
+                } else {
+                    serde_json::Value::String(summary.to_string())
+                }
+            });
         sections.insert(
             "world_background".into(),
             (
@@ -401,9 +443,6 @@ impl WorldDirectorService {
                 false,
             ),
         );
-        // OAG 占位：恒为 Null，发送时被跳过（见下方 order 循环）。OAG/记忆检索
-        // 注入计划重做，届时与角色路统一（见 orchestrator/character_prompt.rs
-        // 的 oag_context 注释）。
         sections.insert(
             "oag_context".into(),
             (
@@ -437,6 +476,19 @@ impl WorldDirectorService {
                 "角色列表与场景状态".into(),
                 "runtime".into(),
                 serde_json::Value::Object(scene_characters),
+                false,
+            ),
+        );
+        sections.insert(
+            "visual_capabilities".into(),
+            (
+                "可用背景图与角色立绘".into(),
+                "runtime.visual_capabilities".into(),
+                payload
+                    .get("tool_data")
+                    .and_then(|value| value.get("visual_capabilities"))
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
                 false,
             ),
         );
@@ -594,7 +646,7 @@ impl WorldDirectorService {
                 messages.extend(tool_loop_messages.iter().cloned());
                 continue;
             }
-            if id == "oag_context" {
+            if id == "oag_context" || id == "visual_capabilities" {
                 if value.is_null() {
                     continue;
                 }
@@ -605,7 +657,6 @@ impl WorldDirectorService {
                 serde_json::to_string_pretty(value).unwrap_or_else(|_| "null".to_string())
             } else if id == "director_rules"
                 || id == "world_runtime_context"
-                || id == "oag_context"
                 // 自定义返回契约是纯文本，直接发，不再包【标签】+JSON 壳。
                 || (id == "response_contract" && value.is_string())
             {
@@ -614,6 +665,8 @@ impl WorldDirectorService {
                     continue;
                 }
                 text.to_string()
+            } else if id == "oag_context" {
+                value.as_str().unwrap_or_default().to_string()
             } else {
                 format!(
                     "【{label}】\n{}",
@@ -1244,7 +1297,7 @@ impl WorldDirectorService {
             if tool_name != "search_knowledge" {
                 continue;
             }
-            if world.director_config["knowledge_access"] != true {
+            if !crate::commands::knowledge::knowledge_tool_allowed(world) {
                 results.insert(
                     index,
                     serde_json::json!({"ok": false, "error": "Knowledge access is disabled"}),
@@ -1461,8 +1514,38 @@ impl WorldDirectorService {
                 .cloned()
                 .unwrap_or_default();
             match tool_name.as_str() {
+                OAG_QUERY_TOOL_NAME => {
+                    let result = if !resolve_oag_enabled(world) {
+                        Err("当前世界未启用 OAG 模式".to_string())
+                    } else if let Some(conn) = notification_conn {
+                        crate::services::oag::model_tool::execute(
+                            conn,
+                            &world.id,
+                            &session.id,
+                            OagActor::Director,
+                            turn_index,
+                            &serde_json::Value::Object(arguments.clone()),
+                        )
+                    } else {
+                        Err("OAG 查询数据库暂不可用".to_string())
+                    };
+                    tool_results.push(match result {
+                        Ok(value) => serde_json::json!({
+                            "id": call_id,
+                            "tool_name": tool_name,
+                            "ok": true,
+                            "result": value
+                        }),
+                        Err(error) => serde_json::json!({
+                            "id": call_id,
+                            "tool_name": tool_name,
+                            "ok": false,
+                            "error": error
+                        }),
+                    });
+                }
                 "search_knowledge" => {
-                    let result = if world.director_config["knowledge_access"] != true {
+                    let result = if !crate::commands::knowledge::knowledge_tool_allowed(world) {
                         Err("Knowledge access is disabled".into())
                     } else if let Some(precomputed) = knowledge_results.get(&tool_call_index) {
                         Ok(precomputed.clone())
@@ -1491,59 +1574,123 @@ impl WorldDirectorService {
                     tool_results.push(match result { Ok(value) => serde_json::json!({"id":call_id,"tool_name":tool_name,"ok":true,"result":value}), Err(error) => serde_json::json!({"id":call_id,"tool_name":tool_name,"ok":false,"error":error}) });
                 }
                 "list_scenes" => {
-                    tool_results.push(serde_json::json!({
-                        "id": call_id,
-                        "tool_name": "list_scenes",
-                        "ok": true,
-                        "result": {
-                            "scenes": extract_scene_names(&world.map_nodes),
-                            "current_scene": session.scene.name,
-                            "current_location": session.location,
-                        }
-                    }));
+                    if config_allows_mcp_tool(&world.director_config, MCP_TOOL_LIST_SCENES_ID) {
+                        tool_results.push(serde_json::json!({
+                            "id": call_id,
+                            "tool_name": "list_scenes",
+                            "ok": true,
+                            "result": {
+                                "scenes": extract_scene_names(&world.map_nodes),
+                                "current_scene": session.scene.name,
+                                "current_location": session.location,
+                            }
+                        }));
+                    } else {
+                        tool_results.push(serde_json::json!({
+                            "id": call_id,
+                            "tool_name": "list_scenes",
+                            "ok": false,
+                            "error": "本世界未授权列出场景",
+                        }));
+                    }
                 }
                 "list_characters" => {
-                    tool_results.push(serde_json::json!({
-                        "id": call_id,
-                        "tool_name": "list_characters",
-                        "ok": true,
-                        "result": {
-                            "current_player_character_name": session.player_character_name,
-                            "current_scene_character_roster": session.visible_characters,
-                            "world_characters": characters.iter().map(|character| serde_json::json!({
-                                "id": character.id,
-                                "name": character.name,
-                                "role": character.role,
-                            })).collect::<Vec<_>>(),
-                        }
-                    }));
+                    if config_allows_mcp_tool(&world.director_config, MCP_TOOL_LIST_CHARACTERS_ID) {
+                        tool_results.push(serde_json::json!({
+                            "id": call_id,
+                            "tool_name": "list_characters",
+                            "ok": true,
+                            "result": {
+                                "current_player_character_name": session.player_character_name,
+                                "current_scene_character_roster": session.visible_characters,
+                                "world_characters": characters.iter().map(|character| serde_json::json!({
+                                    "id": character.id,
+                                    "name": character.name,
+                                    "role": character.role,
+                                })).collect::<Vec<_>>(),
+                            }
+                        }));
+                    } else {
+                        tool_results.push(serde_json::json!({
+                            "id": call_id,
+                            "tool_name": "list_characters",
+                            "ok": false,
+                            "error": "本世界未授权列出角色",
+                        }));
+                    }
                 }
                 "change_scene" => {
-                    self.apply_change_scene_tool(
-                        session,
-                        &call_id,
-                        &arguments,
-                        &mut merged,
-                        &mut tool_results,
-                    );
+                    if allow_scene_transition(world) {
+                        self.apply_change_scene_tool(
+                            session,
+                            world,
+                            characters,
+                            &call_id,
+                            &arguments,
+                            &mut merged,
+                            &mut tool_results,
+                        );
+                    } else {
+                        tool_results.push(serde_json::json!({
+                            "id": call_id,
+                            "tool_name": "change_scene",
+                            "ok": false,
+                            "error": "本世界未授权切换场景",
+                        }));
+                    }
                 }
                 "switch_player_character" => {
-                    self.apply_switch_player_character_tool(
-                        session,
-                        world,
-                        &call_id,
-                        &arguments,
-                        &mut merged,
-                        &mut tool_results,
-                    );
+                    if allow_player_character_switch(world) {
+                        self.apply_switch_player_character_tool(
+                            session,
+                            world,
+                            &call_id,
+                            &arguments,
+                            &mut merged,
+                            &mut tool_results,
+                        );
+                    } else {
+                        tool_results.push(serde_json::json!({
+                            "id": call_id,
+                            "tool_name": "switch_player_character",
+                            "ok": false,
+                            "error": "本世界未授权切换玩家角色",
+                        }));
+                    }
                 }
-                "generate_image" => {
-                    self.apply_generate_image_tool(
-                        &call_id,
-                        &arguments,
-                        &mut merged,
-                        &mut tool_results,
-                    );
+                "generate_background" => {
+                    if world.director_image_generation_enabled() {
+                        self.apply_generate_background_tool(
+                            &call_id,
+                            &arguments,
+                            &mut merged,
+                            &mut tool_results,
+                        );
+                    } else {
+                        tool_results.push(serde_json::json!({
+                            "id": call_id,
+                            "tool_name": "generate_background",
+                            "ok": false,
+                            "error": "本世界未授权生成场景背景",
+                        }));
+                    }
+                }
+                "generate_portrait" => {
+                    if world.director_image_generation_enabled() {
+                        self.apply_generate_portrait_tool(
+                            &call_id,
+                            &arguments,
+                            &mut merged,
+                            &mut tool_results,
+                        );
+                    } else {
+                        tool_results.push(serde_json::json!({
+                            "id": call_id,
+                            "tool_name": "generate_portrait",
+                            "ok": false,
+                            "error": "本世界未授权生成角色立绘",
+                        }));
+                    }
                 }
                 "request_player_interaction" => {
                     self.apply_request_interaction_tool(
@@ -1600,11 +1747,75 @@ impl WorldDirectorService {
     fn apply_change_scene_tool(
         &self,
         session: &SessionSnapshot,
+        world: &WorldDefinition,
+        characters: &[CharacterDefinition],
         call_id: &str,
         arguments: &serde_json::Map<String, serde_json::Value>,
         merged: &mut serde_json::Map<String, serde_json::Value>,
         tool_results: &mut Vec<serde_json::Value>,
     ) {
+        let empty_assets = serde_json::json!({});
+        let asset_config = world.ui_theme_config.get("assets").unwrap_or(&empty_assets);
+        let background_paths = asset_config
+            .get("local_background_assets")
+            .and_then(|value| value.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|value| value.as_str())
+            .chain(
+                asset_config
+                    .get("local_scene_backgrounds")
+                    .and_then(|value| value.as_object())
+                    .into_iter()
+                    .flat_map(|value| value.values())
+                    .filter_map(|value| value.as_array())
+                    .flatten()
+                    .filter_map(|value| value.as_str()),
+            )
+            .collect::<Vec<_>>();
+        let selected_background = arg_string(arguments, "background_asset_path");
+        if let Some(path) = selected_background.as_deref() {
+            if !background_paths.iter().any(|available| *available == path) {
+                tool_results.push(serde_json::json!({
+                    "id": call_id,
+                    "tool_name": "change_scene",
+                    "ok": false,
+                    "error": "background_asset_path 不在当前世界的可用背景图清单中",
+                }));
+                return;
+            }
+        }
+        let mut selected_portraits = Vec::new();
+        if let Some(portraits) = arguments.get("character_portraits").and_then(|value| value.as_object()) {
+            for (character_name, value) in portraits {
+                let Some(path) = value.as_str().map(str::trim).filter(|value| !value.is_empty()) else {
+                    tool_results.push(serde_json::json!({
+                        "id": call_id,
+                        "tool_name": "change_scene",
+                        "ok": false,
+                        "error": "character_portraits 的每个值必须是可用立绘路径",
+                    }));
+                    return;
+                };
+                let available = characters
+                    .iter()
+                    .find(|character| character.name == *character_name)
+                    .is_some_and(|character| character.portrait_assets.iter().any(|asset| asset.as_str() == path));
+                if !available {
+                    tool_results.push(serde_json::json!({
+                        "id": call_id,
+                        "tool_name": "change_scene",
+                        "ok": false,
+                        "error": format!("角色 {character_name} 没有可用的立绘路径 {path}"),
+                    }));
+                    return;
+                }
+                selected_portraits.push(serde_json::json!({
+                    "character_name": character_name,
+                    "portrait_asset_path": path,
+                }));
+            }
+        }
         let scene_name = arg_string(arguments, "scene_name")
             .or_else(|| arg_string(arguments, "location"))
             .unwrap_or_else(|| session.scene.name.clone());
@@ -1643,6 +1854,23 @@ impl WorldDirectorService {
         let scene_tags = arg_string_list(arguments.get("scene_tags"));
         if !scene_tags.is_empty() {
             merged.insert("next_scene_tags".to_string(), serde_json::json!(scene_tags));
+        }
+        if let Some(path) = selected_background {
+            merged.remove("background_generation_prompt");
+            merged.insert("background_asset_path".to_string(), serde_json::Value::String(path));
+        }
+        if !selected_portraits.is_empty() {
+            let mut directives = merged
+                .get("character_visual_directives")
+                .and_then(|value| value.as_array())
+                .cloned()
+                .unwrap_or_default();
+            for selection in selected_portraits {
+                let character_name = selection.get("character_name").and_then(|value| value.as_str()).unwrap_or_default();
+                directives.retain(|item| item.get("character_name").and_then(|value| value.as_str()) != Some(character_name));
+                directives.push(selection);
+            }
+            merged.insert("character_visual_directives".to_string(), serde_json::Value::Array(directives));
         }
         tool_results.push(serde_json::json!({
             "id": call_id,
@@ -1697,46 +1925,89 @@ impl WorldDirectorService {
         }));
     }
 
-    /// generate_image 工具效果:写入背景/立绘生成指令并回执。
-    fn apply_generate_image_tool(
+    /// generate_background 工具效果：写入背景生成指令并回执。
+    fn apply_generate_background_tool(
         &self,
         call_id: &str,
         arguments: &serde_json::Map<String, serde_json::Value>,
         merged: &mut serde_json::Map<String, serde_json::Value>,
         tool_results: &mut Vec<serde_json::Value>,
     ) {
-        let kind = arg_string(arguments, "kind").unwrap_or_else(|| "background".to_string());
         let prompt = arg_string(arguments, "prompt").unwrap_or_default();
-        if !prompt.is_empty() {
-            if kind == "portrait" {
-                if let Some(character_name) = arg_string(arguments, "character_name") {
-                    let mut directives = merged
-                        .get("character_visual_directives")
-                        .and_then(|value| value.as_array())
-                        .cloned()
-                        .unwrap_or_default();
-                    directives.push(serde_json::json!({
-                        "character_name": character_name,
-                        "generation_prompt": prompt,
-                    }));
-                    merged.insert(
-                        "character_visual_directives".to_string(),
-                        serde_json::Value::Array(directives),
-                    );
-                }
-            } else {
-                merged.insert(
-                    "background_generation_prompt".to_string(),
-                    serde_json::Value::String(prompt),
-                );
-            }
+        let name = arg_string(arguments, "name").unwrap_or_default();
+        if name.is_empty() || prompt.is_empty() {
+            tool_results.push(serde_json::json!({
+                "id": call_id,
+                "tool_name": "generate_background",
+                "ok": false,
+                "error": "背景图生成必须指定 name 和 prompt",
+            }));
+            return;
         }
+        merged.insert(
+            "background_generation_name".to_string(),
+            serde_json::Value::String(name),
+        );
+        merged.insert(
+            "background_generation_prompt".to_string(),
+            serde_json::Value::String(prompt),
+        );
         tool_results.push(serde_json::json!({
             "id": call_id,
-            "tool_name": "generate_image",
+            "tool_name": "generate_background",
             "ok": true,
             "result": {
                 "status": "accepted",
+                "kind": "background",
+                "arguments": arguments,
+            }
+        }));
+    }
+
+    /// generate_portrait 工具效果：写入指定角色的立绘生成指令并回执。
+    fn apply_generate_portrait_tool(
+        &self,
+        call_id: &str,
+        arguments: &serde_json::Map<String, serde_json::Value>,
+        merged: &mut serde_json::Map<String, serde_json::Value>,
+        tool_results: &mut Vec<serde_json::Value>,
+    ) {
+        let character_name = arg_string(arguments, "character_name").unwrap_or_default();
+        let name = arg_string(arguments, "name").unwrap_or_default();
+        let prompt = arg_string(arguments, "prompt").unwrap_or_default();
+        if character_name.is_empty() || name.is_empty() || prompt.is_empty() {
+            tool_results.push(serde_json::json!({
+                "id": call_id,
+                "tool_name": "generate_portrait",
+                "ok": false,
+                "error": "角色立绘生成必须指定 character_name、name 和 prompt",
+            }));
+            return;
+        }
+        let mut directives = merged
+            .get("character_visual_directives")
+            .and_then(|value| value.as_array())
+            .cloned()
+            .unwrap_or_default();
+        directives.retain(|item| {
+            item.get("character_name").and_then(|value| value.as_str()) != Some(character_name.as_str())
+        });
+        directives.push(serde_json::json!({
+            "character_name": character_name,
+            "generation_name": name,
+            "generation_prompt": prompt,
+        }));
+        merged.insert(
+            "character_visual_directives".to_string(),
+            serde_json::Value::Array(directives),
+        );
+        tool_results.push(serde_json::json!({
+            "id": call_id,
+            "tool_name": "generate_portrait",
+            "ok": true,
+            "result": {
+                "status": "accepted",
+                "kind": "portrait",
                 "arguments": arguments,
             }
         }));
@@ -2181,11 +2452,7 @@ impl WorldDirectorService {
         world: &WorldDefinition,
         player_input: &str,
     ) -> ParsedDirectorRuntimePayload {
-        let allow_scene_transition = world
-            .director_config
-            .get("allow_scene_transition")
-            .and_then(|value| value.as_bool())
-            .unwrap_or(true);
+        let allow_scene_transition = allow_scene_transition(world);
         let allow_npc_spawn = world
             .director_config
             .get("allow_npc_spawn")
@@ -2233,6 +2500,8 @@ impl WorldDirectorService {
         });
         let background_generation_prompt =
             normalize_llm_text(parsed.get("background_generation_prompt"));
+        let background_generation_name =
+            normalize_llm_text(parsed.get("background_generation_name"));
         let background_asset_name = normalize_llm_text(parsed.get("background_asset_name"));
         let background_asset_path = normalize_llm_text(parsed.get("background_asset_path"));
         let next_scene_tags = parse_next_scene_tags(
@@ -2285,6 +2554,7 @@ impl WorldDirectorService {
             background_asset_name,
             background_asset_path,
             background_generation_prompt,
+            background_generation_name,
             next_scene_tags,
             next_time_label,
             scene_visible_characters,
@@ -2607,93 +2877,96 @@ impl WorldDirectorService {
         session: &SessionSnapshot,
         characters: &[CharacterDefinition],
     ) -> serde_json::Value {
-        let background_source_mode = world
-            .ui_theme_config
+        let empty_assets = serde_json::json!({});
+        let asset_config = world.ui_theme_config.get("assets").unwrap_or(&empty_assets);
+        let background_source_mode = asset_config
             .get("background_source_mode")
             .and_then(|v| v.as_str())
             .unwrap_or("local-first")
             .to_string();
-        let portrait_source_mode = world
-            .ui_theme_config
+        let portrait_source_mode = asset_config
             .get("portrait_source_mode")
+            .or_else(|| asset_config.get("background_source_mode"))
             .and_then(|v| v.as_str())
-            .or_else(|| {
-                world
-                    .ui_theme_config
-                    .get("background_source_mode")
-                    .and_then(|v| v.as_str())
-            })
             .unwrap_or("local-first")
             .to_string();
-        let local_background_assets_count = world
-            .ui_theme_config
+        let local_background_assets = asset_config
             .get("local_background_assets")
             .and_then(|v| v.as_array())
-            .map(|items| items.len())
-            .unwrap_or(0);
-        let local_scene_background_keys = world
-            .ui_theme_config
+            .cloned()
+            .unwrap_or_default();
+        let scene_backgrounds = asset_config
             .get("local_scene_backgrounds")
             .and_then(|v| v.as_object())
-            .map(|obj| obj.keys().cloned().collect::<Vec<_>>())
+            .cloned()
             .unwrap_or_default();
-        let character_portrait_counts = characters
+        let mut background_paths = local_background_assets
+            .iter()
+            .filter_map(|value| value.as_str())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        for paths in scene_backgrounds.values() {
+            if let Some(items) = paths.as_array() {
+                background_paths.extend(items.iter().filter_map(|value| value.as_str()).map(str::to_string));
+            }
+        }
+        background_paths.sort();
+        background_paths.dedup();
+        let background_assets = background_paths
+            .iter()
+            .map(|path| {
+                let mut scene_names = scene_backgrounds
+                    .iter()
+                    .filter(|(_, paths)| {
+                        paths.as_array().is_some_and(|items| {
+                            items.iter().filter_map(|value| value.as_str()).any(|item| item == path)
+                        })
+                    })
+                    .map(|(name, _)| name.clone())
+                    .collect::<Vec<_>>();
+                scene_names.sort();
+                serde_json::json!({
+                    "name": std::path::Path::new(path).file_stem().and_then(|value| value.to_str()).unwrap_or(path),
+                    "path": path,
+                    "scene_names": scene_names,
+                })
+            })
+            .collect::<Vec<_>>();
+        let character_portraits = characters
             .iter()
             .filter(|character| !character.portrait_assets.is_empty())
             .map(|character| {
                 serde_json::json!({
                     "character_name": character.name,
-                    "portrait_count": character.portrait_assets.len(),
-                    "visible": session.visible_characters.iter().any(|name| name == &character.name),
+                    "assets": character.portrait_assets.iter().map(|path| serde_json::json!({
+                        "name": std::path::Path::new(path).file_stem().and_then(|value| value.to_str()).unwrap_or(path),
+                        "path": path,
+                    })).collect::<Vec<_>>(),
                 })
             })
             .collect::<Vec<_>>();
-        let runtime_image_generation_enabled = self
-            .resolve_world_allowed_tool_ids(world)
-            .iter()
-            .any(|id| id == "mcp-tool-image-generation");
-
-        // 无本地素材、无角色立绘、且未启用运行时图像生成时，整块视觉能力没有信息量，省略。
-        if local_background_assets_count == 0
-            && local_scene_background_keys.is_empty()
-            && character_portrait_counts.is_empty()
+        let runtime_image_generation_enabled = world.director_image_generation_enabled();
+        if background_assets.is_empty()
+            && character_portraits.is_empty()
+            && session.assets.background_asset_path.is_none()
+            && session.assets.visible_character_portraits.iter().all(|item| item.portrait_asset_path.is_none())
             && !runtime_image_generation_enabled
         {
             return serde_json::Value::Null;
         }
-
-        let mut capabilities = serde_json::Map::new();
-        capabilities.insert(
-            "background_source_mode".to_string(),
-            serde_json::json!(background_source_mode),
-        );
-        capabilities.insert(
-            "portrait_source_mode".to_string(),
-            serde_json::json!(portrait_source_mode),
-        );
-        if local_background_assets_count > 0 {
-            capabilities.insert(
-                "local_background_assets_count".to_string(),
-                serde_json::json!(local_background_assets_count),
-            );
-        }
-        if !local_scene_background_keys.is_empty() {
-            capabilities.insert(
-                "local_scene_background_keys".to_string(),
-                serde_json::json!(local_scene_background_keys),
-            );
-        }
-        if !character_portrait_counts.is_empty() {
-            capabilities.insert(
-                "character_portrait_counts".to_string(),
-                serde_json::json!(character_portrait_counts),
-            );
-        }
-        capabilities.insert(
-            "runtime_image_generation_enabled".to_string(),
-            serde_json::json!(runtime_image_generation_enabled),
-        );
-        serde_json::Value::Object(capabilities)
+        serde_json::json!({
+            "background_source_mode": background_source_mode,
+            "portrait_source_mode": portrait_source_mode,
+            "background_assets": background_assets,
+            "scene_backgrounds": scene_backgrounds,
+            "current_background_asset_path": session.assets.background_asset_path,
+            "character_portraits": character_portraits,
+            "current_character_portraits": session.assets.visible_character_portraits.iter().filter_map(|item| item.portrait_asset_path.as_ref().map(|path| serde_json::json!({
+                "character_name": item.character_name,
+                "path": path,
+            }))).collect::<Vec<_>>(),
+            "runtime_image_generation_enabled": runtime_image_generation_enabled,
+        })
     }
 
     fn build_history_dialogue(
@@ -2760,20 +3033,25 @@ impl WorldDirectorService {
     ) -> Vec<serde_json::Value> {
         let allowed = self.resolve_world_allowed_tool_ids(world);
         let allowed = allowed.into_iter().collect::<BTreeSet<_>>();
-        let mut tools = vec![
-            serde_json::json!({
+        let mut tools = Vec::new();
+        if config_allows_mcp_tool(&world.director_config, MCP_TOOL_LIST_SCENES_ID) {
+            tools.push(serde_json::json!({
                 "tool_name": "list_scenes",
                 "description": "List available scenes in the current world.",
                 "arguments_schema": { "type": "object", "properties": {} }
-            }),
-            serde_json::json!({
+            }));
+        }
+        if config_allows_mcp_tool(&world.director_config, MCP_TOOL_LIST_CHARACTERS_ID) {
+            tools.push(serde_json::json!({
                 "tool_name": "list_characters",
                 "description": "List characters in the current world and characters currently visible in the scene.",
                 "arguments_schema": { "type": "object", "properties": {} }
-            }),
-            serde_json::json!({
+            }));
+        }
+        if allow_scene_transition(world) {
+            tools.push(serde_json::json!({
                 "tool_name": "change_scene",
-                "description": "Switch to a target scene or create a new scene. scene_character_roster replaces the visible character roster. scene_tags sets scene atmosphere tags. new_characters may create new characters and should include name, role, and background_prompt.",
+                "description": "Switch to a target scene or create a new scene. scene_character_roster replaces the visible character roster. scene_tags sets scene atmosphere tags. new_characters may create new characters and should include name, role, and background_prompt. To reuse existing images without generation, set background_asset_path to an exact path from visual_capabilities.background_assets and/or character_portraits to an object mapping exact character names to exact paths from visual_capabilities.character_portraits. When only changing images, keep scene_name equal to the current scene.",
                 "arguments_schema": {
                     "type": "object",
                     "required": ["scene_name"],
@@ -2782,11 +3060,16 @@ impl WorldDirectorService {
                         "scene_description": { "type": "string" },
                         "scene_tags": { "type": "array", "items": { "type": "string" } },
                         "scene_character_roster": { "type": "array", "items": { "type": "string" } },
+                        "background_asset_path": { "type": "string", "description": "Exact existing background path from visual_capabilities.background_assets." },
+                        "character_portraits": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Character name to exact existing portrait path from visual_capabilities.character_portraits." },
                         "new_characters": { "type": "array", "items": { "type": "object" } }
                     }
                 }
-            }),
-        ];
+            }));
+        }
+        if resolve_oag_enabled(world) {
+            tools.push(oag_query_capability());
+        }
         let allow_player_character_switch = allow_player_character_switch(world);
         if allow_player_character_switch {
             tools.push(serde_json::json!({
@@ -2805,17 +3088,29 @@ impl WorldDirectorService {
                 }
             }));
         }
-        if allowed.contains("mcp-tool-image-generation") {
+        if world.director_image_generation_enabled() {
             tools.push(serde_json::json!({
-                "tool_name": "generate_image",
-                "description": "Generate a background or portrait image from prompt text.",
+                "tool_name": "generate_background",
+                "description": "World-director-only tool. Generate or update a scene background from the current story and scene context. Use when a new location or a meaningful visual change needs a backdrop; describe composition, environment, lighting, and mood. Provide a concise semantic name so the image can be identified from text alone. This is not a general-purpose image generator.",
                 "arguments_schema": {
                     "type": "object",
-                    "required": ["kind", "prompt"],
+                    "required": ["name", "prompt"],
                     "properties": {
-                        "kind": { "type": "string", "enum": ["background", "portrait"] },
-                        "prompt": { "type": "string" },
-                        "character_name": { "type": "string" }
+                        "name": { "type": "string", "description": "Concise semantic image name without a file extension, for example 雨夜码头." },
+                        "prompt": { "type": "string", "description": "Visual direction for the scene background." }
+                    }
+                }
+            }));
+            tools.push(serde_json::json!({
+                "tool_name": "generate_portrait",
+                "description": "World-director-only tool. Generate or update a portrait for one named character using the current story context and that character's established appearance. Use for a specific character, not generic imagery; preserve identity and describe pose, expression, clothing, lighting, and composition. Provide a concise semantic name so the image can be identified from text alone.",
+                "arguments_schema": {
+                    "type": "object",
+                    "required": ["character_name", "name", "prompt"],
+                    "properties": {
+                        "character_name": { "type": "string", "description": "Exact character name in the current world." },
+                        "name": { "type": "string", "description": "Concise semantic image name without a file extension, for example Alice雨夜风衣." },
+                        "prompt": { "type": "string", "description": "Visual direction for this character's portrait." }
                     }
                 }
             }));

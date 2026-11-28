@@ -126,7 +126,7 @@ pub async fn test_model(
             tool_calls: None,
             metadata: None,
         }],
-        // 连通性测试只要一句话，参数写死即可，不吃三级覆盖。
+        // 连通性测试只要一句话，参数写死即可，不走生成参数覆盖。
         generation: crate::models::generation_params::GenerationParams {
             temperature: Some(0.7),
             max_tokens: Some(10),

@@ -394,6 +394,142 @@ fn persist_turn_entries_isolates_private_dialogue_by_present_participants() {
 }
 
 #[test]
+fn turn_entries_use_each_message_witnesses_and_scene() {
+    let conn = Connection::open_in_memory().expect("open sqlite");
+    schema::create_tables(&conn).expect("create tables");
+    let service = MemoryService::new();
+    let world = sample_world();
+    let session = sample_session();
+    let characters = sample_characters();
+    let turn_index = 8;
+    let messages = vec![
+        ChatMessage {
+            message_id: ChatMessage::generate_id(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            parent_message_id: None,
+            role: "player".to_string(),
+            content: MessageContent::Text("Alice, keep the dock secret.".to_string()),
+            speaker: Some("Player".to_string()),
+            metadata: Some(serde_json::json!({
+                "turn_index": turn_index,
+                "scene_id": "dock-scene",
+                "scene_name": "Dock",
+                "witnesses": ["Player", "Alice"]
+            })),
+        },
+        ChatMessage {
+            message_id: ChatMessage::generate_id(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            parent_message_id: None,
+            role: "agent".to_string(),
+            content: MessageContent::Text("Bob confirms the warehouse is empty.".to_string()),
+            speaker: Some("Bob".to_string()),
+            metadata: Some(serde_json::json!({
+                "turn_index": turn_index,
+                "scene_id": "warehouse-scene",
+                "scene_name": "Warehouse",
+                "witnesses": ["Player", "Bob"]
+            })),
+        },
+    ];
+
+    service
+        .persist_turn_entries(
+            &conn,
+            &world,
+            &session,
+            turn_index,
+            "char-player",
+            "Player",
+            &characters,
+            &messages,
+            &["Bob".to_string()],
+            &[],
+        )
+        .expect("persist scene switch turn");
+
+    let repo = MemoryRepository::new(&conn);
+    for (character_id, expected, unexpected) in [
+        ("char-a", "dock secret", "warehouse is empty"),
+        ("char-b", "warehouse is empty", "dock secret"),
+    ] {
+        let entries = repo
+            .list(&MemoryQueryParams {
+                world_id: Some("world-1".to_string()),
+                session_id: Some("sess-1".to_string()),
+                character_id: Some(character_id.to_string()),
+                layer: None,
+                limit: Some(20),
+            })
+            .expect("list character memories");
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].content.contains(expected));
+        assert!(!entries[0].content.contains(unexpected));
+        assert_eq!(
+            entries[0].scene_id.as_deref(),
+            Some(if character_id == "char-a" {
+                "dock-scene"
+            } else {
+                "warehouse-scene"
+            })
+        );
+    }
+}
+
+#[test]
+fn turn_entries_restrict_whisper_to_recipients() {
+    let conn = Connection::open_in_memory().expect("open sqlite");
+    schema::create_tables(&conn).expect("create tables");
+    let service = MemoryService::new();
+    let world = sample_world();
+    let session = sample_session();
+    let characters = sample_characters();
+    let turn_index = 9;
+    let messages = vec![ChatMessage {
+        message_id: ChatMessage::generate_id(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        parent_message_id: None,
+        role: "player".to_string(),
+        content: MessageContent::Text("Alice alone knows the phrase moon glass.".to_string()),
+        speaker: Some("Player".to_string()),
+        metadata: Some(serde_json::json!({
+            "turn_index": turn_index,
+            "witnesses": ["Player", "Alice", "Bob"],
+            "recipients": ["Alice"]
+        })),
+    }];
+
+    service
+        .persist_turn_entries(
+            &conn,
+            &world,
+            &session,
+            turn_index,
+            "char-player",
+            "Player",
+            &characters,
+            &messages,
+            &["Alice".to_string(), "Bob".to_string()],
+            &[],
+        )
+        .expect("persist whisper");
+
+    let repo = MemoryRepository::new(&conn);
+    for (character_id, expected_count) in [("char-player", 1), ("char-a", 1), ("char-b", 0)] {
+        let entries = repo
+            .list(&MemoryQueryParams {
+                world_id: Some("world-1".to_string()),
+                session_id: Some("sess-1".to_string()),
+                character_id: Some(character_id.to_string()),
+                layer: None,
+                limit: Some(20),
+            })
+            .expect("list whisper memories");
+        assert_eq!(entries.len(), expected_count);
+    }
+}
+
+#[test]
 fn recall_entries_for_character_keeps_old_memory_visible_despite_recent_noise() {
     let conn = Connection::open_in_memory().expect("open sqlite");
     schema::create_tables(&conn).expect("create tables");
@@ -553,8 +689,6 @@ fn derive_effective_layer_passes_through_non_dialogue_and_canonical() {
 fn parse_memory_strategy_recognizes_keywords() {
     let default = parse_memory_strategy("");
     assert!(!default.disabled && !default.recency_bias && !default.importance_bias);
-    assert!(default.retrieval_mode.is_none());
-
     assert!(parse_memory_strategy("off").disabled);
     assert!(parse_memory_strategy("无记忆").disabled);
     assert!(parse_memory_strategy("不用记住玩家说的话").disabled);
@@ -565,20 +699,13 @@ fn parse_memory_strategy_recognizes_keywords() {
     let disabled = parse_memory_strategy("off recent important");
     assert!(disabled.disabled && !disabled.recency_bias && !disabled.importance_bias);
 
-    assert_eq!(
-        parse_memory_strategy("semantic").retrieval_mode.as_deref(),
-        Some("semantic_only")
-    );
-    assert_eq!(
-        parse_memory_strategy("用语义检索")
-            .retrieval_mode
-            .as_deref(),
-        Some("semantic_only")
-    );
-    assert_eq!(
-        parse_memory_strategy("lexical").retrieval_mode.as_deref(),
-        Some("lexical_only")
-    );
+    for text in ["semantic", "用语义检索", "lexical", "词法"] {
+        let parsed = parse_memory_strategy(text);
+        assert!(
+            !parsed.disabled && !parsed.recency_bias && !parsed.importance_bias,
+            "retrieval wording should not change strategy overrides: {text}"
+        );
+    }
 
     assert!(parse_memory_strategy("recent").recency_bias);
     assert!(parse_memory_strategy("多关注最近发生的事").recency_bias);
@@ -593,10 +720,7 @@ fn parse_memory_strategy_recognizes_keywords() {
     ] {
         let parsed = parse_memory_strategy(seed_text);
         assert!(
-            !parsed.disabled
-                && !parsed.recency_bias
-                && !parsed.importance_bias
-                && parsed.retrieval_mode.is_none(),
+            !parsed.disabled && !parsed.recency_bias && !parsed.importance_bias,
             "seed text {:?} should parse to defaults",
             seed_text
         );
@@ -632,7 +756,7 @@ fn recall_with_disabled_strategy_returns_nothing() {
 }
 
 #[test]
-fn recall_strategy_overrides_retrieval_mode() {
+fn recall_strategy_keeps_non_retrieval_overrides() {
     let conn = Connection::open_in_memory().expect("open sqlite");
     schema::create_tables(&conn).expect("create tables");
     let repo = MemoryRepository::new(&conn);
@@ -653,30 +777,9 @@ fn recall_strategy_overrides_retrieval_mode() {
             None,
             &[],
             5,
-            Some("semantic"),
-        )
-        .expect("prepare recall");
-    assert_eq!(plan.retrieval_mode, "semantic_only");
-
-    let plan = service
-        .prepare_character_recall(
-            &conn,
-            &world,
-            "world-1",
-            "sess-1",
-            Some("char-a"),
-            "content",
-            "Harbor",
-            None,
-            &[],
-            5,
             Some("important"),
         )
         .expect("prepare recall");
-    assert_eq!(
-        plan.retrieval_mode, "hybrid",
-        "mode 未指定时保持 world 默认"
-    );
     assert_eq!(plan.archive_quota, 3, "importance_bias 应提升 archive 配额");
 }
 
@@ -708,13 +811,39 @@ fn rank_memories_uses_effective_layers_for_quotas() {
         memories,
         &lexical_scores,
         &HashMap::new(),
-        "hybrid",
         0.65,
         &effective_layers,
         2,
     );
     let order: Vec<&str> = ranked.iter().map(|entry| entry.id.as_str()).collect();
     assert_eq!(order, vec!["a", "c", "b"]);
+}
+
+#[test]
+fn rank_memories_combines_lexical_and_semantic_scores() {
+    let memories = vec![
+        bare_entry("lexical", "working", "speaker_response", 20),
+        bare_entry("semantic", "working", "speaker_response", 19),
+    ];
+    let lexical_scores: HashMap<String, f64> =
+        [("lexical".to_string(), 10.0), ("semantic".to_string(), 0.0)]
+            .into_iter()
+            .collect();
+    let semantic_scores: HashMap<String, f64> =
+        [("lexical".to_string(), 0.0), ("semantic".to_string(), 1.0)]
+            .into_iter()
+            .collect();
+
+    let ranked = rank_memories_by_scores(
+        memories,
+        &lexical_scores,
+        &semantic_scores,
+        0.65,
+        &HashMap::new(),
+        2,
+    );
+    let order: Vec<&str> = ranked.iter().map(|entry| entry.id.as_str()).collect();
+    assert_eq!(order, vec!["semantic", "lexical"]);
 }
 
 #[test]
@@ -735,6 +864,11 @@ fn fact_update(subject: &str, predicate: &str, object: &str, action: &str) -> Fa
         subject_type: String::new(),
         object_type: String::new(),
         confidence: 0.7,
+        asserted_by: "director".to_string(),
+        asserted_by_id: None,
+        visibility: "scene".to_string(),
+        truth_status: "asserted".to_string(),
+        witnesses: Vec::new(),
     }
 }
 
@@ -836,6 +970,67 @@ fn persist_fact_updates_creates_entities_and_temporal_relations() {
 }
 
 #[test]
+fn persist_fact_updates_isolates_actor_knowledge_and_invalidation() {
+    let conn = Connection::open_in_memory().expect("open sqlite");
+    schema::create_tables(&conn).expect("create tables");
+    let service = MemoryService::new();
+    let world = sample_world();
+    let relation_repo =
+        crate::db::repositories::memory_relation_repo::MemoryRelationRepository::new(&conn);
+
+    let mut alice_fact = fact_update("银钥匙", "藏在", "窗户", "upsert");
+    alice_fact.asserted_by = "爱丽丝".to_string();
+    alice_fact.asserted_by_id = Some("char-alice".to_string());
+    alice_fact.visibility = "private".to_string();
+    let mut bob_fact = fact_update("银钥匙", "藏在", "背包", "upsert");
+    bob_fact.asserted_by = "鲍勃".to_string();
+    bob_fact.asserted_by_id = Some("char-bob".to_string());
+    bob_fact.visibility = "private".to_string();
+    service
+        .persist_fact_updates(&conn, &world, "sess-1", 1, &[alice_fact, bob_fact])
+        .expect("persist private facts");
+
+    let alice_facts = relation_repo
+        .list_visible_by_actor("sess-1", true, Some("char-alice"), Some("爱丽丝"))
+        .expect("list alice facts");
+    let bob_facts = relation_repo
+        .list_visible_by_actor("sess-1", true, Some("char-bob"), Some("鲍勃"))
+        .expect("list bob facts");
+    let stranger_facts = relation_repo
+        .list_visible_by_actor("sess-1", true, Some("char-other"), Some("其他人"))
+        .expect("list stranger facts");
+    assert_eq!(alice_facts.len(), 1);
+    assert_eq!(alice_facts[0].object_text, "窗户");
+    assert_eq!(alice_facts[0].asserted_by, "爱丽丝");
+    assert_eq!(alice_facts[0].truth_status, "asserted");
+    assert_eq!(bob_facts.len(), 1);
+    assert_eq!(bob_facts[0].object_text, "背包");
+    assert!(stranger_facts.is_empty());
+    assert_eq!(
+        relation_repo
+            .list_active_by_session("sess-1")
+            .unwrap()
+            .len(),
+        2
+    );
+
+    let mut correction = fact_update("银钥匙", "藏在", "抽屉", "upsert");
+    correction.asserted_by = "爱丽丝".to_string();
+    correction.asserted_by_id = Some("char-alice".to_string());
+    correction.visibility = "private".to_string();
+    let (added, invalidated) = service
+        .persist_fact_updates(&conn, &world, "sess-1", 2, &[correction])
+        .expect("correct alice fact");
+    assert_eq!((added, invalidated), (1, 1));
+    let bob_facts = relation_repo
+        .list_visible_by_actor("sess-1", true, Some("char-bob"), Some("鲍勃"))
+        .expect("list bob facts after alice correction");
+    assert_eq!(bob_facts.len(), 1);
+    assert_eq!(bob_facts[0].object_text, "背包");
+    assert_eq!(bob_facts[0].invalid_at_turn, None);
+}
+
+#[test]
 fn persist_fact_updates_invalidate_only_matches_given_object() {
     let conn = Connection::open_in_memory().expect("open sqlite");
     schema::create_tables(&conn).expect("create tables");
@@ -925,10 +1120,11 @@ fn memory_mode_defaults_to_embedding_and_gates_fact_extraction() {
         "默认 Embedding 模式不抽取事实"
     );
 
-    // 旧值 history 迁移为 embedding：历史始终发送，只是现在默认再注入记忆召回。
+    // history 是独立的低档：只发送近期对话，不自动注入长期记忆或 OAG 投影。
     world.director_config = serde_json::json!({ "memory_mode": "history" });
-    assert_eq!(resolve_memory_mode(&world), MemoryMode::Embedding);
+    assert_eq!(resolve_memory_mode(&world), MemoryMode::History);
     assert!(!resolve_oag_enabled(&world));
+    assert!(!resolve_fact_extraction_enabled(&world));
 
     world.director_config = serde_json::json!({ "memory_mode": "embedding" });
     assert_eq!(resolve_memory_mode(&world), MemoryMode::Embedding);

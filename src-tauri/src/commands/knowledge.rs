@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use tauri::State;
 
+use crate::models::mcp_tool::{config_allows_mcp_tool, MCP_TOOL_SEARCH_KNOWLEDGE_ID};
 use crate::state::AppState;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,6 +26,14 @@ pub struct KnowledgeDocument {
     pub content: String,
     pub source_filename: String,
     pub updated_at: String,
+    #[serde(default = "default_document_audience")]
+    pub audience: String,
+    #[serde(default)]
+    pub audience_character_id: Option<String>,
+}
+
+fn default_document_audience() -> String {
+    "public".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,10 +69,18 @@ pub struct BundledDocument {
     pub content: String,
     #[serde(default)]
     pub source_filename: String,
+    #[serde(default = "default_document_audience")]
+    pub audience: String,
+    #[serde(default)]
+    pub audience_character_id: Option<String>,
+}
+
+pub fn knowledge_tool_allowed(world: &crate::models::world::WorldDefinition) -> bool {
+    config_allows_mcp_tool(&world.director_config, MCP_TOOL_SEARCH_KNOWLEDGE_ID)
 }
 
 pub fn tool_capability(world: &crate::models::world::WorldDefinition) -> Option<serde_json::Value> {
-    (world.director_config["knowledge_access"] == true).then(|| serde_json::json!({
+    knowledge_tool_allowed(world).then(|| serde_json::json!({
         "tool_name": "search_knowledge", "description": "Search this world's authorized knowledge documents. Results include source titles and text excerpts.",
         "arguments_schema": {"type":"object", "required":["query"], "properties":{"query":{"type":"string"}}}
     }))
@@ -327,32 +344,43 @@ fn fts_prefilter_document_ids(
     conn: &rusqlite::Connection,
     base_ids: &[String],
     terms: &[String],
+    character_id: Option<&str>,
 ) -> Vec<(String, i64)> {
     let usable: Vec<String> = terms
         .iter()
         .filter(|term| term.chars().count() >= 2)
         .map(|term| fts_phrase(term))
         .collect();
-    if usable.is_empty() {
+    if usable.is_empty() || base_ids.is_empty() {
         return Vec::new();
     }
     let placeholders = (0..base_ids.len())
         .map(|index| format!("?{}", index + 2))
         .collect::<Vec<_>>()
         .join(", ");
+    let actor_parameter = base_ids.len() + 2;
+    let audience_filter = character_id.map(|_| {
+        format!(
+            " AND (d.audience = 'public' OR (d.audience = 'character' AND d.audience_character_id = ?{actor_parameter}))"
+        )
+    }).unwrap_or_default();
     // 先把候选限定在范围内，再让 FTS5 按命中打分；JOIN 用 document_id 与
     // knowledge_documents 关联，确保只返回仍然存在的文档。
     let sql = format!(
         "SELECT d.id, COUNT(*) AS hits FROM knowledge_documents_fts f \
          JOIN knowledge_documents d ON d.id = f.document_id \
-         WHERE knowledge_documents_fts MATCH ?1 AND d.knowledge_base_id IN ({placeholders}) \
+         WHERE knowledge_documents_fts MATCH ?1 AND d.knowledge_base_id IN ({placeholders}){audience_filter} \
          GROUP BY d.id ORDER BY hits DESC, d.id"
     );
     let match_query = usable.join(" OR ");
-    let mut values: Vec<&dyn rusqlite::types::ToSql> = Vec::with_capacity(base_ids.len() + 1);
+    let actor_id = character_id.map(str::to_owned);
+    let mut values: Vec<&dyn rusqlite::types::ToSql> = Vec::with_capacity(base_ids.len() + 2);
     values.push(&match_query);
     for id in base_ids {
         values.push(id);
+    }
+    if let Some(actor_id) = actor_id.as_ref() {
+        values.push(actor_id);
     }
     let Ok(mut stmt) = conn.prepare(&sql) else {
         return Vec::new();
@@ -372,6 +400,7 @@ fn load_candidate_rows(
     conn: &rusqlite::Connection,
     base_ids: &[String],
     prefiltered: &[(String, i64)],
+    character_id: Option<&str>,
 ) -> Result<Vec<(String, String, String, String, ChunkConfig)>, String> {
     if prefiltered.is_empty() {
         // 回退：全量扫描范围内文档（保持旧行为）。
@@ -379,13 +408,23 @@ fn load_candidate_rows(
             .map(|index| format!("?{}", index + 1))
             .collect::<Vec<_>>()
             .join(", ");
+        let actor_parameter = base_ids.len() + 1;
+        let audience_filter = character_id.map(|_| {
+            format!(
+                " AND (d.audience = 'public' OR (d.audience = 'character' AND d.audience_character_id = ?{actor_parameter}))"
+            )
+        }).unwrap_or_default();
         let sql = format!(
-            "SELECT d.id, d.title, d.content, b.name, b.chunk_strategy, b.chunk_max_chars, b.chunk_overlap_chars, b.chunk_delimiter FROM knowledge_documents d JOIN knowledge_bases b ON b.id = d.knowledge_base_id WHERE b.enabled = 1 AND d.knowledge_base_id IN ({placeholders}) ORDER BY d.id"
+            "SELECT d.id, d.title, d.content, b.name, b.chunk_strategy, b.chunk_max_chars, b.chunk_overlap_chars, b.chunk_delimiter FROM knowledge_documents d JOIN knowledge_bases b ON b.id = d.knowledge_base_id WHERE b.enabled = 1 AND d.knowledge_base_id IN ({placeholders}){audience_filter} ORDER BY d.id"
         );
         let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-        let mut values: Vec<&dyn rusqlite::types::ToSql> = Vec::with_capacity(base_ids.len());
+        let actor_id = character_id.map(str::to_owned);
+        let mut values: Vec<&dyn rusqlite::types::ToSql> = Vec::with_capacity(base_ids.len() + 1);
         for id in base_ids {
             values.push(id);
+        }
+        if let Some(actor_id) = actor_id.as_ref() {
+            values.push(actor_id);
         }
         return stmt
             .query_map(values.as_slice(), row_to_document)
@@ -401,13 +440,23 @@ fn load_candidate_rows(
         .map(|index| format!("?{}", index + 1))
         .collect::<Vec<_>>()
         .join(", ");
+    let actor_parameter = ids.len() + 1;
+    let audience_filter = character_id.map(|_| {
+        format!(
+            " AND (d.audience = 'public' OR (d.audience = 'character' AND d.audience_character_id = ?{actor_parameter}))"
+        )
+    }).unwrap_or_default();
     let sql = format!(
-        "SELECT d.id, d.title, d.content, b.name, b.chunk_strategy, b.chunk_max_chars, b.chunk_overlap_chars, b.chunk_delimiter FROM knowledge_documents d JOIN knowledge_bases b ON b.id = d.knowledge_base_id WHERE b.enabled = 1 AND d.id IN ({placeholders})"
+        "SELECT d.id, d.title, d.content, b.name, b.chunk_strategy, b.chunk_max_chars, b.chunk_overlap_chars, b.chunk_delimiter FROM knowledge_documents d JOIN knowledge_bases b ON b.id = d.knowledge_base_id WHERE b.enabled = 1 AND d.id IN ({placeholders}){audience_filter}"
     );
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-    let mut values: Vec<&dyn rusqlite::types::ToSql> = Vec::with_capacity(ids.len());
+    let actor_id = character_id.map(str::to_owned);
+    let mut values: Vec<&dyn rusqlite::types::ToSql> = Vec::with_capacity(ids.len() + 1);
     for id in &ids {
         values.push(id);
+    }
+    if let Some(actor_id) = actor_id.as_ref() {
+        values.push(actor_id);
     }
     let mut rows = stmt
         .query_map(values.as_slice(), row_to_document)
@@ -474,8 +523,8 @@ pub fn prepare_search(
             });
         }
         // FTS5 词法预筛：只切分命中的文档；预筛空则回退全量扫描。
-        let prefiltered = fts_prefilter_document_ids(conn, &base_ids, &terms);
-        load_candidate_rows(conn, &base_ids, &prefiltered)?
+        let prefiltered = fts_prefilter_document_ids(conn, &base_ids, &terms, character_id);
+        load_candidate_rows(conn, &base_ids, &prefiltered, character_id)?
     };
 
     let mut plan = KnowledgeSearchPlan {
@@ -880,8 +929,7 @@ fn hard_split(text: &str, max: usize, overlap: usize) -> Vec<String> {
     chunks
 }
 
-/// 新建世界自带知识库时：打开世界级 `knowledge_access`，并把新库加入世界主控的
-/// 可查询范围（`director_config.knowledge_base_ids`）。避免「刚建好的库主控查不到」。
+/// 新建世界自带知识库时授予检索工具，并把新库加入世界主控的可查询范围。
 fn auto_select_owned_base(
     conn: &rusqlite::Connection,
     world_id: &str,
@@ -898,14 +946,28 @@ fn auto_select_owned_base(
         .as_deref()
         .and_then(|value| serde_json::from_str(value).ok())
         .unwrap_or_else(|| serde_json::json!({}));
-    if !config.is_object() {
-        config = serde_json::json!({});
-    }
+    config = crate::services::catalog::world_service::WorldService::normalize_world_director_config(
+        &config,
+    );
     {
         let object = config
             .as_object_mut()
             .ok_or_else(|| "世界配置不是对象".to_string())?;
-        object.insert("knowledge_access".to_string(), serde_json::json!(true));
+        let allowed = object
+            .entry("allowed_mcp_tool_ids".to_string())
+            .or_insert_with(|| serde_json::json!([]));
+        if !allowed.is_array() {
+            *allowed = serde_json::json!([]);
+        }
+        let tools = allowed
+            .as_array_mut()
+            .ok_or_else(|| "工具授权列表不是数组".to_string())?;
+        if !tools
+            .iter()
+            .any(|value| value.as_str() == Some(MCP_TOOL_SEARCH_KNOWLEDGE_ID))
+        {
+            tools.push(serde_json::json!(MCP_TOOL_SEARCH_KNOWLEDGE_ID));
+        }
         let ids = object
             .entry("knowledge_base_ids".to_string())
             .or_insert_with(|| serde_json::json!([]));
@@ -1097,13 +1159,15 @@ pub fn export_bundled(
             chunk_overlap_chars,
             chunk_delimiter,
         ) = row.map_err(|e| e.to_string())?;
-        let mut docs = conn.prepare("SELECT title, content, source_filename FROM knowledge_documents WHERE knowledge_base_id = ?1 ORDER BY id").map_err(|e| e.to_string())?;
+        let mut docs = conn.prepare("SELECT title, content, source_filename, audience, audience_character_id FROM knowledge_documents WHERE knowledge_base_id = ?1 ORDER BY id").map_err(|e| e.to_string())?;
         let documents = docs
             .query_map(params![id], |r| {
                 Ok(BundledDocument {
                     title: r.get(0)?,
                     content: r.get(1)?,
                     source_filename: r.get(2)?,
+                    audience: r.get(3)?,
+                    audience_character_id: r.get(4)?,
                 })
             })
             .map_err(|e| e.to_string())?
@@ -1149,8 +1213,14 @@ pub fn import_bundled(
             if doc.content.len() > 20 * 1024 * 1024 {
                 return Err("知识库正文最大 20MB".into());
             }
+            let (audience, audience_character_id) = validate_document_audience(
+                conn,
+                &id,
+                &doc.audience,
+                doc.audience_character_id.as_deref(),
+            )?;
             let document_id = uuid::Uuid::new_v4().to_string();
-            conn.execute("INSERT INTO knowledge_documents (id, knowledge_base_id, title, content, source_filename, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![document_id, id, doc.title, doc.content, doc.source_filename, chrono::Utc::now().to_rfc3339()]).map_err(|e| e.to_string())?;
+            conn.execute("INSERT INTO knowledge_documents (id, knowledge_base_id, title, content, source_filename, updated_at, audience, audience_character_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", params![document_id, id, doc.title, doc.content, doc.source_filename, chrono::Utc::now().to_rfc3339(), audience, audience_character_id]).map_err(|e| e.to_string())?;
             upsert_document_fts(
                 conn,
                 &document_id,
@@ -1572,7 +1642,7 @@ pub async fn list_knowledge_documents(
     knowledge_base_id: String,
 ) -> Result<Vec<KnowledgeDocument>, String> {
     let db = state.db.lock().await;
-    let mut stmt = db.conn().prepare("SELECT id, knowledge_base_id, title, content, source_filename, updated_at FROM knowledge_documents WHERE knowledge_base_id = ?1 ORDER BY title").map_err(|e| e.to_string())?;
+    let mut stmt = db.conn().prepare("SELECT id, knowledge_base_id, title, content, source_filename, updated_at, audience, audience_character_id FROM knowledge_documents WHERE knowledge_base_id = ?1 ORDER BY title").map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map(params![knowledge_base_id], |row| {
             Ok(KnowledgeDocument {
@@ -1582,6 +1652,8 @@ pub async fn list_knowledge_documents(
                 content: row.get(3)?,
                 source_filename: row.get(4)?,
                 updated_at: row.get(5)?,
+                audience: row.get(6)?,
+                audience_character_id: row.get(7)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -1646,18 +1718,69 @@ fn extract_text(filename: &str, data: &[u8]) -> Result<String, String> {
     }
 }
 
+fn validate_document_audience(
+    conn: &rusqlite::Connection,
+    knowledge_base_id: &str,
+    audience: &str,
+    audience_character_id: Option<&str>,
+) -> Result<(String, Option<String>), String> {
+    let audience = audience.trim().to_ascii_lowercase();
+    if !matches!(audience.as_str(), "public" | "director" | "character") {
+        return Err("资料可见范围只能是 public、director 或 character".into());
+    }
+    if audience != "character" {
+        return Ok((audience, None));
+    }
+    let character_id = audience_character_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or("角色私有资料必须指定 audience_character_id")?;
+    let (base_world_id, character_world_id): (Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT b.world_id, c.world_id FROM knowledge_bases b
+             JOIN characters c ON c.id = ?2 WHERE b.id = ?1",
+            params![knowledge_base_id, character_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|_| "知识库或目标角色不存在".to_string())?;
+    if base_world_id.is_some() && base_world_id != character_world_id {
+        return Err("专属知识库的角色私有资料只能分配给同世界角色".into());
+    }
+    Ok((audience, Some(character_id.to_string())))
+}
+
 #[tauri::command]
 pub async fn update_knowledge_document(
     state: State<'_, AppState>,
     id: String,
     title: String,
     content: String,
+    audience: Option<String>,
+    audience_character_id: Option<String>,
 ) -> Result<(), String> {
     if title.trim().is_empty() || content.trim().is_empty() || content.len() > 20 * 1024 * 1024 {
         return Err("标题和正文不能为空，正文最大 20MB".into());
     }
     let db = state.db.lock().await;
-    db.conn().execute("UPDATE knowledge_documents SET title = ?2, content = ?3, updated_at = ?4 WHERE id = ?1", params![id, title, content, chrono::Utc::now().to_rfc3339()]).map_err(|e| e.to_string())?;
+    if let Some(audience) = audience.as_deref() {
+        let base_id: String = db
+            .conn()
+            .query_row(
+                "SELECT knowledge_base_id FROM knowledge_documents WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .map_err(|_| "资料不存在".to_string())?;
+        let (audience, audience_character_id) = validate_document_audience(
+            db.conn(),
+            &base_id,
+            audience,
+            audience_character_id.as_deref(),
+        )?;
+        db.conn().execute("UPDATE knowledge_documents SET title = ?2, content = ?3, updated_at = ?4, audience = ?5, audience_character_id = ?6 WHERE id = ?1", params![id, title, content, chrono::Utc::now().to_rfc3339(), audience, audience_character_id]).map_err(|e| e.to_string())?;
+    } else {
+        db.conn().execute("UPDATE knowledge_documents SET title = ?2, content = ?3, updated_at = ?4 WHERE id = ?1", params![id, title, content, chrono::Utc::now().to_rfc3339()]).map_err(|e| e.to_string())?;
+    }
     // 正文或标题变了，旧切片向量随之失效；下次检索重新补算。
     let _ = crate::db::repositories::knowledge_embedding_repo::KnowledgeEmbeddingRepository::new(
         db.conn(),
@@ -1674,6 +1797,8 @@ pub async fn add_knowledge_document(
     knowledge_base_id: String,
     filename: String,
     data: Vec<u8>,
+    audience: Option<String>,
+    audience_character_id: Option<String>,
 ) -> Result<KnowledgeDocument, String> {
     if data.len() > 20 * 1024 * 1024 {
         return Err("知识库文件最大 20MB".to_string());
@@ -1697,7 +1822,13 @@ pub async fn add_knowledge_document(
         .unwrap_or(&filename)
         .to_string();
     let db = state.db.lock().await;
-    db.conn().execute("INSERT INTO knowledge_documents (id, knowledge_base_id, title, content, source_filename, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![id, knowledge_base_id, title, content, filename, now]).map_err(|e| e.to_string())?;
+    let (audience, audience_character_id) = validate_document_audience(
+        db.conn(),
+        &knowledge_base_id,
+        audience.as_deref().unwrap_or("public"),
+        audience_character_id.as_deref(),
+    )?;
+    db.conn().execute("INSERT INTO knowledge_documents (id, knowledge_base_id, title, content, source_filename, updated_at, audience, audience_character_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", params![id, knowledge_base_id, title, content, filename, now, audience, audience_character_id]).map_err(|e| e.to_string())?;
     upsert_document_fts(db.conn(), &id, &format!("{title} {content}"));
     Ok(KnowledgeDocument {
         id,
@@ -1706,6 +1837,8 @@ pub async fn add_knowledge_document(
         content,
         source_filename: filename,
         updated_at: now,
+        audience,
+        audience_character_id,
     })
 }
 
@@ -1728,7 +1861,7 @@ mod tests {
     use super::*;
     fn database() -> rusqlite::Connection {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE worlds(id TEXT PRIMARY KEY, director_config_json TEXT DEFAULT '{}'); CREATE TABLE knowledge_bases(id TEXT PRIMARY KEY, world_id TEXT REFERENCES worlds(id) ON DELETE CASCADE, name TEXT, description TEXT, enabled INTEGER DEFAULT 1, chunk_strategy TEXT NOT NULL DEFAULT 'length', chunk_max_chars INTEGER NOT NULL DEFAULT 800, chunk_overlap_chars INTEGER NOT NULL DEFAULT 120, chunk_delimiter TEXT NOT NULL DEFAULT ''); CREATE TABLE knowledge_documents(id TEXT PRIMARY KEY, knowledge_base_id TEXT REFERENCES knowledge_bases(id) ON DELETE CASCADE, title TEXT, content TEXT, source_filename TEXT, updated_at TEXT); CREATE VIRTUAL TABLE knowledge_documents_fts USING fts5(document_id UNINDEXED, content, tokenize='trigram'); CREATE TABLE knowledge_chunk_embeddings(document_id TEXT NOT NULL, chunk_index INTEGER NOT NULL, model_key TEXT NOT NULL, vector_json TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(document_id, chunk_index, model_key)); CREATE TABLE world_knowledge_bindings(world_id TEXT REFERENCES worlds(id) ON DELETE CASCADE, knowledge_base_id TEXT REFERENCES knowledge_bases(id) ON DELETE CASCADE, PRIMARY KEY(world_id,knowledge_base_id)); INSERT INTO worlds(id) VALUES('one'),('two');").unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE worlds(id TEXT PRIMARY KEY, director_config_json TEXT DEFAULT '{}'); CREATE TABLE knowledge_bases(id TEXT PRIMARY KEY, world_id TEXT REFERENCES worlds(id) ON DELETE CASCADE, name TEXT, description TEXT, enabled INTEGER DEFAULT 1, chunk_strategy TEXT NOT NULL DEFAULT 'length', chunk_max_chars INTEGER NOT NULL DEFAULT 800, chunk_overlap_chars INTEGER NOT NULL DEFAULT 120, chunk_delimiter TEXT NOT NULL DEFAULT ''); CREATE TABLE knowledge_documents(id TEXT PRIMARY KEY, knowledge_base_id TEXT REFERENCES knowledge_bases(id) ON DELETE CASCADE, title TEXT, content TEXT, source_filename TEXT, updated_at TEXT, audience TEXT NOT NULL DEFAULT 'public', audience_character_id TEXT); CREATE VIRTUAL TABLE knowledge_documents_fts USING fts5(document_id UNINDEXED, content, tokenize='trigram'); CREATE TABLE knowledge_chunk_embeddings(document_id TEXT NOT NULL, chunk_index INTEGER NOT NULL, model_key TEXT NOT NULL, vector_json TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(document_id, chunk_index, model_key)); CREATE TABLE world_knowledge_bindings(world_id TEXT REFERENCES worlds(id) ON DELETE CASCADE, knowledge_base_id TEXT REFERENCES knowledge_bases(id) ON DELETE CASCADE, PRIMARY KEY(world_id,knowledge_base_id)); INSERT INTO worlds(id) VALUES('one'),('two');").unwrap();
         conn
     }
     #[test]
@@ -1745,6 +1878,8 @@ mod tests {
                 title: "毒酒".into(),
                 content: "毒酒扣血".into(),
                 source_filename: "rules.md".into(),
+                audience: "public".into(),
+                audience_character_id: None,
             }],
         }];
         import_bundled(&conn, "one", &payload).unwrap();
@@ -1779,7 +1914,7 @@ mod tests {
     #[test]
     fn public_access_requires_world_selection() {
         let conn = database();
-        conn.execute_batch("INSERT INTO knowledge_bases (id, world_id, name, description, enabled) VALUES('public',NULL,'公共','',1); INSERT INTO knowledge_documents VALUES('doc','public','毒酒','毒酒扣血','rules.md','now');").unwrap();
+        conn.execute_batch("INSERT INTO knowledge_bases (id, world_id, name, description, enabled) VALUES('public',NULL,'公共','',1); INSERT INTO knowledge_documents (id, knowledge_base_id, title, content, source_filename, updated_at) VALUES('doc','public','毒酒','毒酒扣血','rules.md','now');").unwrap();
         let query = serde_json::json!({"query":"毒酒"});
         assert!(search(&conn, "one", &query).unwrap()["results"]
             .as_array()
@@ -1804,7 +1939,7 @@ mod tests {
     #[test]
     fn legacy_bindings_still_grant_access() {
         let conn = database();
-        conn.execute_batch("INSERT INTO knowledge_bases (id, world_id, name, description, enabled) VALUES('public',NULL,'公共','',1); INSERT INTO knowledge_documents VALUES('doc','public','毒酒','毒酒扣血','rules.md','now'); INSERT INTO world_knowledge_bindings VALUES('one','public');").unwrap();
+        conn.execute_batch("INSERT INTO knowledge_bases (id, world_id, name, description, enabled) VALUES('public',NULL,'公共','',1); INSERT INTO knowledge_documents (id, knowledge_base_id, title, content, source_filename, updated_at) VALUES('doc','public','毒酒','毒酒扣血','rules.md','now'); INSERT INTO world_knowledge_bindings VALUES('one','public');").unwrap();
         assert_eq!(
             search(&conn, "one", &serde_json::json!({"query":"毒酒"})).unwrap()["results"]
                 .as_array()
@@ -1816,7 +1951,7 @@ mod tests {
     #[test]
     fn world_owned_base_requires_world_selection() {
         let conn = database();
-        conn.execute_batch("INSERT INTO knowledge_bases (id, world_id, name, description, enabled) VALUES('owned','one','专属','',1); INSERT INTO knowledge_documents VALUES('doc','owned','毒酒','毒酒扣血','rules.md','now');").unwrap();
+        conn.execute_batch("INSERT INTO knowledge_bases (id, world_id, name, description, enabled) VALUES('owned','one','专属','',1); INSERT INTO knowledge_documents (id, knowledge_base_id, title, content, source_filename, updated_at) VALUES('doc','owned','毒酒','毒酒扣血','rules.md','now');").unwrap();
         let query = serde_json::json!({"query":"毒酒"});
 
         // 世界已有选择字段但没勾这个自带库：不参与检索。
@@ -1841,7 +1976,7 @@ mod tests {
     #[test]
     fn world_owned_base_never_leaks_to_other_worlds() {
         let conn = database();
-        conn.execute_batch("INSERT INTO knowledge_bases (id, world_id, name, description, enabled) VALUES('owned','one','专属','',1); INSERT INTO knowledge_documents VALUES('doc','owned','毒酒','毒酒扣血','rules.md','now');").unwrap();
+        conn.execute_batch("INSERT INTO knowledge_bases (id, world_id, name, description, enabled) VALUES('owned','one','专属','',1); INSERT INTO knowledge_documents (id, knowledge_base_id, title, content, source_filename, updated_at) VALUES('doc','owned','毒酒','毒酒扣血','rules.md','now');").unwrap();
         let query = serde_json::json!({"query":"毒酒"});
         conn.execute_batch(
             "UPDATE worlds SET director_config_json = '{\"knowledge_base_ids\":[\"owned\"]}' WHERE id='one';",
@@ -1898,6 +2033,80 @@ mod tests {
         let scope = character_knowledge_scope(&conn, "one", Some("c1")).unwrap();
         assert_eq!(scope, vec!["owned".to_string(), "public".to_string()]);
     }
+    #[test]
+    fn document_audience_is_filtered_before_chunking_and_ranking() {
+        let conn = database();
+        conn.execute_batch(
+            "CREATE TABLE characters(id TEXT PRIMARY KEY, world_id TEXT, knowledge_base_ids_json TEXT NOT NULL DEFAULT '[]');\
+             INSERT INTO characters (id, world_id) VALUES('c1','one'),('c2','two');\
+             INSERT INTO knowledge_bases (id, world_id, name, description, enabled) VALUES('owned','one','专属','',1);\
+             INSERT INTO knowledge_documents (id, knowledge_base_id, title, content, source_filename, updated_at, audience, audience_character_id) VALUES\
+             ('public-doc','owned','公共密钥','密钥公开','a.md','now','public',NULL),\
+             ('director-doc','owned','导演密钥','密钥只有导演知道','b.md','now','director',NULL),\
+             ('alice-doc','owned','爱丽丝密钥','密钥属于爱丽丝','c.md','now','character','c1'),\
+             ('bob-doc','owned','鲍勃密钥','密钥属于鲍勃','d.md','now','character','c2');\
+             UPDATE worlds SET director_config_json = '{\"knowledge_base_ids\":[\"owned\"]}' WHERE id='one';",
+        )
+        .unwrap();
+        let query = serde_json::json!({"query":"密钥"});
+        let director_results = search(&conn, "one", &query).unwrap();
+        assert_eq!(director_results["results"].as_array().unwrap().len(), 4);
+
+        let alice_plan = prepare_search(&conn, "one", Some("c1"), &query).unwrap();
+        assert_eq!(alice_plan.candidates.len(), 2);
+        let alice_results = finalize_search(&conn, alice_plan);
+        let ids: Vec<&str> = alice_results["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["document_id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec!["alice-doc", "public-doc"]);
+
+        for (id, title, content) in [
+            ("public-doc", "公共密钥", "密钥公开"),
+            ("director-doc", "导演密钥", "密钥只有导演知道"),
+            ("alice-doc", "爱丽丝密钥", "密钥属于爱丽丝"),
+            ("bob-doc", "鲍勃密钥", "密钥属于鲍勃"),
+        ] {
+            upsert_document_fts(&conn, id, &format!("{title} {content}"));
+        }
+        let hits = fts_prefilter_document_ids(
+            &conn,
+            &["owned".to_string()],
+            &crate::services::game_engine::memory::build_memory_search_terms("密钥"),
+            Some("c1"),
+        );
+        assert_eq!(hits.len(), 2);
+        assert!(hits
+            .iter()
+            .all(|(id, _)| id == "public-doc" || id == "alice-doc"));
+        let alice_plan = prepare_search(&conn, "one", Some("c1"), &query).unwrap();
+        assert_eq!(alice_plan.candidates.len(), 2);
+    }
+
+    #[test]
+    fn character_document_audience_requires_a_same_world_character() {
+        let conn = database();
+        conn.execute_batch(
+            "CREATE TABLE characters(id TEXT PRIMARY KEY, world_id TEXT, knowledge_base_ids_json TEXT NOT NULL DEFAULT '[]');\
+             INSERT INTO characters (id, world_id) VALUES('c1','one'),('c2','two');\
+             INSERT INTO knowledge_bases (id, world_id, name, description, enabled) VALUES('owned','one','专属','',1);",
+        )
+        .unwrap();
+        assert_eq!(
+            validate_document_audience(&conn, "owned", "character", Some("c1")).unwrap(),
+            ("character".to_string(), Some("c1".to_string()))
+        );
+        assert!(validate_document_audience(&conn, "owned", "character", Some("c2")).is_err());
+        assert!(validate_document_audience(&conn, "owned", "character", None).is_err());
+        assert!(validate_document_audience(&conn, "owned", "invalid", None).is_err());
+        assert_eq!(
+            validate_document_audience(&conn, "owned", "director", Some("c2")).unwrap(),
+            ("director".to_string(), None)
+        );
+    }
+
     fn length_config(max_chars: i64, overlap_chars: i64) -> ChunkConfig {
         ChunkConfig {
             strategy: CHUNK_STRATEGY_LENGTH.into(),
@@ -2112,7 +2321,7 @@ mod tests {
         }
 
         let terms = crate::services::game_engine::memory::build_memory_search_terms("城门守军口令");
-        let hits = fts_prefilter_document_ids(&conn, &["owned".to_string()], &terms);
+        let hits = fts_prefilter_document_ids(&conn, &["owned".to_string()], &terms, None);
         let ids: Vec<&str> = hits.iter().map(|(id, _)| id.as_str()).collect();
         assert!(
             ids.contains(&"d2"),
@@ -2122,7 +2331,7 @@ mod tests {
         assert!(!ids.contains(&"d3"));
 
         let terms = crate::services::game_engine::memory::build_memory_search_terms("毒酒");
-        let hits = fts_prefilter_document_ids(&conn, &["owned".to_string()], &terms);
+        let hits = fts_prefilter_document_ids(&conn, &["owned".to_string()], &terms, None);
         let ids: Vec<&str> = hits.iter().map(|(id, _)| id.as_str()).collect();
         assert_eq!(
             ids,
@@ -2131,7 +2340,7 @@ mod tests {
         );
 
         let terms = crate::services::game_engine::memory::build_memory_search_terms("zzzz不存在");
-        assert!(fts_prefilter_document_ids(&conn, &["owned".to_string()], &terms).is_empty());
+        assert!(fts_prefilter_document_ids(&conn, &["owned".to_string()], &terms, None).is_empty());
     }
     #[test]
     fn creating_owned_base_auto_selects_it_for_the_world() {
@@ -2145,7 +2354,11 @@ mod tests {
             )
             .unwrap();
         let config: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert_eq!(config["knowledge_access"], serde_json::json!(true));
+        assert!(config["allowed_mcp_tool_ids"]
+            .as_array()
+            .is_some_and(|items| items
+                .iter()
+                .any(|value| value.as_str() == Some(MCP_TOOL_SEARCH_KNOWLEDGE_ID))));
         assert_eq!(config["knowledge_base_ids"], serde_json::json!(["owned-1"]));
         // 重复调用不重复插入。
         auto_select_owned_base(&conn, "one", "owned-1").unwrap();

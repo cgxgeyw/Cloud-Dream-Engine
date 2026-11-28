@@ -316,6 +316,33 @@ pub(crate) fn build_turn_participants(
     names
 }
 
+pub(crate) fn build_witness_ids(
+    witness_names: &[String],
+    player_character_id: &str,
+    player_character_name: &str,
+    characters: &[crate::models::character::CharacterDefinition],
+) -> Vec<String> {
+    let mut ids = Vec::new();
+    for name in witness_names {
+        let matching_ids = characters
+            .iter()
+            .filter(|character| character.name == *name)
+            .map(|character| character.id.clone())
+            .collect::<Vec<_>>();
+        let id = if name == player_character_name {
+            player_character_id.to_string()
+        } else if matching_ids.len() == 1 {
+            matching_ids[0].clone()
+        } else {
+            continue;
+        };
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    ids
+}
+
 #[cfg(test)]
 mod tests {
     use super::update_current_map_graph_nodes;

@@ -9,6 +9,9 @@ use crate::db::repositories::world_repo::WorldRepository;
 use crate::models::character::{
     CharacterCreateRequest, CharacterDefinition, CharacterUpdateRequest,
 };
+use crate::models::mcp_tool::{
+    synchronize_director_image_generation_permissions, MCP_TOOL_SEARCH_KNOWLEDGE_ID,
+};
 use crate::models::session::{
     AssetSelection, CharacterVisualState, ChatMessage, MessageContent, RuntimeAttributeGroup,
     RuntimeAttributeItem, SceneRuntime, SessionRuntimeAttributesResponse, SessionSnapshot,
@@ -97,6 +100,7 @@ impl WorldService {
             crate::db::cleanup::purge_world_sessions(conn, world_name)?;
         }
         crate::db::cleanup::purge_world_attributes(conn, id)?;
+        crate::services::oag::lifecycle::purge_world(conn, id)?;
         repo.delete(id)?;
         // 记一笔墓碑：若删除的是内置世界，避免下次启动播种时被重建。
         crate::db::seeds::mark_seed_world_tombstoned(conn, id)
@@ -350,6 +354,10 @@ impl WorldService {
             WorldDefinition,
             Vec<CharacterDefinition>,
             Vec<crate::models::mcp_tool::McpToolDefinition>,
+            Option<(
+                crate::models::oag::OagOntology,
+                crate::models::oag::OagCanonData,
+            )>,
         ),
         String,
     > {
@@ -402,17 +410,22 @@ impl WorldService {
         // v8：世界白名单引用到的 MCP 工具一并打包，导入方开箱即用。
         let mcp_tools =
             crate::db::repositories::mcp_tool_repo::McpToolRepository::new(conn).list()?;
-        Ok((world, characters, mcp_tools))
+        let oag = crate::services::oag::canon::export(conn, &world.id)?;
+        Ok((world, characters, mcp_tools, oag))
     }
 
     /// H8: 无 DB 依赖的打包（读资产 + 压 zip），可在全局 DB 锁外执行。
     pub fn package_world_bundle(
         data_dir: &Path,
+        oag: Option<(
+            crate::models::oag::OagOntology,
+            crate::models::oag::OagCanonData,
+        )>,
         world: &WorldDefinition,
         characters: &[CharacterDefinition],
         mcp_tools: &[crate::models::mcp_tool::McpToolDefinition],
     ) -> Result<BinaryFileResponse, String> {
-        WorldPackageService::build_package(data_dir, world, characters, mcp_tools)
+        WorldPackageService::build_package(data_dir, oag, world, characters, mcp_tools)
     }
 
     /// H8: 解压 + 资产落盘(无 DB,可在锁外执行),与 DB 持久化分离。
@@ -436,16 +449,8 @@ impl WorldService {
     pub fn normalize_world_director_config(raw: &serde_json::Value) -> serde_json::Value {
         let object = raw.as_object().cloned().unwrap_or_default();
 
-        let allow_scene_transition = object
-            .get("allow_scene_transition")
-            .and_then(|value| value.as_bool())
-            .unwrap_or(true);
         let allow_npc_spawn = object
             .get("allow_npc_spawn")
-            .and_then(|value| value.as_bool())
-            .unwrap_or(true);
-        let allow_player_character_switch = object
-            .get("allow_player_character_switch")
             .and_then(|value| value.as_bool())
             .unwrap_or(true);
         let service_mode = object
@@ -473,6 +478,22 @@ impl WorldService {
                 )
             })
             .unwrap_or_else(|| "session".to_string());
+        let memory_mode = object
+            .get("memory_mode")
+            .and_then(|value| value.as_str())
+            .map(|value| value.trim().to_string())
+            .filter(|value| matches!(value.as_str(), "history" | "embedding" | "oag"))
+            .unwrap_or_else(|| {
+                if object
+                    .get("oag_enabled")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false)
+                {
+                    "oag".to_string()
+                } else {
+                    "embedding".to_string()
+                }
+            });
         let history_dialogue_rounds = object
             .get("history_dialogue_rounds")
             .and_then(|value| value.as_i64())
@@ -498,12 +519,6 @@ impl WorldService {
             .and_then(|value| value.as_i64())
             .map(|value| value.clamp(0, 6))
             .unwrap_or(2);
-        let character_memory_retrieval_mode = object
-            .get("character_memory_retrieval_mode")
-            .and_then(|value| value.as_str())
-            .map(|value| value.trim().to_string())
-            .filter(|value| matches!(value.as_str(), "lexical_only" | "hybrid" | "semantic_only"))
-            .unwrap_or_else(|| "hybrid".to_string());
         let character_memory_semantic_weight = object
             .get("character_memory_semantic_weight")
             .and_then(|value| value.as_f64())
@@ -593,13 +608,6 @@ impl WorldService {
             .and_then(|value| value.as_array())
             .cloned()
             .unwrap_or_default();
-        // 第 8 项：世界级生成参数。结构不合法一律当「没配」，并夹到合法区间后落库，
-        // 免得一个手写坏了的世界包把整局游戏的采样参数带偏。
-        let generation_params = crate::models::generation_params::GenerationParams::from_json(
-            object.get("generation_params"),
-        )
-        .map(|params| params.sanitized().0)
-        .unwrap_or_default();
         let allowed_mcp_tool_ids = object
             .get("allowed_mcp_tool_ids")
             .and_then(|value| value.as_array())
@@ -629,21 +637,18 @@ impl WorldService {
 
         serde_json::json!({
             "service_mode": service_mode,
-            "knowledge_access": object.get("knowledge_access").and_then(|v| v.as_bool()).unwrap_or(false),
             "knowledge_base_ids": knowledge_base_ids,
             "default_agent_id": default_agent_id,
             "runtime_policy": {
                 "memory_write_mode": memory_write_mode,
             },
-            "allow_scene_transition": allow_scene_transition,
+            "memory_mode": memory_mode,
             "allow_npc_spawn": allow_npc_spawn,
-            "allow_player_character_switch": allow_player_character_switch,
             "history_dialogue_rounds": history_dialogue_rounds,
             "director_tool_loop_limit": director_tool_loop_limit,
             "character_memory_hit_turns": character_memory_hit_turns,
             "character_memory_event_window_rounds": character_memory_event_window_rounds,
             "character_memory_dialogue_window_rounds": character_memory_dialogue_window_rounds,
-            "character_memory_retrieval_mode": character_memory_retrieval_mode,
             "character_memory_semantic_weight": character_memory_semantic_weight,
             "memory_summary_interval_rounds": memory_summary_interval_rounds,
             "memory_summary_model": memory_summary_model,
@@ -659,7 +664,6 @@ impl WorldService {
             "director_interaction_kinds": director_interaction_kinds,
             "return_processing_rules": return_processing_rules,
             "allowed_mcp_tool_ids": allowed_mcp_tool_ids,
-            "generation_params": generation_params,
         })
     }
 
@@ -791,6 +795,15 @@ impl WorldService {
         world.director_system_prompt_base = String::new();
         world.director_config = normalized;
         world.ui_theme_config = Self::normalize_world_ui_theme_config(&world.ui_theme_config);
+        let runtime_image_generation_enabled = world
+            .ui_theme_config
+            .pointer("/assets/runtime_image_generation_enabled")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        world.director_config = synchronize_director_image_generation_permissions(
+            world.director_config,
+            runtime_image_generation_enabled,
+        );
         world
     }
 
@@ -807,6 +820,7 @@ impl WorldService {
         conn: &Connection,
         imported: ImportedWorldPackage,
     ) -> Result<WorldDefinition, String> {
+        crate::db::oag_migration::apply(conn)?;
         let imported_world = imported.world;
         let desktop_ui_source = imported.desktop_ui_source;
         let mobile_ui_source = imported.mobile_ui_source;
@@ -815,6 +829,8 @@ impl WorldService {
         let ui_runtime_version = imported.ui_runtime_version;
         let ui_capabilities = imported.ui_capabilities;
         let imported_characters = imported.characters;
+        let imported_ontology = imported.ontology;
+        let imported_canon = imported.canon;
         let asset_map = imported.asset_map;
 
         let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
@@ -827,6 +843,9 @@ impl WorldService {
             let existing_tool_ids: std::collections::BTreeSet<String> =
                 tool_repo.list()?.into_iter().map(|tool| tool.id).collect();
             for tool in &imported.mcp_tools {
+                if tool.id == "mcp-tool-image-generation" {
+                    continue;
+                }
                 let request = crate::models::mcp_tool::McpToolCreateRequest {
                     name: tool.name.clone(),
                     description: tool.description.clone(),
@@ -947,6 +966,7 @@ impl WorldService {
         let mut id_map = HashMap::new();
         let mut name_map = HashMap::new();
         let existing_characters = char_repo.list_by_world(&world_id)?;
+        let package_characters_for_oag = imported_characters.clone();
         for character in imported_characters {
             let source_character_id = if character.source_character_id.trim().is_empty() {
                 character.name.clone()
@@ -995,6 +1015,17 @@ impl WorldService {
             id_map.insert(source_character_id, created_character_id.clone());
             name_map.insert(character.name.clone(), created_character_id);
         }
+
+        crate::services::oag::canon::import(
+            &tx,
+            &world_id,
+            imported_ontology.as_ref(),
+            &imported_canon,
+            &package_characters_for_oag,
+            &id_map,
+            &imported_world.map_nodes,
+        )?;
+        crate::db::oag_migration::migrate_legacy(&tx)?;
 
         let imported_attribute_values =
             attribute_repo.list_schemas_for_world("character", &world_id)?;
@@ -1055,7 +1086,22 @@ impl WorldService {
             .as_ref()
             .is_some_and(|bases| !bases.is_empty())
         {
-            director_config["knowledge_access"] = serde_json::json!(true);
+            if let Some(object) = director_config.as_object_mut() {
+                let allowed = object
+                    .entry("allowed_mcp_tool_ids".to_string())
+                    .or_insert_with(|| serde_json::json!([]));
+                if !allowed.is_array() {
+                    *allowed = serde_json::json!([]);
+                }
+                if let Some(tools) = allowed.as_array_mut() {
+                    if !tools
+                        .iter()
+                        .any(|value| value.as_str() == Some(MCP_TOOL_SEARCH_KNOWLEDGE_ID))
+                    {
+                        tools.push(serde_json::json!(MCP_TOOL_SEARCH_KNOWLEDGE_ID));
+                    }
+                }
+            }
         }
         // 包里的知识库 id 都是作者机器上的：自带的库导入后已重建为新 id，公共库本机也未必有。
         // 因此这里重算：本世界自带的库全部勾选（等同升级前的「自动可用」），
@@ -1232,7 +1278,7 @@ impl WorldService {
                 director_summary: String::new(),
                 director_history_rounds: None,
             },
-            // 新存档不覆盖任何采样参数：走世界与应用两层。
+            // 新存档不覆盖任何采样参数：走内置默认与应用设置。
             generation_params: Default::default(),
         }
     }
@@ -1381,18 +1427,17 @@ impl WorldService {
                     "visibility_context": artifacts.visibility_context,
                     // 真正随请求下发、但不在对话文本里的旁路字段，补进预览以便和实际发送一致。
                     "response_schema": build_character_response_schema(),
-                    // 第 8 项：预览按「角色内置默认 + 世界覆盖」显示；应用级与会话级
-                    // 覆盖要到实际开局才有（此处没有存档），到时以回合 trace 为准。
                     "request_params": crate::services::llm::param_support::describe_params_without_provider(
                         &crate::models::generation_params::GenerationParams::resolve_for_role(
                             crate::models::generation_params::GENERATION_ROLE_CHARACTER,
-                            &Default::default(),
-                            crate::services::game_engine::orchestrator::world_generation_params(world).as_ref(),
+                            &crate::commands::settings::load_app_settings(conn)
+                                .unwrap_or_default()
+                                .generation_params,
                             None,
                         ),
                         serde_json::json!({
                             "json_mode": true,
-                            "note": "预览只含角色默认与世界级参数；应用级/会话级覆盖以实际回合为准。"
+                            "note": "预览按角色内置默认与应用设置计算；本局存档覆盖以实际回合为准。"
                         }),
                     ),
                 }),
@@ -1641,6 +1686,87 @@ mod tests {
     use crate::models::character::CharacterPackageData;
     use crate::models::world::WorldPackageWorldData;
 
+    #[test]
+    fn director_config_preserves_all_memory_modes() {
+        for mode in ["history", "embedding", "oag"] {
+            let normalized = WorldService::normalize_world_director_config(&serde_json::json!({
+                "memory_mode": mode,
+            }));
+            assert_eq!(normalized["memory_mode"], mode);
+        }
+
+        let default = WorldService::normalize_world_director_config(&serde_json::json!({}));
+        assert_eq!(default["memory_mode"], "embedding");
+        let legacy_oag = WorldService::normalize_world_director_config(&serde_json::json!({
+            "oag_enabled": true,
+        }));
+        assert_eq!(legacy_oag["memory_mode"], "oag");
+    }
+
+    #[test]
+    fn enrich_world_synchronizes_image_generation_tools_and_removes_retired_tool() {
+        use crate::models::mcp_tool::{
+            MCP_TOOL_BACKGROUND_GENERATION_ID, MCP_TOOL_PORTRAIT_GENERATION_ID,
+        };
+
+        for (enabled, expected_ids) in [
+            (
+                true,
+                vec![
+                    "custom-tool".to_string(),
+                    MCP_TOOL_BACKGROUND_GENERATION_ID.to_string(),
+                    MCP_TOOL_PORTRAIT_GENERATION_ID.to_string(),
+                ],
+            ),
+            (false, vec!["custom-tool".to_string()]),
+        ] {
+            let world = crate::models::world::WorldDefinition {
+                id: "world-image-test".to_string(),
+                name: "Image Test".to_string(),
+                genre: String::new(),
+                background_prompt: String::new(),
+                opening_scene: String::new(),
+                summary: String::new(),
+                time_system: String::new(),
+                map_nodes: serde_json::json!({ "version": 1, "nodes": [] }),
+                time_config: serde_json::json!({}),
+                director_config: serde_json::json!({
+                    "allowed_mcp_tool_ids": [
+                        "custom-tool",
+                        "mcp-tool-image-generation",
+                        MCP_TOOL_BACKGROUND_GENERATION_ID,
+                        MCP_TOOL_PORTRAIT_GENERATION_ID
+                    ]
+                }),
+                ui_theme_config: serde_json::json!({
+                    "assets": { "runtime_image_generation_enabled": enabled }
+                }),
+                director_system_prompt_base: String::new(),
+                director_runtime_system_prompt: String::new(),
+                opening_messages: Vec::new(),
+                opening_character_ids: Vec::new(),
+                player_character_id: None,
+            };
+            let enriched = WorldService::enrich_world(world);
+            assert_eq!(
+                enriched.director_config["allowed_mcp_tool_ids"],
+                serde_json::json!(expected_ids)
+            );
+            assert_eq!(enriched.director_image_generation_enabled(), enabled);
+        }
+    }
+
+    #[test]
+    fn director_config_drops_world_level_generation_params() {
+        let normalized = WorldService::normalize_world_director_config(&serde_json::json!({
+            "director_model": "model-1",
+            "generation_params": { "temperature": 1.2 }
+        }));
+
+        assert_eq!(normalized["director_model"], "model-1");
+        assert!(normalized.get("generation_params").is_none());
+    }
+
     fn imported_character(source_id: &str, name: &str) -> CharacterPackageData {
         CharacterPackageData {
             source_character_id: source_id.to_string(),
@@ -1723,6 +1849,8 @@ mod tests {
                 imported_character("good", "导入成功样例"),
                 imported_character("failure", "导入失败样例"),
             ],
+            ontology: None,
+            canon: Default::default(),
             asset_map: HashMap::new(),
             mcp_tools: Vec::new(),
         };
@@ -1794,6 +1922,8 @@ mod tests {
             ui_runtime_version: 3,
             ui_capabilities: Vec::new(),
             characters,
+            ontology: None,
+            canon: Default::default(),
             asset_map: HashMap::new(),
             mcp_tools: Vec::new(),
         }

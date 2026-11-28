@@ -3,10 +3,13 @@ use std::fs;
 use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 
+use rusqlite::Connection;
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
+use crate::db::repositories::world_repo::WorldRepository;
 use crate::models::character::{CharacterDefinition, CharacterPackageData};
+use crate::models::oag::{OagCanonData, OagCanonImportPreview, OagOntology};
 use crate::models::world::{
     BinaryFileResponse, SavedFileResponse, WorldDefinition, WorldPackageAssetEntry,
     WorldPackageCharacterFileEntry, WorldPackageInspectionResult, WorldPackageManifest,
@@ -24,6 +27,8 @@ const WORLD_PACKAGE_DESKTOP_UI_STYLESHEET: &str = "world/ui.desktop.css";
 const WORLD_PACKAGE_MOBILE_UI_STYLESHEET: &str = "world/ui.mobile.css";
 const WORLD_PACKAGE_LOGIC_FILE: &str = "world/logic.js";
 const WORLD_PACKAGE_MCP_TOOLS_FILE: &str = "tools.json";
+const WORLD_PACKAGE_ONTOLOGY_FILE: &str = "world/ontology.json";
+const WORLD_PACKAGE_OBJECTS_FILE: &str = "world/objects.json";
 const MAX_WORLD_LOGIC_BYTES: usize = 256 * 1024;
 const MAX_WORLD_PACKAGE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_WORLD_PACKAGE_ENTRY_BYTES: u64 = 16 * 1024 * 1024;
@@ -38,6 +43,8 @@ pub struct ImportedWorldPackage {
     pub ui_runtime_version: u32,
     pub ui_capabilities: Vec<String>,
     pub characters: Vec<CharacterPackageData>,
+    pub ontology: Option<OagOntology>,
+    pub canon: OagCanonData,
     pub asset_map: HashMap<String, String>,
     /// v8：包内嵌的 MCP 工具定义（导入时 upsert 到工具表）。
     pub mcp_tools: Vec<crate::models::mcp_tool::McpToolDefinition>,
@@ -46,189 +53,206 @@ pub struct ImportedWorldPackage {
 pub struct WorldPackageService;
 
 impl WorldPackageService {
-    pub fn inspect_package_archive(data: Vec<u8>) -> WorldPackageInspectionResult {
-        let mut diagnostics = Vec::new();
-        let mut archive = match zip::ZipArchive::new(Cursor::new(data)) {
-            Ok(archive) => archive,
-            Err(error) => {
-                diagnostics.push(package_diagnostic(
-                    "invalid_zip",
-                    format!("无法读取世界包 ZIP：{error}"),
-                    "archive",
-                ));
-                return WorldPackageInspectionResult {
-                    ok: false,
-                    format: None,
-                    version: None,
-                    diagnostics,
-                };
-            }
-        };
-        if let Err(error) = validate_archive_limits(&mut archive) {
+    pub fn inspect_package_archive_with_db(
+        conn: &Connection,
+        data: Vec<u8>,
+    ) -> WorldPackageInspectionResult {
+        inspect_package_archive_internal(data, Some(conn))
+    }
+}
+
+fn inspect_package_archive_internal(
+    data: Vec<u8>,
+    conn: Option<&Connection>,
+) -> WorldPackageInspectionResult {
+    let mut diagnostics = Vec::new();
+    let mut archive = match zip::ZipArchive::new(Cursor::new(data)) {
+        Ok(archive) => archive,
+        Err(error) => {
             diagnostics.push(package_diagnostic(
-                "archive_limits_exceeded",
-                error,
+                "invalid_zip",
+                format!("无法读取世界包 ZIP：{error}"),
                 "archive",
             ));
-        }
-        let manifest =
-            match read_json_from_zip::<WorldPackageManifest>(&mut archive, "manifest.json") {
-                Ok(manifest) => manifest,
-                Err(error) => {
-                    diagnostics.push(package_diagnostic(
-                        "invalid_manifest",
-                        format!("manifest.json 无效：{error}"),
-                        "manifest.json",
-                    ));
-                    return WorldPackageInspectionResult {
-                        ok: false,
-                        format: None,
-                        version: None,
-                        diagnostics,
-                    };
-                }
+            return WorldPackageInspectionResult {
+                ok: false,
+                format: None,
+                version: None,
+                diagnostics,
+                oag_preview: None,
             };
-        if manifest.format != WORLD_PACKAGE_FORMAT {
+        }
+    };
+    if let Err(error) = validate_archive_limits(&mut archive) {
+        diagnostics.push(package_diagnostic(
+            "archive_limits_exceeded",
+            error,
+            "archive",
+        ));
+    }
+    let manifest = match read_json_from_zip::<WorldPackageManifest>(&mut archive, "manifest.json") {
+        Ok(manifest) => manifest,
+        Err(error) => {
             diagnostics.push(package_diagnostic(
-                "unsupported_package_format",
-                format!("不支持的世界包格式：{}", manifest.format),
-                "manifest.format",
+                "invalid_manifest",
+                format!("manifest.json 无效：{error}"),
+                "manifest.json",
+            ));
+            return WorldPackageInspectionResult {
+                ok: false,
+                format: None,
+                version: None,
+                diagnostics,
+                oag_preview: None,
+            };
+        }
+    };
+    if manifest.format != WORLD_PACKAGE_FORMAT {
+        diagnostics.push(package_diagnostic(
+            "unsupported_package_format",
+            format!("不支持的世界包格式：{}", manifest.format),
+            "manifest.format",
+        ));
+    }
+    if manifest.version != WORLD_PACKAGE_VERSION {
+        diagnostics.push(package_diagnostic(
+            "unsupported_package_version",
+            format!(
+                "不支持的世界包版本：{}，当前版本为 {}。",
+                manifest.version, WORLD_PACKAGE_VERSION
+            ),
+            "manifest.version",
+        ));
+    }
+    for (path, field) in [
+        (manifest.world_file.as_deref(), "manifest.world_file"),
+        (
+            manifest.desktop_ui_file.as_deref(),
+            "manifest.desktop_ui_file",
+        ),
+        (
+            manifest.mobile_ui_file.as_deref(),
+            "manifest.mobile_ui_file",
+        ),
+        (manifest.logic_file.as_deref(), "manifest.logic_file"),
+        (
+            manifest.desktop_ui_stylesheet_file.as_deref(),
+            "manifest.desktop_ui_stylesheet_file",
+        ),
+        (
+            manifest.mobile_ui_stylesheet_file.as_deref(),
+            "manifest.mobile_ui_stylesheet_file",
+        ),
+        (
+            manifest.mcp_tools_file.as_deref(),
+            "manifest.mcp_tools_file",
+        ),
+        (manifest.ontology_file.as_deref(), "manifest.ontology_file"),
+        (manifest.objects_file.as_deref(), "manifest.objects_file"),
+    ] {
+        if let Some(path) = path {
+            if let Err(error) = validate_manifest_path(path, field) {
+                diagnostics.push(package_diagnostic("invalid_manifest_path", error, field));
+            }
+        }
+    }
+    for entry in &manifest.character_files {
+        if let Err(error) =
+            validate_manifest_path(&entry.file_path, "manifest.character_files.file_path")
+        {
+            diagnostics.push(package_diagnostic(
+                "invalid_manifest_path",
+                error,
+                "manifest.character_files",
             ));
         }
-        if manifest.version != WORLD_PACKAGE_VERSION {
+    }
+    for asset in &manifest.assets {
+        if let Err(error) =
+            validate_manifest_path(&asset.archive_path, "manifest.assets.archive_path")
+        {
             diagnostics.push(package_diagnostic(
-                "unsupported_package_version",
-                format!(
-                    "不支持的世界包版本：{}，当前版本为 {}。",
-                    manifest.version, WORLD_PACKAGE_VERSION
-                ),
-                "manifest.version",
+                "invalid_manifest_path",
+                error,
+                "manifest.assets",
             ));
         }
-        for (path, field) in [
-            (manifest.world_file.as_deref(), "manifest.world_file"),
-            (
-                manifest.desktop_ui_file.as_deref(),
-                "manifest.desktop_ui_file",
-            ),
-            (
-                manifest.mobile_ui_file.as_deref(),
-                "manifest.mobile_ui_file",
-            ),
-            (manifest.logic_file.as_deref(), "manifest.logic_file"),
-            (
-                manifest.desktop_ui_stylesheet_file.as_deref(),
-                "manifest.desktop_ui_stylesheet_file",
-            ),
-            (
-                manifest.mobile_ui_stylesheet_file.as_deref(),
-                "manifest.mobile_ui_stylesheet_file",
-            ),
-            (
-                manifest.mcp_tools_file.as_deref(),
-                "manifest.mcp_tools_file",
-            ),
-        ] {
-            if let Some(path) = path {
-                if let Err(error) = validate_manifest_path(path, field) {
-                    diagnostics.push(package_diagnostic("invalid_manifest_path", error, field));
-                }
-            }
-        }
-        for entry in &manifest.character_files {
-            if let Err(error) =
-                validate_manifest_path(&entry.file_path, "manifest.character_files.file_path")
-            {
-                diagnostics.push(package_diagnostic(
-                    "invalid_manifest_path",
-                    error,
-                    "manifest.character_files",
-                ));
-            }
-        }
-        for asset in &manifest.assets {
-            if let Err(error) =
-                validate_manifest_path(&asset.archive_path, "manifest.assets.archive_path")
-            {
-                diagnostics.push(package_diagnostic(
-                    "invalid_manifest_path",
-                    error,
-                    "manifest.assets",
-                ));
-            }
-        }
-        let desktop_path = manifest
-            .desktop_ui_file
-            .as_deref()
-            .unwrap_or(WORLD_PACKAGE_DESKTOP_UI_FILE);
-        let mobile_path = manifest
-            .mobile_ui_file
-            .as_deref()
-            .unwrap_or(WORLD_PACKAGE_MOBILE_UI_FILE);
-        let desktop = read_text_from_zip(&mut archive, desktop_path);
-        let mobile = read_text_from_zip(&mut archive, mobile_path);
-        let desktop_stylesheet = manifest
-            .desktop_ui_stylesheet_file
-            .as_deref()
-            .map(|path| read_text_from_zip(&mut archive, path));
-        let mobile_stylesheet = manifest
-            .mobile_ui_stylesheet_file
-            .as_deref()
-            .map(|path| read_text_from_zip(&mut archive, path));
-        let service = GameUiService::new();
-        for (platform, source) in [("desktop", desktop), ("mobile", mobile)] {
-            match source {
-                Ok(source) => {
-                    let result = service.validate_world_ui_document(
-                        crate::models::world::WorldUiDocumentRequest {
-                            source,
-                            platform: Some(platform.to_string()),
-                        },
-                    );
-                    diagnostics.extend(result.errors.into_iter().map(|diagnostic| {
-                        WorldUiDiagnostic {
+    }
+    let desktop_path = manifest
+        .desktop_ui_file
+        .as_deref()
+        .unwrap_or(WORLD_PACKAGE_DESKTOP_UI_FILE);
+    let mobile_path = manifest
+        .mobile_ui_file
+        .as_deref()
+        .unwrap_or(WORLD_PACKAGE_MOBILE_UI_FILE);
+    let desktop = read_text_from_zip(&mut archive, desktop_path);
+    let mobile = read_text_from_zip(&mut archive, mobile_path);
+    let desktop_stylesheet = manifest
+        .desktop_ui_stylesheet_file
+        .as_deref()
+        .map(|path| read_text_from_zip(&mut archive, path));
+    let mobile_stylesheet = manifest
+        .mobile_ui_stylesheet_file
+        .as_deref()
+        .map(|path| read_text_from_zip(&mut archive, path));
+    let service = GameUiService::new();
+    for (platform, source) in [("desktop", desktop), ("mobile", mobile)] {
+        match source {
+            Ok(source) => {
+                let result = service.validate_world_ui_document(
+                    crate::models::world::WorldUiDocumentRequest {
+                        source,
+                        platform: Some(platform.to_string()),
+                    },
+                );
+                diagnostics.extend(
+                    result
+                        .errors
+                        .into_iter()
+                        .map(|diagnostic| WorldUiDiagnostic {
                             path: diagnostic.path.map(|path| format!("{platform}/{path}")),
                             ..diagnostic
-                        }
-                    }));
-                }
-                Err(error) => diagnostics.push(package_diagnostic(
-                    "missing_ui_file",
-                    format!("{platform} UI 文件无法读取：{error}"),
-                    if platform == "desktop" {
-                        desktop_path
-                    } else {
-                        mobile_path
-                    },
-                )),
+                        }),
+                );
+            }
+            Err(error) => diagnostics.push(package_diagnostic(
+                "missing_ui_file",
+                format!("{platform} UI 文件无法读取：{error}"),
+                if platform == "desktop" {
+                    desktop_path
+                } else {
+                    mobile_path
+                },
+            )),
+        }
+    }
+    for (platform, path, stylesheet) in [
+        (
+            "desktop",
+            manifest.desktop_ui_stylesheet_file.as_deref(),
+            desktop_stylesheet,
+        ),
+        (
+            "mobile",
+            manifest.mobile_ui_stylesheet_file.as_deref(),
+            mobile_stylesheet,
+        ),
+    ] {
+        if let Some(result) = stylesheet {
+            if let Err(error) = result {
+                diagnostics.push(package_diagnostic(
+                    "missing_stylesheet_file",
+                    format!("{platform} stylesheet 文件无法读取：{error}"),
+                    path.unwrap_or("stylesheet"),
+                ));
             }
         }
-        for (platform, path, stylesheet) in [
-            (
-                "desktop",
-                manifest.desktop_ui_stylesheet_file.as_deref(),
-                desktop_stylesheet,
-            ),
-            (
-                "mobile",
-                manifest.mobile_ui_stylesheet_file.as_deref(),
-                mobile_stylesheet,
-            ),
-        ] {
-            if let Some(result) = stylesheet {
-                if let Err(error) = result {
-                    diagnostics.push(package_diagnostic(
-                        "missing_stylesheet_file",
-                        format!("{platform} stylesheet 文件无法读取：{error}"),
-                        path.unwrap_or("stylesheet"),
-                    ));
-                }
-            }
-        }
-        let world_path = manifest.world_file.as_deref().unwrap_or(WORLD_PACKAGE_FILE);
-        if let Ok(package_world) =
-            read_json_from_zip::<WorldPackageWorldData>(&mut archive, world_path)
-        {
+    }
+    let world_path = manifest.world_file.as_deref().unwrap_or(WORLD_PACKAGE_FILE);
+    let package_world = match read_json_from_zip::<WorldPackageWorldData>(&mut archive, world_path)
+    {
+        Ok(package_world) => {
             if let Err(error) = crate::services::world_storage::validate_storage_config(
                 &package_world.ui_storage_config,
             ) {
@@ -256,37 +280,99 @@ impl WorldPackageService {
                     source,
                 ));
             }
-        } else {
+            Some(package_world)
+        }
+        Err(_) => {
             diagnostics.push(package_diagnostic(
                 "missing_world_file",
                 "无法读取 world/world.json。",
                 world_path,
             ));
+            None
         }
-        if let Some(logic_path) = manifest.logic_file.as_deref() {
-            match read_text_from_zip(&mut archive, logic_path) {
-                Ok(source) => diagnostics.extend(
-                    crate::services::game_ui::validate_world_logic_source(&source),
-                ),
-                Err(error) => diagnostics.push(package_diagnostic(
-                    "missing_logic_file",
-                    format!("logic.js 无法读取：{error}"),
-                    logic_path,
-                )),
-            }
-        }
-        WorldPackageInspectionResult {
-            ok: diagnostics
-                .iter()
-                .all(|diagnostic| diagnostic.severity != "error"),
-            format: Some(manifest.format),
-            version: Some(manifest.version),
-            diagnostics,
+    };
+    if let Some(logic_path) = manifest.logic_file.as_deref() {
+        match read_text_from_zip(&mut archive, logic_path) {
+            Ok(source) => diagnostics.extend(
+                crate::services::game_ui::validate_world_logic_source(&source),
+            ),
+            Err(error) => diagnostics.push(package_diagnostic(
+                "missing_logic_file",
+                format!("logic.js 无法读取：{error}"),
+                logic_path,
+            )),
         }
     }
+    let oag_data = read_oag_package_data(&mut archive, &manifest);
+    if let Err(error) = &oag_data {
+        diagnostics.push(package_diagnostic("invalid_oag_data", error.clone(), "oag"));
+    }
+    let mut oag_preview: Option<OagCanonImportPreview> = None;
+    if let (Some(conn), Some(package_world), Ok((ontology, canon))) =
+        (conn, package_world.as_ref(), oag_data)
+    {
+        match preview_package_oag(
+            &mut archive,
+            &manifest,
+            conn,
+            package_world,
+            ontology,
+            canon,
+        ) {
+            Ok(preview) => oag_preview = Some(preview),
+            Err(error) => diagnostics.push(package_diagnostic("invalid_oag_preview", error, "oag")),
+        }
+    }
+    WorldPackageInspectionResult {
+        ok: diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.severity != "error"),
+        format: Some(manifest.format),
+        version: Some(manifest.version),
+        diagnostics,
+        oag_preview,
+    }
+}
 
+fn preview_package_oag(
+    archive: &mut zip::ZipArchive<Cursor<Vec<u8>>>,
+    manifest: &WorldPackageManifest,
+    conn: &Connection,
+    world: &WorldPackageWorldData,
+    ontology: Option<OagOntology>,
+    canon: OagCanonData,
+) -> Result<OagCanonImportPreview, String> {
+    let characters = manifest
+        .character_files
+        .iter()
+        .map(|entry| {
+            let mut character: CharacterPackageData =
+                read_json_from_zip(archive, &entry.file_path)?;
+            if character.source_character_id.trim().is_empty() {
+                character.source_character_id = entry.source_character_id.clone();
+            }
+            Ok(character)
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let existing_world_id = WorldRepository::new(conn)
+        .list()?
+        .into_iter()
+        .find(|existing| existing.name.trim() == world.name.trim())
+        .map(|existing| existing.id);
+    crate::services::oag::canon::preview(
+        conn,
+        existing_world_id.as_deref(),
+        ontology.as_ref(),
+        &canon,
+        &characters,
+        &world.map_nodes,
+    )
+}
+
+impl WorldPackageService {
     pub fn build_package(
         data_dir: &Path,
+        bundled_oag: Option<(OagOntology, OagCanonData)>,
         world: &WorldDefinition,
         characters: &[CharacterDefinition],
         mcp_tools: &[crate::models::mcp_tool::McpToolDefinition],
@@ -320,7 +406,14 @@ impl WorldPackageService {
             .cloned()
             .collect();
 
+        if let Some((ontology, _)) = &bundled_oag {
+            crate::services::oag::ontology::validate(ontology)?;
+        }
         let mut manifest = build_manifest(world, characters, &assets_root)?;
+        if bundled_oag.is_some() {
+            manifest.ontology_file = Some(WORLD_PACKAGE_ONTOLOGY_FILE.to_string());
+            manifest.objects_file = Some(WORLD_PACKAGE_OBJECTS_FILE.to_string());
+        }
         if !bundled_tools.is_empty() {
             manifest.mcp_tools_file = Some(WORLD_PACKAGE_MCP_TOOLS_FILE.to_string());
         }
@@ -398,6 +491,29 @@ impl WorldPackageService {
                 archive
                     .write_all(
                         serde_json::to_string_pretty(&tools_payload)
+                            .map_err(|e| e.to_string())?
+                            .as_bytes(),
+                    )
+                    .map_err(|e| e.to_string())?;
+            }
+
+            if let Some((ontology, canon)) = &bundled_oag {
+                archive
+                    .start_file(WORLD_PACKAGE_ONTOLOGY_FILE, options)
+                    .map_err(|e| e.to_string())?;
+                archive
+                    .write_all(
+                        serde_json::to_string_pretty(ontology)
+                            .map_err(|e| e.to_string())?
+                            .as_bytes(),
+                    )
+                    .map_err(|e| e.to_string())?;
+                archive
+                    .start_file(WORLD_PACKAGE_OBJECTS_FILE, options)
+                    .map_err(|e| e.to_string())?;
+                archive
+                    .write_all(
+                        serde_json::to_string_pretty(canon)
                             .map_err(|e| e.to_string())?
                             .as_bytes(),
                     )
@@ -558,6 +674,8 @@ impl WorldPackageService {
                 manifest.mcp_tools_file.as_deref(),
                 "manifest.mcp_tools_file",
             ),
+            (manifest.ontology_file.as_deref(), "manifest.ontology_file"),
+            (manifest.objects_file.as_deref(), "manifest.objects_file"),
             (
                 manifest.desktop_ui_stylesheet_file.as_deref(),
                 "manifest.desktop_ui_stylesheet_file",
@@ -577,6 +695,8 @@ impl WorldPackageService {
         for asset in &manifest.assets {
             validate_manifest_path(&asset.archive_path, "manifest.assets.archive_path")?;
         }
+
+        let (ontology, canon) = read_oag_package_data(&mut archive, &manifest)?;
 
         // 先完整读取并校验包内容，再写入 assets 目录。导入失败时不应留下半个包的文件。
         let mut pending_assets = Vec::with_capacity(manifest.assets.len());
@@ -675,6 +795,12 @@ impl WorldPackageService {
         if package_characters.is_empty() {
             return Err("世界包缺少角色文件".to_string());
         }
+        crate::services::oag::canon::validate(
+            ontology.as_ref(),
+            &canon,
+            &package_characters,
+            &package_world.map_nodes,
+        )?;
 
         validate_world_package_director_config(&package_world.director_config)?;
         validate_world_package_stickers(&package_world.stickers, &manifest.assets)?;
@@ -737,6 +863,8 @@ impl WorldPackageService {
             ui_runtime_version: manifest.ui_runtime_version.unwrap_or(2),
             ui_capabilities,
             characters: package_characters,
+            ontology,
+            canon,
             asset_map,
             mcp_tools: package_mcp_tools,
         })
@@ -1164,6 +1292,8 @@ fn build_manifest(
         mobile_ui_stylesheet_file: Some(WORLD_PACKAGE_MOBILE_UI_STYLESHEET.to_string()),
         logic_file: world_logic_source(world).map(|_| WORLD_PACKAGE_LOGIC_FILE.to_string()),
         mcp_tools_file: None,
+        ontology_file: None,
+        objects_file: None,
         characters_file: None,
         character_files,
         assets,
@@ -1413,6 +1543,31 @@ fn validate_manifest_path(path: &str, field: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn read_oag_package_data(
+    archive: &mut zip::ZipArchive<Cursor<Vec<u8>>>,
+    manifest: &WorldPackageManifest,
+) -> Result<(Option<OagOntology>, OagCanonData), String> {
+    let ontology = match manifest.ontology_file.as_deref() {
+        Some(path) => {
+            validate_manifest_path(path, "manifest.ontology_file")?;
+            let ontology: OagOntology = read_json_from_zip(archive, path)
+                .map_err(|error| format!("Invalid ontology file: {error}"))?;
+            crate::services::oag::ontology::resolve(Some(&ontology))?;
+            Some(ontology)
+        }
+        None => None,
+    };
+    let canon = match manifest.objects_file.as_deref() {
+        Some(path) => {
+            validate_manifest_path(path, "manifest.objects_file")?;
+            read_json_from_zip(archive, path)
+                .map_err(|error| format!("Invalid objects file: {error}"))?
+        }
+        None => OagCanonData::default(),
+    };
+    Ok((ontology, canon))
+}
+
 fn read_json_from_zip<T: serde::de::DeserializeOwned>(
     archive: &mut zip::ZipArchive<Cursor<Vec<u8>>>,
     path: &str,
@@ -1556,8 +1711,8 @@ mod tests {
         fs::write(assets_dir.join("feast.webp"), b"sticker-bytes").expect("sticker file");
 
         let world = sticker_world();
-        let package =
-            WorldPackageService::build_package(&data_dir, &world, &[], &[]).expect("build package");
+        let package = WorldPackageService::build_package(&data_dir, None, &world, &[], &[])
+            .expect("build package");
 
         let mut archive = zip::ZipArchive::new(Cursor::new(package.bytes)).expect("zip");
         let manifest: WorldPackageManifest =
@@ -1580,6 +1735,95 @@ mod tests {
             .expect("sticker validation");
 
         let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn oag_files_are_exported_and_parsed_with_the_package() {
+        let data_dir = std::env::temp_dir().join(format!(
+            "dream-oag-export-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let ontology: OagOntology = serde_json::from_value(json!({
+            "object_types": [
+                { "key": "character", "label": "Character", "actor": true },
+                { "key": "location", "label": "Location", "platform_role": "location" }
+            ],
+            "link_types": [],
+            "character_object_type": "character",
+            "location_object_type": "location"
+        }))
+        .expect("ontology");
+        let canon = OagCanonData {
+            objects: vec![crate::models::oag::OagCanonObject {
+                object_type: "location".to_string(),
+                canonical_key: "location:town".to_string(),
+                name: "Town".to_string(),
+                aliases: Vec::new(),
+                attributes: serde_json::Map::new(),
+            }],
+            links: Vec::new(),
+        };
+        let mut world = sticker_world();
+        world.ui_theme_config["stickers"] = json!([]);
+        let package = WorldPackageService::build_package(
+            &data_dir,
+            Some((ontology.clone(), canon.clone())),
+            &world,
+            &[],
+            &[],
+        )
+        .expect("package");
+        let package_bytes = package.bytes.clone();
+        let mut archive = zip::ZipArchive::new(Cursor::new(package.bytes)).expect("zip");
+        let manifest: WorldPackageManifest =
+            read_json_from_zip(&mut archive, "manifest.json").expect("manifest");
+        assert_eq!(
+            manifest.ontology_file.as_deref(),
+            Some(WORLD_PACKAGE_ONTOLOGY_FILE)
+        );
+        assert_eq!(
+            manifest.objects_file.as_deref(),
+            Some(WORLD_PACKAGE_OBJECTS_FILE)
+        );
+        let (parsed_ontology, parsed_canon) =
+            read_oag_package_data(&mut archive, &manifest).expect("oag data");
+        assert_eq!(parsed_ontology.expect("ontology").object_types.len(), 2);
+        assert_eq!(parsed_canon.objects.len(), 1);
+        assert_eq!(parsed_canon.objects[0].canonical_key, "location:town");
+
+        let conn = Connection::open_in_memory().expect("database");
+        crate::db::schema::create_tables(&conn).expect("schema");
+        crate::db::oag_schema::create(&conn).expect("oag schema");
+        let inspection =
+            WorldPackageService::inspect_package_archive_with_db(&conn, package_bytes.clone());
+        let preview = inspection.oag_preview.expect("new world preview");
+        assert!(!preview.is_upgrade);
+        assert_eq!(preview.added_count, 4);
+
+        conn.execute(
+            "INSERT INTO worlds (id, name) VALUES ('sticker-test', '贴纸测试')",
+            [],
+        )
+        .expect("world");
+        crate::services::oag::canon::import(
+            &conn,
+            "sticker-test",
+            Some(&ontology),
+            &canon,
+            &[],
+            &HashMap::new(),
+            &world.map_nodes,
+        )
+        .expect("canon import");
+        let upgrade = WorldPackageService::inspect_package_archive_with_db(&conn, package_bytes);
+        let preview = upgrade.oag_preview.expect("upgrade preview");
+        assert!(preview.is_upgrade);
+        assert_eq!(preview.modified_count, 0);
+        assert_eq!(preview.retired_count, 0);
+        assert_eq!(preview.unchanged_count, 4);
     }
 
     #[test]

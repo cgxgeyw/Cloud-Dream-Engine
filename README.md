@@ -1,11 +1,11 @@
-# Cloud Dream Engine（云朵梦境）
+# Yunmeng Engine（云梦引擎）
 
 > An offline-first desktop & mobile engine for building LLM-driven narrative games and "world packs" — author worlds, characters, custom in-game UIs, and an AI director, then play them locally.
 
 > [World package developer guide (runtime v3 / package format v8, Chinese)](docs/world-package-guide-v3.md)
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/25ae1d57-5e2b-478c-902b-628dad463876" alt="Cloud Dream Engine — world editor and runtime" width="820">
+  <img src="https://github.com/user-attachments/assets/25ae1d57-5e2b-478c-902b-628dad463876" alt="Yunmeng Engine — world editor and runtime" width="820">
 </p>
 
 <p align="center">
@@ -16,7 +16,7 @@
 
 ## What it is
 
-Cloud Dream Engine is a [Tauri](https://tauri.app/) + React + Rust/SQLite application for creating and playing **AI narrative games**. You design a *world* (setting, characters, rules, memory, attributes) and a *custom game UI*, and an LLM-powered **director** runs the game loop: it reads player input, updates scene/state/attributes/inventory/memory, and decides who speaks next.
+Yunmeng Engine is a [Tauri](https://tauri.app/) + React + Rust/SQLite application for creating and playing **AI narrative games**. You design a *world* (setting, characters, rules, memory, attributes) and a *custom game UI*, and an LLM-powered **director** runs the game loop: it reads player input, updates scene/state/attributes/inventory/memory, and decides who speaks next.
 
 World packs are portable, declarative content bundles rather than native plugins. Format version 8 can declare world-scoped `records` / `kv` storage, embed MCP tool definitions, request platform file capabilities, and may include optional `sandbox-js-v1` logic that runs in an isolated Worker through a small, validated SDK.
 
@@ -114,7 +114,7 @@ Early and actively developed. Expect rapid changes. Issues and feedback are welc
 
 ## 中文说明
 
-**云朵梦境（Cloud Dream Engine）** 是一个基于 Tauri + React + Rust/SQLite 的离线优先桌面/移动端引擎，用来创作和游玩**由大模型驱动的叙事游戏**。你设计一个*世界*（设定、角色、规则、记忆、属性）和一套*自定义游戏 UI*，由 LLM 驱动的**导演**运行游戏循环：解析玩家输入，写回场景/状态/属性/道具/记忆，并决定下一个发言者。
+**云梦引擎（Yunmeng Engine）** 是一个基于 Tauri + React + Rust/SQLite 的离线优先桌面/移动端引擎，用来创作和游玩**由大模型驱动的叙事游戏**。你设计一个*世界*（设定、角色、规则、记忆、属性）和一套*自定义游戏 UI*，由 LLM 驱动的**导演**运行游戏循环：解析玩家输入，写回场景/状态/属性/道具/记忆，并决定下一个发言者。
 
 世界包是可分享的声明式内容包，而不是原生插件。version 8 支持声明按世界隔离的 `records` / `kv` 存储、内嵌 MCP 工具定义、申请平台文件能力，也可以携带可选的 `sandbox-js-v1` 逻辑；逻辑仅通过受控 SDK 在独立 Worker 中运行。
 

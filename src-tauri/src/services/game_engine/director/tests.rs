@@ -508,7 +508,7 @@ fn should_continue_tool_loop_requires_model_to_return_tool_calls() {
 #[test]
 fn parse_runtime_payload_respects_scene_transition_flag() {
     let service = WorldDirectorService::new();
-    let world = sample_world(serde_json::json!({ "allow_scene_transition": false }));
+    let world = sample_world(serde_json::json!({ "allowed_mcp_tool_ids": [] }));
     let session = sample_session();
     let parsed = serde_json::json!({
         "next_location": "Tower",
@@ -555,7 +555,9 @@ fn director_interaction_waits_for_player_before_speakers_run() {
 #[test]
 fn parse_runtime_payload_sanitizes_switch_character_proposal() {
     let service = WorldDirectorService::new();
-    let world = sample_world(serde_json::json!({ "allow_scene_transition": true }));
+    let world = sample_world(serde_json::json!({
+        "allowed_mcp_tool_ids": [MCP_TOOL_CHANGE_SCENE_ID, MCP_TOOL_SWITCH_PLAYER_CHARACTER_ID]
+    }));
     let session = sample_session();
     let parsed = serde_json::json!({
         "switch_character_proposal": {
@@ -589,7 +591,7 @@ fn parse_runtime_payload_sanitizes_switch_character_proposal() {
 fn parse_runtime_payload_drops_switch_proposal_when_disabled() {
     let service = WorldDirectorService::new();
     let world = sample_world(serde_json::json!({
-        "allow_player_character_switch": false
+        "allowed_mcp_tool_ids": []
     }));
     let session = sample_session();
     let parsed = serde_json::json!({
@@ -713,7 +715,12 @@ fn build_runtime_turn_payload_uses_minimal_director_contract() {
                 .iter()
                 .filter_map(|item| item.as_str())
                 .collect::<Vec<_>>()),
-        Some(vec!["state_tags", "system_messages", "system_log"])
+        Some(vec![
+            "state_tags",
+            "system_messages",
+            "system_log",
+            "character_visual_directives",
+        ])
     );
     assert!(!response_contract.contains_key("tool_call_fallback_field"));
     let optional_fields = response_contract
@@ -891,6 +898,323 @@ fn custom_response_contract_replaces_generated_contract() {
 }
 
 #[test]
+fn oag_projection_replaces_summary_in_director_context() {
+    let service = WorldDirectorService::new();
+    let world = sample_world(serde_json::json!({ "memory_mode": "oag" }));
+    let mut session = sample_session();
+    session.state.director_summary = "旧摘要".to_string();
+    let projection = serde_json::json!({
+        "perspective": { "kind": "director" },
+        "model_context": "【已知事实】\n- 新事实",
+        "sections": { "facts": [{ "id": "fact-1", "value": "新事实" }] },
+        "selection_trace": [{ "id": "fact-1" }]
+    });
+    let call = service.build_runtime_prompt_call_with_oag(
+        &world,
+        &session,
+        &[],
+        "继续",
+        "preview",
+        None,
+        &[],
+        &std::collections::HashMap::new(),
+        None,
+        &[],
+        Some(&projection),
+    );
+    let section = call["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|message| {
+            message.get("section_id").and_then(|value| value.as_str()) == Some("oag_context")
+        })
+        .expect("oag_context section");
+    let content = section["content"].as_str().unwrap_or_default();
+    assert!(content.contains("新事实") && !content.contains("旧摘要"));
+    assert!(!content.contains("selection_trace") && !content.contains("fact-1"));
+    assert_eq!(call["raw_debug"]["payload"]["oag_context"], projection);
+}
+
+#[test]
+fn oag_query_tool_is_exposed_only_in_oag_mode() {
+    let service = WorldDirectorService::new();
+    let enabled = sample_world(serde_json::json!({ "memory_mode": "oag" }));
+    let disabled = sample_world(serde_json::json!({ "memory_mode": "embedding" }));
+    let has_tool = |world: &WorldDefinition| {
+        service
+            .build_director_tool_capabilities(world, &[])
+            .iter()
+            .any(|tool| tool["tool_name"] == "oag_query")
+    };
+    assert!(has_tool(&enabled));
+    assert!(!has_tool(&disabled));
+}
+
+#[test]
+fn director_oag_query_returns_results_and_validation_errors_to_model() {
+    use crate::db::{oag_schema, schema};
+    use crate::models::oag::{OagCanonData, OagCanonObject, OagObjectTypeDefinition, OagOntology};
+
+    let service = WorldDirectorService::new();
+    let world = sample_world(serde_json::json!({ "memory_mode": "oag" }));
+    let session = sample_session();
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    schema::create_tables(&conn).unwrap();
+    oag_schema::create(&conn).unwrap();
+    conn.execute(
+        "INSERT INTO worlds (id, name) VALUES ('world-1', 'World')",
+        [],
+    )
+    .unwrap();
+    let ontology = OagOntology {
+        object_types: vec![OagObjectTypeDefinition {
+            key: "person".to_string(),
+            label: "人物".to_string(),
+            parent: None,
+            actor: true,
+            platform_role: String::new(),
+            attributes: Vec::new(),
+        }],
+        link_types: Vec::new(),
+        character_object_type: Some("person".to_string()),
+        location_object_type: None,
+    };
+    let canon = OagCanonData {
+        objects: vec![OagCanonObject {
+            object_type: "person".to_string(),
+            canonical_key: "canon:person:a".to_string(),
+            name: "甲".to_string(),
+            aliases: Vec::new(),
+            attributes: serde_json::Map::new(),
+        }],
+        links: Vec::new(),
+    };
+    crate::services::oag::canon::import(
+        &conn,
+        &world.id,
+        Some(&ontology),
+        &canon,
+        &[],
+        &std::collections::HashMap::new(),
+        &serde_json::json!({}),
+    )
+    .unwrap();
+
+    let parsed = serde_json::json!({
+        "tool_calls": [{
+            "id": "oag-1",
+            "tool_name": "oag_query",
+            "arguments": { "op": "find", "object_type": "person" }
+        }]
+    });
+    let enriched = service.apply_tool_call_effects_with_notifications(
+        &parsed,
+        &session,
+        &world,
+        &[],
+        None,
+        Some(&conn),
+        3,
+        &std::collections::HashMap::new(),
+        &std::collections::HashMap::new(),
+    );
+    let result = &enriched["tool_results"][0];
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["result"]["count"], 1);
+    assert_eq!(result["result"]["results"][0]["name"], "甲");
+
+    let invalid = serde_json::json!({
+        "tool_calls": [{
+            "id": "oag-2",
+            "tool_name": "oag_query",
+            "arguments": { "op": "traverse", "entity": { "name": "甲" } }
+        }]
+    });
+    let enriched = service.apply_tool_call_effects_with_notifications(
+        &invalid,
+        &session,
+        &world,
+        &[],
+        None,
+        Some(&conn),
+        3,
+        &std::collections::HashMap::new(),
+        &std::collections::HashMap::new(),
+    );
+    assert_eq!(enriched["tool_results"][0]["ok"], false);
+    assert!(enriched["tool_results"][0]["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("1 到 3 个关系步骤"));
+}
+
+#[test]
+fn image_generation_tools_are_split_and_require_the_unified_switch() {
+    use crate::models::mcp_tool::{
+        MCP_TOOL_BACKGROUND_GENERATION_ID, MCP_TOOL_PORTRAIT_GENERATION_ID,
+    };
+
+    let service = WorldDirectorService::new();
+    let disabled = sample_world(serde_json::json!({
+        "allowed_mcp_tool_ids": [
+            MCP_TOOL_BACKGROUND_GENERATION_ID,
+            MCP_TOOL_PORTRAIT_GENERATION_ID
+        ]
+    }));
+    let mut enabled = sample_world(serde_json::json!({
+        "allowed_mcp_tool_ids": [
+            MCP_TOOL_BACKGROUND_GENERATION_ID,
+            MCP_TOOL_PORTRAIT_GENERATION_ID
+        ]
+    }));
+    enabled.ui_theme_config = serde_json::json!({
+        "assets": { "runtime_image_generation_enabled": true }
+    });
+
+    assert!(!disabled.director_image_generation_enabled());
+    assert!(enabled.director_image_generation_enabled());
+    let disabled_names = service.build_director_tool_capabilities(&disabled, &[]);
+    assert!(!disabled_names.iter().any(|tool| {
+        tool["tool_name"] == "generate_background" || tool["tool_name"] == "generate_portrait"
+    }));
+
+    let tools = service.build_director_tool_capabilities(&enabled, &[]);
+    let background = tools
+        .iter()
+        .find(|tool| tool["tool_name"] == "generate_background")
+        .expect("background tool");
+    let portrait = tools
+        .iter()
+        .find(|tool| tool["tool_name"] == "generate_portrait")
+        .expect("portrait tool");
+    assert_eq!(background["arguments_schema"]["required"], serde_json::json!(["name", "prompt"]));
+    assert_eq!(
+        portrait["arguments_schema"]["required"],
+        serde_json::json!(["character_name", "name", "prompt"])
+    );
+    assert!(!tools.iter().any(|tool| tool["tool_name"] == "generate_image"));
+}
+
+#[test]
+fn image_generation_tools_validate_arguments_and_apply_distinct_effects() {
+    use crate::models::mcp_tool::{
+        MCP_TOOL_BACKGROUND_GENERATION_ID, MCP_TOOL_PORTRAIT_GENERATION_ID,
+    };
+
+    let service = WorldDirectorService::new();
+    let mut world = sample_world(serde_json::json!({
+        "allowed_mcp_tool_ids": [
+            MCP_TOOL_BACKGROUND_GENERATION_ID,
+            MCP_TOOL_PORTRAIT_GENERATION_ID
+        ]
+    }));
+    world.ui_theme_config = serde_json::json!({
+        "assets": { "runtime_image_generation_enabled": true }
+    });
+    let session = sample_session();
+    let parsed = serde_json::json!({
+        "tool_calls": [
+            {
+                "id": "background-1",
+                "tool_name": "generate_background",
+                "arguments": { "name": "雨夜码头", "prompt": "雨夜码头，远处灯塔亮起" }
+            },
+            {
+                "id": "portrait-1",
+                "tool_name": "generate_portrait",
+                "arguments": { "character_name": "Alice", "name": "Alice雨夜风衣", "prompt": "微笑，深色风衣" }
+            }
+        ]
+    });
+    let enriched = service.apply_tool_call_effects(&parsed, &session, &world, &[]);
+    assert_eq!(
+        enriched["background_generation_name"],
+        "雨夜码头"
+    );
+    assert_eq!(
+        enriched["background_generation_prompt"],
+        "雨夜码头，远处灯塔亮起"
+    );
+    assert_eq!(
+        enriched["character_visual_directives"],
+        serde_json::json!([{
+            "character_name": "Alice",
+            "generation_name": "Alice雨夜风衣",
+            "generation_prompt": "微笑，深色风衣"
+        }])
+    );
+    assert_eq!(enriched["tool_results"][0]["result"]["status"], "accepted");
+    assert_eq!(enriched["tool_results"][1]["result"]["kind"], "portrait");
+
+    let invalid = service.apply_tool_call_effects(
+        &serde_json::json!({
+            "tool_calls": [
+                { "id": "bad-background", "tool_name": "generate_background", "arguments": {} },
+                {
+                    "id": "bad-portrait",
+                    "tool_name": "generate_portrait",
+                    "arguments": { "character_name": "Alice" }
+                }
+            ]
+        }),
+        &session,
+        &world,
+        &[],
+    );
+    assert!(invalid.get("background_generation_prompt").is_none());
+    assert!(invalid.get("character_visual_directives").is_none());
+    assert_eq!(invalid["tool_results"][0]["ok"], false);
+    assert_eq!(invalid["tool_results"][1]["ok"], false);
+}
+
+#[test]
+fn image_generation_is_denied_when_either_permission_half_is_missing() {
+    use crate::models::mcp_tool::{
+        MCP_TOOL_BACKGROUND_GENERATION_ID, MCP_TOOL_PORTRAIT_GENERATION_ID,
+    };
+
+    let service = WorldDirectorService::new();
+    let parsed = serde_json::json!({
+        "tool_calls": [
+            { "id": "background", "tool_name": "generate_background", "arguments": { "prompt": "背景" } },
+            {
+                "id": "portrait",
+                "tool_name": "generate_portrait",
+                "arguments": { "character_name": "Alice", "prompt": "立绘" }
+            }
+        ]
+    });
+    for (director_config, runtime_enabled) in [
+        (
+            serde_json::json!({
+                "allowed_mcp_tool_ids": [MCP_TOOL_BACKGROUND_GENERATION_ID]
+            }),
+            true,
+        ),
+        (
+            serde_json::json!({
+                "allowed_mcp_tool_ids": [
+                    MCP_TOOL_BACKGROUND_GENERATION_ID,
+                    MCP_TOOL_PORTRAIT_GENERATION_ID
+                ]
+            }),
+            false,
+        ),
+    ] {
+        let mut world = sample_world(director_config);
+        world.ui_theme_config = serde_json::json!({
+            "assets": { "runtime_image_generation_enabled": runtime_enabled }
+        });
+        let enriched = service.apply_tool_call_effects(&parsed, &sample_session(), &world, &[]);
+        assert_eq!(enriched["tool_results"][0]["ok"], false);
+        assert_eq!(enriched["tool_results"][1]["ok"], false);
+        assert!(enriched.get("background_generation_prompt").is_none());
+        assert!(enriched.get("character_visual_directives").is_none());
+    }
+}
+
+#[test]
 fn interaction_tool_is_exposed_only_when_world_declares_kinds() {
     let service = WorldDirectorService::new();
     let declared = sample_world(serde_json::json!({
@@ -998,7 +1322,9 @@ fn interaction_tool_injects_validated_interaction_and_rejects_bad_args() {
 #[test]
 fn change_scene_tool_applies_scene_tags() {
     let service = WorldDirectorService::new();
-    let world = sample_world(serde_json::json!({}));
+    let world = sample_world(serde_json::json!({
+        "allowed_mcp_tool_ids": [MCP_TOOL_CHANGE_SCENE_ID]
+    }));
     let session = sample_session();
     let parsed = serde_json::json!({
         "tool_calls": [
@@ -1022,6 +1348,27 @@ fn change_scene_tool_applies_scene_tags() {
         tags,
         &vec![serde_json::json!("night"), serde_json::json!("rain")]
     );
+}
+
+#[test]
+fn legacy_permission_flags_do_not_authorize_scene_changes() {
+    let service = WorldDirectorService::new();
+    let world = sample_world(serde_json::json!({
+        "allow_scene_transition": true
+    }));
+    let session = sample_session();
+    let parsed = serde_json::json!({
+        "tool_calls": [{
+            "id": "call-1",
+            "tool_name": "change_scene",
+            "arguments": { "scene_name": "Tower" }
+        }]
+    });
+
+    let enriched = service.apply_tool_call_effects(&parsed, &session, &world, &[]);
+
+    assert!(enriched.get("next_scene_tags").is_none());
+    assert_eq!(enriched["tool_results"][0]["ok"], false);
 }
 
 #[test]

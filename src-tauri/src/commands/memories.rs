@@ -37,11 +37,20 @@ pub async fn list_memory_relations(
     state: State<'_, AppState>,
     session_id: String,
     active_only: Option<bool>,
+    actor_id: Option<String>,
+    actor_name: Option<String>,
 ) -> Result<Vec<MemoryRelation>, String> {
     let db = state.db.lock().await;
     let repo =
         crate::db::repositories::memory_relation_repo::MemoryRelationRepository::new(db.conn());
-    if active_only.unwrap_or(false) {
+    if actor_id.is_some() || actor_name.is_some() {
+        repo.list_visible_by_actor(
+            &session_id,
+            active_only.unwrap_or(false),
+            actor_id.as_deref(),
+            actor_name.as_deref(),
+        )
+    } else if active_only.unwrap_or(false) {
         repo.list_active_by_session(&session_id)
     } else {
         repo.list_by_session(&session_id, false)

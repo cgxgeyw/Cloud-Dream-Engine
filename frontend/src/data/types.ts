@@ -238,11 +238,37 @@ export type WorldPackageInspectionRequest = {
   data: number[];
 };
 
+export type OagCanonImportChangeKind = "added" | "modified" | "retired";
+
+export type OagCanonImportChange = {
+  kind: OagCanonImportChangeKind;
+  key: string;
+  label: string;
+  before?: unknown | null;
+  after?: unknown | null;
+};
+
+export type OagCanonImportPreview = {
+  world_id?: string | null;
+  is_upgrade: boolean;
+  compatibility: boolean;
+  ontology_change?: OagCanonImportChange | null;
+  object_type_changes: OagCanonImportChange[];
+  link_type_changes: OagCanonImportChange[];
+  object_changes: OagCanonImportChange[];
+  link_changes: OagCanonImportChange[];
+  added_count: number;
+  modified_count: number;
+  retired_count: number;
+  unchanged_count: number;
+};
+
 export type WorldPackageInspectionResult = {
   ok: boolean;
   format?: string | null;
   version?: number | null;
   diagnostics: WorldUiDiagnostic[];
+  oag_preview?: OagCanonImportPreview | null;
 };
 
 export type WorldGameTurnTransition = {
@@ -446,7 +472,7 @@ export type SessionSnapshot = {
   scene: SceneRuntime;
   assets: AssetSelection;
   state: SessionState;
-  /** 本存档的生成参数覆盖（三级覆盖里优先级最高的一层）。空对象表示不覆盖。 */
+  /** 本存档的生成参数覆盖（应用设置之上的本局覆盖）。空对象表示不覆盖。 */
   generation_params?: GenerationParams;
 };
 
@@ -457,8 +483,8 @@ export type SessionSnapshotResponse = SessionSnapshot;
 // ==============================
 
 /**
- * 生成参数。每个字段可缺省，缺省表示「这一层不覆盖」，交给下一层或内置默认决定。
- * 覆盖顺序：内置默认（导演 0.7 / 角色 0.8）→ 应用设置 → 世界 → 存档。
+ * 生成参数。每个字段可缺省，缺省表示「这一层不覆盖」，交给上一层或内置默认决定。
+ * 覆盖顺序：内置默认（导演 0.7 / 角色 0.8）→ 应用设置 → 存档。
  */
 export type GenerationParams = {
   temperature?: number;
@@ -477,10 +503,9 @@ export type DroppedGenerationParam = {
   reason: string;
 };
 
-/** 本存档的三级生成参数与最终生效值。 */
+/** 本存档的生成参数与最终生效值。 */
 export type SessionGenerationParamsResponse = {
   app: GenerationParams;
-  world: GenerationParams;
   session: GenerationParams;
   effective_director: GenerationParams;
   effective_character: GenerationParams;
@@ -628,7 +653,7 @@ export type AppSettings = {
   default_embedding_model: string;
   home_background_strategy: string;
   export_directory: string;
-  /** 应用级生成参数（三级覆盖的第一层）。缺省字段表示不覆盖内置默认。 */
+  /** 应用级生成参数。缺省字段表示不覆盖内置默认。 */
   generation_params?: GenerationParams;
 };
 
@@ -826,6 +851,61 @@ export type MemoryEntry = {
   keywords: string[];
 };
 
+export type OagActor =
+  | { kind: "object" | "player"; id: string }
+  | { kind: "director" | "author" };
+
+export type OagEntityReference = {
+  id?: string;
+  name?: string;
+  object_type?: string;
+};
+
+export type OagTraverseStep = {
+  link_type: string;
+  direction: "out" | "in" | "both";
+};
+
+export type OagKnowledgeTarget = {
+  kind: "object" | "attribute" | "link" | "event" | "memory";
+  id: string;
+};
+
+export type OagQueryRequest = {
+  op: "resolve" | "entity" | "find" | "traverse" | "aggregate" | "absence" | "knows" | "timeline";
+  entity?: OagEntityReference;
+  object_type?: string;
+  attribute?: { key: string; op: string; value: unknown };
+  link?: { link_type: string; direction: "out" | "in" | "both"; to?: OagEntityReference };
+  steps?: OagTraverseStep[];
+  metric?: "count" | "count_distinct" | "sum" | "avg" | "min" | "max";
+  metric_attribute?: string;
+  group_by?: "object_type" | "attribute" | "link_target";
+  group_attribute?: string;
+  knowledge_actor?: OagEntityReference;
+  target?: OagKnowledgeTarget;
+  mentioned?: string;
+  as_of_turn?: number;
+  from_turn?: number;
+  to_turn?: number;
+  event_type?: string;
+  participant?: OagEntityReference;
+  location?: OagEntityReference;
+  include_history?: boolean;
+  include_retired?: boolean;
+  limit?: number;
+};
+
+export type OagQueryResponse = {
+  ok: boolean;
+  op: string;
+  count: number;
+  truncated: boolean;
+  results: unknown[];
+  trace_id: string;
+  hint: string;
+};
+
 export type MemoryEntity = {
   id: string;
   world_id: string;
@@ -853,6 +933,11 @@ export type MemoryRelation = {
   source: string;
   confidence: number;
   created_at: string;
+  asserted_by: string;
+  asserted_by_id?: string | null;
+  visibility: "public" | "scene" | "private";
+  truth_status: string;
+  witnesses: string[];
 };
 
 export type RuntimeAttributeItem = {
@@ -890,7 +975,8 @@ export type UploadResponse = {
 };
 export type KnowledgeChunkStrategy = 'length' | 'delimiter';
 export interface KnowledgeBase { id: string; world_id: string | null; name: string; description: string; enabled: boolean; chunk_strategy: KnowledgeChunkStrategy; chunk_max_chars: number; chunk_overlap_chars: number; chunk_delimiter: string }
-export interface KnowledgeDocument { id: string; knowledge_base_id: string; title: string; content: string; source_filename: string; updated_at: string }
+export type KnowledgeDocumentAudience = 'public' | 'director' | 'character';
+export interface KnowledgeDocument { id: string; knowledge_base_id: string; title: string; content: string; source_filename: string; updated_at: string; audience: KnowledgeDocumentAudience; audience_character_id?: string | null }
 export type KnowledgeRebuildStatus = 'running' | 'completed' | 'failed';
 export interface KnowledgeRebuildSnapshot {
   job_id: string;

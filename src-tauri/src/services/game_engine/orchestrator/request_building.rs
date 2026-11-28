@@ -12,34 +12,21 @@ use crate::services::game_engine::director::{
 use crate::services::game_engine::structured_output::StructuredOutputFailure;
 use rusqlite::Connection;
 
-use super::character_prompt::build_character_prompt_artifacts;
+use super::character_prompt::build_character_prompt_artifacts_with_oag;
 
 pub(crate) fn resolve_settings(conn: &Connection) -> Result<AppSettings, String> {
     crate::commands::settings::load_app_settings(conn)
 }
 
-/// 世界级生成参数：写在 `director_config.generation_params`，随世界包导入导出。
-pub fn world_generation_params(world: &WorldDefinition) -> Option<GenerationParams> {
-    GenerationParams::from_json(world.director_config.get("generation_params"))
-}
-
-/// 解析某次调用最终使用的生成参数（第 8 项）：
-/// 角色内置默认 → 应用设置 → 世界 → 会话，逐层覆盖，只有本层显式给了值才生效。
+/// 解析某次调用最终使用的生成参数：角色内置默认 → 应用设置 → 会话。
 fn resolve_generation_params(
     role: &str,
     settings: &AppSettings,
-    world: &WorldDefinition,
     session: &SessionSnapshot,
 ) -> GenerationParams {
-    let world_params = world_generation_params(world);
     let session_params =
         (!session.generation_params.is_empty()).then(|| session.generation_params.clone());
-    GenerationParams::resolve_for_role(
-        role,
-        &settings.generation_params,
-        world_params.as_ref(),
-        session_params.as_ref(),
-    )
+    GenerationParams::resolve_for_role(role, &settings.generation_params, session_params.as_ref())
 }
 
 /// 生成参数解析结果 + 模型连接配置里的 max_tokens 兜底。
@@ -48,11 +35,10 @@ fn resolve_generation_params(
 pub fn resolve_generation_params_with_model(
     role: &str,
     settings: &AppSettings,
-    world: &WorldDefinition,
     session: &SessionSnapshot,
     model: &ModelConfig,
 ) -> GenerationParams {
-    let mut resolved = resolve_generation_params(role, settings, world, session);
+    let mut resolved = resolve_generation_params(role, settings, session);
     if resolved.max_tokens.is_none() {
         resolved.max_tokens = Some(model.max_tokens);
     }
@@ -93,6 +79,7 @@ pub(crate) fn resolve_text_model(
     Ok(model)
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_character_chat_request(
     dialogue_pipeline: &DialoguePipeline,
@@ -115,7 +102,54 @@ pub(crate) fn build_character_chat_request(
     player_media: &[ContentPart],
     mcp_tools: &[crate::models::mcp_tool::McpToolDefinition],
 ) -> crate::services::llm::client::ChatRequest {
-    let artifacts = build_character_prompt_artifacts(
+    build_character_chat_request_with_oag(
+        dialogue_pipeline,
+        world,
+        model,
+        speaker_name,
+        speaker_profile,
+        session,
+        player_character_name,
+        location,
+        scene_name,
+        player_input,
+        recent_messages,
+        recalled_memories,
+        memory_pool,
+        visible_attribute_lines,
+        public_scene_state_lines,
+        kv_vars,
+        generation,
+        player_media,
+        mcp_tools,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_character_chat_request_with_oag(
+    dialogue_pipeline: &DialoguePipeline,
+    world: &WorldDefinition,
+    model: &ModelConfig,
+    speaker_name: &str,
+    speaker_profile: Option<&CharacterDefinition>,
+    session: &SessionSnapshot,
+    player_character_name: &str,
+    location: &str,
+    scene_name: &str,
+    player_input: &str,
+    recent_messages: &[ChatMessage],
+    recalled_memories: &[MemoryEntry],
+    memory_pool: &[MemoryEntry],
+    visible_attribute_lines: &[String],
+    public_scene_state_lines: &[String],
+    kv_vars: &std::collections::HashMap<String, String>,
+    generation: &GenerationParams,
+    player_media: &[ContentPart],
+    mcp_tools: &[crate::models::mcp_tool::McpToolDefinition],
+    oag_context: Option<&serde_json::Value>,
+) -> crate::services::llm::client::ChatRequest {
+    let artifacts = build_character_prompt_artifacts_with_oag(
         dialogue_pipeline,
         world,
         speaker_name,
@@ -135,6 +169,7 @@ pub(crate) fn build_character_chat_request(
         &session.visible_characters,
         kv_vars,
         player_media,
+        oag_context,
     );
     // 工具下发与主控路共用同一套生成与转换逻辑：世界授权的自定义 MCP 工具与内置的
     // schedule_notification 一视同仁，不再只硬编码后者。
@@ -260,7 +295,7 @@ mod tests {
         }
     }
 
-    // ---- 第 8 项：生成参数三级覆盖（走真实 DB 读写，验收「不改代码即可调整」）----
+    // ---- 生成参数两级覆盖 ----
 
     fn params_test_world(generation_params: serde_json::Value) -> WorldDefinition {
         WorldDefinition {
@@ -426,7 +461,7 @@ mod tests {
         let session = params_test_session("session-tools", "参数世界");
         let character = profile_with_strategy("");
         let pipeline = DialoguePipeline::new();
-        build_character_chat_request(
+        build_character_chat_request_with_oag(
             &pipeline,
             world,
             &params_test_model(),
@@ -446,6 +481,7 @@ mod tests {
             &GenerationParams::default(),
             &[],
             mcp_tools,
+            None,
         )
     }
 
@@ -486,7 +522,8 @@ mod tests {
             "mcp-tool-change-scene",
             "mcp-tool-list-scenes",
             "mcp-tool-switch-player-character",
-            "mcp-tool-image-generation"
+            "mcp-tool-background-generation",
+            "mcp-tool-portrait-generation"
         ]));
         let request = build_request_with_tools(&world, &[stock_quote_tool()]);
 
@@ -497,6 +534,24 @@ mod tests {
             .map(|tool| tool.name)
             .collect::<Vec<_>>();
         assert_eq!(names, vec!["stock_quote".to_string()]);
+    }
+
+    #[test]
+    fn oag_query_tool_is_exposed_to_characters_in_oag_mode() {
+        let mut world = world_allowing(serde_json::json!([]));
+        world.director_config["memory_mode"] = serde_json::json!("oag");
+
+        let request = build_request_with_tools(&world, &[]);
+        let tools = request.tools.expect("OAG 模式应下发查询工具");
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "oag_query");
+        assert!(tools[0]
+            .input_schema
+            .pointer("/properties/as_of_turn")
+            .is_none());
+
+        world.director_config["memory_mode"] = serde_json::json!("embedding");
+        assert!(build_request_with_tools(&world, &[]).tools.is_none());
     }
 
     /// 插值管理（世界级）与内置变量在角色运行时上下文里展开。
@@ -762,28 +817,26 @@ mod tests {
     }
 
     #[test]
-    fn world_and_session_layers_override_app_settings_without_code_changes() {
+    fn app_and_session_layers_override_defaults_without_code_changes() {
         let mut settings = AppSettings::default();
         settings.generation_params = GenerationParams {
             temperature: Some(0.4),
             top_p: Some(0.95),
+            seed: Some(99),
             ..Default::default()
         };
-        let world = params_test_world(serde_json::json!({ "temperature": 1.15, "seed": 99 }));
+        let world = params_test_world(serde_json::json!({ "temperature": 1.15, "seed": 7 }));
         let mut session = params_test_session("sess-1", &world.name);
 
-        // 只有应用 + 世界两层时：世界层的 temperature 生效，应用层的 top_p 仍在。
-        let world_level = resolve_generation_params(
+        let app_level = resolve_generation_params(
             crate::models::generation_params::GENERATION_ROLE_CHARACTER,
             &settings,
-            &world,
             &session,
         );
-        assert_eq!(world_level.temperature, Some(1.15));
-        assert_eq!(world_level.top_p, Some(0.95));
-        assert_eq!(world_level.seed, Some(99));
+        assert_eq!(app_level.temperature, Some(0.4));
+        assert_eq!(app_level.top_p, Some(0.95));
+        assert_eq!(app_level.seed, Some(99));
 
-        // 存档自己再覆盖一层：会话层最高优先，其余层不受影响。
         session.generation_params = GenerationParams {
             temperature: Some(0.1),
             ..Default::default()
@@ -791,7 +844,6 @@ mod tests {
         let session_level = resolve_generation_params(
             crate::models::generation_params::GENERATION_ROLE_CHARACTER,
             &settings,
-            &world,
             &session,
         );
         assert_eq!(session_level.temperature, Some(0.1));
@@ -810,7 +862,6 @@ mod tests {
         let resolved = resolve_generation_params_with_model(
             crate::models::generation_params::GENERATION_ROLE_DIRECTOR,
             &settings,
-            &world,
             &session,
             &params_test_model(),
         );
@@ -820,22 +871,17 @@ mod tests {
     }
 
     #[test]
-    fn world_layer_ignores_a_malformed_generation_params_block() {
+    fn world_level_generation_params_are_ignored() {
         let settings = AppSettings::default();
-        let world = params_test_world(serde_json::json!("温度高一点"));
+        let world = params_test_world(serde_json::json!({ "temperature": 1.15 }));
         let session = params_test_session("sess-1", &world.name);
 
         let resolved = resolve_generation_params(
             crate::models::generation_params::GENERATION_ROLE_CHARACTER,
             &settings,
-            &world,
             &session,
         );
 
-        assert_eq!(
-            resolved.temperature,
-            Some(0.8),
-            "世界包写坏了就当没配，回落到内置默认而不是报错"
-        );
+        assert_eq!(resolved.temperature, Some(0.8), "世界包字段不再参与覆盖");
     }
 }

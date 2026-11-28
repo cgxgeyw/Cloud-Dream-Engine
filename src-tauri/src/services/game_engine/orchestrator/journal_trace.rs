@@ -401,7 +401,7 @@ pub(crate) fn build_director_prompt_trace(
         player_input,
         loop_limit,
         &stage,
-        // 请求上带的就是本回合三级覆盖解析后的参数，直接复用，不重算。
+        // 请求上带的就是本回合解析后的参数，直接复用，不重算。
         &trace.request.generation,
     )
 }

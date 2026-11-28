@@ -676,7 +676,7 @@ mod tests {
     #[test]
     fn salvages_content_when_json_keys_are_mangled() {
         let salvaged = salvage_dialogue_content(
-            "{\"  \t\":\"这是一张名为「云朵梦境」的首页截图，页面里有开始冒险等入口。\",\"narration\":\"\"}",
+            "{\"  \t\":\"这是一张名为「云梦引擎」的首页截图，页面里有开始冒险等入口。\",\"narration\":\"\"}",
         )
         .expect("salvaged content");
         assert!(salvaged.starts_with("这是一张名为"), "实际: {salvaged}");

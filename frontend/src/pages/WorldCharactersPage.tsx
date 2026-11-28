@@ -18,7 +18,7 @@ import {
 import { ConfirmDialog, ModalDialog } from "../components/ModalDialog";
 import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
 import { useIsMobile } from "../components/ResponsiveLayout";
-import { X, Users, ArrowLeft, ChevronRight, Plus } from "lucide-react";
+import { X, Users, ArrowLeft, Plus, SlidersHorizontal } from "lucide-react";
 import { AttributePanel } from "../components/AttributePanel";
 
 type CreateMode = "same_world" | "other_world";
@@ -41,7 +41,7 @@ export function WorldCharactersPage() {
   const [targetWorldId, setTargetWorldId] = useState("");
   const [newCharacterName, setNewCharacterName] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [mobilePane, setMobilePane] = useState<"list" | "shared">("list");
+  const [sharedAttributesOpen, setSharedAttributesOpen] = useState(false);
 
   useEffect(() => {
     if (!worldId) {
@@ -254,10 +254,6 @@ export function WorldCharactersPage() {
   }
 
   function handleMobileBack() {
-    if (mobilePane === "shared") {
-      setMobilePane("list");
-      return;
-    }
     navigate(worldId ? `/worlds/${worldId}/edit` : "/worlds");
   }
 
@@ -296,17 +292,15 @@ export function WorldCharactersPage() {
             type="button"
             className="mobile-editor-back"
             onClick={handleMobileBack}
-            aria-label={mobilePane === "shared" ? "返回角色池" : "返回世界编辑"}
+            aria-label="返回世界编辑"
           >
             <ArrowLeft size={18} />
           </button>
           <div className="mobile-editor-heading">
-            <strong className="mobile-editor-title">
-              {mobilePane === "shared" ? "角色共享属性" : "角色池"}
-            </strong>
+            <strong className="mobile-editor-title">角色池</strong>
             <span className="mobile-editor-kicker">{world?.name?.trim() || "角色池"}</span>
           </div>
-          {mobilePane === "list" && worldId ? (
+          {worldId ? (
             <button
               type="button"
               className="mobile-editor-more"
@@ -324,33 +318,28 @@ export function WorldCharactersPage() {
       {loading ? <SurfacePanel className="surface-panel--pad-lg">正在加载角色池...</SurfacePanel> : null}
       {error ? <SurfacePanel className="surface-panel--pad-lg text-error">错误：{error}</SurfacePanel> : null}
 
-      {!loading && !error && world && (!isMobile || mobilePane === "shared") ? (
-        <SurfacePanel className="surface-panel--pad-lg">
-          <div className="editor-content">
-            <AttributePanel scope="character" ownerType="character" worldId={world.id} hideTitle={isMobile} />
-          </div>
-        </SurfacePanel>
-      ) : null}
-
-      {!loading && !error && world && isMobile && mobilePane === "list" ? (
-        <div className="wed-m-list" style={{ marginBottom: 16 }}>
-          <button type="button" className="wed-m-card" onClick={() => setMobilePane("shared")}>
-            <span className="wed-m-card-copy">
-              <span className="t">角色共享属性</span>
-              <span className="s">统一维护该世界所有角色的公共属性</span>
-            </span>
-            <ChevronRight size={16} aria-hidden="true" />
+      {!loading && !error && world ? (
+        <div className="character-pool-actions">
+          <button
+            type="button"
+            className="action-btn"
+            aria-haspopup="dialog"
+            title="统一维护该世界所有角色的公共属性"
+            onClick={() => setSharedAttributesOpen(true)}
+          >
+            <SlidersHorizontal size={16} aria-hidden="true" />
+            角色共享属性
           </button>
         </div>
       ) : null}
 
-      {!loading && !error && world && sortedCharacters.length === 0 && (!isMobile || mobilePane === "list") ? (
+      {!loading && !error && world && sortedCharacters.length === 0 ? (
         <SurfacePanel className="surface-panel--pad-lg">
           <div className="empty-text">当前世界还没有角色。先创建角色，再继续做导出模板和跨世界创建。</div>
         </SurfacePanel>
       ) : null}
 
-      {!loading && !error && world && sortedCharacters.length > 0 && (!isMobile || mobilePane === "list") ? (
+      {!loading && !error && world && sortedCharacters.length > 0 ? (
         <div className="card-grid character-pool-grid">
           {sortedCharacters.map((character) => {
             const isDeleting = deleting === character.id;
@@ -435,6 +424,22 @@ export function WorldCharactersPage() {
             );
           })}
         </div>
+      ) : null}
+
+      {world && sharedAttributesOpen ? (
+        <ModalDialog
+          open
+          title="角色共享属性"
+          onClose={() => setSharedAttributesOpen(false)}
+          maxWidth={960}
+          footer={
+            <button type="button" className="action-btn action-btn--accent" onClick={() => setSharedAttributesOpen(false)}>
+              完成
+            </button>
+          }
+        >
+          <AttributePanel scope="character" ownerType="character" worldId={world.id} hideTitle />
+        </ModalDialog>
       ) : null}
 
       <ModalDialog

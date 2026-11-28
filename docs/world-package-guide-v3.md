@@ -1,6 +1,6 @@
-# Cloud Dream Engine 世界包开发指南 v3
+# 云梦引擎世界包开发指南 v3
 
-本文面向世界包设计者，说明如何为 Cloud Dream Engine 制作可导入、可导出、同时支持桌面与 Android 的世界包和游戏 UI。
+本文面向世界包设计者，说明如何为云梦引擎（Yunmeng Engine）制作可导入、可导出、同时支持桌面与 Android 的世界包和游戏 UI。
 
 ### 知识库资料
 
@@ -35,7 +35,13 @@
 
 应用内「图库和知识库 → 知识库」详情页可以改这两个设置；旧库和旧包缺少这些字段时按默认 `length` / 800 / 120 读取。
 
-`director_config.knowledge_access` 控制是否向主控和角色提供 `search_knowledge` 原生工具。创建世界专属知识库、关联公共知识库或导入非空专属资料会启用它，可在世界编辑器“基础权限”关闭。工具参数为 `{ "query": "查询内容" }`，返回至多六个带来源的正文片段。工具结果进入已有工具循环和模型调用记录；正文作为工具资料，不自动拼入系统提示词。
+`director_config.allowed_mcp_tool_ids` 是主控工具授权的唯一规范来源。向该数组加入 `mcp-tool-search-knowledge` 后，主控和角色才会获得 `search_knowledge` 工具能力；创建世界专属知识库、关联公共知识库或导入非空专属资料时会自动加入此 id。工具也可在「世界编辑器 → 世界主控 → MCP 工具授权」中开关。旧布尔字段不再读取或输出。工具参数为 `{ "query": "查询内容" }`，返回至多六个带来源的正文片段。工具结果进入已有工具循环和模型调用记录；正文作为工具资料，不自动拼入系统提示词。
+
+仅主控可用的 `mcp-tool-list-scenes`、`mcp-tool-list-characters`、`mcp-tool-change-scene`、`mcp-tool-switch-player-character` 仍在同一白名单中授权，但编辑器把它们放在「权限与判定 → 主控专用工具」单独控制，通用工具列表和角色能力表不会展示它们。白名单缺失或为空时不授予任何工具；新建世界默认包含这四个主控工具 id。
+
+世界主控生图使用两个专用工具：`generate_background` 接收 `name` 和 `prompt`，`generate_portrait` 接收 `character_name`、`name` 和 `prompt`。`name` 是模型给出的简短语义图片名，不含扩展名，用于生成文件名并帮助主控仅凭文字判断图片内容。编辑器「允许世界主控 AI 生图」总开关同时控制 `ui_theme_config.assets.runtime_image_generation_enabled` 和 `mcp-tool-background-generation`、`mcp-tool-portrait-generation` 两项授权；任一部分关闭都不会下发或执行生图工具。旧的 `generate_image` 已移除。
+
+主控每回合会收到「可用背景图与角色立绘」提示词区块，包含世界背景库、场景背景映射、角色立绘库及当前会话正在使用的图片路径。只要拥有 `mcp-tool-change-scene` 授权，即使关闭生图，也可以调用 `change_scene` 选择已有图片：`background_asset_path` 使用背景清单中的精确路径，`character_portraits` 是「角色名 → 该角色立绘清单中的精确路径」；只换图时把 `scene_name` 保持为当前场景名。生成成功的背景图和立绘会自动登记到世界背景库或对应角色的立绘库，后续会话可继续选用。
 
 可查询范围分两层：
 
@@ -335,7 +341,7 @@ manifest 中与 UI 有关的字段：
 }
 ```
 
-`world/world.json` 保存世界设定、导演配置（含交互消息、提示词模块、生成参数）、资源配置、`ui_runtime_version`、`ui_capabilities`、`platform_features`、`storage` 和不含源码的 `logic` 配置。逻辑源码由 `manifest.logic_file` 指向；角色数据与资源路径通过 manifest 管理，导入时会重新映射为本机资源路径。
+`world/world.json` 保存世界设定、导演配置（含交互消息与提示词模块）、资源配置、`ui_runtime_version`、`ui_capabilities`、`platform_features`、`storage` 和不含源码的 `logic` 配置。逻辑源码由 `manifest.logic_file` 指向；角色数据与资源路径通过 manifest 管理，导入时会重新映射为本机资源路径。
 
 ### manifest 完整字段
 
@@ -1844,7 +1850,7 @@ div.game-ui-component[data-component="message_list"]  ← class_name
 
 ### 玩家角色切换
 
-`allow_player_character_switch` 控制世界主控能否提议玩家切换到其他角色，默认 `true`。切换由主控调用 `switch_player_character` 工具完成；关闭后该工具不再下发给主控，旧 JSON 字段 `switch_character_proposal` 也会被运行时丢弃。玩家仍可由应用的独立切换功能手动切换。
+`director_config.allowed_mcp_tool_ids` 中的 `mcp-tool-switch-player-character` 控制世界主控能否调用工具切换玩家角色。该 id 对应编辑器「权限与判定 → 主控专用工具」里的独立开关，不会出现在通用 MCP 工具列表；白名单缺失或为空时不授权。旧 JSON 字段 `switch_character_proposal` 始终由运行时丢弃。玩家仍可由应用的独立切换功能手动切换。
 
 ### 返回格式自定义（response_contract_prompt）
 
@@ -1934,21 +1940,13 @@ div.game-ui-component[data-component="message_list"]  ← class_name
 
 每个模块是否实际注入及原因（总是注入 / 命中关键词 / 未命中 / 渲染后为空）都可在调试页的 Prompt 追踪里看到。
 
-### 生成参数（generation_params）
+### 生成参数
 
-世界层可以为采样参数给一组默认值（每个字段都可留空 = 本层不覆盖）：
+生成参数在「设置 → 模型」中配置，本局存档可以在调试页单独覆盖。世界包不再保存采样参数；世界主控只选择使用哪个模型。
 
-```json
-{
-  "director_config": {
-    "generation_params": { "temperature": 0.9, "max_tokens": 4000 }
-  }
-}
-```
+可用字段：`temperature`、`top_p`、`top_k`、`max_tokens`、`stop`、`presence_penalty`、`frequency_penalty`、`seed`。实际生效值按「角色内置默认 → 应用设置 → 会话存档」逐字段取最内层；模型/provider 不支持的参数会被过滤并在调试页留痕（`dropped` 带原因），越界值夹到合法区间。
 
-可用字段：`temperature`、`top_p`、`top_k`、`max_tokens`、`stop`、`presence_penalty`、`frequency_penalty`、`seed`。实际生效值按「角色内置默认 → 应用设置 → 世界 → 会话存档」逐字段取最内层；模型/provider 不支持的参数会被过滤并在调试页留痕（`dropped` 带原因），越界值夹到合法区间。
-
-> **`max_tokens` 别给太小**：带思维链的模型（如 deepseek 推理系列）的 reasoning 也占这份预算。给 800–1000 时常见结局是思维链烧光预算、正文一个字没输出（`finish_reason=length`），角色只剩"（本回合没有可显示的台词）"占位。用推理模型时建议 ≥ 4000。引擎在"正文为空 + length 截断"时会自动放大预算重试一次兜底，但治本仍是把世界参数给够。
+> **`max_tokens` 别给太小**：带思维链的模型（如 deepseek 推理系列）的 reasoning 也占这份预算。给 800–1000 时常见结局是思维链烧光预算、正文一个字没输出（`finish_reason=length`），角色只剩"（本回合没有可显示的台词）"占位。用推理模型时建议 ≥ 4000。引擎在"正文为空 + length 截断"时会自动放大预算重试一次兜底，但治本仍是在模型或本局设置里把参数给够。
 
 注意：玩家能否发图片/语音附件，取决于所用模型在「设置 → 模型」里是否开启了对应**输入模态**开关；未开启的模型收到附件会在提交时明确报错，不会静默丢弃。
 
@@ -1977,7 +1975,7 @@ div.game-ui-component[data-component="message_list"]  ← class_name
 |---|---|
 | `background_source_mode` | 场景背景来源策略 |
 | `portrait_source_mode` | 角色立绘来源策略 |
-| `runtime_image_generation_enabled` | 是否允许运行时生成图片 |
+| `runtime_image_generation_enabled` | 世界主控运行时生图总开关；开启时同步授权背景和立绘两个专用工具 |
 | `local_background_assets` | 通用背景候选 |
 | `local_scene_backgrounds` | 按场景名称分组的背景候选 |
 

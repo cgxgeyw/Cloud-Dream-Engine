@@ -4,7 +4,7 @@
 > 角色该做什么、性格、目标、说话方式，由角色卡/系统提示和模型自己决定，OAG 不参与。
 > 关联：[OAG 本体设计](./03-ontology-design.md)、[记忆隔离审计](./02-isolation-audit.md)。
 >
-> **当前实现状态（2026-11-12）**：世界配置 `director_config.memory_mode`，默认 `embedding`（世界编辑器 → 基础权限 → 记忆模式）。两种模式都始终发送场景隔离的最近对话：`embedding` = 历史 + 现有向量/词法记忆召回；`oag` = 历史 + 结构化事实/关系层（尚未接入，暂按 Embedding 运行）。旧值 `history` 按 `embedding` 读取。角色与导演的历史轮数默认 30，不做 token 预算/截断；低上下文模型通过降低轮数解决。事实抽取另有 `director_config.fact_extraction_enabled`，默认 **false**；即使 OAG 模式也不会自动开启，且抽取必须是独立后置任务，不能并入角色扮演回复。
+> **当前实现状态（2026-11-26）**：世界配置 `director_config.memory_mode`，默认 `embedding`（世界编辑器 → 基础权限 → 记忆模式）。两种模式都始终发送按消息观众过滤的最近对话：`embedding` = 历史 + 现有向量/词法记忆召回；`oag` = 历史 + 结构化视角投影与事实/关系/知识边界。旧值 `history` 按 `embedding` 读取。角色与导演的历史轮数默认 30，不做 token 预算/截断；低上下文模型通过降低轮数解决。事实抽取另有 `director_config.fact_extraction_enabled`，默认 **false**；即使 OAG 模式也不会自动开启。M0 已补齐逐消息记忆、事实 provenance/actor 可见性、知识库 audience 和分支/回滚一致性；M1 已交付世界包本体、稳定 Canon、实体解析、确定性事件与知识写入、Debug 可见子图、分支/回滚/清理和只读导入差异预览；M2 已交付角色/导演视角投影，以及多跳、聚合、否定、知情与时间线查询内核、Debug 参数面板和统一只读模型工具 `oag_query`。工具按现有机制接入导演与所有角色链路；条件访问策略、调用预算、专用投影检查界面和独立后置抽取仍未完成。
 
 ## 0. 先把职责钉死
 
@@ -43,16 +43,17 @@ Perspective(actor, session, turn, scene) -> BeliefSnapshot
 
 ### 0.2 记忆模式
 
-两种模式共享同一个底座：对话历史始终发送最近 N 轮（按 `witnesses` 过滤）。切换只决定额外注入哪一层：
+三档共享同一个底座：对话历史始终发送最近 N 轮（按 `witnesses` 过滤）。切换只决定额外注入哪一层：
 
 | 模式 | 额外注入 | 成本 | 现状 |
 |---|---|---|---|
+| `history` | 无，只发送近期可见对话 | 低 | 已实现 |
 | `embedding` | 现有向量/词法记忆召回 | 中 | 已实现 |
-| `oag` | 结构化事实/关系/知识边界 | 高 | 设计完成，未接入；暂按 Embedding 运行 |
+| `oag` | 语义召回 + 结构化事实/关系/事件/记忆投影 | 高 | 已接入视角投影、查询内核与统一模型工具 |
 
-- 场景隔离是共同底座：两种模式都必须按观众过滤历史，否则会串场景。
-- Embedding 和 OAG 不是替代关系：Embedding 找“说过什么”，OAG 找“什么是真的/谁知道”。
-- 旧配置 `memory_mode: "history"` 读取为 `embedding`，因为不再存在“只发历史、不注入”的模式。
+- 场景隔离是共同底座：三档都必须按观众过滤历史，否则会串场景。
+- Embedding 和 OAG 不是替代关系：Embedding 找“说过什么”，OAG 找“什么是真的/谁知道”；OAG 档同时保留语义召回并跨层去重。
+- `memory_mode: "history"` 现在是独立的低档，不再迁移为 `embedding`；缺省值仍为 `embedding`，旧字段 `oag_enabled=true` 迁移为 `oag`。
 - OAG 模式的事实抽取必须是独立后置任务，不能塞进角色回复。
 
 ### 0.3 固定桶记忆总结
@@ -120,18 +121,20 @@ Perspective(actor, session, turn, scene) -> BeliefSnapshot
 
 | 层 | 表 | 说明 |
 |---|---|---|
-| TBox | `oag_object_types` / `oag_link_types` | 每个世界可扩展 |
-| ABox | `oag_objects` / `oag_attributes` / `oag_links` / `oag_scenes` / `oag_events` / `oag_event_objects` | Canon + Session |
-| 认知 | `oag_knowledge` / `oag_access_policies` / `oag_turn_audience` | 谁在何时知道什么 |
-| 记忆 | `memories` / `oag_memory_objects` | 角色主观记忆 |
-| 文本 | `oag_lore_entries` / `knowledge_documents` / `oag_summaries` | 文本投影与压缩 |
-| 运维 | `oag_query_traces` / `oag_conflicts` / `oag_review_queue` | 调试、冲突、待审 |
+| TBox | `oag_object_types` / `oag_link_types` | M1：每个世界从 `ontology.json` 声明，应用不预置题材语义 |
+| ABox | `oag_objects` / `oag_attributes` / `oag_links` / `oag_scenes` / `oag_scene_participants` / `oag_events` / `oag_event_objects` | M1：Canon + Session |
+| 认知 | `oag_knowledge` / `oag_turn_audience` | M1：谁在何时知道什么；`oag_access_policies` 留到 M2 |
+| 记忆 | `memories` / `oag_memory_objects` | M1：角色主观记忆 |
+| 文本 | `knowledge_documents` + 现有 lore/总结表 | M1 不新建正文副本；`oag_lore_entries` / `oag_summaries` 是后续可选扩展 |
+| 运维 | `oag_schema_meta` / `oag_legacy_id_map` / `oag_query_traces` / `oag_write_traces` | M1：迁移与追踪；冲突/待审队列留到后续 |
 
 ## 2. 搭建步骤
 
 不要一次做完。按“视角正确 → 本体够用 → 查询可用 → 自动化 → 打磨”的顺序。
 
 ### Phase 0：视角与隔离基础（必须先做）
+
+**当前进度**：本轮 M0 已实现消息级写入/读取、耳语 recipients、事实来源与 actor 可见性、知识库 audience、分支/回滚一致性。`oag_turn_audience`、独立事实抽取、远程参与者策略、缺席发言约束和旧数据回填仍未完成。
 
 **目标**：任何上下文/查询都只使用该角色视角内的内容。
 
@@ -157,33 +160,42 @@ Perspective(actor, session, turn, scene) -> BeliefSnapshot
 
 任务：
 
-- TBox：内置 8~10 个 object type、10~12 个 link type；世界可扩展；
-- ABox：`oag_objects` / `attributes` / `links` / `scenes` / `events`；
-- Canon 导入：characters → character objects；map nodes → location objects；可选 `objects.json`；
-- 事件：每回合确定性写 `oag_events` + `oag_event_objects`；
-- 知识：从 witnesses 写 `oag_knowledge`；
-- 实体解析：规范名 + 别名 + 最长匹配；同名按 id；
-- 时间：`valid_from_turn` / `valid_to_turn` / `learned_turn`。
+- TBox：对象类型、属性和关系均由世界包 `ontology.json` 声明；应用只提供存储与校验，不注入固定题材清单；
+- 旧包兼容：没有本体文件时只生成明确标记的 `character` / `location` 类型，`character` 标记为 actor，仅用于迁移现有角色和地图节点，不补造其他类型或关系；新制作并启用 OAG 的世界应提供本体文件；
+- ABox：`oag_objects` / `attributes` / `links` / `scenes` / `events`；Canon 与 Session 分层；
+- Canon 导入：characters → 世界声明的角色类型；map nodes → 世界声明的地点类型；可选 `objects.json`；类型或关系未声明时拒绝结构化写入；
+- 事件：每条消息与每次状态变化确定性写 `oag_events` + `oag_event_objects`，对话正文仍以消息表为唯一源；
+- 知识：从消息级 audience 写 `oag_knowledge`，保留 source event 与 learned turn；
+- 实体解析：显式 ID → 规范名 → 别名 → 唯一归一化名；歧义失败关闭；
+- 时间：`valid_from_turn` / `valid_to_turn` / `learned_turn`，统一半开区间；
+- 查询：`VisibleGraph` + `resolve/entity/find/timeline`，暂不开放多跳/聚合/否定；
+- 不在 M1 实现 access policy 条件语言、独立 LLM 抽取或 prompt 投影。
 
 验收：
 
-- 能回答“第 30 回合谁在码头”“老王现在在哪”“谁持有铜钥匙”；
+- 两个世界可以定义完全不同的类型/关系；应用不会把某世界的语义带给另一个世界；
+- 世界未声明的类型/关系不会被隐式补造；无本体文件只启用最小兼容类型，新 OAG 世界必须提供本体文件；
+- 重复导入不产生重复行；
+- 能按世界包声明的语义回答位置、持有、成员、时间等基础问题；
 - 角色查询只返回自己知道的；
 - 事件按回合可分页。
 
-### Phase 2：Perspective 投影
+### Phase 2：Perspective 投影（已交付 2026-11-26）
 
 **目标**：NPC prompt 里的“事实/关系/记忆”来自 OAG，而不是全局 JSON。
+
+已实现：`ProjectionInput` 承载演员、会话、回合和场景；`VisibleGraph` 先裁剪再遍历；投影包含 scene frame、entity cards、facts、relations、events、memories 和导演 summary，不重复注入 lore。模型只接收 `model_context` 紧凑文本，完整 JSON、`selection_trace` 与 `omitted_trace` 留在 Debug 和请求追踪中。角色 2400、导演 1800 的预算只计算模型文本 Unicode 字符数；场景/actor 相关内容和最近变化优先，事件与记忆在最终选择阶段去重。OAG 模式保留摘要和 Embedding/关键词召回，与结构化记忆合并到同一 `oag_context` 后跨层去重；Embedding 模式保持原行为。默认角色顺序已调整为身份规则在前、记忆居中、当前输入在后，玩家的 `character_prompt_order` 始终优先。
 
 任务：
 
 - `Perspective { actor, session, turn, scene }`；
 - `VisibleGraph`：先裁剪再遍历；
-- 投影查询：scene frame、entity cards、fact digest、event digest、memory digest、lore text、summary；
-- 去重：对象/关系/事件 id；记忆与事实同一件事只留一个；
-- 预算：默认角色 2400 / 导演 1800，按来源配额；
-- 渲染：`oag_context` 单一 section；`chat_history` 只放最近对话；
-- trace：本回合投影了什么、为什么、多少 token。
+- 投影查询：scene frame、entity cards、fact digest、event digest、memory digest、summary；
+- 去重：对象/关系/事件语义键；记忆与事实同一件事只留一个，且必须等事件最终入选后才能删除重复记忆；
+- 预算：默认角色 2400 / 导演 1800，按来源配额，只计算模型可见文本；
+- 渲染：`oag_context` 单一 section，发送紧凑文本；`chat_history` 只放最近对话；
+- 互补召回：OAG 模式继续执行摘要和 Embedding/关键词召回，语义记忆追加到同一 section 并去重；
+- trace：完整投影保留候选、选择、省略和预算；trace 不进入模型消息或模型预算。
 
 验收：
 
@@ -192,19 +204,15 @@ Perspective(actor, session, turn, scene) -> BeliefSnapshot
 - 不再有 `memory_context` 双发；
 - Debug 能看到“为什么这条事实进来了”。
 
-### Phase 3：逻辑查询工具
+### Phase 3：逻辑查询与统一模型工具（已交付 2026-11-26）
 
 **目标**：模型能查结构化信息，而不是只读投影。
 
-任务：
+**已实现**：`resolve/entity/find/traverse/aggregate/absence/knows/timeline` 八种查询都先在 `VisibleGraph` 上完成裁剪。多跳最多 3 跳，只沿声明的关系、对称关系或反向关系前进；聚合支持六种指标与三种分组；否定只描述当前可见记录；知情查询限制角色只能查自己并脱敏耳语来源；时间线可按正文提及过滤。Debug 面板已提供全部查询参数、JSON 结果和查询追踪。
 
-- `oag_entity`：实体卡；
-- `oag_query`：类型/属性/关系过滤；
-- `oag_traverse`：多跳；
-- `oag_timeline`：事件；
-- `oag_knows`：谁知识什么；
-- 所有工具带 actor 视角，结果带来源/回合/置信度；
-- 每回合调用次数/结果长度限制。
+**模型工具**：OAG 模式下，导演与普通角色都通过现有工具能力机制获得一个统一只读工具 `oag_query`，内部通过 `op` 复用上述八种查询；角色预览与实际请求一致，不区分单智能体和多角色链路。世界、存档、视角、当前回合和 200 节点上限由后端固定，模型不能覆盖查询回合或读取退休记录；参数错误作为工具结果回流，沿用现有工具循环。
+
+**待实现**：每回合调用次数/结果长度预算、同回合结果缓存和 `VisibleGraph` 物理加载上限。这些是后续可选的复杂度治理，不影响当前单工具接口。
 
 验收：
 
@@ -220,7 +228,7 @@ Perspective(actor, session, turn, scene) -> BeliefSnapshot
 
 - 独立后置抽取任务从回合记录生成 claim（带 speaker/witnesses/confidence）；**不要**让角色扮演模型在回复 JSON 里附带 `fact_extractions`，那会破坏入戏；
 - 可选回合后快速模型抽取/合并；
-- 谓词归一化：内置关系 + 同义词 + 未知 → `related_to` + review queue；
+- 谓词归一化：只使用世界包声明的关系与同义词；未声明谓词保留原文并进入 review queue，只有世界显式声明兜底关系时才允许降级；
 - 事件摘要、arc/chapter 摘要；
 - 矛盾检测：functional link 冲突 → invalidate + conflict；
 - 嵌入/索引：事件、lore、文档 chunk；增量更新。
@@ -264,29 +272,30 @@ turn finish
 原则：
 
 - **事件先于摘要**：事件是真相源，摘要可重建；
-- **claim 不是真理**：`asserted_by` + `source` + `confidence` + `truth_status`；
-- **知识边不是可选项**：没有 `oag_knowledge` 的关系默认只对导演可见；
-- **幂等**：`UNIQUE(session_id, turn_index, ordinal)` + journal step；
+- **claim 不是真理**：`asserted_by_id` + `source_event_id` + `confidence` + `truth_status`；
+- **知识边不是可选项**：没有 `oag_knowledge` 的 runtime 关系/属性默认只对导演可见；
+- **幂等**：`UNIQUE(session_id, dedupe_key)` + `oag_committed` journal step；
 - **失败隔离**：OAG 写失败只记 trace，不阻断回合；后台重试；
 - **不在 DB 锁内调 LLM/embedding**：沿用现有 prepare/embed/finalize 三段式。
 
 ### 3.1 事件
 
-每回合至少一条：
+每回合至少一条；对话消息单独建事件，正文不复制：
 
 ```json
 {
   "turn_index": 42,
   "scene_id": "scene-dock-42",
-  "event_type": "conflict",
-  "title": "仓库冲突",
-  "summary": "玩家逼问老王 3 号仓的事，老王否认，门外出现脚步声。",
-  "details": {"player_input": "...", "speaker_lines": ["..."], "changes": ["..."]},
+  "event_type": "dialogue",
+  "title": "玩家与老王在仓库交谈",
+  "summary": "发生一轮对话；正文按 actor audience 从 source_message_id 渲染。",
+  "source_message_id": "msg-42-03",
+  "details": {"message_id": "msg-42-03", "speaker_object_id": "obj:world:character:player"},
   "visibility": "scene"
 }
 ```
 
-`witnesses` → `oag_event_objects(role='witness')` + `oag_knowledge(witnessed)`。
+`witnesses` → `oag_event_objects(role='witness')` + `oag_knowledge(witnessed)`；耳语的非 recipients 只获得 `whisper_envelope`，不获得正文事件。
 
 ### 3.2 Claim/关系
 
@@ -295,17 +304,19 @@ turn finish
   "subject": "铜钥匙",
   "predicate": "held_by",
   "object": "阿禾",
-  "asserted_by": "老王",
-  "witnesses": ["玩家", "老王", "阿禾"],
-  "confidence": 0.8
+  "asserted_by_id": "obj:world:character:lao-wang",
+  "source_event_id": "evt:session:42:dialogue:msg-42-03",
+  "witness_ids": ["obj:world:character:player", "obj:world:character:lao-wang"],
+  "confidence": 0.8,
+  "truth_status": "asserted"
 }
 ```
 
 - 主语/宾语先解析成对象；未知则创建 session object；
-- 谓词归一化到 link type；未知 → `related_to` + 原文谓词；
-- `valid_from_turn=当前`；同一 functional link 的旧边 `valid_to_turn=当前`；
-- 写入 `oag_knowledge`：witnesses 得 `witnessed`；recipients 得 `told`；
-- 只有说话人/作者确认的 claim 才 `truth_status=confirmed`，其余 `asserted`。
+- 谓词归一化只接受世界包已声明的关系；未声明谓词保留原文并进入审核，只有世界显式声明 `related_to` 时才写入兜底关系；
+- `valid_from_turn=当前`；同一说话人的 functional 旧 claim 写 `valid_to_turn=当前`，不全局作废其他 actor 的 claim；
+- 写入 `oag_knowledge`：witnesses 得 `witnessed`；recipients 得 `told`；每条边保留 `source_event_id` 与 `learned_turn`；
+- 只有作者 Canon 或系统接受的状态才 `truth_status=confirmed`，LLM/角色 claim 始终 `asserted`，跨 actor 矛盾标记 `disputed`。
 
 ### 3.3 记忆
 
@@ -368,14 +379,15 @@ struct BeliefSnapshot {
 
 ### 5.1 新表
 
-按 [OAG 本体设计 §9](./03-ontology-design.md) 的表：
+M1 只实施 [本体设计 §9](./03-ontology-design.md#9-m1-存储设计冻结-schema) 的表：
 
 - TBox：`oag_object_types`、`oag_link_types`
 - ABox：`oag_objects`、`oag_attributes`、`oag_links`、`oag_scenes`、`oag_scene_participants`、`oag_events`、`oag_event_objects`
-- 认知：`oag_knowledge`、`oag_access_policies`、`oag_turn_audience`
+- 认知：`oag_knowledge`、`oag_turn_audience`
 - 记忆：`oag_memory_objects`
-- 文本：`oag_lore_entries`、`oag_summaries`
-- 运维：`oag_query_traces`、`oag_conflicts`、`oag_review_queue`
+- 迁移/运维：`oag_legacy_id_map`、`oag_schema_meta`、`oag_query_traces`、`oag_write_traces`
+
+`oag_access_policies`、`oag_lore_entries`、`oag_summaries` 是后续扩展，M1 不建表；lore、知识文档和固定桶总结继续使用现有实现。
 
 ### 5.2 Rust 模块
 
@@ -391,7 +403,7 @@ src-tauri/src/services/game_engine/oag/
   graph.rs          VisibleGraph
   query.rs          find/traverse/as-of/aggregate/knows
   projection.rs     BeliefSnapshot -> oag_context
-  tools.rs          模型工具适配
+  model_tool.rs     统一 oag_query 模型工具
   maintenance.rs    完整性检查/重建/迁移
   tests.rs
 ```
@@ -429,7 +441,7 @@ OAG 的维护分“Canon 维护、运行时维护、结构维护、运维”四�
 - **稳定 key**：对象用 `obj:<world>:<type>:<normalized-key>`；不要用显示名当主键；
 - **导入 diff**：世界包更新时按 key upsert；消失的 Canon 标记 `retired_at`，不物理删除（避免引用断裂）；
 - **不覆盖运行时**：导入只改 `session_id=''` 的 Canon，不碰 session 对象/关系；
-- **schema 校验**：object/link type 必须存在；domain/range 不匹配 → 拒收或降级 `related_to` + warning；
+- **schema 校验**：object/link type 必须来自该世界包；domain/range 不匹配的作者数据拒绝写入，运行时候选数据保留审核，不静默补造类型或套用未声明的兜底关系；
 - **lore 关联**：lore 文本必须指向存在的对象；孤儿 lore 进 lint；
 - **版本**：`oag_schema_version` + 世界包版本；开发阶段可拒绝旧包，但导出要写版本。
 
@@ -453,7 +465,7 @@ OAG 的维护分“Canon 维护、运行时维护、结构维护、运维”四�
 #### 抽取质量
 
 - 低置信 claim（`confidence < 0.6`）进 `oag_review_queue`，不直接进 Canon/检索；
-- 未知谓词统一进 `related_to`，同时记录原文；作者可提升为正式 link type；
+- 未声明谓词保留原文并进入审核；只有世界包声明 `related_to` 时才使用该兜底关系，作者可提升为正式关系类型；
 - 实体解析优先精确名/别名，其次最长匹配；自动合并只对高置信、同类型、无冲突的实体；
 - 角色说谎/误判：存 `asserted`，不存 `confirmed`；查询结果标“据 X 所述”。
 
@@ -577,7 +589,7 @@ Debug 三问：
 
 1. **隔离**：第三方看不到私聊；场景切换不串；耳语只给 recipients；电话参与者有记忆。
 2. **时间**：第 30 回合查不到第 40 回合的事实；as-of 正确；invalidate 后历史仍可查。
-3. **知识边界**：角色查不到未见证事实；导演能查全图；`oag_knows` 分视角。
+3. **知识边界**：角色查不到未见证事实；导演能查全图；`oag_query` 的 `knows` 操作分视角。
 4. **查询语义**：find/traverse/aggregate/absence 的边界条件；空结果不编造。
 5. **分支/回滚**：知识边/事件/摘要与存档回合一致。
 6. **导入/导出**：Canon round-trip；旧包拒绝。
@@ -596,10 +608,12 @@ Debug 三问：
 不要一开始做全量本体。建议第一个竖切（约 2~3 周）：
 
 1. **Phase 0 隔离**：消息 witnesses、turn audience、读过滤、fact speaker。
-2. **最小本体**：character / location / item / organization；`located_in` / `holds` / `owns` / `member_of` / `ally_of` / `enemy_of`。
+2. **世界包驱动的最小本体**：实现本体文件读取、类型/关系校验和稳定对象导入；具体有哪些对象和关系由世界包决定，应用不预设修仙清单。
 3. **事件 + 知识**：每回合事件、witnesses、`oag_knowledge`。
-4. **Perspective 投影**：scene frame + entity cards + known facts + events + memories。
-5. **两个查询**：`oag_entity` + `oag_query`（find/1 跳）；Debug perspective inspector。
+4. **可见子图 + 基础查询**：`resolve/entity/find/timeline`，先裁剪再查询，不向模型开放半成品工具。
+5. **Debug**：对象、关系、事件、知识来源与查询 trace，先验证“谁知道/不知道”。
+
+提示词投影与统一模型工具已在 M2 单独交付；自动抽取不放进这个竖切。
 
 先不做：
 
@@ -609,7 +623,7 @@ Debug 三问：
 - 图推理/社区；
 - 全自动 ontology 编辑 UI。
 
-原因：先把“视角正确 + 能查基本事实”跑通，再谈压缩和自动化。
+原因：先把“世界包语义正确 + 视角正确 + 能查基本事实”跑通，再谈投影、压缩和自动化。
 
 ## 9. 常见坑
 
@@ -629,6 +643,7 @@ Debug 三问：
 搭建：
 
 - [ ] Perspective 契约确定：actor/session/turn/scene
+- [ ] 世界包本体文件读取、校验与增量导入
 - [ ] 消息级 witnesses/recipients/presence_mode
 - [ ] Canon 导入 + 稳定 ID + alias
 - [ ] 事件/claim/knowledge 写入 + journal

@@ -1,15 +1,21 @@
-/** 小问号提示：把字段说明折叠进标题后面的圆形按钮里，hover / 点击展开气泡。 */
-
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 type HelpTipProps = {
-  /** 说明文案（同时作为无障碍标签）。 */
   text: string;
+};
+
+type TooltipPosition = {
+  left: number;
+  top: number;
 };
 
 export function HelpTip({ text }: HelpTipProps) {
   const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<TooltipPosition | null>(null);
   const wrapRef = useRef<HTMLSpanElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const bubbleRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -33,28 +39,74 @@ export function HelpTip({ text }: HelpTipProps) {
     };
   }, [open]);
 
+  useLayoutEffect(() => {
+    if (!open) return;
+
+    const updatePosition = () => {
+      const anchor = buttonRef.current?.getBoundingClientRect();
+      const bubble = bubbleRef.current?.getBoundingClientRect();
+      if (!anchor || !bubble) return;
+
+      const margin = 16;
+      const gap = 8;
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      const left = Math.min(
+        Math.max(anchor.left + anchor.width / 2 - bubble.width / 2, margin),
+        Math.max(viewportWidth - bubble.width - margin, margin),
+      );
+      const preferredTop = anchor.bottom + gap;
+      const top = preferredTop + bubble.height > viewportHeight - margin
+        ? Math.max(anchor.top - bubble.height - gap, margin)
+        : preferredTop;
+      setPosition({ left, top });
+    };
+
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [open, text]);
+
   return (
     <span className="help-tip" ref={wrapRef}>
       <button
+        ref={buttonRef}
         type="button"
         className="help-tip__btn"
         aria-label={text}
         aria-expanded={open}
-        // 在 label 内部时必须阻止默认行为，否则会聚焦输入框 / 误触开关。
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
-          setOpen((current) => !current);
+          setOpen(true);
         }}
-        onMouseEnter={() => setOpen(true)}
-        onMouseLeave={() => setOpen(false)}
+        onPointerEnter={(event) => {
+          if (event.pointerType === "mouse") setOpen(true);
+        }}
+        onPointerLeave={(event) => {
+          if (event.pointerType === "mouse") setOpen(false);
+        }}
       >
         ?
       </button>
-      {open ? (
-        <span role="tooltip" className="help-tip__bubble">
+      {open ? createPortal(
+        <span
+          ref={bubbleRef}
+          role="tooltip"
+          className="help-tip__bubble"
+          style={{
+            left: position?.left ?? 0,
+            top: position?.top ?? 0,
+            visibility: position ? "visible" : "hidden",
+          }}
+        >
           {text}
-        </span>
+        </span>,
+        document.body,
       ) : null}
     </span>
   );

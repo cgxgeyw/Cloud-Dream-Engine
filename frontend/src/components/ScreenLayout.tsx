@@ -70,7 +70,7 @@ export function ScreenLayout({
           <header className={`layout-header${compactHeader ? " layout-header--compact" : ""}${backgroundUrl ? " layout-header--has-bg" : ""}`}>
             <div className="layout-title-shell">
               <div className="grid grid--gap-xs">
-                <div className="layout-brand">云朵梦境</div>
+                <div className="layout-brand">云梦引擎</div>
                 <h1 className={`layout-title${compactHeader ? " layout-title--compact" : ""}`}>{title}</h1>
                 {subtitle ? <p className="layout-subtitle">{subtitle}</p> : null}
               </div>

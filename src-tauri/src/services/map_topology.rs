@@ -46,10 +46,10 @@ pub fn compile_map_topology(value: &Value, current_scene: &str) -> CompiledMapTo
 
     if let Some(object) = value.as_object() {
         if let Some(root) = object.get("root").or_else(|| object.get("tree")) {
-            collect_hierarchy_nodes(root, None, &mut flat_nodes);
+            collect_hierarchy_nodes(root, None, &mut flat_nodes, &[0]);
         } else if let Some(nodes) = object.get("nodes").and_then(Value::as_array) {
-            for node in nodes {
-                collect_single_node(node, None, &mut flat_nodes);
+            for (index, node) in nodes.iter().enumerate() {
+                collect_single_node(node, None, &mut flat_nodes, &[index]);
             }
         }
 
@@ -157,11 +157,18 @@ pub fn compile_map_topology(value: &Value, current_scene: &str) -> CompiledMapTo
     }
 }
 
-fn collect_hierarchy_nodes(value: &Value, parent_id: Option<String>, nodes: &mut Vec<FlatMapNode>) {
-    let current_id = collect_single_node(value, parent_id, nodes);
+fn collect_hierarchy_nodes(
+    value: &Value,
+    parent_id: Option<String>,
+    nodes: &mut Vec<FlatMapNode>,
+    path: &[usize],
+) {
+    let current_id = collect_single_node(value, parent_id, nodes, path);
     if let Some(children) = value.get("children").and_then(Value::as_array) {
-        for child in children {
-            collect_hierarchy_nodes(child, current_id.clone(), nodes);
+        for (index, child) in children.iter().enumerate() {
+            let mut child_path = path.to_vec();
+            child_path.push(index);
+            collect_hierarchy_nodes(child, current_id.clone(), nodes, &child_path);
         }
     }
 }
@@ -197,6 +204,7 @@ fn collect_single_node(
     value: &Value,
     parent_id: Option<String>,
     nodes: &mut Vec<FlatMapNode>,
+    path: &[usize],
 ) -> Option<String> {
     let object = value.as_object()?;
     let label = object
@@ -212,7 +220,14 @@ fn collect_single_node(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(slugify_scene_id)
-        .unwrap_or_else(|| slugify_scene_id(label));
+        .unwrap_or_else(|| {
+            let suffix = path
+                .iter()
+                .map(|index| index.to_string())
+                .collect::<Vec<_>>()
+                .join("-");
+            format!("map-node-{suffix}")
+        });
     nodes.push(FlatMapNode {
         id: id.clone(),
         label: label.to_string(),
@@ -278,6 +293,30 @@ mod tests {
             ],
             "edges": [{ "source": "彩霞山", "target": "七玄门山门" }]
         })
+    }
+
+    #[test]
+    fn nodes_without_ids_use_stable_hierarchy_paths() {
+        let topology = compile_map_topology(
+            &serde_json::json!({
+                "root": {
+                    "label": "Same",
+                    "children": [
+                        { "label": "Same" },
+                        { "label": "Same" }
+                    ]
+                }
+            }),
+            "",
+        );
+        assert_eq!(
+            topology
+                .nodes
+                .iter()
+                .map(|node| node.node_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["map-node-0", "map-node-0-0", "map-node-0-1"]
+        );
     }
 
     #[test]

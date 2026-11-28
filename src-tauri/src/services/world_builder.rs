@@ -15,6 +15,10 @@ use crate::models::interaction::{
     INTERACTION_KIND_CHOICE, INTERACTION_KIND_CONFIRM, INTERACTION_KIND_FORM,
     INTERACTION_KIND_MULTI_CHOICE, INTERACTION_KIND_SLIDER,
 };
+use crate::models::mcp_tool::{
+    MCP_TOOL_CHANGE_SCENE_ID, MCP_TOOL_LIST_CHARACTERS_ID, MCP_TOOL_LIST_SCENES_ID,
+    MCP_TOOL_SWITCH_PLAYER_CHARACTER_ID,
+};
 use crate::models::model_config::ModelConfig;
 use crate::models::world::{
     AiWorldCreateRequest, AiWorldCreateResponse, WorldCreateRequest, WorldOpeningMessage,
@@ -148,7 +152,7 @@ async fn generate_world_draft(
     } else {
         "multi-agent world simulation with three to five playable or NPC characters"
     };
-    let system_prompt = r#"You are a world package architect for Cloud Dream Engine.
+    let system_prompt = r#"You are a world package architect for Yunmeng Engine.
 Return only valid JSON. A single ```json code fence around it is acceptable.
 Create coherent world and character data from the user's concept.
 Keep prompts directly editable by creators. Avoid meta text like "the system will".
@@ -308,7 +312,6 @@ fn persist_world_draft(
         serde_json::json!({
             "service_mode": "agent_chat",
             "default_agent_id": default_agent_id_placeholder,
-            "allow_scene_transition": false,
             "allow_npc_spawn": false,
             "memory_mode": "embedding",
             "memory_summary_interval_rounds": 10,
@@ -324,7 +327,6 @@ fn persist_world_draft(
     } else {
         serde_json::json!({
             "service_mode": "world_sim",
-            "allow_scene_transition": true,
             "allow_npc_spawn": true,
             "memory_mode": "embedding",
             "memory_summary_interval_rounds": 10,
@@ -335,7 +337,12 @@ fn persist_world_draft(
             "return_processing_rules": [],
             "director_interaction_kinds": interaction_kinds,
             "runtime_policy": { "memory_write_mode": "session" },
-            "allowed_mcp_tool_ids": []
+            "allowed_mcp_tool_ids": [
+                MCP_TOOL_LIST_SCENES_ID,
+                MCP_TOOL_LIST_CHARACTERS_ID,
+                MCP_TOOL_CHANGE_SCENE_ID,
+                MCP_TOOL_SWITCH_PLAYER_CHARACTER_ID,
+            ]
         })
     };
 

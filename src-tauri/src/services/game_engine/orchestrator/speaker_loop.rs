@@ -1,12 +1,13 @@
 use crate::models::character::CharacterDefinition;
 use crate::models::generation_params::GENERATION_ROLE_CHARACTER;
 use crate::models::mcp_tool::MCP_TOOL_SCHEDULE_NOTIFICATION_ID;
+use crate::models::oag::OagActor;
 use crate::models::session::*;
 use crate::models::world::WorldDefinition;
 use crate::services::game_engine::dialogue::DialoguePipeline;
 use crate::services::game_engine::memory::{
-    align_history_rounds_to_summary_bucket, resolve_memory_summary_interval, MemoryService,
-    RecallCutoff,
+    align_history_rounds_to_summary_bucket, resolve_memory_mode, resolve_memory_summary_interval,
+    resolve_oag_enabled, MemoryMode, MemoryService, RecallCutoff,
 };
 use crate::services::game_engine::scene::SceneManager;
 use crate::services::game_engine::structured_output::{
@@ -16,6 +17,7 @@ use crate::services::llm::client::{ChatToolCall, LlmClient};
 use crate::services::notifications::{
     NotificationScheduler, NotificationToolContext, NotificationToolRuntime,
 };
+use crate::services::oag::model_tool::{execute as execute_oag_query, OAG_QUERY_TOOL_NAME};
 
 use super::character_prompt::*;
 use super::request_building::*;
@@ -52,7 +54,7 @@ impl SessionOrchestrator {
     ) -> Result<SpeakerTurnRunResult, String> {
         let completed_speaker_steps = completed_speaker_steps_from_journal(recovery_journal);
         // 会话级 variables KV（第 6 项 {{var:key}} 占位符的数据源）
-        // 与应用级生成参数（第 8 项三级覆盖的第一层）一起在同一次加锁内读出。
+        // 与应用级生成参数一起在同一次加锁内读出。
         let (kv_vars, app_settings) = {
             let guard = db.lock().await;
             (
@@ -69,6 +71,7 @@ impl SessionOrchestrator {
             }
             speaker_step_index += 1;
             let journal_step_index = speaker_step_index;
+            let speaker_char = characters.iter().find(|c| c.name == *speaker_name);
             if completed_speaker_steps.contains(&journal_step_index) {
                 if let Some(payload) = journal_payload(
                     recovery_journal,
@@ -99,6 +102,13 @@ impl SessionOrchestrator {
                         if !recovered_witnesses.contains(&recovered_speaker) {
                             recovered_witnesses.push(recovered_speaker.clone());
                         }
+                        let recovered_witness_ids =
+                            super::session_materialization::build_witness_ids(
+                                &recovered_witnesses,
+                                &session.player_character_id,
+                                &session.player_character_name,
+                                characters,
+                            );
                         messages.push(ChatMessage {
                             message_id: ChatMessage::generate_id(),
                             created_at: chrono::Utc::now().to_rfc3339(),
@@ -113,6 +123,9 @@ impl SessionOrchestrator {
                                 "scene_id": SceneManager::new().slugify(next_scene_name),
                                 "scene_name": next_scene_name,
                                 "witnesses": recovered_witnesses,
+                                "witness_ids": recovered_witness_ids,
+                                "recipient_ids": [],
+                                "speaker_character_id": speaker_char.map(|character| character.id.clone()),
                             })),
                         });
                     }
@@ -121,7 +134,6 @@ impl SessionOrchestrator {
                 }
             }
 
-            let speaker_char = characters.iter().find(|c| c.name == *speaker_name);
             // C1/H9: 召回分三步,嵌入 HTTP 必须在锁外执行。
             // 步骤 1(持锁):取候选记忆 + 词法打分 + 已存向量,不触网。
             let (
@@ -132,6 +144,7 @@ impl SessionOrchestrator {
                 recent_messages,
                 speaker_character_id_owned,
                 mut recall_plan,
+                oag_context,
             ) = {
                 let db_guard = db.lock().await;
                 let conn = db_guard.conn();
@@ -145,6 +158,27 @@ impl SessionOrchestrator {
                 // 不支持即明确报错（中文文案），不静默丢弃。
                 crate::models::model_config::ensure_media_supported(&speaker_model, player_media)?;
                 let speaker_character_id = speaker_char.map(|character| character.id.as_str());
+                let memory_mode = resolve_memory_mode(world);
+                let oag_context = if matches!(memory_mode, MemoryMode::Oag) {
+                    let actor = if let Some(id) = speaker_character_id {
+                        crate::models::oag::OagActor::Object(id.to_string())
+                    } else {
+                        crate::models::oag::OagActor::Player(session.player_character_id.clone())
+                    };
+                    crate::services::oag::projection::load_prompt_projection(
+                        conn,
+                        world,
+                        &session.id,
+                        turn_index,
+                        crate::services::oag::projection::ProjectionInput {
+                            actor,
+                            scene_id: &session.scene.scene_id,
+                            summary: &session.state.director_summary,
+                        },
+                    )?
+                } else {
+                    None
+                };
                 let visible_attribute_lines = load_character_visible_attribute_lines(
                     conn,
                     session,
@@ -171,23 +205,27 @@ impl SessionOrchestrator {
                     requested_rounds,
                     summary_interval,
                 );
-                let recall_plan = memory_service.prepare_character_recall_with_cutoff(
-                    conn,
-                    world,
-                    &world.id,
-                    &session.id,
-                    speaker_character_id,
-                    player_input,
-                    &session.location,
-                    Some(session.scene.scene_id.as_str()),
-                    &build_turn_participants(visible_chars, &session.player_character_name),
-                    recall_limit,
-                    speaker_char.map(|character| character.memory_strategy.as_str()),
-                    Some(RecallCutoff {
-                        current_turn: turn_index,
-                        raw_rounds: aligned_rounds,
-                    }),
-                )?;
+                let recall_plan = if memory_mode == MemoryMode::History {
+                    None
+                } else {
+                    Some(memory_service.prepare_character_recall_with_cutoff(
+                        conn,
+                        world,
+                        &world.id,
+                        &session.id,
+                        speaker_character_id,
+                        player_input,
+                        &session.location,
+                        Some(session.scene.scene_id.as_str()),
+                        &build_turn_participants(visible_chars, &session.player_character_name),
+                        recall_limit,
+                        speaker_char.map(|character| character.memory_strategy.as_str()),
+                        Some(RecallCutoff {
+                            current_turn: turn_index,
+                            raw_rounds: aligned_rounds,
+                        }),
+                    )?)
+                };
                 let recent_messages = slice_character_history(
                     &messages,
                     aligned_rounds,
@@ -202,20 +240,25 @@ impl SessionOrchestrator {
                     recent_messages,
                     speaker_character_id.map(|value| value.to_string()),
                     recall_plan,
+                    oag_context,
                 )
             };
             let _ = speaker_character_id_owned;
 
             // 步骤 2(锁外):嵌入 HTTP / 本地推理。block_in_place 让阻塞调用不占用
             // 其它 tokio worker,且此处已不持有 DB 锁,慢嵌入端点不再卡住全库。
-            tokio::task::block_in_place(|| memory_service.embed_recall_plan(&mut recall_plan));
+            if let Some(plan) = recall_plan.as_mut() {
+                tokio::task::block_in_place(|| memory_service.embed_recall_plan(plan));
+            }
 
             // 步骤 3(持锁):写回向量缓存并完成排序,随后构建请求。
             let (recalled_memories, speaker_request, speaker_provider, speaker_request_value) = {
                 let db_guard = db.lock().await;
                 let conn = db_guard.conn();
-                let recalled_memories = memory_service.finalize_character_recall(conn, recall_plan);
-                let mut speaker_request = build_character_chat_request(
+                let recalled_memories = recall_plan
+                    .map(|plan| memory_service.finalize_character_recall(conn, plan))
+                    .unwrap_or_default();
+                let mut speaker_request = build_character_chat_request_with_oag(
                     dialogue_pipeline,
                     world,
                     &speaker_model,
@@ -235,12 +278,12 @@ impl SessionOrchestrator {
                     &resolve_generation_params_with_model(
                         GENERATION_ROLE_CHARACTER,
                         &app_settings,
-                        world,
                         session,
                         &speaker_model,
                     ),
                     player_media,
                     mcp_tools,
+                    oag_context.as_ref(),
                 );
                 speaker_request.stream = Some(
                     speaker_model.streaming_enabled
@@ -459,8 +502,35 @@ impl SessionOrchestrator {
                                     result,
                                 });
                             }
+                            if call.tool_name.trim() == OAG_QUERY_TOOL_NAME {
+                                let result = if !resolve_oag_enabled(world) {
+                                    Err("当前世界未启用 OAG 查询".to_string())
+                                } else {
+                                    let guard = db.lock().await;
+                                    let actor = if let Some(character) = speaker_char {
+                                        OagActor::Object(character.id.clone())
+                                    } else {
+                                        OagActor::Player(session.player_character_id.clone())
+                                    };
+                                    execute_oag_query(
+                                        guard.conn(),
+                                        &world.id,
+                                        session_id,
+                                        actor,
+                                        turn_index,
+                                        &call.arguments,
+                                    )
+                                };
+                                round_results.push(SpeakerNotificationToolResult {
+                                    call: call.clone(),
+                                    result: match result {
+                                        Ok(value) => serde_json::json!({"ok":true,"result":value}),
+                                        Err(error) => serde_json::json!({"ok":false,"error":error}),
+                                    },
+                                });
+                            }
                             if call.tool_name == "search_knowledge"
-                                && world.director_config["knowledge_access"] == true
+                                && crate::commands::knowledge::knowledge_tool_allowed(world)
                             {
                                 // 分三阶段：持锁准备 → 锁外嵌入 → 持锁写回排序，
                                 // 与角色记忆召回一致，本地/远程向量模型都不占 DB 锁。
@@ -729,6 +799,7 @@ impl SessionOrchestrator {
                             "content": parsed_response.content.clone(),
                             "narration": parsed_response.narration.clone(),
                         }),
+                        oag_context.as_ref(),
                         &kv_vars,
                         &speaker_request.generation,
                         player_media,
@@ -789,7 +860,35 @@ impl SessionOrchestrator {
                     }
 
                     let speaker_pending_notifications = Vec::new();
-                    if let Some(raw_payload) = parsed_response.raw_payload.clone() {
+                    let mut witnesses =
+                        build_turn_participants(visible_chars, &session.player_character_name);
+                    if !witnesses
+                        .iter()
+                        .any(|name| name == &parsed_response.speaker)
+                    {
+                        witnesses.push(parsed_response.speaker.clone());
+                    }
+                    let witness_ids = super::session_materialization::build_witness_ids(
+                        &witnesses,
+                        &session.player_character_id,
+                        &session.player_character_name,
+                        characters,
+                    );
+                    if let Some(mut raw_payload) = parsed_response.raw_payload.clone() {
+                        if let Some(object) = raw_payload.as_object_mut() {
+                            object.insert(
+                                "fact_speaker".to_string(),
+                                serde_json::json!(parsed_response.speaker),
+                            );
+                            object.insert(
+                                "fact_speaker_id".to_string(),
+                                serde_json::json!(
+                                    speaker_char.map(|character| character.id.clone())
+                                ),
+                            );
+                            object
+                                .insert("fact_witnesses".to_string(), serde_json::json!(witnesses));
+                        }
                         runtime_payloads.push(raw_payload);
                     }
                     // 自主 pass：本回合不写入可见台词，但仍保留 journal / prompt trace / llm call，
@@ -804,14 +903,6 @@ impl SessionOrchestrator {
                             "raw_response": raw_response.clone()
                         });
                         // 这条台词发生在导演确定的新场景里；观众 = 新名册 + 玩家 + 实际说话人。
-                        let mut witnesses =
-                            build_turn_participants(visible_chars, &session.player_character_name);
-                        if !witnesses
-                            .iter()
-                            .any(|name| name == &parsed_response.speaker)
-                        {
-                            witnesses.push(parsed_response.speaker.clone());
-                        }
                         if let Some(object) = message_metadata.as_object_mut() {
                             object.insert(
                                 "scene_id".to_string(),
@@ -822,6 +913,12 @@ impl SessionOrchestrator {
                                 serde_json::json!(next_scene_name),
                             );
                             object.insert("witnesses".to_string(), serde_json::json!(witnesses));
+                            object
+                                .insert("witness_ids".to_string(), serde_json::json!(witness_ids));
+                            object.insert(
+                                "recipient_ids".to_string(),
+                                serde_json::json!(Vec::<String>::new()),
+                            );
                             if let Some(character) = speaker_char {
                                 object.insert(
                                     "speaker_character_id".to_string(),
@@ -962,6 +1059,7 @@ impl SessionOrchestrator {
                         String::new(),
                         serde_json::json!({ "error": e.clone() }),
                         serde_json::json!({ "error": e.clone() }),
+                        oag_context.as_ref(),
                         &kv_vars,
                         &speaker_request.generation,
                         player_media,
@@ -1146,6 +1244,7 @@ async fn execute_speaker_custom_tool_calls(
         .filter(|call| {
             call.tool_name.trim() != "schedule_notification"
                 && call.tool_name.trim() != "search_knowledge"
+                && call.tool_name.trim() != OAG_QUERY_TOOL_NAME
                 && !crate::services::game_engine::stickers::is_tool(&call.tool_name)
                 && !crate::services::world_logic::tool_definitions(world)
                     .iter()
@@ -1297,12 +1396,16 @@ fn build_tool_activity_value(
         if status == "done" && !seen_ids.insert(call_name.to_string()) {
             continue;
         }
-        let display_name = mcp_tools
-            .iter()
-            .find(|tool| tool.tool_name.trim() == call_name)
-            .map(|tool| tool.name.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| call_name.to_string());
+        let display_name = if call_name == OAG_QUERY_TOOL_NAME {
+            "查询世界关系".to_string()
+        } else {
+            mcp_tools
+                .iter()
+                .find(|tool| tool.tool_name.trim() == call_name)
+                .map(|tool| tool.name.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| call_name.to_string())
+        };
         let mut entry = serde_json::json!({ "id": call_name, "name": display_name });
         if status == "calling" {
             if let Some(preview) = summarize_tool_call_arguments(&call.arguments) {

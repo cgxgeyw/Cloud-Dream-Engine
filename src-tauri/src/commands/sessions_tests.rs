@@ -78,3 +78,29 @@ fn speaker_fact_extractions_noop_when_nothing_to_merge() {
     // 没有事实时不应新建字段
     assert_eq!(merged, director_payload);
 }
+
+#[test]
+fn fact_merges_keep_payload_speaker_and_force_asserted_truth() {
+    let speaker_payload = serde_json::json!({
+        "fact_speaker": "爱丽丝",
+        "fact_speaker_id": "char-alice",
+        "fact_witnesses": ["玩家", "爱丽丝"],
+        "fact_extractions": [{
+            "subject": "银钥匙",
+            "predicate": "藏在",
+            "object": "12号柜",
+            "asserted_by": "鲍勃",
+            "asserted_by_id": "char-bob",
+            "witnesses": ["鲍勃"],
+            "visibility": "private",
+            "truth_status": "confirmed"
+        }]
+    });
+    let merged = merge_speaker_fact_extractions(&serde_json::json!({}), &[speaker_payload]);
+    let fact = &merged["fact_extractions"][0];
+    assert_eq!(fact["asserted_by"], "爱丽丝");
+    assert_eq!(fact["asserted_by_id"], "char-alice");
+    assert_eq!(fact["witnesses"], serde_json::json!(["玩家", "爱丽丝"]));
+    assert_eq!(fact["visibility"], "private");
+    assert_eq!(fact["truth_status"], "asserted");
+}

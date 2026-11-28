@@ -71,7 +71,7 @@ pub struct ChatToolCall {
 pub struct ChatRequest {
     pub model: String,
     pub messages: Vec<ChatMessage>,
-    /// 生成参数（第 8 项）。与连接配置分离，由应用/世界/会话三级覆盖解析而来；
+    /// 生成参数。与连接配置分离，由应用设置与会话存档两级覆盖解析而来；
     /// 真正发出前还会按 provider 过滤掉不支持的项。
     #[serde(default)]
     pub generation: crate::models::generation_params::GenerationParams,

@@ -21,6 +21,7 @@ import type {
   McpToolResponse, McpToolUpsertRequest,
   McpServerConfig, McpServerUpsertRequest, McpServerProbeResult,
   MemoryEntry, MemoryEntity, MemoryRelation, MemorySummaryPromptDefaults,
+  OagActor, OagQueryRequest, OagQueryResponse,
   AttributeSchemaResponse, AttributeSchemaUpsertRequest,
   AttributeValueResponse, AttributeValueUpsertRequest,
   RuntimeAttributeItem, RuntimeAttributeGroup, SessionRuntimeAttributesResponse,
@@ -727,6 +728,16 @@ export function fetchSessionRuntimeAttributes(sessionId: string) {
 
 export function fetchSessionDebug(sessionId: string) {
   return fetchJson<SessionDebugResponse>(`/api/debug/sessions/${sessionId}`);
+}
+
+export function queryOagDebug(
+  _sessionId: string,
+  _actor: OagActor,
+  _request: OagQueryRequest,
+  _asOfTurn?: number,
+  _maxNodes = 200,
+): Promise<OagQueryResponse> {
+  return Promise.reject(new Error("OAG 调试查询仅支持桌面端"));
 }
 
 export function fetchAllCharacters() {

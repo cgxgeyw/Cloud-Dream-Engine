@@ -1,13 +1,13 @@
 # 记忆隔离代码审计（当前实现）
 
 > 目的：在做 OAG 之前，先把“不同场景、不同人物为什么会有不同记忆”这件事从代码层面讲清楚。
-> 结论先行：**存储层隔离是成立的，读路径没有隔离；事实和知识库完全没有隔离。**
+> **2026-11-27 当前结论**：M0 隔离范围与 M2 的视角投影/查询已落地。逐消息记忆、耳语读过滤、事实 actor 可见性、知识库文档 audience、分支/回滚一致性、OAG 可见子图与紧凑模型注入均已修复或实现；独立事实抽取、远程发言策略和旧 audience 回填仍未实现。
 >
-> **2026-11-12 更新**：新消息已写入 `witnesses`（玩家消息用回合开始名册，NPC 消息用新场景名册，开场消息用开局名册）；`slice_character_history` / `collect_windowed_dialogue_messages` 已按 viewer 过滤；不在场角色不能进入 `planned_speakers`。仍缺：`build_turn_entries()` 仍按回合末名册写记忆；事实/知识库没有 actor；旧消息无 `witnesses` 时按可见处理；历史轮数默认 30，但不做 token 截断（按模型上下文能力）。下文保留原始审计，便于对照。
+> **2026-11-12 历史更新**：新消息已写入 `witnesses`（玩家消息用回合开始名册，NPC 消息用新场景名册，开场消息用开局名册）；`slice_character_history` / `collect_windowed_dialogue_messages` 已按 viewer 过滤；不在场角色不能进入 `planned_speakers`。当时仍缺：`build_turn_entries()` 按回合末名册写记忆；事实/知识库没有 actor；旧消息无 `witnesses` 时按可见处理；历史轮数默认 30，但不做 token 截断（按模型上下文能力）。下文 0～6 节保留 M0 前审计，便于对照；当前状态以本段和 §8.3 为准。
 >
 > 相关代码：`src-tauri/src/services/game_engine/memory/mod.rs`、`orchestrator/turn_context.rs`、`orchestrator/speaker_loop.rs`、`commands/sessions.rs`、`db/repositories/memory_repo.rs`。
 
-## 0. 结论摘要
+## 0. M0 前结论摘要（历史审计）
 
 | 层 | 现状 | 判断 |
 |---|---|---|
@@ -216,9 +216,9 @@ session.player_character_name + session.visible_characters
 
 ### 4.5 知识库：世界级，不是角色级
 
-`commands/knowledge.rs:48-90` 的 `search()` 只按 `world_id` + `knowledge_base.enabled` + 公共库绑定过滤；`tool_capability()` 只看 `director_config.knowledge_access`。没有 actor 参数，没有文档 audience。
+M0 前，`commands/knowledge.rs` 的 `search()` 只按 `world_id` + `knowledge_base.enabled` + 公共库绑定过滤，工具能力只看旧的 `knowledge_access` 布尔字段，没有 actor 参数和文档 audience。任何在场或不在场角色调用 `search_knowledge` 都可能读到整个世界资料。
 
-所以任何在场/不在场角色调用 `search_knowledge`，都能查到该世界的全部资料，包括只应该导演知道的设定。
+M0 后，工具授权统一读取 `director_config.allowed_mcp_tool_ids` 中的 `mcp-tool-search-knowledge`；检索按消息观众、角色知识范围和文档 audience 过滤。旧布尔字段不再参与判断。
 
 ### 4.6 属性：策略级，不是场景级
 
@@ -381,6 +381,25 @@ OAG 不能只查对象和关系，还必须知道**这个 actor 能不能看到�
 | 分支 | 分支保留 events/knowledge/facts；不读到旧分支 |
 | 同名角色 | 按 id 而不是 name 解析 |
 | 旧数据回填 | 从 memories 反推 turn audience 后，旧存档不串 |
+
+### 8.3 M0 实施状态（2026-11-26）
+
+| 范围 | 当前实现 | 状态 |
+|---|---|---|
+| 逐消息记忆 | 每条 player/agent 消息按自己的 witnesses/recipients/scene 写入；旧消息回退到兼容观众 | ✅ 已实现 |
+| 最近对话与 dialogue_focus | 按 viewer 的 witnesses 过滤；recipients 非空时只保留说话人和收件人 | ✅ 已实现 |
+| 事实来源 | speaker payload 覆盖 asserted_by/id 和 witnesses，模型不能自报 confirmed | ✅ 已实现 |
+| 事实可见性 | public/private/scene；actor 查询先过滤，矛盾失效限定在同一 actor | ✅ 已实现 |
+| 知识库 audience | public/director/character；FTS、fallback、分块、嵌入、排序前过滤 | ✅ 已实现 |
+| 分支 | memories + embeddings + summary_ranges + entities + relations，全部 ID 重映射并保留 provenance | ✅ 已实现 |
+| 回滚 | 快照包含 summary_ranges；清除快照后的旧桶异步总结，还原实体/事实/来源/可见性 | ✅ 已实现 |
+| 世界包 | 知识库 audience 随导入导出保留；旧资料默认 public | ✅ 已实现 |
+| 不在场发言 | 世界角色表兜底与显式远程场景策略尚未收敛 | ⏳ 未完成 |
+| audience 回填 | 尚无 oag_turn_audience 表或旧消息批量回填 | ⏳ 未完成 |
+| 耳语占位事件 | 非收件人目前不取得正文，但还没有“发生耳语”的脱敏事件 | ⏳ 未完成 |
+| OAG 投影/查询 | 已实现视角投影、八种逻辑查询与统一只读模型工具；模型只接收裁剪后的紧凑文本，完整 trace 留在 Debug | ✅ M2 已交付 |
+
+新增回归测试覆盖：场景切换、耳语、事实来源合并、actor 私有事实与失效隔离、知识库 FTS/fallback audience、分支图 ID 重映射、回滚旧桶总结与 provenance 恢复。
 
 ## 9. 和 OAG 的关系
 

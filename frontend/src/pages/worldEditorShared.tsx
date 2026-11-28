@@ -10,7 +10,6 @@ import {
   type WorldOpeningMessage,
   type WorldResponse,
 } from "../data/apiAdapter";
-import type { GenerationParams } from "../data/types";
 import { defaultGameUiFile, normalizeAssetConfig, normalizeWorldUiEnvelope } from "../data/gameUi";
 
 
@@ -51,7 +50,63 @@ export type FoldableEditorSectionProps = {
   children: ReactNode;
 };
 
-export type MemoryMode = "embedding" | "oag";
+export type MemoryMode = "history" | "embedding" | "oag";
+
+export const MCP_TOOL_SEARCH_KNOWLEDGE_ID = "mcp-tool-search-knowledge";
+export const MCP_TOOL_LIST_SCENES_ID = "mcp-tool-list-scenes";
+export const MCP_TOOL_LIST_CHARACTERS_ID = "mcp-tool-list-characters";
+export const MCP_TOOL_CHANGE_SCENE_ID = "mcp-tool-change-scene";
+export const MCP_TOOL_SWITCH_PLAYER_CHARACTER_ID = "mcp-tool-switch-player-character";
+export const MCP_TOOL_BACKGROUND_GENERATION_ID = "mcp-tool-background-generation";
+export const MCP_TOOL_PORTRAIT_GENERATION_ID = "mcp-tool-portrait-generation";
+export const DIRECTOR_IMAGE_GENERATION_MCP_TOOL_IDS = [
+  MCP_TOOL_BACKGROUND_GENERATION_ID,
+  MCP_TOOL_PORTRAIT_GENERATION_ID,
+] as const;
+export const DIRECTOR_ONLY_MCP_TOOL_IDS = [
+  MCP_TOOL_LIST_SCENES_ID,
+  MCP_TOOL_LIST_CHARACTERS_ID,
+  MCP_TOOL_CHANGE_SCENE_ID,
+  MCP_TOOL_SWITCH_PLAYER_CHARACTER_ID,
+  ...DIRECTOR_IMAGE_GENERATION_MCP_TOOL_IDS,
+] as const;
+export const DEFAULT_DIRECTOR_MCP_TOOL_IDS = [
+  MCP_TOOL_LIST_SCENES_ID,
+  MCP_TOOL_LIST_CHARACTERS_ID,
+  MCP_TOOL_CHANGE_SCENE_ID,
+  MCP_TOOL_SWITCH_PLAYER_CHARACTER_ID,
+];
+
+export function isDirectorOnlyMcpToolId(toolId: string): boolean {
+  return (DIRECTOR_ONLY_MCP_TOOL_IDS as readonly string[]).includes(toolId);
+}
+
+export function resolveDirectorImageGenerationEnabled(
+  directorConfig: Pick<DirectorConfig, "allowed_mcp_tool_ids">,
+  uiThemeConfig: Pick<UiThemeConfig, "runtime_image_generation_enabled">,
+): boolean {
+  return uiThemeConfig.runtime_image_generation_enabled
+    && DIRECTOR_IMAGE_GENERATION_MCP_TOOL_IDS.every((toolId) =>
+      directorConfig.allowed_mcp_tool_ids.includes(toolId),
+    );
+}
+
+export function applyDirectorImageGenerationEnabled(
+  directorConfig: DirectorConfig,
+  uiThemeConfig: UiThemeConfig,
+  enabled: boolean,
+): { directorConfig: DirectorConfig; uiThemeConfig: UiThemeConfig } {
+  const allowed = new Set(directorConfig.allowed_mcp_tool_ids);
+  if (enabled) {
+    for (const toolId of DIRECTOR_IMAGE_GENERATION_MCP_TOOL_IDS) allowed.add(toolId);
+  } else {
+    for (const toolId of DIRECTOR_IMAGE_GENERATION_MCP_TOOL_IDS) allowed.delete(toolId);
+  }
+  return {
+    directorConfig: { ...directorConfig, allowed_mcp_tool_ids: Array.from(allowed) },
+    uiThemeConfig: { ...uiThemeConfig, runtime_image_generation_enabled: enabled },
+  };
+}
 
 export type DirectorConfig = {
   service_mode: "world_sim" | "agent_chat";
@@ -59,14 +114,11 @@ export type DirectorConfig = {
   runtime_policy: {
     memory_write_mode: "session" | "character" | "world_and_character";
   };
-  allow_scene_transition: boolean;
-  knowledge_access: boolean;
   /** 世界主控可查询的公共知识库 id（世界自带的库自动可用，不需要列在这里）。 */
   knowledge_base_ids: string[];
-  /** 记忆模式：历史 + Embedding 召回 / 历史 + OAG（结构化层尚未接入）。对话历史始终注入。 */
+  /** 自动注入的记忆层级：历史对话 / 语义召回 / 结构化 OAG 投影。 */
   memory_mode: MemoryMode;
   allow_npc_spawn: boolean;
-  allow_player_character_switch: boolean;
   director_interaction_kinds: InteractionKind[];
   history_dialogue_rounds: number;
   director_tool_loop_limit: number;
@@ -74,7 +126,6 @@ export type DirectorConfig = {
   character_memory_hit_turns: number;
   character_memory_event_window_rounds: number;
   character_memory_dialogue_window_rounds: number;
-  character_memory_retrieval_mode: "lexical_only" | "hybrid" | "semantic_only";
   character_memory_semantic_weight: number;
   /** 固定桶记忆总结间隔（回合）：1-10、11-20……默认 10。 */
   memory_summary_interval_rounds: number;
@@ -94,8 +145,6 @@ export type DirectorConfig = {
   character_prompt_order: string[];
   return_processing_rules: ReturnProcessingRule[];
   allowed_mcp_tool_ids: string[];
-  /** 世界级生成参数（第 8 项）。留空的项交给应用默认，玩家还能在存档里再覆盖。 */
-  generation_params: GenerationParams;
 };
 
 export type InteractionKind = "choice" | "multi_choice" | "form" | "confirm" | "slider";
@@ -110,7 +159,7 @@ export const interactionKindOptions: Array<{ value: InteractionKind; label: stri
 
 export const directorPromptSections = [
   ["world_background", "世界背景信息"], ["oag_context", "OAG 注入信息"],
-  ["director_rules", "世界主控预设/规则"], ["world_runtime_context", "世界运行时上下文"], ["scene_characters", "角色列表与场景状态"],
+  ["director_rules", "世界主控模型提示词/规则"], ["world_runtime_context", "世界运行时上下文"], ["scene_characters", "角色列表与场景状态"], ["visual_capabilities", "可用背景图与角色立绘"],
   ["chat_history", "对话历史"], ["player_input", "当前玩家输入"],
   ["response_contract", "返回格式与状态更新规则"], ["tool_loop_context", "工具调用结果"],
 ] as const;
@@ -177,12 +226,9 @@ export const defaultDirectorConfig: DirectorConfig = {
   runtime_policy: {
     memory_write_mode: "session",
   },
-  allow_scene_transition: true,
-  knowledge_access: false,
   knowledge_base_ids: [],
   memory_mode: "embedding",
   allow_npc_spawn: true,
-  allow_player_character_switch: true,
   director_interaction_kinds: [],
   history_dialogue_rounds: 30,
   director_tool_loop_limit: 4,
@@ -190,7 +236,6 @@ export const defaultDirectorConfig: DirectorConfig = {
   character_memory_hit_turns: 2,
   character_memory_event_window_rounds: 10,
   character_memory_dialogue_window_rounds: 2,
-  character_memory_retrieval_mode: "hybrid",
   character_memory_semantic_weight: 0.65,
   memory_summary_interval_rounds: 10,
   memory_summary_model: "",
@@ -203,8 +248,7 @@ export const defaultDirectorConfig: DirectorConfig = {
   director_prompt_order: directorPromptSections.map(([id]) => id),
   character_prompt_order: characterPromptSections.map(([id]) => id),
   return_processing_rules: [],
-  allowed_mcp_tool_ids: [],
-  generation_params: {},
+  allowed_mcp_tool_ids: DEFAULT_DIRECTOR_MCP_TOOL_IDS,
 };
 
 export const defaultTimeConfig: TimeConfig = {
@@ -403,6 +447,14 @@ export function normalizeDirectorConfig(raw: Record<string, unknown> | undefined
         typeof item === "string" && interactionKindOptions.some((option) => option.value === item),
       )))
       : [];
+  const allowedMcpToolIds = Array.isArray(raw?.allowed_mcp_tool_ids)
+    ? Array.from(new Set(
+        raw.allowed_mcp_tool_ids
+          .filter((item): item is string => typeof item === "string")
+          .map((item) => item.trim())
+          .filter(Boolean),
+      ))
+    : [];
   return {
     service_mode: serviceMode,
     default_agent_id:
@@ -416,30 +468,19 @@ export function normalizeDirectorConfig(raw: Record<string, unknown> | undefined
             ? raw.memory_write_mode
           : defaultDirectorConfig.runtime_policy.memory_write_mode,
     },
-    knowledge_access: raw?.knowledge_access === true,
     knowledge_base_ids: Array.isArray(raw?.knowledge_base_ids)
       ? raw.knowledge_base_ids.filter(
           (item): item is string => typeof item === "string" && item.trim().length > 0,
         )
       : [],
     memory_mode:
-      raw?.memory_mode === "oag"
-        ? "oag"
-        : raw?.memory_mode === "embedding" || raw?.memory_mode === "history"
-          ? "embedding"
-          : raw?.oag_enabled === true
-            ? "oag"
-            : defaultDirectorConfig.memory_mode,
-    allow_scene_transition:
-      typeof raw?.allow_scene_transition === "boolean"
-        ? raw.allow_scene_transition
-        : defaultDirectorConfig.allow_scene_transition,
+      raw?.memory_mode === "history" || raw?.memory_mode === "embedding" || raw?.memory_mode === "oag"
+        ? raw.memory_mode
+        : raw?.oag_enabled === true
+          ? "oag"
+          : defaultDirectorConfig.memory_mode,
     allow_npc_spawn:
       typeof raw?.allow_npc_spawn === "boolean" ? raw.allow_npc_spawn : defaultDirectorConfig.allow_npc_spawn,
-    allow_player_character_switch:
-      typeof raw?.allow_player_character_switch === "boolean"
-        ? raw.allow_player_character_switch
-        : defaultDirectorConfig.allow_player_character_switch,
     director_interaction_kinds: normalizeInteractionKinds(raw?.director_interaction_kinds),
     history_dialogue_rounds:
       typeof raw?.history_dialogue_rounds === "number"
@@ -465,12 +506,6 @@ export function normalizeDirectorConfig(raw: Record<string, unknown> | undefined
       typeof raw?.character_memory_dialogue_window_rounds === "number"
         ? Math.max(0, Math.min(6, Math.round(raw.character_memory_dialogue_window_rounds)))
         : defaultDirectorConfig.character_memory_dialogue_window_rounds,
-    character_memory_retrieval_mode:
-      raw?.character_memory_retrieval_mode === "lexical_only" ||
-      raw?.character_memory_retrieval_mode === "semantic_only" ||
-      raw?.character_memory_retrieval_mode === "hybrid"
-        ? raw.character_memory_retrieval_mode
-        : defaultDirectorConfig.character_memory_retrieval_mode,
     character_memory_semantic_weight:
       typeof raw?.character_memory_semantic_weight === "number"
         ? Math.max(0, Math.min(1, Number(raw.character_memory_semantic_weight)))
@@ -528,42 +563,8 @@ export function normalizeDirectorConfig(raw: Record<string, unknown> | undefined
           };
         })
       : defaultDirectorConfig.return_processing_rules,
-    allowed_mcp_tool_ids: Array.isArray(raw?.allowed_mcp_tool_ids)
-      ? Array.from(new Set(raw.allowed_mcp_tool_ids.map((item) => String(item).trim()).filter(Boolean)))
-      : defaultDirectorConfig.allowed_mcp_tool_ids,
-    generation_params: normalizeGenerationParams(raw?.generation_params),
+    allowed_mcp_tool_ids: allowedMcpToolIds,
   };
-}
-
-/** 只收数字/字符串数组类型的参数项，其余（手写坏了的世界包）按「没配」处理。 */
-export function normalizeGenerationParams(raw: unknown): GenerationParams {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return {};
-  }
-  const row = raw as Record<string, unknown>;
-  const result: GenerationParams = {};
-  const numericKeys = [
-    "temperature",
-    "top_p",
-    "top_k",
-    "max_tokens",
-    "presence_penalty",
-    "frequency_penalty",
-    "seed",
-  ] as const;
-  for (const key of numericKeys) {
-    const value = row[key];
-    if (typeof value === "number" && Number.isFinite(value)) {
-      result[key] = value;
-    }
-  }
-  if (Array.isArray(row.stop)) {
-    const stop = row.stop.map((item) => String(item).trim()).filter(Boolean);
-    if (stop.length > 0) {
-      result.stop = stop;
-    }
-  }
-  return result;
 }
 
 export function normalizeTimeConfig(raw: Record<string, unknown> | undefined): TimeConfig {

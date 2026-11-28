@@ -24,7 +24,7 @@ pub struct SessionSnapshot {
     pub scene: SceneRuntime,
     pub assets: AssetSelection,
     pub state: SessionState,
-    /// 会话级生成参数（第 8 项三级覆盖的最后一层，优先级最高）。
+    /// 会话级生成参数（应用设置之上的本局覆盖，优先级最高）。
     /// 这是玩家偏好而非游戏状态：回滚/重新生成不还原它（见 rollback_session_to_turn）。
     #[serde(default)]
     pub generation_params: crate::models::generation_params::GenerationParams,

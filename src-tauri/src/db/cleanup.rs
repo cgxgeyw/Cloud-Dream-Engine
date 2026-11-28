@@ -15,6 +15,7 @@ use rusqlite::{params, Connection};
 /// 清理单个会话产生的全部关联数据(含会话行本身)。
 /// 删除顺序:先删子表(memories 触发 embeddings 级联),最后删 sessions / saves。
 pub fn purge_session_data(conn: &Connection, session_id: &str) -> Result<(), String> {
+    crate::services::oag::lifecycle::purge_session(conn, session_id)?;
     exec(
         conn,
         "DELETE FROM memory_relations WHERE session_id = ?1",
@@ -115,6 +116,7 @@ pub fn purge_session_data(conn: &Connection, session_id: &str) -> Result<(), Str
 
 /// 清理某角色在所有会话中残留的属性与记忆(角色行本身由调用方删除)。
 pub fn purge_character_data(conn: &Connection, character_id: &str) -> Result<(), String> {
+    crate::services::oag::lifecycle::purge_character(conn, character_id)?;
     // 角色级属性
     exec(
         conn,
@@ -163,6 +165,7 @@ pub fn purge_world_attributes(conn: &Connection, world_id: &str) -> Result<(), S
 
 /// 清空所有会话衍生数据(删除全部世界时使用)。保留 attribute_schemas、model_configs 等全局配置。
 pub fn purge_all_session_scoped_data(conn: &Connection) -> Result<(), String> {
+    crate::services::oag::lifecycle::purge_all(conn)?;
     for sql in [
         "DELETE FROM memory_relations",
         "DELETE FROM memory_entities",
@@ -226,6 +229,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
         crate::db::schema::create_tables(&conn).unwrap();
+        crate::db::oag_schema::create(&conn).unwrap();
         conn.execute(
             "INSERT INTO attribute_schemas (id, scope, key, label) VALUES ('cleanup-attr', 'character', 'value', 'Value')",
             [],
@@ -252,11 +256,21 @@ mod tests {
                 "INSERT INTO scoped_kv (owner_type, owner_id, namespace, key) VALUES ('character', ?1, 'state', 'value')",
                 params![format!("{session_id}:npc")],
             ).unwrap();
+            conn.execute(
+                "INSERT INTO oag_objects (id, world_id, session_id, object_type, canonical_key, name, name_normalized, created_turn, updated_turn)
+                 VALUES (?1, 'cleanup-world', ?2, 'person', 'person', 'Alice', 'alice', 1, 1)",
+                params![session_id, session_id],
+            ).unwrap();
         }
         let tx = conn.unchecked_transaction().unwrap();
         purge_session_data(&tx, "session_%").unwrap();
         tx.commit().unwrap();
-        for table in ["sessions", "memory_entities", "memory_relations"] {
+        for table in [
+            "sessions",
+            "memory_entities",
+            "memory_relations",
+            "oag_objects",
+        ] {
             let ids: Vec<String> = conn
                 .prepare(&format!("SELECT id FROM {table}"))
                 .unwrap()

@@ -50,6 +50,57 @@ impl<'a> WorldRecordRepository<'a> {
             .map_err(|error| error.to_string())
     }
 
+    pub fn upsert_with_id(
+        &self,
+        world_id: &str,
+        id: &str,
+        request: &WorldRecordWriteRequest,
+    ) -> Result<WorldRecord, String> {
+        let world_id = validate_world_id(world_id)?;
+        self.require_world(&world_id)?;
+        let id = validate_record_id(id)?;
+        let collection = validate_collection(&request.collection)?;
+        let data_json = validate_data(&request.data)?;
+        let owner: Option<(String, String)> = self
+            .conn
+            .query_row(
+                "SELECT world_id, collection FROM world_records WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?;
+        if owner
+            .as_ref()
+            .is_some_and(|(existing_world, existing_collection)| {
+                existing_world != &world_id || existing_collection != &collection
+            })
+        {
+            return Err("世界记录 ID 已属于其他世界或集合".to_string());
+        }
+        let usage = self.scope_usage(&world_id, &collection)?;
+        let existing_bytes = self
+            .get_with_size(&world_id, &collection, &id)?
+            .map(|(_, size)| size)
+            .unwrap_or(0);
+        validate_update_quota(&usage, existing_bytes, data_json.len() as i64)?;
+        self.conn
+            .execute(
+                "INSERT INTO world_records
+                 (id, world_id, collection, data_json, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4,
+                         strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                         strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                 ON CONFLICT(id) DO UPDATE SET
+                   data_json = excluded.data_json,
+                   updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+                params![id, world_id, collection, data_json],
+            )
+            .map_err(|error| error.to_string())?;
+        self.get(&world_id, &collection, &id)?
+            .ok_or_else(|| "世界记录写入后无法读取".to_string())
+    }
+
     pub fn create(
         &self,
         world_id: &str,

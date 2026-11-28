@@ -138,6 +138,9 @@ export type {
   WorldCreateRequest,
   WorldUpsertRequest,
   CharacterResponse,
+  OagCanonImportChange,
+  OagCanonImportChangeKind,
+  OagCanonImportPreview,
   CharacterCreateRequest,
   CharacterUpsertRequest,
   CharacterTemplateResponse,
@@ -195,6 +198,7 @@ export type {
   WorldUiCompileResult,
   WorldUiCompatibilityReport,
   WorldUiDocumentValidationResult,
+  WorldPackageInspectionResult,
   WorldRecord,
   WorldRecordWriteRequest,
   KnowledgeBase,
@@ -743,6 +747,18 @@ export async function fetchSessionDebug(sessionId: string) {
   return isTauri ? (await getTauri()).fetchSessionDebug(sessionId) : (await getHttp()).fetchSessionDebug(sessionId);
 }
 
+export async function queryOagDebug(
+  sessionId: string,
+  actor: import("./types").OagActor,
+  request: import("./types").OagQueryRequest,
+  asOfTurn?: number,
+  maxNodes = 200,
+) {
+  return isTauri
+    ? (await getTauri()).queryOagDebug(sessionId, actor, request, asOfTurn, maxNodes)
+    : (await getHttp()).queryOagDebug(sessionId, actor, request, asOfTurn, maxNodes);
+}
+
 export async function fetchSessionRuntimeAttributes(sessionId: string) {
   return isTauri
     ? (await getTauri()).fetchSessionRuntimeAttributes(sessionId)
@@ -798,9 +814,9 @@ export async function onKnowledgeRebuildProgress(callback: (snapshot: import('./
   return () => {};
 }
 export async function fetchKnowledgeDocuments(id: string) { return (await getTauri()).fetchKnowledgeDocuments(id); }
-export async function addKnowledgeDocument(id: string, file: File) { return (await getTauri()).addKnowledgeDocument(id, file); }
+export async function addKnowledgeDocument(id: string, file: File, audience: import('./types').KnowledgeDocumentAudience = 'public', audienceCharacterId?: string | null) { return (await getTauri()).addKnowledgeDocument(id, file, audience, audienceCharacterId); }
 export async function deleteKnowledgeDocument(id: string) { return (await getTauri()).deleteKnowledgeDocument(id); }
-export async function updateKnowledgeDocument(id: string, title: string, content: string) { return (await getTauri()).updateKnowledgeDocument(id, title, content); }
+export async function updateKnowledgeDocument(id: string, title: string, content: string, audience?: import('./types').KnowledgeDocumentAudience, audienceCharacterId?: string | null) { return (await getTauri()).updateKnowledgeDocument(id, title, content, audience, audienceCharacterId); }
 export async function listWorldKnowledgeCandidates(worldId?: string | null) { return (await getTauri()).listWorldKnowledgeCandidates(worldId); }
 export async function listWorldKnowledgeScope(worldId: string) { return (await getTauri()).listWorldKnowledgeScope(worldId); }
 export async function fetchStickerPacks() { return (await getTauri()).fetchStickerPacks(); }

@@ -143,7 +143,6 @@ pub struct CharacterRecallPlan {
     limit: i32,
     candidates: Vec<MemoryEntry>,
     lexical_scores: HashMap<String, f64>,
-    retrieval_mode: String,
     semantic_weight: f64,
     model: Option<ModelConfig>,
     model_key: String,
@@ -165,7 +164,6 @@ impl CharacterRecallPlan {
             limit: 1,
             candidates: Vec::new(),
             lexical_scores: HashMap::new(),
-            retrieval_mode: "hybrid".to_string(),
             semantic_weight: 0.65,
             model: None,
             model_key: String::new(),
@@ -400,25 +398,17 @@ impl MemoryService {
             })
             .collect::<HashMap<_, _>>();
 
-        let retrieval_mode = strategy
-            .retrieval_mode
-            .clone()
-            .unwrap_or_else(|| resolve_character_memory_retrieval_mode(world));
         let semantic_weight = resolve_character_memory_semantic_weight(world);
         let mut plan = CharacterRecallPlan {
             limit,
             candidates,
             lexical_scores,
-            retrieval_mode: retrieval_mode.clone(),
             semantic_weight,
             effective_layers,
             archive_quota: if strategy.importance_bias { 3 } else { 2 },
             ..CharacterRecallPlan::empty()
         };
 
-        if retrieval_mode == "lexical_only" {
-            return Ok(plan);
-        }
         let Some(model) = self.resolve_embedding_model(conn).ok().flatten() else {
             return Ok(plan);
         };
@@ -535,7 +525,6 @@ impl MemoryService {
             plan.candidates,
             &plan.lexical_scores,
             &semantic_scores,
-            &plan.retrieval_mode,
             plan.semantic_weight,
             &plan.effective_layers,
             plan.archive_quota,
@@ -554,7 +543,7 @@ impl MemoryService {
         messages: &[ChatMessage],
         visible_characters: &[String],
     ) -> Vec<MemoryEntry> {
-        let participant_names = {
+        let fallback_participant_names = {
             let mut names = visible_characters.to_vec();
             if !names.contains(&player_character_name.to_string()) {
                 names.push(player_character_name.to_string());
@@ -568,93 +557,97 @@ impl MemoryService {
                     }
                 }
             }
-            names
+            unique_message_names(names)
         };
-
-        let participant_ids = participant_names
-            .iter()
-            .filter_map(|name| {
-                if name == player_character_name {
-                    Some(player_character_id.to_string())
-                } else {
-                    characters
-                        .iter()
-                        .find(|character| character.name == *name)
-                        .map(|character| character.id.clone())
-                }
-            })
-            .collect::<Vec<_>>();
 
         let mut memories = Vec::new();
         let current_turn_messages = messages
             .iter()
             .filter(|message| extract_turn_index(message) == Some(turn_index))
             .collect::<Vec<_>>();
-        let player_message = current_turn_messages
-            .iter()
-            .find(|message| message.role == "player")
-            .map(|message| message.content.clone())
-            .unwrap_or_default();
-        let assistant_messages = current_turn_messages
-            .iter()
-            .filter(|message| message.role == "agent")
-            .collect::<Vec<_>>();
 
-        if !player_message.as_str().trim().is_empty() {
-            for character_id in &participant_ids {
-                // 单层写入:对话记忆只存 working 一份,"有效层"在召回时按回合年龄推算
-                // (derive_effective_layer),避免同一段内容以多个 layer 副本重复入库/重复进提示词。
-                memories.push(build_memory_entry(
-                    world,
-                    session,
-                    turn_index,
-                    character_id,
-                    "working",
-                    player_message.as_str(),
-                    "player_action",
-                    0.65,
-                    "dialogue",
-                    Some(player_character_name),
-                    Some("player"),
-                    Some(session.location.as_str()),
-                    Some(session.scene.scene_id.as_str()),
-                    participant_names.clone(),
-                ));
-            }
-        }
+        for message in current_turn_messages {
+            let participant_names = message_participant_names(
+                message,
+                player_character_name,
+                &fallback_participant_names,
+            );
+            let participant_ids = participant_names
+                .iter()
+                .filter_map(|name| {
+                    if name == player_character_name {
+                        Some(player_character_id.to_string())
+                    } else {
+                        characters
+                            .iter()
+                            .find(|character| character.name == *name)
+                            .map(|character| character.id.clone())
+                    }
+                })
+                .collect::<Vec<_>>();
+            let scene_id = message_metadata_text(message, "scene_id")
+                .unwrap_or_else(|| session.scene.scene_id.clone());
+            let location = message_metadata_text(message, "scene_name")
+                .unwrap_or_else(|| session.location.clone());
 
-        for assistant_message in assistant_messages {
-            let content = assistant_message.content.trim().to_string();
-            if content.is_empty() {
-                continue;
-            }
-            let speaker_name = assistant_message
-                .speaker
-                .as_ref()
-                .map(|value| value.as_str())
-                .unwrap_or(player_character_name);
-            for character_id in &participant_ids {
-                let importance = if speaker_name == player_character_name {
-                    0.75
-                } else {
-                    0.68
-                };
-                memories.push(build_memory_entry(
-                    world,
-                    session,
-                    turn_index,
-                    character_id,
-                    "working",
-                    &content,
-                    "speaker_response",
-                    importance,
-                    "dialogue",
-                    Some(speaker_name),
-                    Some("agent"),
-                    Some(session.location.as_str()),
-                    Some(session.scene.scene_id.as_str()),
-                    participant_names.clone(),
-                ));
+            match message.role.as_str() {
+                "player" => {
+                    let content = message.content.as_str();
+                    if content.trim().is_empty() {
+                        continue;
+                    }
+                    for character_id in &participant_ids {
+                        // 单层写入:对话记忆只存 working 一份,"有效层"在召回时按回合年龄推算
+                        // (derive_effective_layer),避免同一段内容以多个 layer 副本重复入库/重复进提示词。
+                        memories.push(build_memory_entry(
+                            world,
+                            session,
+                            turn_index,
+                            character_id,
+                            "working",
+                            content,
+                            "player_action",
+                            0.65,
+                            "dialogue",
+                            Some(player_character_name),
+                            Some("player"),
+                            Some(location.as_str()),
+                            Some(scene_id.as_str()),
+                            participant_names.clone(),
+                        ));
+                    }
+                }
+                "agent" => {
+                    let content = message.content.as_str().trim();
+                    if content.is_empty() {
+                        continue;
+                    }
+                    let speaker_name = message.speaker.as_deref().unwrap_or(player_character_name);
+                    for character_id in &participant_ids {
+                        let importance = if speaker_name == player_character_name {
+                            0.75
+                        } else {
+                            0.68
+                        };
+                        memories.push(build_memory_entry(
+                            world,
+                            session,
+                            turn_index,
+                            character_id,
+                            "working",
+                            content,
+                            "speaker_response",
+                            importance,
+                            "dialogue",
+                            Some(speaker_name),
+                            Some("agent"),
+                            Some(location.as_str()),
+                            Some(scene_id.as_str()),
+                            participant_names.clone(),
+                        ));
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -739,8 +732,13 @@ impl MemoryService {
                 )?)
             };
 
-            let active_relations =
-                relation_repo.find_active(session_id, &subject.id, update.predicate.trim())?;
+            let active_relations = relation_repo.find_active_for_actor(
+                session_id,
+                &subject.id,
+                update.predicate.trim(),
+                update.asserted_by_id.as_deref(),
+                Some(&update.asserted_by),
+            )?;
             if update.action == "invalidate" {
                 for relation in &active_relations {
                     let object_matches = match &object_entity {
@@ -787,6 +785,11 @@ impl MemoryService {
                 source: "llm_extraction".to_string(),
                 confidence: update.confidence,
                 created_at: Utc::now().to_rfc3339(),
+                asserted_by: update.asserted_by.clone(),
+                asserted_by_id: update.asserted_by_id.clone(),
+                visibility: update.visibility.clone(),
+                truth_status: update.truth_status.clone(),
+                witnesses: update.witnesses.clone(),
             })?;
             added += 1;
         }
@@ -1298,7 +1301,6 @@ fn rank_memories_by_scores(
     mut memories: Vec<MemoryEntry>,
     lexical_scores: &HashMap<String, f64>,
     semantic_scores: &HashMap<String, f64>,
-    retrieval_mode: &str,
     semantic_weight: f64,
     effective_layers: &HashMap<String, String>,
     archive_quota: usize,
@@ -1313,15 +1315,11 @@ fn rank_memories_by_scores(
         let right_lexical = lexical_normalized.get(&right.id).copied().unwrap_or(0.0);
         let left_final = if semantic_scores.is_empty() {
             left_lexical
-        } else if retrieval_mode == "semantic_only" {
-            left_semantic
         } else {
             left_lexical * lexical_weight + left_semantic * semantic_weight
         };
         let right_final = if semantic_scores.is_empty() {
             right_lexical
-        } else if retrieval_mode == "semantic_only" {
-            right_semantic
         } else {
             right_lexical * lexical_weight + right_semantic * semantic_weight
         };
@@ -1395,16 +1393,6 @@ fn normalize_embedding_provider(provider: &str) -> String {
         other => other.to_string(),
     }
 }
-fn resolve_character_memory_retrieval_mode(world: &WorldDefinition) -> String {
-    world
-        .director_config
-        .get("character_memory_retrieval_mode")
-        .and_then(|value| value.as_str())
-        .map(|value| value.trim().to_string())
-        .filter(|value| matches!(value.as_str(), "lexical_only" | "hybrid" | "semantic_only"))
-        .unwrap_or_else(|| "hybrid".to_string())
-}
-
 fn resolve_character_memory_semantic_weight(world: &WorldDefinition) -> f64 {
     world
         .director_config
@@ -1414,18 +1402,17 @@ fn resolve_character_memory_semantic_weight(world: &WorldDefinition) -> f64 {
         .unwrap_or(0.65)
 }
 
-/// 记忆模式：历史 + Embedding 召回 / 历史 + OAG。
-/// 对话历史是两种模式共同的底座，始终发送；切换只决定额外注入哪一层：
-/// Embedding 加语义/词法记忆召回，OAG 再加结构化事实/关系。
+/// 自动注入层级：仅历史 / 历史 + 语义召回 / 语义召回 + OAG 投影。
+/// 对话历史始终发送；OAG 与语义召回互补，不是互相替代。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MemoryMode {
+    History,
     Embedding,
     Oag,
 }
 
 /// 读取世界级记忆模式（director_config.memory_mode）。
-/// 缺省 embedding；旧值 history 也迁移为 embedding，因为对话历史现在始终发送，
-/// 不再存在“只发历史、不注入”的模式。旧字段 oag_enabled=true 迁移为 oag。
+/// 缺省 embedding；旧字段 oag_enabled=true 迁移为 oag。
 pub(crate) fn resolve_memory_mode(world: &WorldDefinition) -> MemoryMode {
     match world
         .director_config
@@ -1434,8 +1421,9 @@ pub(crate) fn resolve_memory_mode(world: &WorldDefinition) -> MemoryMode {
         .map(str::trim)
         .unwrap_or_default()
     {
+        "history" => MemoryMode::History,
+        "embedding" => MemoryMode::Embedding,
         "oag" => MemoryMode::Oag,
-        "embedding" | "history" => MemoryMode::Embedding,
         _ => {
             if world
                 .director_config
@@ -1528,8 +1516,6 @@ fn derive_effective_layer<'a>(
 pub(crate) struct MemoryStrategyOverrides {
     /// off/none/不记/无记忆:跳过召回。
     pub disabled: bool,
-    /// semantic/语义 → semantic_only;lexical/词法 → lexical_only。
-    pub retrieval_mode: Option<String>,
     /// recent/近期/最近:时效分加权。
     pub recency_bias: bool,
     /// important/archive/重要:重要度加权 + archive 配额提升。
@@ -1551,11 +1537,6 @@ pub(crate) fn parse_memory_strategy(strategy: &str) -> MemoryStrategyOverrides {
     if has_word("off") || has_word("none") || contains_any(&["不记", "无记忆", "不用记"]) {
         overrides.disabled = true;
         return overrides;
-    }
-    if has_word("semantic") || text.contains("语义") {
-        overrides.retrieval_mode = Some("semantic_only".to_string());
-    } else if has_word("lexical") || text.contains("词法") {
-        overrides.retrieval_mode = Some("lexical_only".to_string());
     }
     if has_word("recent") || contains_any(&["近期", "最近"]) {
         overrides.recency_bias = true;
@@ -1977,6 +1958,88 @@ fn extract_turn_index(message: &ChatMessage) -> Option<i32> {
         .and_then(|meta| meta.get("turn_index"))
         .and_then(|value| value.as_i64())
         .map(|value| value as i32)
+}
+
+fn message_metadata_text(message: &ChatMessage, key: &str) -> Option<String> {
+    message
+        .metadata
+        .as_ref()
+        .and_then(|meta| meta.get(key))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn message_participant_names(
+    message: &ChatMessage,
+    player_character_name: &str,
+    fallback: &[String],
+) -> Vec<String> {
+    let metadata = message.metadata.as_ref();
+    let witnesses = metadata
+        .and_then(|meta| meta.get("witnesses"))
+        .and_then(|value| value.as_array())
+        .map(|items| metadata_name_list(items));
+    let recipients = metadata
+        .and_then(|meta| meta.get("recipients"))
+        .and_then(|value| value.as_array())
+        .map(|items| metadata_name_list(items))
+        .filter(|items| !items.is_empty());
+    let mut names = match recipients {
+        Some(mut recipients) => {
+            if let Some(speaker) = message.speaker.as_deref().map(str::trim) {
+                if !speaker.is_empty() {
+                    recipients.push(speaker.to_string());
+                }
+            }
+            recipients
+        }
+        None => witnesses.unwrap_or_else(|| fallback.to_vec()),
+    };
+    if let Some(speaker) = message.speaker.as_deref().map(str::trim) {
+        if !speaker.is_empty() && !names.iter().any(|name| name == speaker) {
+            names.push(speaker.to_string());
+        }
+    }
+    if !names.iter().any(|name| name == player_character_name)
+        && (message.role == "player" || witnesses_include_player(metadata, player_character_name))
+    {
+        names.push(player_character_name.to_string());
+    }
+    unique_message_names(names)
+}
+
+fn metadata_name_list(items: &[serde_json::Value]) -> Vec<String> {
+    items
+        .iter()
+        .filter_map(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn witnesses_include_player(metadata: Option<&serde_json::Value>, player_name: &str) -> bool {
+    metadata
+        .and_then(|meta| meta.get("witnesses"))
+        .and_then(|value| value.as_array())
+        .is_some_and(|items| {
+            metadata_name_list(items)
+                .iter()
+                .any(|name| name == player_name)
+        })
+}
+
+fn unique_message_names(names: Vec<String>) -> Vec<String> {
+    let mut result = Vec::new();
+    for name in names {
+        let name = name.trim().to_string();
+        if !name.is_empty() && !result.contains(&name) {
+            result.push(name);
+        }
+    }
+    result
 }
 
 fn build_memory_entry(

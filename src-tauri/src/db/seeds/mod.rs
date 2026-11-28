@@ -3,7 +3,11 @@ pub mod schedule_assistant_world;
 
 use rusqlite::{params, Connection};
 
-use crate::models::mcp_tool::MCP_TOOL_SCHEDULE_NOTIFICATION_ID;
+use crate::models::mcp_tool::{
+    MCP_TOOL_BACKGROUND_GENERATION_ID, MCP_TOOL_CHANGE_SCENE_ID, MCP_TOOL_LIST_CHARACTERS_ID,
+    MCP_TOOL_LIST_SCENES_ID, MCP_TOOL_PORTRAIT_GENERATION_ID, MCP_TOOL_SCHEDULE_NOTIFICATION_ID,
+    MCP_TOOL_SEARCH_KNOWLEDGE_ID, MCP_TOOL_SWITCH_PLAYER_CHARACTER_ID,
+};
 
 use schedule_assistant_world::*;
 
@@ -258,20 +262,32 @@ fn ensure_default_plugins(conn: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 fn ensure_builtin_mcp_tools(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute("DELETE FROM mcp_tools WHERE id = 'mcp-tool-image-generation'", [])?;
     let builtin_tools = [
         (
-            "mcp-tool-image-generation",
-            "图像生成",
-            "根据当前世界上下文生成场景图、角色肖像或其他视觉素材。",
-            "builtin-image-generation",
-            "generate_image",
+            MCP_TOOL_BACKGROUND_GENERATION_ID,
+            "生成场景背景",
+            "仅供世界主控按当前剧情与场景生成或更新背景图，不是通用生图工具。",
+            "builtin-world-director",
+            "generate_background",
             1,
             r#""on-demand""#,
             "medium",
-            r#"["background","portrait","generate image","scene image"]"#,
+            r#"["background","scene image","场景背景","背景图"]"#,
         ),
         (
-            "mcp-tool-list-scenes",
+            MCP_TOOL_PORTRAIT_GENERATION_ID,
+            "生成角色立绘",
+            "仅供世界主控为指定角色生成或更新立绘，不是通用生图工具。",
+            "builtin-world-director",
+            "generate_portrait",
+            1,
+            r#""on-demand""#,
+            "medium",
+            r#"["portrait","character image","角色立绘","立绘"]"#,
+        ),
+        (
+            MCP_TOOL_LIST_SCENES_ID,
             "列出场景",
             "读取当前世界地图与场景节点，列出可用场景及其基础信息。",
             "builtin-world-director",
@@ -282,7 +298,7 @@ fn ensure_builtin_mcp_tools(conn: &Connection) -> Result<(), rusqlite::Error> {
             r#"["scene","map","location","list scenes"]"#,
         ),
         (
-            "mcp-tool-list-characters",
+            MCP_TOOL_LIST_CHARACTERS_ID,
             "列出角色",
             "读取当前世界中的角色列表，返回可参与互动的角色信息。",
             "builtin-world-director",
@@ -293,7 +309,7 @@ fn ensure_builtin_mcp_tools(conn: &Connection) -> Result<(), rusqlite::Error> {
             r#"["character","npc","list characters"]"#,
         ),
         (
-            "mcp-tool-change-scene",
+            MCP_TOOL_CHANGE_SCENE_ID,
             "切换场景",
             "根据当前世界状态切换到目标场景，并同步场景描述与上下文。",
             "builtin-world-director",
@@ -304,7 +320,7 @@ fn ensure_builtin_mcp_tools(conn: &Connection) -> Result<(), rusqlite::Error> {
             r#"["change scene","scene transition","enter scene"]"#,
         ),
         (
-            "mcp-tool-switch-player-character",
+            MCP_TOOL_SWITCH_PLAYER_CHARACTER_ID,
             "切换玩家角色",
             "将当前玩家控制权切换到指定角色，并更新玩家角色上下文。",
             "builtin-world-director",
@@ -313,6 +329,17 @@ fn ensure_builtin_mcp_tools(conn: &Connection) -> Result<(), rusqlite::Error> {
             r#""on-demand""#,
             "medium",
             r#"["switch player","switch character","possession","control character"]"#,
+        ),
+        (
+            MCP_TOOL_SEARCH_KNOWLEDGE_ID,
+            "知识库检索",
+            "按需检索本世界已授权的知识库，返回来源标题与正文片段。",
+            "builtin-knowledge",
+            "search_knowledge",
+            1,
+            r#""on-demand""#,
+            "low",
+            r#"["knowledge","知识库","search","检索","资料"]"#,
         ),
         (
             MCP_TOOL_SCHEDULE_NOTIFICATION_ID,
@@ -541,6 +568,43 @@ mod tests {
     use super::schedule_assistant_world;
     use crate::models::mcp_tool::MCP_TOOL_SCHEDULE_NOTIFICATION_ID;
     use serde_json::Value;
+
+    #[test]
+    fn builtin_image_tools_replace_the_retired_combined_tool() {
+        use crate::db::schema;
+        use crate::models::mcp_tool::{
+            MCP_TOOL_BACKGROUND_GENERATION_ID, MCP_TOOL_PORTRAIT_GENERATION_ID,
+        };
+
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        schema::create_tables(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO mcp_tools (id, name, tool_name) VALUES ('mcp-tool-image-generation', '旧生图', 'generate_image')",
+            [],
+        )
+        .unwrap();
+        super::ensure_builtin_mcp_tools(&conn).unwrap();
+
+        let retired: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM mcp_tools WHERE id = 'mcp-tool-image-generation'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(retired, 0);
+        for (id, tool_name) in [
+            (MCP_TOOL_BACKGROUND_GENERATION_ID, "generate_background"),
+            (MCP_TOOL_PORTRAIT_GENERATION_ID, "generate_portrait"),
+        ] {
+            let seeded: String = conn
+                .query_row("SELECT tool_name FROM mcp_tools WHERE id = ?1", [id], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(seeded, tool_name);
+        }
+    }
 
     #[test]
     fn schedule_assistant_seed_uses_agent_chat_notification_tool() {

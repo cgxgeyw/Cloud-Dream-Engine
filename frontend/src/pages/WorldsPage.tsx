@@ -15,6 +15,9 @@ import {
   isTauriEnvironment,
   type CharacterResponse,
   type AiWorldCreateMode,
+  type OagCanonImportChange,
+  type OagCanonImportPreview,
+  type WorldPackageInspectionResult,
   type WorldResponse,
 } from "../data/apiAdapter";
 import { ConfirmDialog, ModalDialog } from "../components/ModalDialog";
@@ -96,6 +99,10 @@ export function WorldsPage() {
   const [duplicating, setDuplicating] = useState<string | null>(null);
   const [exporting, setExporting] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  const [pendingImport, setPendingImport] = useState<{
+    file: File;
+    inspection: WorldPackageInspectionResult;
+  } | null>(null);
   const [showAiCreateDialog, setShowAiCreateDialog] = useState(false);
   const [aiCreateMode, setAiCreateMode] = useState<AiWorldCreateMode>("single_agent");
   const [aiConcept, setAiConcept] = useState("");
@@ -229,6 +236,23 @@ export function WorldsPage() {
     }
   }
 
+  async function performImport(file: File) {
+    const importedWorld = await importWorldPackage(file);
+    const isUpgrade = worldsRef.current.some((world) => world.id === importedWorld.id);
+    const importedCharacters = await fetchWorldCharacters(importedWorld.id);
+    // 同名世界包导入后端会复用原世界的 id，这里也要按 id 替换而不是往后加，
+    // 否则列表里出现两行同名世界，玩家分不清自己进的是哪一个。
+    setWorlds((prev) => [
+      importedWorld,
+      ...prev.filter((world) => world.id !== importedWorld.id),
+    ]);
+    setWorldCharacters((prev) => ({
+      ...prev,
+      [importedWorld.id]: importedCharacters,
+    }));
+    showToast(t(isUpgrade ? "worlds.updated" : "worlds.imported"));
+  }
+
   async function handleImport(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) {
@@ -246,27 +270,81 @@ export function WorldsPage() {
             .join("\n");
           throw new Error(details || "世界包导入前检查失败。");
         }
+        if (inspection.oag_preview) {
+          setPendingImport({ file, inspection });
+          return;
+        }
       }
-      const importedWorld = await importWorldPackage(file);
-      const isUpgrade = worldsRef.current.some((world) => world.id === importedWorld.id);
-      const importedCharacters = await fetchWorldCharacters(importedWorld.id);
-      // 同名世界包导入后端会复用原世界的 id，这里也要按 id 替换而不是往后加，
-      // 否则列表里出现两行同名世界，玩家分不清自己进的是哪一个。
-      setWorlds((prev) => [
-        importedWorld,
-        ...prev.filter((world) => world.id !== importedWorld.id),
-      ]);
-      setWorldCharacters((prev) => ({
-        ...prev,
-        [importedWorld.id]: importedCharacters,
-      }));
-      showToast(t(isUpgrade ? "worlds.updated" : "worlds.imported"));
+      await performImport(file);
     } catch (importError) {
       setError(importError instanceof Error ? importError.message : t("worlds.importFailed"));
     } finally {
       setImporting(false);
       event.target.value = "";
     }
+  }
+
+  async function confirmImport() {
+    const pending = pendingImport;
+    if (!pending) {
+      return;
+    }
+    setPendingImport(null);
+    try {
+      setImporting(true);
+      setError(null);
+      await performImport(pending.file);
+    } catch (importError) {
+      setError(importError instanceof Error ? importError.message : t("worlds.importFailed"));
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  function renderCanonChanges(title: string, changes: OagCanonImportChange[]) {
+    if (changes.length === 0) {
+      return null;
+    }
+    const kindLabels = {
+      added: t("worlds.importPreviewAdded"),
+      modified: t("worlds.importPreviewModified"),
+      retired: t("worlds.importPreviewRetired"),
+    };
+    return (
+      <section className="world-import-preview-section">
+        <h3>{title}</h3>
+        <ul className="world-import-preview-list">
+          {changes.map((change) => (
+            <li key={`${change.kind}:${change.key}`} className={`world-import-preview-change is-${change.kind}`}>
+              <div className="world-import-preview-change-heading">
+                <span className="world-import-preview-kind">{kindLabels[change.kind]}</span>
+                <span className="world-import-preview-name">
+                  {change.key === "ontology" ? title : change.label || change.key}
+                </span>
+              </div>
+              <code className="world-import-preview-key">{change.key}</code>
+              <details>
+                <summary>{t("worlds.importPreviewDetails")}</summary>
+                <div className="world-import-preview-json">
+                  {change.before != null ? (
+                    <div>
+                      <span>{t("worlds.importPreviewBefore")}</span>
+                      <pre>{JSON.stringify(change.before, null, 2)}</pre>
+                    </div>
+                  ) : null}
+                  {change.after != null ? (
+                    <div>
+                      <span>{t("worlds.importPreviewAfter")}</span>
+                      <pre>{JSON.stringify(change.after, null, 2)}</pre>
+                    </div>
+                  ) : null}
+                </div>
+              </details>
+            </li>
+          ))}
+        </ul>
+      </section>
+    );
   }
 
   async function handleAiCreate() {
@@ -309,6 +387,9 @@ export function WorldsPage() {
       setAiCreating(false);
     }
   }
+
+  const importPreview: OagCanonImportPreview | null =
+    pendingImport?.inspection.oag_preview ?? null;
 
   return (
     <ScreenLayout
@@ -511,6 +592,68 @@ export function WorldsPage() {
           })}
         </div>
       ) : null}
+
+      <ModalDialog
+        open={Boolean(pendingImport && importPreview)}
+        title={t("worlds.importPreviewTitle")}
+        maxWidth={720}
+        onClose={() => {
+          if (!importing) {
+            setPendingImport(null);
+          }
+        }}
+        footer={
+          <>
+            <button
+              type="button"
+              className="action-btn"
+              disabled={importing}
+              onClick={() => setPendingImport(null)}
+            >
+              {t("common.cancel")}
+            </button>
+            <button
+              type="button"
+              className="action-btn action-btn--accent"
+              disabled={importing}
+              onClick={() => void confirmImport()}
+            >
+              {importing ? t("worlds.importing") : t("worlds.importPreviewConfirm")}
+            </button>
+          </>
+        }
+      >
+        {pendingImport && importPreview ? (
+          <div className="world-import-preview">
+            <p className="modal-description">
+              {t("worlds.importPreviewFile").replace("{name}", pendingImport.file.name)}
+            </p>
+            <p className="world-import-preview-mode">
+              {t(importPreview.is_upgrade ? "worlds.importPreviewUpgrade" : "worlds.importPreviewNew")}
+            </p>
+            {importPreview.compatibility ? (
+              <p className="world-import-preview-warning">{t("worlds.importPreviewCompatibility")}</p>
+            ) : null}
+            <p className="world-import-preview-summary">
+              {t("worlds.importPreviewSummary")
+                .replace("{added}", String(importPreview.added_count))
+                .replace("{modified}", String(importPreview.modified_count))
+                .replace("{retired}", String(importPreview.retired_count))
+                .replace("{unchanged}", String(importPreview.unchanged_count))}
+            </p>
+            {importPreview.ontology_change ? (
+              renderCanonChanges(t("worlds.importPreviewOntology"), [importPreview.ontology_change])
+            ) : null}
+            {renderCanonChanges(t("worlds.importPreviewObjectTypes"), importPreview.object_type_changes)}
+            {renderCanonChanges(t("worlds.importPreviewLinkTypes"), importPreview.link_type_changes)}
+            {renderCanonChanges(t("worlds.importPreviewObjects"), importPreview.object_changes)}
+            {renderCanonChanges(t("worlds.importPreviewLinks"), importPreview.link_changes)}
+            {importPreview.added_count + importPreview.modified_count + importPreview.retired_count === 0 ? (
+              <p className="modal-description">{t("worlds.importPreviewNoChanges")}</p>
+            ) : null}
+          </div>
+        ) : null}
+      </ModalDialog>
 
       <ModalDialog
         open={showAiCreateDialog}

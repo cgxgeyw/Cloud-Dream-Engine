@@ -48,7 +48,7 @@ fn spec(
 // 导演（世界主控）返回格式
 // ---------------------------------------------------------------------------
 
-/// 导演返回的活动字段表：场景/名册/新角色/换角/背景图/交互已迁往工具调用，
+/// 导演返回的活动字段表：场景/名册/新角色/换角/背景图/立绘/交互已迁往工具调用，
 /// 不再作为 JSON 字段宣传（见 project.md「导演输出契约」）。
 pub fn director_return_fields() -> Vec<ReturnFieldSpec> {
     vec![
@@ -78,12 +78,6 @@ pub fn director_return_fields() -> Vec<ReturnFieldSpec> {
             Some("一条非对话的旁白或舞台提示，仅在确实需要更新场景时返回；角色对白由角色模型单独生成。"),
             false,
             Some(json!({ "type": "string" })),
-        ),
-        spec(
-            "character_visual_directives",
-            Some("角色的视觉或立绘状态指令，仅在状态变化时返回。"),
-            false,
-            Some(json!({ "type": "array" })),
         ),
         spec(
             "session_attribute_updates",
@@ -145,10 +139,17 @@ pub const DIRECTOR_LEGACY_RETURN_FIELD_IDS: &[&str] = &[
     "background_asset_name",
     "background_asset_path",
     "background_generation_prompt",
+    "background_generation_name",
+    "character_visual_directives",
 ];
 
 /// 契约明令禁止的返回字段。
-pub const DIRECTOR_FORBIDDEN_FIELDS: &[&str] = &["state_tags", "system_messages", "system_log"];
+pub const DIRECTOR_FORBIDDEN_FIELDS: &[&str] = &[
+    "state_tags",
+    "system_messages",
+    "system_log",
+    "character_visual_directives",
+];
 
 /// 每回合必填的核心字段（core_fields / schema.required）。
 pub fn director_core_field_ids() -> Vec<&'static str> {

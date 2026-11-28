@@ -77,6 +77,18 @@ async fn custom_tool_executor_skips_notification_calls() {
     assert!(results.is_empty());
 }
 
+#[tokio::test]
+async fn custom_tool_executor_skips_oag_query_calls() {
+    let world = test_world();
+    let call = ChatToolCall {
+        id: "call-oag".to_string(),
+        tool_name: "oag_query".to_string(),
+        arguments: serde_json::json!({ "op": "find", "object_type": "person" }),
+    };
+    let results = execute_speaker_custom_tool_calls(&world, &[], &[], Some(&[call])).await;
+    assert!(results.is_empty());
+}
+
 fn valid_pending_notification_json(tool_call_id: &str) -> serde_json::Value {
     serde_json::json!({
         "tool_call_id": tool_call_id,
@@ -548,6 +560,17 @@ fn tool_activity_falls_back_to_call_name_when_definition_missing() {
         tools[0].get("name").and_then(|v| v.as_str()),
         Some("stock_quote")
     );
+}
+
+#[test]
+fn tool_activity_uses_chinese_name_for_oag_query() {
+    let call = ChatToolCall {
+        id: "call-oag".to_string(),
+        tool_name: "oag_query".to_string(),
+        arguments: serde_json::json!({ "op": "find", "object_type": "person" }),
+    };
+    let value = build_tool_activity_value(&[call], &[], "calling");
+    assert_eq!(value["tools"][0]["name"].as_str(), Some("查询世界关系"));
 }
 
 #[test]

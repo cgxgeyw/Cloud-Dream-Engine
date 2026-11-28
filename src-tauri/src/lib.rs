@@ -158,6 +158,7 @@ pub fn run() {
             commands::debug::get_debug_prompts,
             commands::debug::get_debug_memories,
             commands::debug::get_debug_errors,
+            commands::oag::debug_oag_query,
             // 插件
             commands::plugins::list_plugins,
             // MCP 工具

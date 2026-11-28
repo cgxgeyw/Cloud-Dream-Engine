@@ -40,6 +40,7 @@ pub async fn get_session(
         .await;
     {
         let db = state.db.lock().await;
+        crate::services::assets::resolver::register_generated_session_assets(db.conn(), &updated)?;
         let merged = state
             .services
             .runtime
@@ -89,6 +90,7 @@ pub async fn create_session(
         .await;
     {
         let db = state.db.lock().await;
+        crate::services::assets::resolver::register_generated_session_assets(db.conn(), &updated)?;
         state
             .services
             .runtime
@@ -214,10 +216,28 @@ pub(crate) async fn submit_player_action_inner(
 
     let director_service = &state.services.runtime.world_director;
     // 会话级 variables KV（第 6 项 {{var:key}} 占位符的数据源）
-    // 与导演的生成参数（第 8 项：应用→世界→会话三级覆盖）一起在同一次加锁内读出。
-    let (kv_vars, runtime_attributes, director_generation) = {
+    // 与导演的生成参数（内置默认 → 应用设置 → 会话）一起在同一次加锁内读出。
+    let (kv_vars, runtime_attributes, director_generation, director_oag_context) = {
         let db = state.db.lock().await;
         let settings = crate::commands::settings::load_app_settings(db.conn())?;
+        let director_oag_context = if matches!(
+            crate::services::game_engine::memory::resolve_memory_mode(&world),
+            crate::services::game_engine::memory::MemoryMode::Oag
+        ) {
+            crate::services::oag::projection::load_prompt_projection(
+                db.conn(),
+                &world,
+                &session_id,
+                turn_index,
+                crate::services::oag::projection::ProjectionInput {
+                    actor: crate::models::oag::OagActor::Director,
+                    scene_id: &session.scene.scene_id,
+                    summary: &session.state.director_summary,
+                },
+            )?
+        } else {
+            None
+        };
         (
             crate::services::game_engine::prompting::load_prompt_kv_vars(db.conn(), &session_id)?,
             state
@@ -228,10 +248,10 @@ pub(crate) async fn submit_player_action_inner(
             crate::services::game_engine::orchestrator::resolve_generation_params_with_model(
                 crate::models::generation_params::GENERATION_ROLE_DIRECTOR,
                 &settings,
-                &world,
                 &session,
                 &director_model,
             ),
+            director_oag_context,
         )
     };
     let mut emit_director_progress =
@@ -251,7 +271,7 @@ pub(crate) async fn submit_player_action_inner(
         .services
         .runtime
         .session_orchestrator
-        .run_director_turn(
+        .run_director_turn_with_oag(
             &state.services.llm_client,
             director_service,
             director_model,
@@ -275,6 +295,7 @@ pub(crate) async fn submit_player_action_inner(
                 data_dir: &state.data_dir,
             }),
             Some(&mut emit_director_progress),
+            director_oag_context.as_ref(),
         )
         .await;
     let director_turn = match director_turn {
@@ -337,6 +358,13 @@ pub(crate) async fn submit_player_action_inner(
                 &runtime_preparation.visible_chars,
                 &session.player_character_name,
             );
+        let witness_ids =
+            crate::services::game_engine::orchestrator::session_materialization::build_witness_ids(
+                &witnesses,
+                &session.player_character_id,
+                &session.player_character_name,
+                &characters,
+            );
         messages.push(crate::models::session::ChatMessage {
             message_id: crate::models::session::ChatMessage::generate_id(),
             created_at: chrono::Utc::now().to_rfc3339(),
@@ -347,9 +375,12 @@ pub(crate) async fn submit_player_action_inner(
             metadata: Some(serde_json::json!({
                 "turn_index": turn_index,
                 "message_kind": "event",
+                "scene_id": crate::services::game_engine::scene::SceneManager::new().slugify(&runtime_preparation.next_scene_name),
                 "event": event_text,
                 "scene_name": runtime_preparation.next_scene_name,
                 "witnesses": witnesses,
+                "witness_ids": witness_ids,
+                "recipient_ids": [],
             })),
         });
     }
@@ -923,7 +954,11 @@ fn merge_agent_chat_runtime_payloads(payloads: &[serde_json::Value]) -> serde_js
                 .entry((*key).to_string())
                 .or_insert_with(|| serde_json::Value::Array(Vec::new()));
             if let Some(target) = entry.as_array_mut() {
-                target.extend(items.iter().cloned());
+                if *key == "fact_extractions" {
+                    target.extend(fact_extractions_with_provenance(payload));
+                } else {
+                    target.extend(items.iter().cloned());
+                }
             }
         }
         for key in VALUE_KEYS {
@@ -953,6 +988,71 @@ fn merge_agent_chat_runtime_payloads(payloads: &[serde_json::Value]) -> serde_js
     serde_json::Value::Object(merged)
 }
 
+fn fact_extractions_with_provenance(payload: &serde_json::Value) -> Vec<serde_json::Value> {
+    payload
+        .get("fact_extractions")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .map(|fact| {
+                    let mut fact = fact.clone();
+                    let Some(object) = fact.as_object_mut() else {
+                        return fact;
+                    };
+                    let asserted_by = payload
+                        .get("fact_speaker")
+                        .and_then(|value| value.as_str())
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or("director");
+                    object.insert(
+                        "asserted_by".to_string(),
+                        serde_json::Value::String(asserted_by.to_string()),
+                    );
+                    let asserted_by_id = payload
+                        .get("fact_speaker_id")
+                        .and_then(|value| value.as_str())
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string);
+                    object.insert(
+                        "asserted_by_id".to_string(),
+                        asserted_by_id
+                            .map(serde_json::Value::String)
+                            .unwrap_or(serde_json::Value::Null),
+                    );
+                    let witnesses = payload
+                        .get("fact_witnesses")
+                        .and_then(|value| value.as_array())
+                        .or_else(|| object.get("witnesses").and_then(|value| value.as_array()))
+                        .cloned()
+                        .unwrap_or_default();
+                    object.insert("witnesses".to_string(), serde_json::Value::Array(witnesses));
+                    let visibility = match object
+                        .get("visibility")
+                        .and_then(|value| value.as_str())
+                        .map(str::trim)
+                    {
+                        Some("private") => "private",
+                        Some("public") => "public",
+                        _ => "scene",
+                    };
+                    object.insert(
+                        "visibility".to_string(),
+                        serde_json::Value::String(visibility.to_string()),
+                    );
+                    object.insert(
+                        "truth_status".to_string(),
+                        serde_json::Value::String("asserted".to_string()),
+                    );
+                    fact
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// 把各说话人 payload 里的 fact_extractions 数组并进导演 payload。
 /// 普通导演模式下 speaker_turn_result.runtime_payloads 不进入 runtime 解析,
 /// 事实卡片需要这条显式通道;parsed_runtime 已有同名字段时追加而非覆盖。
@@ -962,13 +1062,7 @@ fn merge_speaker_fact_extractions(
 ) -> serde_json::Value {
     let facts: Vec<serde_json::Value> = speaker_payloads
         .iter()
-        .filter_map(|payload| {
-            payload
-                .get("fact_extractions")
-                .and_then(|value| value.as_array())
-        })
-        .flatten()
-        .cloned()
+        .flat_map(fact_extractions_with_provenance)
         .collect();
     if facts.is_empty() {
         return parsed_runtime.clone();
@@ -999,14 +1093,12 @@ pub async fn get_session_runtime_attributes(
         .get_session_runtime_attributes(db.conn(), &session_id)
 }
 
-/// 本局生成参数的解析结果（第 8 项）：每层各自配了什么 + 最终生效值。
+/// 本局生成参数的解析结果：每层各自配了什么 + 最终生效值。
 /// 前端编辑界面靠 `session` 层做编辑，靠 `effective_*` 展示「实际用的是多少」。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SessionGenerationParamsResponse {
     /// 应用设置里的覆盖（空对象表示这层不覆盖）。
     pub app: crate::models::generation_params::GenerationParams,
-    /// 世界包 director_config.generation_params 里的覆盖。
-    pub world: crate::models::generation_params::GenerationParams,
     /// 本存档自己的覆盖，唯一可在游戏内编辑的一层。
     pub session: crate::models::generation_params::GenerationParams,
     /// 导演调用最终生效的参数（含内置默认 temperature 0.7）。
@@ -1015,7 +1107,7 @@ pub struct SessionGenerationParamsResponse {
     pub effective_character: crate::models::generation_params::GenerationParams,
 }
 
-/// 读本局的三级生成参数与最终生效值。
+/// 读本局的两级生成参数与最终生效值。
 #[tauri::command]
 pub async fn get_session_generation_params(
     state: State<'_, AppState>,
@@ -1026,16 +1118,14 @@ pub async fn get_session_generation_params(
     let session = crate::db::repositories::session_repo::SessionRepository::new(conn)
         .get(&session_id)?
         .ok_or_else(|| "会话不存在".to_string())?;
-    let world =
-        crate::services::game_engine::orchestrator::resolve_world_for_session(conn, &session)?;
     let settings = crate::commands::settings::load_app_settings(conn)?;
     Ok(build_session_generation_params_response(
-        &settings, &world, &session,
+        &settings, &session,
     ))
 }
 
-/// 写本局的会话级生成参数（三级覆盖里优先级最高的一层）。
-/// 只动会话层：应用层在设置页改，世界层在世界编辑器改。
+/// 写本局的会话级生成参数（两级覆盖里优先级最高的一层）。
+/// 只动会话层：应用层在设置页改。
 #[tauri::command]
 pub async fn update_session_generation_params(
     state: State<'_, AppState>,
@@ -1048,36 +1138,30 @@ pub async fn update_session_generation_params(
     let mut session = repo
         .get(&session_id)?
         .ok_or_else(|| "会话不存在".to_string())?;
-    // 入库前夹到合法区间，与应用/世界两层一致。
+    // 入库前夹到合法区间，与应用层一致。
     session.generation_params = params.sanitized().0;
     repo.upsert(&session)?;
-    let world =
-        crate::services::game_engine::orchestrator::resolve_world_for_session(conn, &session)?;
     let settings = crate::commands::settings::load_app_settings(conn)?;
     Ok(build_session_generation_params_response(
-        &settings, &world, &session,
+        &settings, &session,
     ))
 }
 
 fn build_session_generation_params_response(
     settings: &crate::models::settings::AppSettings,
-    world: &crate::models::world::WorldDefinition,
     session: &SessionSnapshot,
 ) -> SessionGenerationParamsResponse {
     use crate::models::generation_params::{GENERATION_ROLE_CHARACTER, GENERATION_ROLE_DIRECTOR};
-    use crate::services::game_engine::orchestrator::world_generation_params;
     let resolve = |role: &str| {
         // 这里不带模型连接配置，max_tokens 未配就留空（真实回合会用所选模型的上限兜底）。
         crate::models::generation_params::GenerationParams::resolve_for_role(
             role,
             &settings.generation_params,
-            world_generation_params(world).as_ref(),
             (!session.generation_params.is_empty()).then_some(&session.generation_params),
         )
     };
     SessionGenerationParamsResponse {
         app: settings.generation_params.clone(),
-        world: world_generation_params(world).unwrap_or_default(),
         session: session.generation_params.clone(),
         effective_director: resolve(GENERATION_ROLE_DIRECTOR),
         effective_character: resolve(GENERATION_ROLE_CHARACTER),

@@ -145,11 +145,11 @@ pub async fn export_world_package(
     world_id: String,
 ) -> Result<BinaryFileResponse, String> {
     // H8: 与导入对称——锁内只读元数据，锁外做读资产 + 压 zip，避免持全局 DB 锁卡住其它命令。
-    let (world, characters, mcp_tools) = {
+    let (world, characters, mcp_tools, oag) = {
         let db = state.db.lock().await;
         WorldService::new().load_world_package_inputs(db.conn(), &world_id)?
     };
-    WorldService::package_world_bundle(&state.data_dir, &world, &characters, &mcp_tools)
+    WorldService::package_world_bundle(&state.data_dir, oag, &world, &characters, &mcp_tools)
 }
 
 #[tauri::command]
@@ -158,12 +158,12 @@ pub async fn export_world_package_to_downloads(
     state: State<'_, AppState>,
     world_id: String,
 ) -> Result<SavedFileResponse, String> {
-    let (world, characters, mcp_tools) = {
+    let (world, characters, mcp_tools, oag) = {
         let db = state.db.lock().await;
         WorldService::new().load_world_package_inputs(db.conn(), &world_id)?
     };
     let package =
-        WorldService::package_world_bundle(&state.data_dir, &world, &characters, &mcp_tools)?;
+        WorldService::package_world_bundle(&state.data_dir, oag, &world, &characters, &mcp_tools)?;
     WorldPackageService::save_package_to_downloads(&app, &state, package).await
 }
 
@@ -188,9 +188,14 @@ pub async fn import_world_package(
 
 #[tauri::command]
 pub async fn inspect_world_package(
+    state: State<'_, AppState>,
     request: WorldPackageInspectionRequest,
 ) -> Result<WorldPackageInspectionResult, String> {
-    Ok(WorldPackageService::inspect_package_archive(request.data))
+    let db = state.db.lock().await;
+    Ok(WorldPackageService::inspect_package_archive_with_db(
+        db.conn(),
+        request.data,
+    ))
 }
 
 #[tauri::command]

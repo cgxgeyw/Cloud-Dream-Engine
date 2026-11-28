@@ -29,7 +29,9 @@ const ENGINE_BUILTIN_TOOL_IDS = new Set([
   "mcp-tool-list-characters",
   "mcp-tool-change-scene",
   "mcp-tool-switch-player-character",
-  "mcp-tool-image-generation",
+  "mcp-tool-background-generation",
+  "mcp-tool-portrait-generation",
+  "mcp-tool-search-knowledge",
   "mcp-tool-schedule-notification",
 ]);
 

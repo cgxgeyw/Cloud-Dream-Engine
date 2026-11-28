@@ -969,7 +969,7 @@ async fn golden_turn_rejects_non_json_model_output() {
     );
 }
 
-// ---- 生成参数三级覆盖（第 8 项）----
+// ---- 生成参数两级覆盖 ----
 
 #[tokio::test]
 async fn resolved_generation_params_reach_the_wire_and_unsupported_ones_are_filtered() {
@@ -981,25 +981,23 @@ async fn resolved_generation_params_reach_the_wire_and_unsupported_ones_are_filt
     let director = WorldDirectorService::new();
     let llm = crate::services::llm::client::LlmClient::new();
     let session = sample_session();
-    let mut world = sample_world();
-    // 世界包配一组参数，其中 top_k 是 OpenAI 兼容端点不支持的。
-    world.director_config = serde_json::json!({
-        "generation_params": {
-            "temperature": 0.15,
-            "top_p": 0.8,
-            "top_k": 40,
-            "max_tokens": 777,
-            "stop": ["【完】"],
-            "seed": 1234
-        }
-    });
+    let world = sample_world();
     let characters = vec![sample_character("char-a", "Alice")];
-    let settings = crate::models::settings::AppSettings::default();
+    let mut settings = crate::models::settings::AppSettings::default();
+    // 应用设置配一组参数，其中 top_k 是 OpenAI 兼容端点不支持的。
+    settings.generation_params = crate::models::generation_params::GenerationParams {
+        temperature: Some(0.15),
+        top_p: Some(0.8),
+        top_k: Some(40),
+        max_tokens: Some(777),
+        stop: Some(vec!["【完】".to_string()]),
+        seed: Some(1234),
+        ..Default::default()
+    };
     let model = mock_model(base_url);
     let generation = resolve_generation_params_with_model(
         crate::models::generation_params::GENERATION_ROLE_DIRECTOR,
         &settings,
-        &world,
         &session,
         &model,
     );
@@ -1034,12 +1032,12 @@ async fn resolved_generation_params_reach_the_wire_and_unsupported_ones_are_filt
         .recv_timeout(std::time::Duration::from_secs(5))
         .expect("mock server should capture the request body");
 
-    // 世界层配置直达请求体，且盖住了导演内置默认的 0.7。
+    // 应用层配置直达请求体，且盖住了导演内置默认的 0.7。
     assert_eq!(sent["temperature"], 0.15);
     assert_eq!(sent["top_p"], 0.8);
     assert_eq!(sent["seed"], 1234);
     assert_eq!(sent["stop"], serde_json::json!(["【完】"]));
-    // 世界配的 max_tokens 优先于模型连接配置的上限。
+    // 应用配的 max_tokens 优先于模型连接配置的上限。
     assert_eq!(sent["max_tokens"], 777);
     // 不支持的参数被摘掉，而不是原样发出去让服务端报错。
     assert!(
@@ -1144,26 +1142,28 @@ async fn player_media_reaches_the_wire_as_openai_multipart() {
 }
 
 #[tokio::test]
-async fn session_layer_overrides_world_layer_on_the_wire() {
+async fn session_layer_overrides_app_layer_on_the_wire() {
     let (base_url, requests) = spawn_capturing_mock_llm_server(valid_director_content());
     let orchestrator = SessionOrchestrator;
     let director = WorldDirectorService::new();
     let llm = crate::services::llm::client::LlmClient::new();
-    let mut world = sample_world();
-    world.director_config =
-        serde_json::json!({ "generation_params": { "temperature": 1.4, "top_p": 0.7 } });
+    let world = sample_world();
     let mut session = sample_session();
-    // 玩家在本存档里把随机度调低：只覆盖 temperature，top_p 仍走世界层。
+    // 玩家在本存档里把随机度调低：只覆盖 temperature，top_p 仍走应用层。
     session.generation_params = crate::models::generation_params::GenerationParams {
         temperature: Some(0.05),
         ..Default::default()
     };
     let characters = vec![sample_character("char-a", "Alice")];
+    let mut settings = crate::models::settings::AppSettings::default();
+    settings.generation_params = crate::models::generation_params::GenerationParams {
+        top_p: Some(0.7),
+        ..Default::default()
+    };
     let model = mock_model(base_url);
     let generation = resolve_generation_params_with_model(
         crate::models::generation_params::GENERATION_ROLE_DIRECTOR,
-        &crate::models::settings::AppSettings::default(),
-        &world,
+        &settings,
         &session,
         &model,
     );
@@ -1199,7 +1199,7 @@ async fn session_layer_overrides_world_layer_on_the_wire() {
         .expect("mock server should capture the request body");
 
     assert_eq!(sent["temperature"], 0.05, "存档层优先级最高");
-    assert_eq!(sent["top_p"], 0.7, "存档没配的项仍用世界层");
+    assert_eq!(sent["top_p"], 0.7, "存档没配的项仍用应用层");
 }
 
 // ---- 消息稳定 ID（第 1 项）----

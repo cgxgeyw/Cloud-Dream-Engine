@@ -631,6 +631,7 @@ mod tests {
 
         let conn = Connection::open_in_memory().expect("open sqlite");
         schema::create_tables(&conn).expect("create schema");
+        crate::db::oag_schema::create(&conn).expect("create OAG schema");
         WorldRepository::new(&conn)
             .create(&WorldCreateRequest {
                 name: "World".to_string(),

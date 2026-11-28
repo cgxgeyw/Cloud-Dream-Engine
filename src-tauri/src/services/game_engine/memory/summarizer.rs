@@ -657,6 +657,22 @@ pub(crate) fn persist_summary(
     bucket_start: i32,
     bucket_end: i32,
 ) -> Result<bool, String> {
+    let Some(current_session) =
+        crate::db::repositories::session_repo::SessionRepository::new(conn).get(&session.id)?
+    else {
+        return Ok(false);
+    };
+    let current_messages = serde_json::to_value(current_session.messages).unwrap_or_default();
+    let snapshot_messages = serde_json::to_value(&session.messages).unwrap_or_default();
+    // 回滚或重试会改写旧消息；只允许在捕获快照仍为当前历史前缀时落库。
+    if !matches!(
+        (&current_messages, &snapshot_messages),
+        (serde_json::Value::Array(current), serde_json::Value::Array(snapshot))
+            if current.starts_with(snapshot)
+    ) {
+        return Ok(false);
+    }
+
     let mut keywords = super::extract_memory_keywords(&draft.content);
     for participant in &draft.participants {
         let participant = participant.trim();
@@ -730,8 +746,10 @@ mod tests {
     use super::*;
     use crate::db::repositories::memory_repo::MemoryRepository;
     use crate::db::repositories::memory_summary_repo::MemorySummaryRepository;
+    use crate::db::repositories::session_repo::SessionRepository;
     use crate::db::schema;
     use crate::models::memory::{MemoryEntry, MemorySummaryRange};
+    use crate::models::session::{AssetSelection, MessageContent, SceneRuntime, SessionState};
     use rusqlite::Connection;
 
     #[test]
@@ -784,6 +802,141 @@ mod tests {
             location: Some("码头".to_string()),
             participants: vec!["玩家".to_string(), "韩立".to_string()],
             keywords: vec!["码头".to_string()],
+        }
+    }
+
+    fn summary_world() -> WorldDefinition {
+        WorldDefinition {
+            id: "world-1".to_string(),
+            name: "World".to_string(),
+            genre: String::new(),
+            background_prompt: String::new(),
+            opening_scene: "Harbor".to_string(),
+            summary: String::new(),
+            time_system: String::new(),
+            map_nodes: serde_json::json!({}),
+            time_config: serde_json::json!({}),
+            director_config: serde_json::json!({}),
+            ui_theme_config: serde_json::json!({}),
+            director_system_prompt_base: String::new(),
+            director_runtime_system_prompt: String::new(),
+            opening_messages: vec![],
+            opening_character_ids: vec![],
+            player_character_id: Some("char-player".to_string()),
+        }
+    }
+
+    fn summary_session(messages: Vec<ChatMessage>) -> SessionSnapshot {
+        SessionSnapshot {
+            id: "sess-1".to_string(),
+            world_name: "World".to_string(),
+            location: "Harbor".to_string(),
+            time_label: "Night".to_string(),
+            current_speaker: "Alice".to_string(),
+            current_line: String::new(),
+            player_character_id: "char-player".to_string(),
+            player_character_name: "Player".to_string(),
+            visible_characters: vec!["Alice".to_string()],
+            messages,
+            player_stats: vec![],
+            map_graph_nodes: vec![],
+            map_graph_edges: vec![],
+            system_log: vec![],
+            scene: SceneRuntime {
+                scene_id: "harbor".to_string(),
+                name: "Harbor".to_string(),
+                background_hint: String::new(),
+                temporary_tags: vec![],
+                present_characters: vec!["Player".to_string(), "Alice".to_string()],
+            },
+            assets: AssetSelection::default(),
+            state: SessionState::default(),
+            generation_params: GenerationParams::default(),
+        }
+    }
+
+    fn summary_message(id: &str, turn_index: i32, content: &str) -> ChatMessage {
+        ChatMessage {
+            message_id: id.to_string(),
+            role: "agent".to_string(),
+            content: MessageContent::Text(content.to_string()),
+            speaker: Some("Alice".to_string()),
+            metadata: Some(serde_json::json!({ "turn_index": turn_index })),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            parent_message_id: None,
+        }
+    }
+
+    #[test]
+    fn summary_persistence_rejects_rolled_back_or_rewritten_history() {
+        let snapshot_messages = vec![
+            summary_message("message-1", 1, "公开信息"),
+            summary_message("message-2", 2, "已回滚的秘密"),
+        ];
+        let cases = vec![
+            ("same", Some(snapshot_messages.clone()), true),
+            (
+                "appended",
+                Some(vec![
+                    snapshot_messages[0].clone(),
+                    snapshot_messages[1].clone(),
+                    summary_message("message-3", 3, "新回合"),
+                ]),
+                true,
+            ),
+            (
+                "rolled_back",
+                Some(vec![snapshot_messages[0].clone()]),
+                false,
+            ),
+            (
+                "rewritten",
+                Some(vec![
+                    snapshot_messages[0].clone(),
+                    summary_message("replacement-2", 2, "重试后的内容"),
+                ]),
+                false,
+            ),
+            ("deleted", None, false),
+        ];
+
+        for (name, current_messages, expected) in cases {
+            let conn = Connection::open_in_memory().expect("open sqlite");
+            schema::create_tables(&conn).expect("create tables");
+            if let Some(messages) = current_messages {
+                SessionRepository::new(&conn)
+                    .upsert(&summary_session(messages))
+                    .expect("save current session");
+            }
+            let persisted = persist_summary(
+                &conn,
+                &summary_world(),
+                &summary_session(snapshot_messages.clone()),
+                &SummaryDraft {
+                    character_id: "char-a".to_string(),
+                    scene_id: "harbor".to_string(),
+                    scene_name: "Harbor".to_string(),
+                    turn_start: 1,
+                    turn_end: 2,
+                    content: "旧快照总结".to_string(),
+                    participants: vec!["Player".to_string(), "Alice".to_string()],
+                },
+                0,
+                1,
+                10,
+            )
+            .expect("persist summary");
+            assert_eq!(persisted, expected, "{name}");
+            let memory_count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))
+                .expect("count memories");
+            let range_count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM memory_summary_ranges", [], |row| {
+                    row.get(0)
+                })
+                .expect("count summary ranges");
+            assert_eq!(memory_count, i64::from(expected), "{name}");
+            assert_eq!(range_count, i64::from(expected), "{name}");
         }
     }
 

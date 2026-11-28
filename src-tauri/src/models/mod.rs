@@ -6,6 +6,7 @@ pub mod mcp_server;
 pub mod mcp_tool;
 pub mod memory;
 pub mod model_config;
+pub mod oag;
 pub mod plugin;
 pub mod runtime;
 pub mod save;

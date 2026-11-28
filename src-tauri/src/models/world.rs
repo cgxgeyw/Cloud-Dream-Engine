@@ -22,6 +22,15 @@ pub struct WorldDefinition {
     pub player_character_id: Option<String>,
 }
 
+impl WorldDefinition {
+    pub fn director_image_generation_enabled(&self) -> bool {
+        crate::models::mcp_tool::config_allows_director_image_generation(
+            &self.director_config,
+            &self.ui_theme_config,
+        )
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorldOpeningMessage {
     pub role: String,
@@ -122,6 +131,10 @@ pub struct WorldPackageManifest {
     /// 导入世界时自动 upsert，免去单独导入工具包的步骤。
     #[serde(default)]
     pub mcp_tools_file: Option<String>,
+    #[serde(default)]
+    pub ontology_file: Option<String>,
+    #[serde(default)]
+    pub objects_file: Option<String>,
     pub characters_file: Option<String>,
     pub character_files: Vec<WorldPackageCharacterFileEntry>,
     pub assets: Vec<WorldPackageAssetEntry>,
@@ -138,6 +151,8 @@ pub struct WorldPackageInspectionResult {
     pub format: Option<String>,
     pub version: Option<u32>,
     pub diagnostics: Vec<WorldUiDiagnostic>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oag_preview: Option<crate::models::oag::OagCanonImportPreview>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

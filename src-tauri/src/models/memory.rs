@@ -85,6 +85,24 @@ pub struct MemoryRelation {
     pub source: String,
     pub confidence: f64,
     pub created_at: String,
+    #[serde(default)]
+    pub asserted_by: String,
+    #[serde(default)]
+    pub asserted_by_id: Option<String>,
+    #[serde(default = "default_fact_visibility")]
+    pub visibility: String,
+    #[serde(default = "default_truth_status")]
+    pub truth_status: String,
+    #[serde(default)]
+    pub witnesses: Vec<String>,
+}
+
+fn default_fact_visibility() -> String {
+    "scene".to_string()
+}
+
+fn default_truth_status() -> String {
+    "asserted".to_string()
 }
 
 /// LLM 从本回合对话中提取的一条事实更新(fact_extractions 数组的一项)。
@@ -98,4 +116,14 @@ pub struct FactUpdate {
     pub subject_type: String,
     pub object_type: String,
     pub confidence: f64,
+    #[serde(default)]
+    pub asserted_by: String,
+    #[serde(default)]
+    pub asserted_by_id: Option<String>,
+    #[serde(default = "default_fact_visibility")]
+    pub visibility: String,
+    #[serde(default = "default_truth_status")]
+    pub truth_status: String,
+    #[serde(default)]
+    pub witnesses: Vec<String>,
 }

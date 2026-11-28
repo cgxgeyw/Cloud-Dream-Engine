@@ -35,7 +35,7 @@ rquickjs = "0.9"
 rusqlite = { version = "0.31", features = ["bundled"] }
 
 # 通用工具
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "v5"] }
 chrono = { version = "0.4", features = ["serde"] }
 regex = "1"
 time = "0.3"

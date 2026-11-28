@@ -20,6 +20,7 @@ import {
 } from "../data/apiAdapter";
 import { AttributePanel } from "../components/AttributePanel";
 import { ConfirmDialog } from "../components/ModalDialog";
+import { HelpTip } from "../components/HelpTip";
 import { ScreenLayout, SurfacePanel } from "../components/ScreenLayout";
 import { useIsMobile } from "../components/ResponsiveLayout";
 import { showToast } from "../components/Toast";
@@ -47,7 +48,7 @@ const fixedTabMeta: Record<FixedTabId, { group: string; desc: string }> = {
   runtimeContext: { group: "角色内容", desc: "每回合注入的实时上下文" },
   avatar: { group: "素材", desc: "角色列表与对话头像" },
   portrait: { group: "素材", desc: "场景与角色面板立绘" },
-  memory: { group: "记忆与属性", desc: "记忆策略与带入历史轮数" },
+  memory: { group: "记忆与属性", desc: "记忆偏好与最近对话轮数" },
   attribute: { group: "记忆与属性", desc: "角色标签与结构化属性" },
   preview: { group: "其他", desc: "查看当前配置的完整 JSON" },
 };
@@ -87,6 +88,10 @@ function moveAssetToFront(items: string[], target: string): string[] {
 function getAssetDisplayName(assetPath: string): string {
   const parts = assetPath.split(/[\\/]/).filter(Boolean);
   return parts[parts.length - 1] ?? assetPath;
+}
+
+function normalizeMemoryStrategyForEditor(strategy: string): string {
+  return strategy.trim().toLowerCase() === "recent" ? "优先回忆最近发生的事" : strategy;
 }
 
 export function CharacterEditorPage() {
@@ -151,6 +156,7 @@ export function CharacterEditorPage() {
               id: "new",
               name: sourceCharacter.name ? `${sourceCharacter.name} 副本` : "",
               world_id: preferredWorldId || sourceCharacter.world_id,
+              memory_strategy: normalizeMemoryStrategyForEditor(sourceCharacter.memory_strategy),
             });
           } else {
             setCharacter((current) => ({
@@ -163,7 +169,10 @@ export function CharacterEditorPage() {
 
         const characterData = await fetchCharacter(id as string);
         if (!cancelled) {
-          setCharacter(characterData);
+          setCharacter({
+            ...characterData,
+            memory_strategy: normalizeMemoryStrategyForEditor(characterData.memory_strategy),
+          });
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -388,8 +397,12 @@ export function CharacterEditorPage() {
         setWorlds((current) => current.map((world) => world.id === worldDraft.id ? worldDraft : world));
       }
 
-      setCharacter(saved);
-      dirtyBaselineRef.current = JSON.stringify(saved);
+      const normalizedSaved = {
+        ...saved,
+        memory_strategy: normalizeMemoryStrategyForEditor(saved.memory_strategy),
+      };
+      setCharacter(normalizedSaved);
+      dirtyBaselineRef.current = JSON.stringify(normalizedSaved);
       showToast("角色已保存");
 
       if (isNew) {
@@ -832,18 +845,27 @@ export function CharacterEditorPage() {
 
             {activeTab === "memory" ? (
               <div className="editor-content">
-                <label className="editor-field">
-                  <span className="editor-field-label">记忆策略</span>
+                <div className="editor-field">
+                  <div className="field-label-head">
+                    <span className="editor-field-label">记忆偏好</span>
+                    <HelpTip text="recent 表示优先回忆最近发生的事，不是只保留最近记忆。可填写：优先回忆最近发生的事、重要的事要牢记、不记。留空使用默认；“不记”会停止该角色的长期记忆召回和自动总结，但不会删除已有记忆。" />
+                  </div>
                   <textarea
+                    aria-label="记忆偏好"
                     value={character.memory_strategy}
                     onChange={(event) => updateDraft({ memory_strategy: event.target.value })}
                     className="editor-field-input editor-field-textarea"
+                    placeholder="例如：优先回忆最近发生的事；重要的事要牢记"
                   />
-                </label>
-                <label className="editor-field">
-                  <span className="editor-field-label">带入历史对话轮数</span>
+                </div>
+                <div className="editor-field">
+                  <div className="field-label-head">
+                    <span className="editor-field-label">最近对话轮数</span>
+                    <HelpTip text="每次回复时直接带入该角色可见的最近几轮对话。0 表示不直接携带对话原文，长期记忆仍按世界的记忆模式召回。为避免与总结重复，实际轮数会按总结间隔对齐，可能略有增减。" />
+                  </div>
                   <input
                     type="number"
+                    aria-label="最近对话轮数"
                     min={0}
                     value={character.recent_dialogue_rounds}
                     onChange={(event) =>
@@ -851,7 +873,7 @@ export function CharacterEditorPage() {
                     }
                     className="editor-field-input"
                   />
-                </label>
+                </div>
                 <div className="editor-field">
                   <span className="editor-field-label">可查询的知识库</span>
                   <div className="text-muted" style={{ fontSize: 12 }}>

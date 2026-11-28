@@ -51,7 +51,9 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             title TEXT NOT NULL,
             content TEXT NOT NULL,
             source_filename TEXT NOT NULL DEFAULT '',
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            audience TEXT NOT NULL DEFAULT 'public',
+            audience_character_id TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_knowledge_documents_base ON knowledge_documents(knowledge_base_id);
         CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_documents_fts USING fts5(
@@ -268,6 +270,11 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             source TEXT NOT NULL DEFAULT 'llm_extraction',
             confidence REAL NOT NULL DEFAULT 0.7,
             created_at TEXT NOT NULL DEFAULT '',
+            asserted_by TEXT NOT NULL DEFAULT '',
+            asserted_by_id TEXT,
+            visibility TEXT NOT NULL DEFAULT 'scene',
+            truth_status TEXT NOT NULL DEFAULT 'asserted',
+            witnesses_json TEXT NOT NULL DEFAULT '[]',
             FOREIGN KEY (subject_entity_id) REFERENCES memory_entities(id) ON DELETE CASCADE
         );
 
@@ -555,6 +562,13 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     )?;
     ensure_column(
         conn,
+        "knowledge_documents",
+        "audience",
+        "TEXT NOT NULL DEFAULT 'public'",
+    )?;
+    ensure_column(conn, "knowledge_documents", "audience_character_id", "TEXT")?;
+    ensure_column(
+        conn,
         "knowledge_bases",
         "chunk_delimiter",
         "TEXT NOT NULL DEFAULT ''",
@@ -563,6 +577,31 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         conn,
         "characters",
         "knowledge_base_ids_json",
+        "TEXT NOT NULL DEFAULT '[]'",
+    )?;
+    ensure_column(
+        conn,
+        "memory_relations",
+        "asserted_by",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+    ensure_column(conn, "memory_relations", "asserted_by_id", "TEXT")?;
+    ensure_column(
+        conn,
+        "memory_relations",
+        "visibility",
+        "TEXT NOT NULL DEFAULT 'scene'",
+    )?;
+    ensure_column(
+        conn,
+        "memory_relations",
+        "truth_status",
+        "TEXT NOT NULL DEFAULT 'asserted'",
+    )?;
+    ensure_column(
+        conn,
+        "memory_relations",
+        "witnesses_json",
         "TEXT NOT NULL DEFAULT '[]'",
     )?;
     migrate_world_knowledge_bindings(conn)?;

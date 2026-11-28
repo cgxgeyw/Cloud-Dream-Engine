@@ -19,7 +19,7 @@ import java.util.TimeZone
 class NotificationManager(private val context: Context) {
   companion object {
     private const val TAG = "CloudDreamCalendar"
-    private const val APP_NAME = "云朵梦境"
+    private const val APP_NAME = "云梦引擎"
     private const val PREFS_NAME = "scheduled_calendar_reminders"
     private const val KEY_EVENT_ID_PREFIX = "event_id:"
     private const val DEFAULT_EVENT_DURATION_MS = 30L * 60L * 1000L

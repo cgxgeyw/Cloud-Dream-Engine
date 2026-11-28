@@ -146,7 +146,7 @@ function DirectorFieldGuide({ writtenResult }: { writtenResult: unknown }) {
       key: "character_visual_directives",
       label: "角色视觉指令",
       value: result.character_visual_directives,
-      desc: "用于选择或生成角色立绘，比如 portrait_asset_path 或 generation_prompt。",
+      desc: "由 generate_portrait 工具写入的内部立绘生成指令，用于调试查看，不是模型 JSON 返回字段。",
     },
   ].filter((row) => result[row.key] !== undefined && result[row.key] !== null);
 
